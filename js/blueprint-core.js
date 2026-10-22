@@ -9,7 +9,8 @@ const NODE_DEFS = {
   imageIn:  { title:'图像输入', dot:'image', desc:'载入一张图像作为起点', inputs:[], outputs:['image'], execIn:false, execOut:['exec'] },
   modelIn:  { title:'3D 模型输入', dot:'model', desc:'导入 OBJ / GLB / STL 等模型', inputs:[], outputs:['model'], execIn:false, execOut:['exec'] },
   text:     { title:'文本 / 提示词', dot:'text', desc:'固定文本、提示词或补充说明', inputs:[], outputs:['text'], execIn:false, execOut:['exec'] },
-  boolNode: { title:'布尔值', dot:'logic', desc:'手动输出真 / 假', inputs:[], outputs:[], execIn:false, execOut:['exec'] },
+  numNode:  { title:'数值', dot:'logic', desc:'输出整数 / 浮点，供数值参数引脚连线使用', inputs:[], outputs:['int','float'], execIn:false, execOut:['exec'] },
+  boolNode: { title:'布尔值', dot:'logic', desc:'手动输出真 / 假', inputs:[], outputs:['bool'], execIn:false, execOut:['exec'] },
   aiTask:   { title:'分析任务', dot:'text', desc:'按指令分析文本 / 图像，自定义输入输出引脚与超时', inputs:[], outputs:[], execIn:true, execOut:['exec'] },
   condition:{ title:'IF 条件判断', dot:'logic', desc:'让语言模型判断条件是否成立', inputs:['text'], outputs:['bool'], execIn:true, execOut:['exec'] },
   branch:   { title:'条件分支', dot:'logic', desc:'按布尔值走真 / 假执行线', inputs:['bool'], outputs:[], execIn:true, execOut:['true','false'] },
@@ -29,7 +30,9 @@ const NODE_DEFS = {
  * 连线后自动隐藏控件。形态由声明驱动，不再散落 if(n.type===...) 分支。
  *
  * 字段：
- *   key    node.data 上的键；与输入引脚同名时（如 prompt）自动绑定该引脚
+ *   key    node.data 上的键；与引脚同名时（如 prompt / bool）自动绑定该引脚
+ *   side   'in'（默认）挂到输入引脚右侧；'out' 挂到输出引脚右侧（数据源节点用）
+ *   dataKey 引脚键与数据键分离时用（如 text 节点：引脚 __content__、数据键 text）
  *   label  显示名
  *   ctl    控件：text / textarea / number / select / bool
  *   min/max/step   number 的范围（超出自动夹取）
@@ -65,7 +68,7 @@ const NODE_PARAMS = {
 
   tripoImg: [
     { key:'prompt', label:'prompt', ctl:'textarea', ph:'提示词（未连线时使用）' },
-    { key:'timeout', label:'超时', ctl:'number', min:10, max:900, step:10, unit:'秒', default:240 },
+    { key:'timeout', label:'超时', ctl:'number', type:'int', min:10, max:900, step:10, unit:'秒', default:240 },
     { key:'mode', label:'模式', ctl:'select', default:'auto', options:[
       ['auto','自动（有参考图走图生图）'], ['text','文生图'], ['image','图生图']
     ] },
@@ -76,8 +79,8 @@ const NODE_PARAMS = {
   ],
 
   imageCompress: [
-    { key:'maxEdge', label:'最长边', ctl:'number', min:64, max:4096, step:64, unit:'px', default:1024 },
-    { key:'quality', label:'质量',   ctl:'number', min:10, max:100, step:5, unit:'%',  default:80 },
+    { key:'maxEdge', label:'最长边', ctl:'number', type:'int', min:64, max:4096, step:64, unit:'px', default:1024 },
+    { key:'quality', label:'质量',   ctl:'number', type:'int', min:10, max:100, step:5, unit:'%',  default:80 },
     { tip:'等比缩小到最长边限制，并转成 JPEG 输出' }
   ],
 
@@ -87,11 +90,18 @@ const NODE_PARAMS = {
 
   branch: [ { tip:'按布尔引脚的值决定走「真」或「假」执行线' } ],
 
-  boolNode: [ { key:'value', label:'取值', ctl:'bool', default:true } ],
+  // 取值控件挂在输出引脚上（side:'out'），布尔节点本身是数据源，没有输入引脚
+  boolNode: [ { key:'bool', label:'取值', ctl:'bool', default:true, side:'out' } ],
+
+  // 数值节点：一次同时提供「整数」与「浮点」两种输出，覆盖全部数值输入引脚
+  numNode: [
+    { key:'float', label:'数值', dataKey:'value', ctl:'number', step:'any', default:0, side:'out' },
+    { tip:'同一数值同时从两个引脚输出：整数引脚取整，浮点引脚保留小数' }
+  ],
 
   aiTask: [
     { key:'instruction', ctl:'textarea', ph:'任务指令（例如：总结输入文本并列出风险点）' },
-    { key:'timeout', label:'超时', ctl:'number', min:0, max:3600, step:10, unit:'秒，0 表示不限时', default:120 },
+    { key:'timeout', label:'超时', ctl:'number', type:'int', min:0, max:3600, step:10, unit:'秒，0 表示不限时', default:120 },
     { key:'__taskPins__', ctl:'taskPins' }
   ],
 
@@ -112,14 +122,22 @@ const NODE_PARAMS = {
 };
 
 const NODE_LIB = [
-  { group:'输入', types:['imageIn','modelIn','text','boolNode'] },
+  // 「输入」组按数据类型排齐：文本 / 数值 / 布尔 / 图像 / 3D 模型，与 TYPE_META 一一对应
+  { group:'输入', types:['text','numNode','boolNode','imageIn','modelIn'] },
   { group:'分析任务', types:['aiTask'] },
   { group:'图像任务', types:['imageGen','imageCompress','tripoImg'] },
   { group:'3D 任务', types:['model3d','modelViews'] },
   { group:'逻辑', types:['condition','branch'] },
+  { group:'流程', types:['start','end'] },
   { group:'输出', types:['result'] },
 ];
 const PIN_META = {
+  instruction: { label:'指令', type:'string' },
+  maxEdge:     { label:'最长边', type:'int' },
+  quality:     { label:'质量', type:'int' },
+  timeout:     { label:'超时', type:'int' },
+  int:    { label:'整数', type:'int' },
+  float:  { label:'浮点', type:'float' },
   image:  { label:'图像', type:'image' },
   hint:   { label:'补充', type:'string' },
   prompt: { label:'提示词', type:'string' },
@@ -146,6 +164,8 @@ const TYPE_ORDER = ['int','float','string','bool','image','model'];
 const TASK_OUT_TYPES = ['string','int','float','bool'];
 const TASK_TIMEOUT_DEFAULT = 120;
 const SVG_NS = 'http://www.w3.org/2000/svg';
+// 节点内可编辑控件必须拦下这几个事件，否则一按就开始拖节点 / 框选画布
+const NAME_EVENTS = ['pointerdown', 'mousedown', 'click', 'dblclick'];
 const uid = () => Math.random().toString(36).slice(2, 9);
 
 let FLOWS = [];

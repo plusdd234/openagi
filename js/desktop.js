@@ -454,7 +454,8 @@ function newNode(type, x, y){
     ];
   }
   if(type === 'condition') n.data.instruction = '';
-  if(type === 'boolNode') n.data.value = true;
+  if(type === 'boolNode') n.data.bool = true;
+  if(type === 'numNode') n.data.value = 0;
   if(type === 'imageIn') n.data.image = '';
   if(type === 'modelIn') n.data.model = '';
   return n;
@@ -815,21 +816,40 @@ function makeFieldControl(spec, n, p){
   return el;
 }
 
+// 参数引脚的类型与名称：优先级 声明 → 引脚名映射 → 字符串
+// 缺了第二级，maxEdge / quality / timeout 这类引脚会被当成字符串，数值节点就接不上
+function paramPortMeta(spec, n, key){
+  const m = PIN_META[key];
+  const type = (spec && spec.type) || (m ? m.type : 'string');
+  return {
+    label: (spec && spec.label) || (m ? m.label : key),
+    type, spec, node:n,
+    param: spec ? paramObjOf(n, spec) : null
+  };
+}
+
 // 一个参数 = 一行「引脚 + 名称 + 控件」；无同名列引脚时用规格里的 key 当引脚
-function makeParamPort(spec, n, p){
+// dir 为 'out' 时是数据源节点（布尔 / 数值），控件照样紧跟引脚，连线后不隐藏
+function makeParamPort(spec, n, p, dir){
+  dir = dir === 'out' ? 'out' : 'in';
   const row = document.createElement('div');
-  row.className = 'port-row has-param' + (spec.ctl === 'textarea' ? ' wide' : '');
+  row.className = 'port-row has-param'
+    + (dir === 'out' ? ' out-param' : '')
+    + (spec.ctl === 'textarea' ? ' wide' : '');
   row.dataset.paramKey = spec.key;
   if(p && p.id) row.dataset.paramId = p.id;
 
   const pin = document.createElement('span');
-  pin.className = 'pin in';
-  pin.dataset.dir = 'in';
+  pin.className = 'pin ' + dir;
+  pin.dataset.dir = dir;
   pin.dataset.key = (p && p.id) ? p.id : spec.key;
-  pin.dataset.type = spec.type || 'string';
-  if(pin.dataset.key === spec.key || (p && p.id)) {
-    pin.style.setProperty('--pin-c', PIN_COLORS[pin.dataset.type] || '#5d6bb8');
-  }
+  // 类型优先级：声明的 type → 参数对象自身类型（如四视图的 int/float 参数）→ 引脚名映射 → 字符串
+  // 少了第二步，数值参数引脚会被降级成 string，数值节点就永远连不上
+  pin.dataset.type = spec.type
+    || (p && p.type)
+    || (PIN_META[spec.key] ? PIN_META[spec.key].type : null)
+    || 'string';
+  pin.style.setProperty('--pin-c', PIN_COLORS[pin.dataset.type] || '#5d6bb8');
 
   const label = document.createElement('span');
   label.className = 'port-label';
@@ -855,9 +875,11 @@ function makeParamPort(spec, n, p){
 
 function makePort(key, dir, meta){
   meta = meta || PIN_META[key] || { label:key, type:'string' };
+  // 未显式给类型的，用引脚名映射兜底（例如 text / prompt / model 等固定引脚）
+  if(dir === 'out' && !meta.type && PIN_META[key]) meta = Object.assign({}, meta, { type:PIN_META[key].type });
   // 有对应参数声明时，直接渲染成「引脚 + 名称 + 控件」的统一形态
-  if(dir === 'in' && meta.spec){
-    return makeParamPort(meta.spec, meta.node, meta.param);
+  if(meta.spec){
+    return makeParamPort(meta.spec, meta.node, meta.param, dir);
   }
   const row = document.createElement('div');
   row.className = 'port-row';
@@ -954,6 +976,7 @@ function nodeEl(n){
   // 有参数但缺同名引脚的，补一条输入引脚（值可视化于其右侧）
   specs.forEach(s => {
     if(s.ctl === 'paramList' || s.ctl === 'taskPins' || s.ctl === 'filePick' || s.tip) return;
+    if(s.side === 'out') return;   // 数据源参数：挂在输出引脚上，不生成输入引脚
     if(s.store === 'param'){
       if(!inputKeys.includes(s.key)) inputKeys.push(s.key);
     } else if(!inputKeys.includes(s.key)){
@@ -990,21 +1013,24 @@ function nodeEl(n){
         type:k === '__image__' ? 'image' : 'model' }));
       return;
     }
-    inCol.appendChild(makePort(k, 'in', spec
-      ? { label:spec.label || k, type:PIN_META[k] ? PIN_META[k].type : 'string', spec:spec, node:n, param:paramObjOf(n, spec) }
-      : undefined));
+    inCol.appendChild(makePort(k, 'in', paramPortMeta(spec, n, k)));
   });
 
-  // 输出侧
-  (d.outputs || []).forEach(k => outCol.appendChild(makePort(k, 'out')));
+  // 输出侧：声明里 side:'out' 的参数，取值控件跟着输出引脚一起渲染
+  (d.outputs || []).forEach(k => {
+    const s = specByKey[k];
+    outCol.appendChild(makePort(k, 'out', (s && s.side === 'out')
+      ? paramPortMeta(s, n, k) : undefined));
+  });
   if(n.type === 'start') (n.params || []).forEach(p => outCol.appendChild(makePort(p.id, 'out', { label:p.name, type:p.type })));
   if(isVarNode && v && n.type === 'varGet') outCol.appendChild(makePort(v.id, 'out', { label:v.name, type:v.type }));
   if(n.type === 'aiTask'){
     (n.data.outputs || []).forEach(p => outCol.appendChild(makePort(p.id, 'out', { label:p.name || '输出', type:p.type })));
   }
 
-  // 2) 含参数的节点让输入列占满整行，取值控件才有位置
-  const hasParamRow = inputKeys.some(k => specByKey[k] && !specByKey[k].tip);
+  // 2) 含参数的节点让引脚列占满整行，取值控件才有位置（输入侧 / 输出侧都算）
+  const hasParamRow = specs.some(s => !s.tip
+    && s.ctl !== 'paramList' && s.ctl !== 'taskPins' && s.ctl !== 'filePick');
   if(hasParamRow) body.classList.add('wide-in');
   body.append(inCol);
   if((d.outputs || []).length || isVarNode || n.type === 'start' || n.type === 'aiTask'){
@@ -1433,17 +1459,28 @@ function taskPinSection(n, kind){
 function taskPinRow(n, kind, p){
   const row = document.createElement('div');
   row.className = 'param-row task-pin';
+  // 自定义引脚必须有真实的 pin 元素，否则既不能拖线，连线也画不出来
+  const dir = kind === 'in' ? 'in' : 'out';
+  const pin = document.createElement('span');
+  pin.className = 'pin ' + dir;
+  pin.dataset.dir = dir;
+  pin.dataset.key = p.id;
+  pin.dataset.type = p.type;
+  pin.style.setProperty('--pin-c', PIN_COLORS[p.type] || '#5d6bb8');
+  row.appendChild(pin);
   const head = document.createElement('div');
   head.className = 'param-head';
   const name = document.createElement('input');
   name.type = 'text';
   name.value = p.name || '';
   name.title = '引脚名称';
+  for(const ev of NAME_EVENTS) name.addEventListener(ev, e => e.stopPropagation());
   name.addEventListener('input', () => {
     p.name = name.value;
     scheduleFlowSave();
   });
   const sel = document.createElement('select');
+  for(const ev of NAME_EVENTS) sel.addEventListener(ev, e => e.stopPropagation());
   (kind === 'in' ? TYPE_ORDER : TASK_OUT_TYPES).forEach(t => {
     const opt = document.createElement('option');
     opt.value = t;
@@ -1497,8 +1534,9 @@ function renderNodes(){
       : (l.to.node === nodeId && l.to.key === key));
     pin.classList.toggle('linked', on);
     // 参数引脚连线后隐藏取值控件：值改由上游提供，悬停时出小标签提示
+    // 仅输入侧如此；输出侧是数据源，连出去后仍需可编辑
     const row = pin.closest('.port-row');
-    if(row && row.classList.contains('has-param')){
+    if(row && row.classList.contains('has-param') && dir === 'in'){
       row.classList.toggle('is-linked', on);
       const ctl = row.querySelector('.port-param');
       if(ctl) ctl.setAttribute('title', on ? '该参数已由连线提供，断开连线后可手动编辑' : '');

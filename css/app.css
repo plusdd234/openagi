@@ -818,6 +818,9 @@
 
   /* 带参数的输入引脚：取值控件紧贴引脚右侧，与名称同一行 */
   .port-row.has-param { height: 20px; gap: 5px; padding-right: 2px; }
+  /* 输出侧的参数行：右侧要让出引脚的位置 */
+  .port-row.has-param.out-param { padding-right: 15px; }
+  .port-row.has-param.out-param .port-param { margin-left: 6px; }
   .port-row.has-param .port-label { flex: 0 0 auto; line-height: 11px; }
   .port-row .port-param {
     flex: 1 1 auto; min-width: 0; margin-left: auto;
@@ -906,7 +909,11 @@
     border: 1px solid #3a3e43; border-radius: 4px; background: #1c1f22; color: #dfe2e5; padding: 0 6px;
   }
   .task-timeout input:focus { outline: none; border-color: #56607d; }
-  .task-pin { padding-top: 5px; margin-top: 5px; }
+  /* 自定义引脚：行内嵌真实 pin，左右各探出到节点边缘 */
+  .task-pin { position: relative; padding-top: 5px; margin-top: 5px; }
+  .task-pin .pin { top: 50%; margin-top: -4px; }
+  .task-pin .pin.in { left: -13px; }
+  .task-pin .pin.out { right: -13px; }
   .task-pin .param-head input { flex: 1; min-width: 0; }
   .task-pin .param-head select { width: 66px; flex: none; }
 

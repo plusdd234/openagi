@@ -260,6 +260,7 @@ function varAddForm(){
   const name = document.createElement('input');
   name.type = 'text';
   name.placeholder = '变量名';
+  for(const ev of NAME_EVENTS) name.addEventListener(ev, e => e.stopPropagation());
   const sel = document.createElement('select');
   TYPE_ORDER.forEach(t => {
     const opt = document.createElement('option');
@@ -940,8 +941,15 @@ async function runFlow(){
         n.out.image = n.data.image;
       } else if(n.type === 'text'){
         n.out.text = n.data.text || '';
+      } else if(n.type === 'numNode'){
+        const num = Number(n.data.value);
+        const v = isFinite(num) ? num : 0;
+        n.out.int = Math.trunc(v);
+        n.out.float = v;
       } else if(n.type === 'boolNode'){
-        n.out.bool = n.data.value !== false;
+        // 旧流程存的是 data.value，保留兼容
+        const raw = n.data.bool !== undefined ? n.data.bool : n.data.value;
+        n.out.bool = raw !== false;
       } else if(n.type === 'aiTask'){
         const instruction = (n.data.instruction || '').trim();
         const ins = n.data.inputs || [];
