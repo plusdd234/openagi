@@ -647,6 +647,61 @@ function renderLinks(){
   });
 }
 
+// 参数引脚的取值控件规格（用于「值紧跟引脚右侧」的就地编辑）
+const MV_PARAM_SPEC = {
+  '画布尺寸':     { kind:'select', options:[2048, 4096] },
+  '间距':         { kind:'number', min:0,   max:256, step:8 },
+  '线宽':         { kind:'number', min:0.4, max:6,   step:0.1 },
+  '线色':         { kind:'color' },
+  '填充色':       { kind:'color' },
+  '背景色':       { kind:'color' },
+  '背景不透明度': { kind:'number', min:0,   max:1,   step:0.05 },
+  '模式':         { kind:'select', options:['line', 'solid'], labels:{ line:'线框', solid:'实体' } }
+};
+
+// 生成参数取值控件，直接编辑 n.data.params 里对应的值
+function makeParamControl(p){
+  const s = MV_PARAM_SPEC[p.name] || { kind:'text' };
+  let inp;
+  if(s.kind === 'select'){
+    inp = document.createElement('select');
+    s.options.forEach(o => {
+      const op = document.createElement('option');
+      op.value = String(o);
+      op.textContent = (s.labels && s.labels[o]) ? s.labels[o] : String(o);
+      inp.appendChild(op);
+    });
+    inp.value = String(p.value);
+    inp.addEventListener('change', () => {
+      p.value = (s.options.length && !isNaN(Number(inp.value))) ? Number(inp.value) : inp.value;
+      scheduleFlowSave();
+    });
+  } else if(s.kind === 'color'){
+    inp = document.createElement('input');
+    inp.type = 'color';
+    inp.value = /^#[0-9a-fA-F]{6}$/.test(String(p.value)) ? String(p.value) : '#ffffff';
+    inp.addEventListener('input', () => { p.value = inp.value; scheduleFlowSave(); });
+  } else if(s.kind === 'number'){
+    inp = document.createElement('input');
+    inp.type = 'number';
+    inp.min = String(s.min); inp.max = String(s.max); inp.step = String(s.step);
+    inp.value = String(p.value);
+    inp.addEventListener('input', () => {
+      const v = Number(inp.value);
+      if(isFinite(v)) p.value = Math.max(s.min, Math.min(s.max, v));
+      scheduleFlowSave();
+    });
+  } else {
+    inp = document.createElement('input');
+    inp.type = 'text';
+    inp.value = String(p.value == null ? '' : p.value);
+    inp.addEventListener('input', () => { p.value = inp.value; scheduleFlowSave(); });
+  }
+  // 值控件上的指针事件不要传给节点（避免误拖拽节点）
+  ['pointerdown', 'mousedown', 'click'].forEach(ev => inp.addEventListener(ev, e => e.stopPropagation()));
+  return inp;
+}
+
 function makePort(key, dir, meta){
   meta = meta || PIN_META[key] || { label:key, type:'string' };
   const row = document.createElement('div');
@@ -659,7 +714,16 @@ function makePort(key, dir, meta){
   pin.style.setProperty('--pin-c', PIN_COLORS[meta.type] || '#5d6bb8');
   const label = document.createElement('span');
   label.textContent = meta.label;
+  label.className = 'port-label';
   if(dir === 'in') row.append(pin, label); else row.append(label, pin);
+  // 带 param 的参数引脚：取值控件紧跟引脚右侧（连线后由 renderNodes 隐藏）
+  if(dir === 'in' && meta.param){
+    row.classList.add('has-param');
+    const ctl = makeParamControl(meta.param);
+    ctl.classList.add('port-param');
+    ctl.dataset.paramKey = key;
+    row.append(ctl);
+  }
   return row;
 }
 
@@ -748,7 +812,9 @@ function nodeEl(n){
     (n.data.outputs || []).forEach(p => outCol.appendChild(makePort(p.id, 'out', { label:p.name || '输出', type:p.type })));
   }
   if(n.type === 'modelViews'){
-    (n.data.params || []).forEach(p => inCol.appendChild(makePort(p.id, 'in', { label:p.name, type:p.type })));
+    (n.data.params || []).forEach(p => inCol.appendChild(makePort(p.id, 'in', { label:p.name, type:p.type, param:p })));
+    // 参数引脚是整行布局，输入列占满整行宽度，取值控件才有位置显示在引脚右侧
+    body.classList.add('wide-in');
   }
   body.append(inCol, outCol);
 
@@ -897,65 +963,12 @@ function nodeEl(n){
   }
   if(n.type === 'modelViews'){
     if(!Array.isArray(n.data.params)) n.data.params = [];
-    const SPEC = {
-      '画布尺寸':     { kind:'select', options:[2048, 4096] },
-      '间距':         { kind:'number', min:0,   max:256, step:8 },
-      '线宽':         { kind:'number', min:0.4, max:6,   step:0.1 },
-      '线色':         { kind:'color' },
-      '填充色':       { kind:'color' },
-      '背景色':       { kind:'color' },
-      '背景不透明度': { kind:'number', min:0,   max:1,   step:0.05 },
-      '模式':         { kind:'select', options:['line', 'solid'], labels:{ line:'线框', solid:'实体' } }
-    };
-    n.data.params.forEach(p => {
-      const s = SPEC[p.name] || { kind:'text' };
-      const row = document.createElement('div');
-      row.className = 'task-timeout';
-      const l = document.createElement('span');
-      l.textContent = p.name;
-      let inp;
-      if(s.kind === 'select'){
-        inp = document.createElement('select');
-        s.options.forEach(o => {
-          const op = document.createElement('option');
-          op.value = String(o);
-          op.textContent = (s.labels && s.labels[o]) ? s.labels[o] : String(o);
-          inp.appendChild(op);
-        });
-        inp.value = String(p.value);
-        inp.addEventListener('change', () => {
-          p.value = (s.options.find(o => String(o) === inp.value) !== undefined && s.kind === 'select' && !isNaN(Number(inp.value))) ? Number(inp.value) : inp.value;
-          scheduleFlowSave();
-        });
-      } else if(s.kind === 'color'){
-        inp = document.createElement('input');
-        inp.type = 'color';
-        inp.value = /^#[0-9a-fA-F]{6}$/.test(String(p.value)) ? String(p.value) : '#ffffff';
-        inp.addEventListener('input', () => { p.value = inp.value; scheduleFlowSave(); });
-      } else if(s.kind === 'number'){
-        inp = document.createElement('input');
-        inp.type = 'number';
-        inp.min = String(s.min); inp.max = String(s.max); inp.step = String(s.step);
-        inp.value = String(p.value);
-        inp.addEventListener('input', () => {
-          const v = Number(inp.value);
-          p.value = isFinite(v) ? Math.max(s.min, Math.min(s.max, v)) : p.value;
-          scheduleFlowSave();
-        });
-      } else {
-        inp = document.createElement('input');
-        inp.type = 'text';
-        inp.value = String(p.value == null ? '' : p.value);
-        inp.addEventListener('input', () => { p.value = inp.value; scheduleFlowSave(); });
-      }
-      row.append(l, inp);
-      fields.appendChild(row);
-    });
+    // 参数控件已前移到各引脚右侧，此处只保留运行结果 / 说明
     const tip = document.createElement('div');
     tip.className = 'node-result';
     tip.textContent = n.out && n.out.text
       ? n.out.text
-      : '前/后/左/右 正交视图拼成 2×2 正方形；参数可就地填写，也可连线覆盖。';
+      : '输出 2×2 正交四视图，参数可就地编辑';
     fields.appendChild(tip);
   }
   if(n.type === 'aiTask'){
@@ -1499,6 +1512,13 @@ function renderNodes(){
       ? (l.from.node === nodeId && l.from.key === key)
       : (l.to.node === nodeId && l.to.key === key));
     pin.classList.toggle('linked', on);
+    // 参数引脚连线后隐藏取值控件：值改由上游提供，悬停时出小标签提示
+    const row = pin.closest('.port-row');
+    if(row && row.classList.contains('has-param')){
+      row.classList.toggle('is-linked', on);
+      const ctl = row.querySelector('.port-param');
+      if(ctl) ctl.setAttribute('title', on ? '该参数已由连线提供，断开连线后可手动编辑' : '');
+    }
   });
 
   $('bpEmpty').classList.toggle('hidden', bp.nodes.length > 0);
