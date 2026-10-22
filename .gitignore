@@ -1,0 +1,29 @@
+# ===== 依赖 =====
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===== 运行产物 / 临时文件 =====
+tripo_out/
+tripo_tmp/
+*.log
+
+# ===== 浏览器自动化 profile（可能含登录态/凭证，切勿提交） =====
+.tripo-profile/
+.tripo-profile-*
+
+# ===== 工具内部数据 =====
+.workbuddy/
+
+# ===== 系统 / 编辑器 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# ===== 密钥（如有本地密钥文件，请勿提交） =====
+*.local.json
+.env
+.env.local
