@@ -22,6 +22,95 @@ const NODE_DEFS = {
   modelViews:{ title:'3D 模型转四视图', dot:'model', desc:'把 3D 模型渲染为 2×2 四视图（前/后/左/右），可直接喂给生图 AI', inputs:['model'], outputs:['image','text'], execIn:true, execOut:['exec'] },
   result:   { title:'结果输出', dot:'out', desc:'汇总文本、图像与模型结果', inputs:['text','image','model'], outputs:[], execIn:true, execOut:[] },
 };
+/* ---------------------------------------------------------------
+ * 节点参数声明表（统一参数形态的唯一来源）
+ *
+ * 设计目标：所有节点的参数一律「名称 + 取值控件紧跟引脚右侧」，
+ * 连线后自动隐藏控件。形态由声明驱动，不再散落 if(n.type===...) 分支。
+ *
+ * 字段：
+ *   key    node.data 上的键；与输入引脚同名时（如 prompt）自动绑定该引脚
+ *   label  显示名
+ *   ctl    控件：text / textarea / number / select / bool
+ *   min/max/step   number 的范围（超出自动夹取）
+ *   unit   number 后面的单位后缀
+ *   options [['值','显示'], ...]   select 选项
+ *   default(value)  缺省值，可为常量或返回函数
+ *   ph     占位提示
+ *   store  写入位置：'data'（默认，写 node.data[key]）或 'param'（写参数对象自身）
+ *   tip    跟在控件后的浅色说明，或直接给整块提示文字
+ * -------------------------------------------------------------- */
+const DATA_PARAMS = (list) => list.map(o => Object.assign({ store:'data' }, o));
+const PARAM_PARAMS = (list) => list.map(o => Object.assign({ store:'param' }, o));
+
+const NODE_PARAMS = {
+  start: [
+    { key:'__params__', ctl:'paramList' }
+  ],
+  end: [
+    { key:'__params__', ctl:'paramList' },
+    { tip:'运行结束时汇总各引脚收到的值' }
+  ],
+
+  imageIn: [ { key:'__image__', ctl:'filePick' } ],
+  modelIn: [ { key:'__model__', ctl:'filePick' } ],
+
+  // 注意：text 节点的 data 键叫 text、输出引脚也叫 text，两者不能共用引脚键，
+  // 否则会重复出一条输入引脚。这里用 __content__ 作为独立引脚键。
+  text:     [ { key:'__content__', label:'内容', dataKey:'text', ctl:'textarea', ph:'文本内容' } ],
+
+  imageGen: [
+    { key:'__prompt__', label:'prompt', dataKey:'prompt', ctl:'textarea', ph:'提示词（未连线时使用）' }
+  ],
+
+  tripoImg: [
+    { key:'prompt', label:'prompt', ctl:'textarea', ph:'提示词（未连线时使用）' },
+    { key:'timeout', label:'超时', ctl:'number', min:10, max:900, step:10, unit:'秒', default:240 },
+    { key:'mode', label:'模式', ctl:'select', default:'auto', options:[
+      ['auto','自动（有参考图走图生图）'], ['text','文生图'], ['image','图生图']
+    ] },
+    { key:'ratio', label:'比例', ctl:'select', default:'auto', options:[
+      ['auto','自动'], ['1:1','1:1'], ['16:9','16:9'], ['9:16','9:16'], ['4:3','4:3'], ['3:4','3:4']
+    ] },
+    { tip:'使用 Tripo 网页账号；运行时先自动切到文生图 / 图生图面板，参考图引脚可接图像。' }
+  ],
+
+  imageCompress: [
+    { key:'maxEdge', label:'最长边', ctl:'number', min:64, max:4096, step:64, unit:'px', default:1024 },
+    { key:'quality', label:'质量',   ctl:'number', min:10, max:100, step:5, unit:'%',  default:80 },
+    { tip:'等比缩小到最长边限制，并转成 JPEG 输出' }
+  ],
+
+  model3d: [ { tip:'使用设置中的 Tripo 版本，输出 GLB 模型' } ],
+
+  condition: [ { key:'instruction', ctl:'textarea', ph:'判断条件（例如：输入内容是否描述了人物）' } ],
+
+  branch: [ { tip:'按布尔引脚的值决定走「真」或「假」执行线' } ],
+
+  boolNode: [ { key:'value', label:'取值', ctl:'bool', default:true } ],
+
+  aiTask: [
+    { key:'instruction', ctl:'textarea', ph:'任务指令（例如：总结输入文本并列出风险点）' },
+    { key:'timeout', label:'超时', ctl:'number', min:0, max:3600, step:10, unit:'秒，0 表示不限时', default:120 },
+    { key:'__taskPins__', ctl:'taskPins' }
+  ],
+
+  modelViews: PARAM_PARAMS([
+    { key:'画布尺寸',     ctl:'select', default:2048, options:[[2048,'2048 (2K)'],[4096,'4096 (4K)']] },
+    { key:'间距',         ctl:'number', min:0,   max:256, step:8,   default:0 },
+    { key:'线宽',         ctl:'number', min:0.4, max:6,   step:0.1, default:1.4 },
+    { key:'线色',         ctl:'color',  default:'#2b2b2b' },
+    { key:'填充色',       ctl:'color',  default:'#ffffff' },
+    { key:'背景色',       ctl:'color',  default:'#ffffff' },
+    { key:'背景不透明度', ctl:'number', min:0,   max:1,   step:0.05, default:1 },
+    { key:'模式',         ctl:'select', default:'line', options:[['line','线框'],['solid','实体']] }
+  ]),
+
+  result: [ { tip:'连接文本、图像或模型，运行后在此汇总结果' } ],
+  varGet: [],
+  varSet: [ { tip:'运行到此处时，把「值」引脚的数据写入该变量' } ]
+};
+
 const NODE_LIB = [
   { group:'输入', types:['imageIn','modelIn','text','boolNode'] },
   { group:'分析任务', types:['aiTask'] },

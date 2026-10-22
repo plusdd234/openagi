@@ -836,9 +836,24 @@
   }
   .port-row .port-param[type="color"]::-webkit-color-swatch-wrapper { padding: 1px; }
   .port-row .port-param[type="color"]::-webkit-color-swatch { border: none; border-radius: 2px; }
+  /* 长文本类：占满整行并换行显示，给足高度 */
+  .port-row.has-param.wide { height: auto; align-items: flex-start; flex-wrap: wrap; padding-bottom: 2px; }
+  .port-row.has-param.wide .port-label { padding-top: 3px; }
+  .port-row.has-param.wide .port-param {
+    flex: 1 1 100%; margin-left: 0; min-height: 34px; height: auto;
+    padding: 4px 5px; line-height: 1.45; resize: vertical; white-space: pre-wrap;
+  }
+  .port-row.has-param .port-param.ctl-text { min-width: 90px; }
+
   /* 已连线：隐藏取值控件，仅保留引脚与名称 */
-  .port-row.is-linked .port-param { display: none; }
+  .port-row.is-linked .port-param,
+  .port-row.is-linked .port-unit-wrap { display: none; }
   .port-row.is-linked .port-label { color: #7f8798; font-style: italic; }
+
+  /* 数字控件的单位后缀 */
+  .port-unit-wrap { flex: 1 1 auto; margin-left: auto; display: flex; align-items: center; gap: 3px; min-width: 0; }
+  .port-unit-wrap .port-param { flex: 0 0 62px; margin-left: 0; }
+  .port-unit { font-size: 9px; color: #7f8798; white-space: nowrap; }
 
   .node-fields { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 5px; padding: 3px 9px 0; }
   .node-text, .node-input {

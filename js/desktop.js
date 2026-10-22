@@ -647,63 +647,218 @@ function renderLinks(){
   });
 }
 
-// 参数引脚的取值控件规格（用于「值紧跟引脚右侧」的就地编辑）
-const MV_PARAM_SPEC = {
-  '画布尺寸':     { kind:'select', options:[2048, 4096] },
-  '间距':         { kind:'number', min:0,   max:256, step:8 },
-  '线宽':         { kind:'number', min:0.4, max:6,   step:0.1 },
-  '线色':         { kind:'color' },
-  '填充色':       { kind:'color' },
-  '背景色':       { kind:'color' },
-  '背景不透明度': { kind:'number', min:0,   max:1,   step:0.05 },
-  '模式':         { kind:'select', options:['line', 'solid'], labels:{ line:'线框', solid:'实体' } }
-};
+/* ---------------------------------------------------------------
+ * 统一参数控件：所有节点的参数都走这里，保证形态一致
+ *   spec.store === 'param' → 读写传入的参数对象本身（如 modelViews 的 data.params 项）
+ *   否则                    → 读写 node.data[spec.key]
+ * 传参形式：makeFieldControl(spec, node, paramObj)
+ * -------------------------------------------------------------- */
+// 取参数声明对应的参数对象（仅 store==='param' 且名称匹配时存在）
+function paramObjOf(n, spec){
+  if(!spec || spec.store !== 'param' || !n.data || !Array.isArray(n.data.params)) return null;
+  return n.data.params.find(p => p.name === spec.key) || null;
+}
 
-// 生成参数取值控件，直接编辑 n.data.params 里对应的值
-function makeParamControl(p){
-  const s = MV_PARAM_SPEC[p.name] || { kind:'text' };
-  let inp;
-  if(s.kind === 'select'){
-    inp = document.createElement('select');
-    s.options.forEach(o => {
-      const op = document.createElement('option');
-      op.value = String(o);
-      op.textContent = (s.labels && s.labels[o]) ? s.labels[o] : String(o);
-      inp.appendChild(op);
-    });
-    inp.value = String(p.value);
-    inp.addEventListener('change', () => {
-      p.value = (s.options.length && !isNaN(Number(inp.value))) ? Number(inp.value) : inp.value;
-      scheduleFlowSave();
-    });
-  } else if(s.kind === 'color'){
-    inp = document.createElement('input');
-    inp.type = 'color';
-    inp.value = /^#[0-9a-fA-F]{6}$/.test(String(p.value)) ? String(p.value) : '#ffffff';
-    inp.addEventListener('input', () => { p.value = inp.value; scheduleFlowSave(); });
-  } else if(s.kind === 'number'){
-    inp = document.createElement('input');
-    inp.type = 'number';
-    inp.min = String(s.min); inp.max = String(s.max); inp.step = String(s.step);
-    inp.value = String(p.value);
-    inp.addEventListener('input', () => {
-      const v = Number(inp.value);
-      if(isFinite(v)) p.value = Math.max(s.min, Math.min(s.max, v));
-      scheduleFlowSave();
-    });
+function tipEl(text){
+  const el = document.createElement('div');
+  el.className = 'node-result';
+  el.textContent = text;
+  return el;
+}
+
+// 图像输入：点击 / 拖入
+function imageDropEl(n){
+  const drop = document.createElement('div');
+  drop.className = 'node-drop';
+  if(n.data.image){
+    const img = document.createElement('img');
+    img.src = n.data.image;
+    drop.appendChild(img);
   } else {
-    inp = document.createElement('input');
-    inp.type = 'text';
-    inp.value = String(p.value == null ? '' : p.value);
-    inp.addEventListener('input', () => { p.value = inp.value; scheduleFlowSave(); });
+    drop.textContent = '点击或拖入图像';
   }
-  // 值控件上的指针事件不要传给节点（避免误拖拽节点）
-  ['pointerdown', 'mousedown', 'click'].forEach(ev => inp.addEventListener(ev, e => e.stopPropagation()));
-  return inp;
+  drop.addEventListener('click', () => {
+    bpPickedNode = n;
+    $('bpFile').value = '';
+    $('bpFile').click();
+  });
+  drop.addEventListener('dragover', e => e.preventDefault());
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if(file) loadNodeImage(n, file);
+  });
+  return drop;
+}
+
+// 模型输入：点击 / 拖入
+function modelDropEl(n){
+  const drop = document.createElement('div');
+  drop.className = 'node-drop';
+  if(n.data.model){
+    const info = document.createElement('div');
+    info.className = 'node-file';
+    const name = document.createElement('b');
+    name.textContent = n.data.fileName || '3D 模型文件';
+    const meta = document.createElement('small');
+    meta.textContent = (n.data.fileSize ? formatBytes(n.data.fileSize) + ' · ' : '') + '点击更换';
+    info.append(name, meta);
+    drop.appendChild(info);
+  } else {
+    drop.textContent = '点击或拖入 3D 模型';
+  }
+  drop.addEventListener('click', () => {
+    bpPickedModelNode = n;
+    $('bpModelFile').value = '';
+    $('bpModelFile').click();
+  });
+  drop.addEventListener('dragover', e => e.preventDefault());
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if(file) loadNodeModel(n, file);
+  });
+  return drop;
+}
+
+// 声明里的 dataKey 允许「引脚键」与「数据键」分离（如 text 节点输出引脚也叫 text）
+function specDataKey(spec){ return spec.dataKey || spec.key; }
+
+function paramSpecValue(spec, n, p){
+  if(spec.store === 'param') return p ? p.value : undefined;
+  return n.data ? n.data[specDataKey(spec)] : undefined;
+}
+
+function paramDefault(spec){
+  return typeof spec.default === 'function' ? spec.default() : spec.default;
+}
+
+function writeParamValue(spec, n, p, raw){
+  let v = raw;
+  if(spec.ctl === 'number'){
+    const num = Number(raw);
+    if(!isFinite(num) || raw === '') return;          // 输入过程中的空值不落盘
+    v = Math.max(spec.min != null ? spec.min : -Infinity,
+                 Math.min(spec.max != null ? spec.max : Infinity, num));
+  } else if(spec.ctl === 'bool'){
+    v = !!raw;
+  }
+  if(spec.store === 'param'){
+    if(p) p.value = v;
+  } else if(n.data){
+    n.data[specDataKey(spec)] = v;
+  }
+  scheduleFlowSave();
+}
+
+// 生成一个参数控件（不含标签行），统一处理范围夹取、颜色校验与事件隔离
+function makeFieldControl(spec, n, p){
+  const cur = paramSpecValue(spec, n, p);
+  const val = (cur === undefined || cur === null) ? paramDefault(spec) : cur;
+  let el;
+
+  if(spec.ctl === 'select'){
+    el = document.createElement('select');
+    (spec.options || []).forEach(o => {
+      const [ov, ol] = Array.isArray(o) ? o : [o, String(o)];
+      const op = document.createElement('option');
+      op.value = String(ov);
+      op.textContent = String(ol);
+      el.appendChild(op);
+    });
+    el.value = String(val);
+    el.addEventListener('change', () => {
+      const hit = (spec.options || []).map(o => Array.isArray(o) ? o[0] : o)
+        .find(o => String(o) === el.value);
+      writeParamValue(spec, n, p, hit !== undefined ? hit : el.value);
+    });
+  } else if(spec.ctl === 'bool'){
+    el = document.createElement('select');
+    [['true','真'], ['false','假']].forEach(([ov, ol]) => {
+      const op = document.createElement('option');
+      op.value = ov; op.textContent = ol;
+      el.appendChild(op);
+    });
+    el.value = val === false ? 'false' : 'true';
+    el.addEventListener('change', () => writeParamValue(spec, n, p, el.value === 'true'));
+  } else if(spec.ctl === 'color'){
+    el = document.createElement('input');
+    el.type = 'color';
+    el.value = /^#[0-9a-fA-F]{6}$/.test(String(val)) ? String(val) : '#ffffff';
+    el.addEventListener('input', () => writeParamValue(spec, n, p, el.value));
+  } else if(spec.ctl === 'number'){
+    el = document.createElement('input');
+    el.type = 'number';
+    if(spec.min != null) el.min = String(spec.min);
+    if(spec.max != null) el.max = String(spec.max);
+    if(spec.step != null) el.step = String(spec.step);
+    el.value = (val === undefined || val === null) ? '' : String(val);
+    el.addEventListener('input', () => writeParamValue(spec, n, p, el.value));
+  } else if(spec.ctl === 'textarea'){
+    el = document.createElement('textarea');
+    el.rows = 2;
+    if(spec.ph) el.placeholder = spec.ph;
+    el.value = val == null ? '' : String(val);
+    el.addEventListener('input', () => writeParamValue(spec, n, p, el.value));
+  } else {
+    el = document.createElement('input');
+    el.type = 'text';
+    if(spec.ph) el.placeholder = spec.ph;
+    el.value = val == null ? '' : String(val);
+    el.addEventListener('input', () => writeParamValue(spec, n, p, el.value));
+  }
+
+  el.classList.add('port-param', 'ctl-' + spec.ctl);
+  // 控件上的指针事件不冒泡到节点，避免编辑时误拖节点
+  ['pointerdown', 'mousedown', 'click', 'dblclick'].forEach(ev =>
+    el.addEventListener(ev, e => e.stopPropagation()));
+  return el;
+}
+
+// 一个参数 = 一行「引脚 + 名称 + 控件」；无同名列引脚时用规格里的 key 当引脚
+function makeParamPort(spec, n, p){
+  const row = document.createElement('div');
+  row.className = 'port-row has-param' + (spec.ctl === 'textarea' ? ' wide' : '');
+  row.dataset.paramKey = spec.key;
+  if(p && p.id) row.dataset.paramId = p.id;
+
+  const pin = document.createElement('span');
+  pin.className = 'pin in';
+  pin.dataset.dir = 'in';
+  pin.dataset.key = (p && p.id) ? p.id : spec.key;
+  pin.dataset.type = spec.type || 'string';
+  if(pin.dataset.key === spec.key || (p && p.id)) {
+    pin.style.setProperty('--pin-c', PIN_COLORS[pin.dataset.type] || '#5d6bb8');
+  }
+
+  const label = document.createElement('span');
+  label.className = 'port-label';
+  label.textContent = spec.label || (p && p.name) || spec.key;
+
+  row.append(pin, label);
+
+  const ctl = makeFieldControl(spec, n, p);
+  if(spec.unit){
+    const wrap = document.createElement('span');
+    wrap.className = 'port-unit-wrap';
+    wrap.append(ctl);
+    const u = document.createElement('span');
+    u.className = 'port-unit';
+    u.textContent = spec.unit;
+    wrap.append(u);
+    row.append(wrap);
+  } else {
+    row.append(ctl);
+  }
+  return row;
 }
 
 function makePort(key, dir, meta){
   meta = meta || PIN_META[key] || { label:key, type:'string' };
+  // 有对应参数声明时，直接渲染成「引脚 + 名称 + 控件」的统一形态
+  if(dir === 'in' && meta.spec){
+    return makeParamPort(meta.spec, meta.node, meta.param);
+  }
   const row = document.createElement('div');
   row.className = 'port-row';
   const pin = document.createElement('span');
@@ -717,13 +872,6 @@ function makePort(key, dir, meta){
   label.className = 'port-label';
   if(dir === 'in') row.append(pin, label); else row.append(label, pin);
   // 带 param 的参数引脚：取值控件紧跟引脚右侧（连线后由 renderNodes 隐藏）
-  if(dir === 'in' && meta.param){
-    row.classList.add('has-param');
-    const ctl = makeParamControl(meta.param);
-    ctl.classList.add('port-param');
-    ctl.dataset.paramKey = key;
-    row.append(ctl);
-  }
   return row;
 }
 
@@ -795,274 +943,110 @@ function nodeEl(n){
   }
   const hasExec = !!d.execIn || !!(d.execOut && d.execOut.length);
 
+  /* ---------- 节点主体：统一由 NODE_PARAMS 声明驱动 ---------- */
+  const specs = (NODE_PARAMS[n.type] || []).slice();
+
+  // 1) 参数与输入引脚合并：有同名引脚时，参数直接挂在那个引脚右侧
+  const inputKeys = (d.inputs || []).slice();
+  if(n.type === 'end') (n.params || []).forEach(p => inputKeys.push(p.id));
+  if(isVarNode && v && n.type === 'varSet') inputKeys.push(v.id);
+
+  // 有参数但缺同名引脚的，补一条输入引脚（值可视化于其右侧）
+  specs.forEach(s => {
+    if(s.ctl === 'paramList' || s.ctl === 'taskPins' || s.ctl === 'filePick' || s.tip) return;
+    if(s.store === 'param'){
+      if(!inputKeys.includes(s.key)) inputKeys.push(s.key);
+    } else if(!inputKeys.includes(s.key)){
+      inputKeys.push(s.key);
+    }
+  });
+
   const body = document.createElement('div');
   body.className = 'node-body';
   const inCol = document.createElement('div');
   inCol.className = 'node-col in';
-  d.inputs.forEach(k => inCol.appendChild(makePort(k, 'in')));
   const outCol = document.createElement('div');
   outCol.className = 'node-col out';
-  d.outputs.forEach(k => outCol.appendChild(makePort(k, 'out')));
+
+  const specByKey = {};
+  specs.forEach(s => { specByKey[s.key] = s; });
+
+  // 输入侧
+  inputKeys.forEach(k => {
+    const spec = specByKey[k] || null;
+    if(spec && spec.tip) return;
+    if(spec && (spec.ctl === 'paramList' || spec.ctl === 'taskPins')) return;
+    if(n.type === 'start') return;
+    if(n.type === 'end'){
+      const p = (n.params || []).find(x => x.id === k);
+      if(p){ inCol.appendChild(paramRow(n, p)); return; }
+    }
+    if(isVarNode && v && k === v.id){
+      inCol.appendChild(makePort(k, 'in', { label:'值', type:v.type }));
+      return;
+    }
+    if(k === '__image__' || k === '__model__'){
+      inCol.appendChild(makePort(k, 'in', { label:k === '__image__' ? '图像' : '模型',
+        type:k === '__image__' ? 'image' : 'model' }));
+      return;
+    }
+    inCol.appendChild(makePort(k, 'in', spec
+      ? { label:spec.label || k, type:PIN_META[k] ? PIN_META[k].type : 'string', spec:spec, node:n, param:paramObjOf(n, spec) }
+      : undefined));
+  });
+
+  // 输出侧
+  (d.outputs || []).forEach(k => outCol.appendChild(makePort(k, 'out')));
   if(n.type === 'start') (n.params || []).forEach(p => outCol.appendChild(makePort(p.id, 'out', { label:p.name, type:p.type })));
-  if(n.type === 'end') (n.params || []).forEach(p => inCol.appendChild(makePort(p.id, 'in', { label:p.name, type:p.type })));
-  if(n.type === 'varGet' && v) outCol.appendChild(makePort(v.id, 'out', { label:v.name, type:v.type }));
-  if(n.type === 'varSet' && v) inCol.appendChild(makePort(v.id, 'in', { label:'值', type:v.type }));
+  if(isVarNode && v && n.type === 'varGet') outCol.appendChild(makePort(v.id, 'out', { label:v.name, type:v.type }));
   if(n.type === 'aiTask'){
-    (n.data.inputs || []).forEach(p => inCol.appendChild(makePort(p.id, 'in', { label:p.name || '输入', type:p.type })));
     (n.data.outputs || []).forEach(p => outCol.appendChild(makePort(p.id, 'out', { label:p.name || '输出', type:p.type })));
   }
-  if(n.type === 'modelViews'){
-    (n.data.params || []).forEach(p => inCol.appendChild(makePort(p.id, 'in', { label:p.name, type:p.type, param:p })));
-    // 参数引脚是整行布局，输入列占满整行宽度，取值控件才有位置显示在引脚右侧
-    body.classList.add('wide-in');
-  }
-  body.append(inCol, outCol);
 
+  // 2) 含参数的节点让输入列占满整行，取值控件才有位置
+  const hasParamRow = inputKeys.some(k => specByKey[k] && !specByKey[k].tip);
+  if(hasParamRow) body.classList.add('wide-in');
+  body.append(inCol);
+  if((d.outputs || []).length || isVarNode || n.type === 'start' || n.type === 'aiTask'){
+    body.appendChild(outCol);
+  }
+
+  // 3) 纯块级内容（文件选择、参数列表、提示文字、运行结果）
   const fields = document.createElement('div');
   fields.className = 'node-fields';
 
-  if(n.type === 'imageIn'){
-    const drop = document.createElement('div');
-    drop.className = 'node-drop';
-    if(n.data.image){
-      const img = document.createElement('img');
-      img.src = n.data.image;
-      drop.appendChild(img);
-    } else {
-      drop.textContent = '点击或拖入图像';
+  specs.forEach(s => {
+    if(s.ctl === 'filePick'){
+      fields.appendChild(s.key === '__image__' ? imageDropEl(n) : modelDropEl(n));
+    } else if(s.ctl === 'paramList'){
+      (n.params || []).forEach(p => fields.appendChild(paramRow(n, p)));
+      if(n._showAdd) fields.appendChild(paramAddForm(n));
+      if(!(n.params || []).length && !n._showAdd){
+        fields.appendChild(tipEl('点击右上角 + 添加' + (n.type === 'start' ? '输入' : '输出') + '参数'));
+      }
+    } else if(s.ctl === 'taskPins'){
+      fields.appendChild(taskPinSection(n, 'in'));
+      fields.appendChild(taskPinSection(n, 'out'));
+    } else if(s.tip){
+      fields.appendChild(tipEl(
+        (n.out && n.out.text && n.type !== 'aiTask') ? n.out.text
+          : (n.type === 'end' && bp && bp.lastRun && bp.lastRun.at)
+            ? s.tip + ' · 上次运行 ' + new Date(bp.lastRun.at).toLocaleTimeString()
+            : s.tip
+      ));
     }
-    drop.addEventListener('click', () => {
-      bpPickedNode = n;
-      $('bpFile').value = '';
-      $('bpFile').click();
-    });
-    drop.addEventListener('dragover', e => e.preventDefault());
-    drop.addEventListener('drop', e => {
-      e.preventDefault();
-      const file = e.dataTransfer.files && e.dataTransfer.files[0];
-      if(file) loadNodeImage(n, file);
-    });
-    fields.appendChild(drop);
-  }
+  });
 
-  if(n.type === 'modelIn'){
-    const drop = document.createElement('div');
-    drop.className = 'node-drop';
-    if(n.data.model){
-      const info = document.createElement('div');
-      info.className = 'node-file';
-      const name = document.createElement('b');
-      name.textContent = n.data.fileName || '3D 模型文件';
-      const meta = document.createElement('small');
-      meta.textContent = (n.data.fileSize ? formatBytes(n.data.fileSize) + ' · ' : '') + '点击更换';
-      info.append(name, meta);
-      drop.appendChild(info);
-    } else {
-      drop.textContent = '点击或拖入 3D 模型';
-    }
-    drop.addEventListener('click', () => {
-      bpPickedModelNode = n;
-      $('bpModelFile').value = '';
-      $('bpModelFile').click();
-    });
-    drop.addEventListener('dragover', e => e.preventDefault());
-    drop.addEventListener('drop', e => {
-      e.preventDefault();
-      const file = e.dataTransfer.files && e.dataTransfer.files[0];
-      if(file) loadNodeModel(n, file);
-    });
-    fields.appendChild(drop);
-  }
-
-  if(n.type === 'text'){
-    fields.appendChild(bindTextarea(n, 'text', '文本内容'));
-  }
-  if(n.type === 'imageGen'){
-    fields.appendChild(bindTextarea(n, 'prompt', '提示词（未连线时使用）'));
-  }
-  if(n.type === 'tripoImg'){
-    fields.appendChild(bindTextarea(n, 'prompt', '提示词（未连线时使用）'));
-    const tRow = document.createElement('div');
-    tRow.className = 'task-timeout';
-    const tLabel = document.createElement('span');
-    tLabel.textContent = '超时';
-    const tInput = document.createElement('input');
-    tInput.type = 'number';
-    tInput.min = '10';
-    tInput.max = '900';
-    tInput.step = '10';
-    tInput.value = String(Number(n.data.timeout) || 240);
-    tInput.addEventListener('input', () => {
-      n.data.timeout = Math.max(10, Math.min(900, Math.trunc(Number(tInput.value) || 0) || 240));
-      scheduleFlowSave();
-    });
-    const tUnit = document.createElement('span');
-    tUnit.textContent = '秒';
-    tRow.append(tLabel, tInput, tUnit);
-    fields.appendChild(tRow);
-
-    const mode = document.createElement('select');
-    mode.className = 'node-input';
-    [['auto','模式 · 自动（有参考图走图生图）'],['text','模式 · 文生图'],['image','模式 · 图生图']].forEach(([v, label]) => {
-      const opt = document.createElement('option');
-      opt.value = v;
-      opt.textContent = label;
-      mode.appendChild(opt);
-    });
-    mode.value = n.data.mode || 'auto';
-    mode.addEventListener('change', () => { n.data.mode = mode.value; scheduleFlowSave(); });
-    fields.appendChild(mode);
-
-    const ratio = document.createElement('select');
-    ratio.className = 'node-input';
-    [['auto','比例 · 自动'],['1:1','比例 · 1:1'],['16:9','比例 · 16:9'],['9:16','比例 · 9:16'],['4:3','比例 · 4:3'],['3:4','比例 · 3:4']].forEach(([v, label]) => {
-      const opt = document.createElement('option');
-      opt.value = v;
-      opt.textContent = label;
-      ratio.appendChild(opt);
-    });
-    ratio.value = n.data.ratio || 'auto';
-    ratio.addEventListener('change', () => { n.data.ratio = ratio.value; scheduleFlowSave(); });
-    fields.appendChild(ratio);
-
-    const tip = document.createElement('div');
-    tip.className = 'node-result';
-    tip.textContent = '使用 Tripo 网页账号；运行时会先自动切到文生图 / 图生图面板，参考图引脚可接图像。结果保存到 tripo_out，需先在设置 → 图像生成中连接账号。';
-    fields.appendChild(tip);
-  }
-  if(n.type === 'imageCompress'){
-    const numRow = (label, val, min, max, step, unit, apply) => {
-      const row = document.createElement('div');
-      row.className = 'task-timeout';
-      const l = document.createElement('span');
-      l.textContent = label;
-      const inp = document.createElement('input');
-      inp.type = 'number';
-      inp.min = String(min);
-      inp.max = String(max);
-      inp.step = String(step);
-      inp.value = String(val);
-      inp.addEventListener('input', () => { apply(inp.value); scheduleFlowSave(); });
-      const u = document.createElement('span');
-      u.textContent = unit;
-      row.append(l, inp, u);
-      return row;
-    };
-    fields.appendChild(numRow('最长边', Number(n.data.maxEdge) || 1024, 64, 4096, 64, 'px', v => {
-      n.data.maxEdge = Math.max(64, Math.min(4096, Math.trunc(Number(v) || 0) || 1024));
-    }));
-    fields.appendChild(numRow('质量', Number(n.data.quality) || 80, 10, 100, 5, '%', v => {
-      n.data.quality = Math.max(10, Math.min(100, Math.trunc(Number(v) || 0) || 80));
-    }));
-    const tip = document.createElement('div');
-    tip.className = 'node-result';
-    tip.textContent = n.out && n.out.imageInfo
-      ? n.out.imageInfo
-      : '把输入图像等比缩小到最长边限制，并转成 JPEG 输出。';
-    fields.appendChild(tip);
-  }
-  if(n.type === 'modelViews'){
-    if(!Array.isArray(n.data.params)) n.data.params = [];
-    // 参数控件已前移到各引脚右侧，此处只保留运行结果 / 说明
-    const tip = document.createElement('div');
-    tip.className = 'node-result';
-    tip.textContent = n.out && n.out.text
-      ? n.out.text
-      : '输出 2×2 正交四视图，参数可就地编辑';
-    fields.appendChild(tip);
-  }
-  if(n.type === 'aiTask'){
-    fields.appendChild(bindTextarea(n, 'instruction', '任务指令（例如：总结输入文本并列出风险点）'));
-    const tRow = document.createElement('div');
-    tRow.className = 'task-timeout';
-    const tLabel = document.createElement('span');
-    tLabel.textContent = '超时';
-    const tInput = document.createElement('input');
-    tInput.type = 'number';
-    tInput.min = '0';
-    tInput.max = '3600';
-    tInput.step = '10';
-    tInput.value = Number(n.data.timeout) > 0 ? n.data.timeout : '';
-    tInput.placeholder = String(TASK_TIMEOUT_DEFAULT);
-    tInput.addEventListener('input', () => {
-      n.data.timeout = Math.max(0, Math.min(3600, Math.trunc(Number(tInput.value) || 0)));
-      scheduleFlowSave();
-    });
-    const tUnit = document.createElement('span');
-    tUnit.textContent = '秒，0 表示不限时';
-    tRow.append(tLabel, tInput, tUnit);
-    fields.appendChild(tRow);
-    fields.appendChild(taskPinSection(n, 'in'));
-    fields.appendChild(taskPinSection(n, 'out'));
-  }
-  if(n.type === 'condition'){
-    fields.appendChild(bindTextarea(n, 'instruction', '判断条件（例如：输入内容是否描述了人物）'));
-  }
-  if(n.type === 'boolNode'){
-    const sel = document.createElement('select');
-    sel.className = 'node-input';
-    [['true','真'],['false','假']].forEach(([v, label]) => {
-      const opt = document.createElement('option');
-      opt.value = v;
-      opt.textContent = label;
-      sel.appendChild(opt);
-    });
-    sel.value = n.data.value === false ? 'false' : 'true';
-    sel.addEventListener('change', () => { n.data.value = sel.value === 'true'; scheduleFlowSave(); });
-    fields.appendChild(sel);
-  }
-  if(n.type === 'branch'){
-    const tip = document.createElement('div');
-    tip.className = 'node-result';
-    tip.textContent = '按布尔引脚的值决定走「真」或「假」执行线。';
-    fields.appendChild(tip);
-  }
   if(isVarNode){
     if(!v){
-      const tip = document.createElement('div');
-      tip.className = 'node-result';
-      tip.textContent = '变量已删除，请在变量面板重新创建。';
-      fields.appendChild(tip);
+      fields.appendChild(tipEl('变量已删除，请在变量面板重新创建。'));
     } else {
       fields.appendChild(varPreviewEl(v));
-      if(n.type === 'varSet'){
-        const tip = document.createElement('div');
-        tip.className = 'node-result';
-        tip.textContent = '运行到此处时，把「值」引脚的数据写入该变量。';
-        fields.appendChild(tip);
-      }
     }
-  }
-  if(n.type === 'start' || n.type === 'end'){
-    (n.params || []).forEach(p => fields.appendChild(paramRow(n, p)));
-    if(n._showAdd) fields.appendChild(paramAddForm(n));
-    if(!(n.params || []).length && !n._showAdd){
-      const tip = document.createElement('div');
-      tip.className = 'node-result';
-      tip.textContent = '点击右上角 + 添加' + (n.type === 'start' ? '输入' : '输出') + '参数';
-      fields.appendChild(tip);
-    }
-    if(n.type === 'end' && bp && bp.lastRun && bp.lastRun.at){
-      const t = document.createElement('div');
-      t.className = 'node-result';
-      t.textContent = '上次运行：' + new Date(bp.lastRun.at).toLocaleTimeString();
-      fields.appendChild(t);
-    }
-  }
-  if(n.type === 'result' && !(n.out && (n.out.text || n.out.image || n.out.model))){
-    const tip = document.createElement('div');
-    tip.className = 'node-result';
-    tip.textContent = '连接文本、图像或模型，运行后在此汇总结果。';
-    fields.appendChild(tip);
-  }
-  if(n.type === 'model3d'){
-    const tip = document.createElement('div');
-    tip.className = 'node-result';
-    tip.textContent = '使用设置中的 Tripo 版本，输出 GLB 模型。';
-    fields.appendChild(tip);
   }
 
-  body.appendChild(fields);
+  if(fields.childNodes.length) body.appendChild(fields);
+
 
   if(n.out && n.out.text){
     const box = document.createElement('div');
