@@ -4,6 +4,9 @@
  */
 // 旧版节点迁移：必须在所有模块加载完成后执行（migrateAiTaskNodes / taskPin 定义在 js/desktop.js）
 FLOWS.forEach(migrateAiTaskNodes);
+// 输入节点改为纯参数节点后，清掉从它们拉出的旧执行线
+const _dropped = FLOWS.reduce((sum, f) => sum + migrateExecLinks(f), 0);
+if(_dropped){ persistFlows(); console.info('[blueprint] 已清理 ' + _dropped + ' 条失效执行线（输入节点不再提供执行输出）'); }
 
 // ---- 交互绑定 ----
 $('btnNewFlow').addEventListener('click', createFlow);

@@ -75,6 +75,7 @@ const OBJ = process.argv[2] || 'C:/Users/30297/Desktop/自研贴图系统/AIGC�
   /* ---------------- 2. 真实连线运行 ---------------- */
   const objData = 'data:model/obj;base64,' + fs.readFileSync(OBJ).toString('base64');
   const run = await page.evaluate(async (objData) => {
+    const s = newNode('start', -260, 0);          // 执行流只从「任务开始」出发
     const mi = newNode('modelIn', 0, 0);
     mi.data.model = objData; mi.data.fileName = 'model.obj';
     const nv = newNode('numNode', 40, 320); nv.data.value = 3.7;
@@ -87,8 +88,13 @@ const OBJ = process.argv[2] || 'C:/Users/30297/Desktop/自研贴图系统/AIGC�
     const gap = mv.data.params.find(p => p.name === '间距');    // int
     const flow = {
       id: 'run_' + Date.now(), name: '数值联动',
-      nodes: [mi, nv, bn, mv, br, rs], vars: [], updated: Date.now(), lastRun: null,
+      nodes: [s, mi, nv, bn, mv, br, rs], vars: [], updated: Date.now(), lastRun: null,
       links: [
+        // 执行线：任务开始 → 四视图 → 结果；任务开始 → 分支
+        { id: uid(), from: { node: s.id, key: 'exec' }, to: { node: mv.id, key: 'exec' } },
+        { id: uid(), from: { node: mv.id, key: 'exec' }, to: { node: rs.id, key: 'exec' } },
+        { id: uid(), from: { node: s.id, key: 'exec' }, to: { node: br.id, key: 'exec' } },
+        // 数据线：输入类节点不占执行线，由下游按需读取
         { id: uid(), from: { node: nv.id, key: 'float' }, to: { node: mv.id, key: wide.id } },
         { id: uid(), from: { node: nv.id, key: 'int' }, to: { node: mv.id, key: gap.id } },
         { id: uid(), from: { node: bn.id, key: 'bool' }, to: { node: br.id, key: 'bool' } },

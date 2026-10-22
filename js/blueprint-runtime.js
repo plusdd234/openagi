@@ -847,6 +847,7 @@ async function runFlow(){
   const execLinks = links.filter(l => pinType(byId[l.from.node], l.from.key) === 'exec');
   const cache = new Map();
   const visiting = new Set();
+  const activated = new Set();     // 本次实际被求值的节点，用于提示「未接入执行线」
 
   bpRunBusy = true;
   bpRunNodeId = null;
@@ -895,6 +896,7 @@ async function runFlow(){
     try {
       const out = await executeNode(n, viaLinkId);
       cache.set(n.id, out);
+      activated.add(n.id);
       return out;
     } finally {
       visiting.delete(n.id);
@@ -907,6 +909,14 @@ async function runFlow(){
     const nodeStarted = Date.now();
     bpLog('▶ ' + bpNodeLabel(n) + ' 开始');
     const input = key => resolveInput(n, key, viaLinkId);
+    /* 参数引脚取值：连线优先，未连线才用节点上就地填写的值。
+       少了这一步，数值节点连到 maxEdge / 超时这类引脚上也不会生效。 */
+    const paramIn = async key => {
+      const v = await input(key);
+      if(v !== undefined && v !== null && v !== '') return v;
+      const d = n.data ? n.data[key] : undefined;
+      return (d === undefined || d === null) ? undefined : d;
+    };
     try {
       if(n.type === 'start'){
         (n.params || []).forEach(p => { n.out[p.id] = paramValue(p); });
@@ -951,7 +961,7 @@ async function runFlow(){
         const raw = n.data.bool !== undefined ? n.data.bool : n.data.value;
         n.out.bool = raw !== false;
       } else if(n.type === 'aiTask'){
-        const instruction = (n.data.instruction || '').trim();
+        const instruction = String((await paramIn('instruction')) || '').trim();
         const ins = n.data.inputs || [];
         const outs = n.data.outputs || [];
         const sections = [];
@@ -966,7 +976,8 @@ async function runFlow(){
           else sections.push({ name:p.name || '输入', value: typeof v === 'object' ? JSON.stringify(v) : String(v) });
         }
         if(!instruction && !hasMaterial) throw new Error('缺少任务指令或输入');
-        const limitMs = Number(n.data.timeout) > 0 ? Math.round(Number(n.data.timeout) * 1000) : 0;
+        const tSec = Number(await paramIn('timeout'));
+        const limitMs = tSec > 0 ? Math.round(tSec * 1000) : 0;
         const live = bpLog('分析任务：请求已发出，等待首段输出…', '', true);
         try{
           n.out = await wfAiTask(instruction, sections, images, outs, acc => {
@@ -982,7 +993,7 @@ async function runFlow(){
         if(live) live.done('分析任务完成 · ' + outs.length + ' 个输出 · ' + (Date.now() - nodeStarted) + 'ms · ' + bpPreview(first, 160), 'ok');
       } else if(n.type === 'condition'){
         const text = await input('text');
-        n.out.bool = await wfCondition(n.data.instruction, text);
+        n.out.bool = await wfCondition(String((await paramIn('instruction')) || ''), text);
       } else if(n.type === 'branch'){
         const v = await input('bool');
         if(v === undefined) throw new Error('条件引脚未连接布尔值');
@@ -1003,15 +1014,19 @@ async function runFlow(){
         const p = ((await input('prompt')) || n.data.prompt || '').trim();
         if(!p) throw new Error('缺少提示词');
         const ref = await input('image');
-        const timeoutSec = Math.max(10, Math.min(900, Math.trunc(Number(n.data.timeout) || 0) || 240));
-        const r = await wfTripoWebImage(p, ref, { timeoutSec, ratio: n.data.ratio, mode: n.data.mode });
+        const timeoutSec = Math.max(10, Math.min(900, Math.trunc(Number(await paramIn('timeout')) || 0) || 240));
+        const r = await wfTripoWebImage(p, ref, {
+          timeoutSec,
+          ratio: await paramIn('ratio'),
+          mode: await paramIn('mode')
+        });
         n.out.image = r.url;
         n.out.text = r.file ? ('已保存：' + r.file) : r.url;
       } else if(n.type === 'imageCompress'){
         const src = await input('image');
         if(!src) throw new Error('缺少图像输入');
-        const edge = Math.max(64, Math.min(4096, Math.trunc(Number(n.data.maxEdge) || 0) || 1024));
-        const q = Math.max(10, Math.min(100, Math.trunc(Number(n.data.quality) || 0) || 80)) / 100;
+        const edge = Math.max(64, Math.min(4096, Math.trunc(Number(await paramIn('maxEdge')) || 0) || 1024));
+        const q = Math.max(10, Math.min(100, Math.trunc(Number(await paramIn('quality')) || 0) || 80)) / 100;
         n.out = await wfCompressImage(src, edge, q);
       } else if(n.type === 'model3d'){
         const img = await input('image');
@@ -1077,16 +1092,26 @@ async function runFlow(){
     for(const l of outs) await execFrom(l, visited);
   }
 
-  for(const n of bp.nodes){
-    if(n.type === 'varGet') continue;
-    if(execLinks.some(l => l.to.node === n.id)) continue;
-    const visited = new Set([n.id]);
+  /* 执行流只从「任务开始」出发：往下沿执行线依次激活；
+     未接在执行链上的节点不会被执行（纯数据节点会在被连线引用时按需求值）。 */
+  const starts = bp.nodes.filter(n => n.type === 'start');
+  if(!starts.length){
+    bpLog('没有「任务开始」节点，本次没有执行任何步骤', 'error');
+  }
+  for(const s of starts){
+    const visited = new Set([s.id]);
     try {
-      const out = await evalNode(n, null);
-      await followExec(n, out, visited);
+      const out = await evalNode(s, null);
+      await followExec(s, out, visited);
     } catch(e){
-      // 入口节点失败不影响其他入口
+      // 某个入口失败不影响其他入口
     }
+  }
+
+  // 需要执行线驱动、却没被激活的节点，明确提示出来
+  const idle = bp.nodes.filter(n => (NODE_DEFS[n.type] || {}).execIn && !activated.has(n.id));
+  if(idle.length){
+    bpLog('· ' + idle.length + ' 个节点未接入执行线，本次未激活：' + idle.map(bpNodeLabel).join('、'));
   }
 
   highlight(null, null);
@@ -1096,7 +1121,9 @@ async function runFlow(){
   btn.textContent = '运行';
   scheduleFlowSave();
   const errs = bp.nodes.filter(n => n.status === 'error').length;
-  bpLog('运行结束 · ' + (bp.nodes.length - errs) + ' 成功 / ' + errs + ' 失败 · ' + (Date.now() - runStarted) + 'ms', errs ? 'error' : 'ok');
-  bpToast(errs ? '运行结束，有节点失败' : '运行完成');
+  bpLog('运行结束 · ' + activated.size + ' 个节点已激活 · ' + errs + ' 失败 · ' + (Date.now() - runStarted) + 'ms', errs ? 'error' : 'ok');
+  bpToast(errs ? '运行结束，有节点失败'
+    : starts.length ? '运行完成'
+      : '没有「任务开始」节点，未执行任何步骤');
 }
 

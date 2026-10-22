@@ -418,6 +418,23 @@ function migrateAiTaskNodes(flow){
   });
 }
 
+/* 执行模型调整后的旧流程迁移：
+   图像 / 模型 / 文本 / 数值 / 布尔等输入节点已改为纯参数节点，不再提供执行输出。
+   老流程里从它们拉出的执行线会变成悬空线（既画不出来，下游也永远不会被触发），
+   这里直接清掉，避免用户看到「连了线却不执行」。 */
+function migrateExecLinks(flow){
+  if(!flow || !Array.isArray(flow.links) || !Array.isArray(flow.nodes)) return 0;
+  const before = flow.links.length;
+  flow.links = flow.links.filter(l => {
+    const src = flow.nodes.find(n => n.id === l.from.node);
+    if(!src) return false;
+    const d = NODE_DEFS[src.type];
+    if(!d) return false;
+    return !(l.from.key === 'exec' && !(d.execOut && d.execOut.length));
+  });
+  return before - flow.links.length;
+}
+
 function newNode(type, x, y){
   const n = { id: uid(), type, x, y, data: {}, out: {}, status: '' };
   if(type === 'start' || type === 'end') n.params = [];
@@ -518,6 +535,7 @@ function openFlow(id){
   bp.links = bp.links || [];
   bp.vars = Array.isArray(bp.vars) ? bp.vars : [];
   migrateAiTaskNodes(bp);
+  migrateExecLinks(bp);
   bp.nodes.forEach(n => {
     n.out = {};
     n.status = '';
@@ -939,6 +957,14 @@ function nodeEl(n){
   del.className = 'node-del';
   del.title = '删除节点';
   del.textContent = '×';
+  // 纯参数节点：不占执行线，标一下避免误以为「连了就该执行」
+  if(d.pure){
+    const tag = document.createElement('span');
+    tag.className = 'node-tag';
+    tag.textContent = '参数';
+    tag.title = '参数节点：不带执行引脚，由下游按需读取';
+    head.append(tag);
+  }
   if(n.type === 'start' || n.type === 'end'){
     const plus = document.createElement('button');
     plus.className = 'node-plus';

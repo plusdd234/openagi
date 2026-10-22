@@ -771,6 +771,11 @@
   .param-val { font-size: 9px; color: #7c8288; line-height: 1.35; word-break: break-word; }
   .param-val img { width: 100%; max-height: 80px; object-fit: contain; margin-top: 3px; border-radius: 4px; display: block; }
   .node-title { flex: 1; font-size: 10px; font-weight: 600; letter-spacing: .02em; color: #e3e5e8; }
+  /* 纯参数节点的标记：不带执行引脚 */
+  .node-tag {
+    font-size: 8px; line-height: 1; padding: 1px 4px; border-radius: 3px;
+    background: #2a2e33; color: #8b9298; border: 1px solid #34383e; cursor: default;
+  }
   .node-status { font-size: 8.5px; color: #7c8288; font-family: var(--mono); }
   .node-status.ok { color: #6fdc9f; }
   .node-status.error { color: #ff8a8a; }
