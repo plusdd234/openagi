@@ -1009,6 +1009,33 @@ async function runFlow(){
         const img = await input('image');
         if(!img) throw new Error('缺少图像输入');
         n.out.model = await wf3D(img);
+      } else if(n.type === 'modelViews'){
+        const model = await input('model');
+        if(!model) throw new Error('缺少 3D 模型输入');
+        if(!window.Model3D) throw new Error('3D 模块未加载');
+        if(!Model3D.ready()) throw new Error('3D 组件未就绪（缺少 three.js）');
+        const P = n.data.params || [];
+        // 参数取值：连线优先，未连线则用节点上就地填写的值
+        const get = async (name, fallback) => {
+          const p = P.find(x => x.name === name);
+          if(!p) return fallback;
+          const linked = await input(p.id);
+          if(linked !== undefined && linked !== null && linked !== '') return linked;
+          return (p.value === '' || p.value === null || p.value === undefined) ? fallback : p.value;
+        };
+        const sizeRaw = Number(await get('画布尺寸', 2048));
+        const opts = {
+          size: sizeRaw === 4096 ? 4096 : 2048,
+          gap: Number(await get('间距', 0)) || 0,
+          lineWidth: Number(await get('线宽', 1.4)) || 1.4,
+          lineColor: String(await get('线色', '#2b2b2b')),
+          fillColor: String(await get('填充色', '#ffffff')),
+          bgColor: String(await get('背景色', '#ffffff')),
+          bgOpacity: Math.max(0, Math.min(1, Number(await get('背景不透明度', 1)))),
+          mode: String(await get('模式', 'line')) === 'solid' ? 'solid' : 'line'
+        };
+        n.out.image = await Model3D.quadViews(model, opts);
+        n.out.text = '四视图已生成 · ' + opts.size + '×' + opts.size + ' · ' + (opts.mode === 'solid' ? '实体' : '线框');
       }
       n.status = 'ok';
       setStatus(n, '完成', 'ok');

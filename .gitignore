@@ -7,6 +7,7 @@ yarn-error.log*
 # ===== 运行产物 / 临时文件 =====
 tripo_out/
 tripo_tmp/
+samples/
 *.log
 
 # ===== 浏览器自动化 profile（可能含登录态/凭证，切勿提交） =====

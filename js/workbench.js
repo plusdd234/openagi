@@ -253,9 +253,32 @@ async function generate3D(){
       (preview ? `<img src="${preview}" style="width:100%;border-radius:10px;border:1px solid var(--border);">` : '') +
       `<div class="row" style="margin-top:10px;">
         ${modelUrl ? `<a class="btn sm" href="${modelUrl}" target="_blank" rel="noopener" download="model.glb">下载 GLB</a>` : ''}
+        ${modelUrl ? `<button class="btn sm" id="btnPreview3D" type="button">3D 预览</button>` : ''}
+        ${modelUrl ? `<button class="btn sm" id="btnQuadViews" type="button">导出四视图</button>` : ''}
         <span class="hint">${version}${done.credits_consumed != null ? ' · 消耗 ' + done.credits_consumed + ' 积分' : ''}</span>
       </div>` +
       (modelUrl ? '' : '<div class="hint" style="margin-top:8px;">任务完成，但未返回模型地址。</div>');
+    const pvBtn = $('btnPreview3D');
+    if(pvBtn) pvBtn.addEventListener('click', () => {
+      if(!window.Model3D || !Model3D.ready()){ setStatus('3D 组件未就绪', 'warn'); return; }
+      setStatus('正在加载 3D 模型…');
+      Model3D.openPreview(modelUrl, { title: '3D 模型预览' })
+        .then(() => setStatus('3D 预览已打开', 'ok'))
+        .catch(e => setStatus('3D 预览失败：' + friendlyErr(e), 'error'));
+    });
+    const qvBtn = $('btnQuadViews');
+    if(qvBtn) qvBtn.addEventListener('click', async () => {
+      if(!window.Model3D || !Model3D.ready()){ setStatus('3D 组件未就绪', 'warn'); return; }
+      qvBtn.disabled = true;
+      setStatus('正在渲染四视图…');
+      try{
+        const url = await Model3D.quadViews(modelUrl, { size: 2048, mode: 'line' });
+        const a = document.createElement('a');
+        a.href = url; a.download = 'model_quad_views.png'; a.click();
+        setStatus('四视图已导出', 'ok');
+      }catch(e){ setStatus('四视图导出失败：' + friendlyErr(e), 'error'); }
+      finally{ qvBtn.disabled = false; }
+    });
     $('resultImg').scrollIntoView({behavior:'smooth'});
     setStatus(modelUrl ? '3D 模型已生成' : '3D 任务完成，但缺少模型地址', modelUrl ? 'ok' : 'warn');
   }catch(err){

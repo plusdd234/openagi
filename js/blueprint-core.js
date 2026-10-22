@@ -19,13 +19,14 @@ const NODE_DEFS = {
   tripoImg: { title:'Tripo 网页生图', dot:'gen', desc:'通过 Tripo 网页账号文生图 / 图生图', inputs:['prompt','image'], outputs:['image','text'], execIn:true, execOut:['exec'] },
   imageCompress: { title:'压缩图像', dot:'image', desc:'缩放并压缩图像，降低分析 / 生成请求的数据量', inputs:['image'], outputs:['image'], execIn:true, execOut:['exec'] },
   model3d:  { title:'3D 生成', dot:'model', desc:'图生 3D 模型（Tripo）', inputs:['image'], outputs:['model'], execIn:true, execOut:['exec'] },
+  modelViews:{ title:'3D 模型转四视图', dot:'model', desc:'把 3D 模型渲染为 2×2 四视图（前/后/左/右），可直接喂给生图 AI', inputs:['model'], outputs:['image','text'], execIn:true, execOut:['exec'] },
   result:   { title:'结果输出', dot:'out', desc:'汇总文本、图像与模型结果', inputs:['text','image','model'], outputs:[], execIn:true, execOut:[] },
 };
 const NODE_LIB = [
   { group:'输入', types:['imageIn','modelIn','text','boolNode'] },
   { group:'分析任务', types:['aiTask'] },
   { group:'图像任务', types:['imageGen','imageCompress','tripoImg'] },
-  { group:'3D 任务', types:['model3d'] },
+  { group:'3D 任务', types:['model3d','modelViews'] },
   { group:'逻辑', types:['condition','branch'] },
   { group:'输出', types:['result'] },
 ];

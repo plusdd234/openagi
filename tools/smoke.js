@@ -2,7 +2,7 @@ const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
 
-const TARGET = pathToFileURL(path.join(__dirname, 'index.html')).href;
+const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href;
 
 (async () => {
   const errors = [];

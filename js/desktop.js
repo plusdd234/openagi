@@ -439,6 +439,20 @@ function newNode(type, x, y){
     n.data.inputs = [taskPin('文本', 'string')];
     n.data.outputs = [taskPin('结果', 'string')];
   }
+  if(type === 'modelViews'){
+    // 每个参数既是可就地填写的字段，也是一个可连线的输入引脚（连线优先）
+    const P = (name, type, value) => { const p = newParam(name, type); p.value = value; return p; };
+    n.data.params = [
+      P('画布尺寸', 'int', 2048),
+      P('间距', 'int', 0),
+      P('线宽', 'float', 1.4),
+      P('线色', 'string', '#2b2b2b'),
+      P('填充色', 'string', '#ffffff'),
+      P('背景色', 'string', '#ffffff'),
+      P('背景不透明度', 'float', 1),
+      P('模式', 'string', 'line')
+    ];
+  }
   if(type === 'condition') n.data.instruction = '';
   if(type === 'boolNode') n.data.value = true;
   if(type === 'imageIn') n.data.image = '';
@@ -596,8 +610,10 @@ function varOf(key){
   return null;
 }
 function taskPinsOf(n){
-  if(!n || n.type !== 'aiTask' || !n.data) return [];
-  return (n.data.inputs || []).concat(n.data.outputs || []);
+  if(!n || !n.data) return [];
+  if(n.type === 'aiTask') return (n.data.inputs || []).concat(n.data.outputs || []);
+  if(n.type === 'modelViews') return n.data.params || [];   // 参数引脚
+  return [];
 }
 function taskPinOf(n, key){
   return taskPinsOf(n).find(p => p.id === key) || null;
@@ -730,6 +746,9 @@ function nodeEl(n){
   if(n.type === 'aiTask'){
     (n.data.inputs || []).forEach(p => inCol.appendChild(makePort(p.id, 'in', { label:p.name || '输入', type:p.type })));
     (n.data.outputs || []).forEach(p => outCol.appendChild(makePort(p.id, 'out', { label:p.name || '输出', type:p.type })));
+  }
+  if(n.type === 'modelViews'){
+    (n.data.params || []).forEach(p => inCol.appendChild(makePort(p.id, 'in', { label:p.name, type:p.type })));
   }
   body.append(inCol, outCol);
 
@@ -874,6 +893,69 @@ function nodeEl(n){
     tip.textContent = n.out && n.out.imageInfo
       ? n.out.imageInfo
       : '把输入图像等比缩小到最长边限制，并转成 JPEG 输出。';
+    fields.appendChild(tip);
+  }
+  if(n.type === 'modelViews'){
+    if(!Array.isArray(n.data.params)) n.data.params = [];
+    const SPEC = {
+      '画布尺寸':     { kind:'select', options:[2048, 4096] },
+      '间距':         { kind:'number', min:0,   max:256, step:8 },
+      '线宽':         { kind:'number', min:0.4, max:6,   step:0.1 },
+      '线色':         { kind:'color' },
+      '填充色':       { kind:'color' },
+      '背景色':       { kind:'color' },
+      '背景不透明度': { kind:'number', min:0,   max:1,   step:0.05 },
+      '模式':         { kind:'select', options:['line', 'solid'], labels:{ line:'线框', solid:'实体' } }
+    };
+    n.data.params.forEach(p => {
+      const s = SPEC[p.name] || { kind:'text' };
+      const row = document.createElement('div');
+      row.className = 'task-timeout';
+      const l = document.createElement('span');
+      l.textContent = p.name;
+      let inp;
+      if(s.kind === 'select'){
+        inp = document.createElement('select');
+        s.options.forEach(o => {
+          const op = document.createElement('option');
+          op.value = String(o);
+          op.textContent = (s.labels && s.labels[o]) ? s.labels[o] : String(o);
+          inp.appendChild(op);
+        });
+        inp.value = String(p.value);
+        inp.addEventListener('change', () => {
+          p.value = (s.options.find(o => String(o) === inp.value) !== undefined && s.kind === 'select' && !isNaN(Number(inp.value))) ? Number(inp.value) : inp.value;
+          scheduleFlowSave();
+        });
+      } else if(s.kind === 'color'){
+        inp = document.createElement('input');
+        inp.type = 'color';
+        inp.value = /^#[0-9a-fA-F]{6}$/.test(String(p.value)) ? String(p.value) : '#ffffff';
+        inp.addEventListener('input', () => { p.value = inp.value; scheduleFlowSave(); });
+      } else if(s.kind === 'number'){
+        inp = document.createElement('input');
+        inp.type = 'number';
+        inp.min = String(s.min); inp.max = String(s.max); inp.step = String(s.step);
+        inp.value = String(p.value);
+        inp.addEventListener('input', () => {
+          const v = Number(inp.value);
+          p.value = isFinite(v) ? Math.max(s.min, Math.min(s.max, v)) : p.value;
+          scheduleFlowSave();
+        });
+      } else {
+        inp = document.createElement('input');
+        inp.type = 'text';
+        inp.value = String(p.value == null ? '' : p.value);
+        inp.addEventListener('input', () => { p.value = inp.value; scheduleFlowSave(); });
+      }
+      row.append(l, inp);
+      fields.appendChild(row);
+    });
+    const tip = document.createElement('div');
+    tip.className = 'node-result';
+    tip.textContent = n.out && n.out.text
+      ? n.out.text
+      : '前/后/左/右 正交视图拼成 2×2 正方形；参数可就地填写，也可连线覆盖。';
     fields.appendChild(tip);
   }
   if(n.type === 'aiTask'){
