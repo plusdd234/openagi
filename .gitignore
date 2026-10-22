@@ -23,7 +23,8 @@ desktop.ini
 .vscode/
 .idea/
 
-# ===== 密钥（如有本地密钥文件，请勿提交） =====
+# ===== 密钥与本地运行时状态（含 API Key 与工作流数据，勿提交） =====
+openagi-store.json
 *.local.json
 .env
 .env.local

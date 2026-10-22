@@ -1,0 +1,1434 @@
+/* 虚拟机桌面
+ * 原 index.html 2952-4381 行
+ * 由解耦脚本机械切分，内容与顺序保持原样
+ */
+// ======================= 虚拟机桌面 =======================
+const DESK_GLYPH = {
+  chat: '<path d="M4 5h16v10H9l-5 4V5Z"/>',
+  t2i: '<rect x="3.5" y="4.5" width="17" height="14" rx="2.5"/><circle cx="8.6" cy="9.6" r="1.4"/><path d="m4.5 16.5 4.6-4 3.4 2.7 3-2.2 4 3.5"/>',
+  i2i: '<rect x="3.5" y="7.5" width="10.5" height="10.5" rx="2"/><path d="M8.5 4.5h7.5a2 2 0 0 1 2 2v7.5"/><path d="m8 14 2.2-2.2 1.6 1.6 1.4-1.4"/>',
+  flow: '<rect x="3.5" y="4.5" width="6" height="5" rx="1.4"/><rect x="14.5" y="14.5" width="6" height="5" rx="1.4"/><path d="M9.5 7h3.5a3 3 0 0 1 3 3v4.5"/><path d="M6.5 9.5v3a2 2 0 0 0 2 2h1.5"/>',
+  gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2.6M12 17.9v2.6M3.5 12h2.6M17.9 12h2.6M6 6l1.9 1.9M16.1 16.1 18 18M18 6l-1.9 1.9M7.9 16.1 6 18"/>'
+};
+function deskSvg(kind){
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (DESK_GLYPH[kind] || DESK_GLYPH.flow) + '</svg>';
+}
+
+const DESK_APPS = [
+  { id:'chat',     name:'对话',   glyph:'chat', grad:'linear-gradient(150deg,#5b8cff,#7a5cff)' },
+  { id:'t2i',      name:'文生图', glyph:'t2i',  grad:'linear-gradient(150deg,#22c58b,#0f9aa8)' },
+  { id:'i2i',      name:'图生图', glyph:'i2i',  grad:'linear-gradient(150deg,#f2994a,#e05a52)' },
+  { id:'flows',    name:'工作流', glyph:'flow', grad:'linear-gradient(150deg,#7c5cff,#4f7cff)' },
+  { id:'settings', name:'设置',   glyph:'gear', grad:'linear-gradient(150deg,#6b7689,#3c4457)' }
+];
+
+let deskPos = {};
+try { deskPos = JSON.parse(localStorage.getItem('hf_desk_pos') || '{}') || {}; } catch(e){ deskPos = {}; }
+
+function deskStateOf(id){
+  if(id === 'chat') return llmReady();
+  if(id === 't2i' || id === 'i2i') return imageReady();
+  return null;
+}
+function saveDeskPos(){
+  try { localStorage.setItem('hf_desk_pos', JSON.stringify(deskPos)); } catch(e){}
+}
+function deskClamp(x, y, el){
+  const wall = $('deskWall');
+  if(!wall) return { x, y };
+  const w = el ? el.offsetWidth : 92;
+  const h = el ? el.offsetHeight : 98;
+  const maxX = Math.max(0, wall.clientWidth - w - 8);
+  const maxY = Math.max(0, wall.clientHeight - h - 8);
+  return { x: Math.round(Math.min(Math.max(0, x), maxX)), y: Math.round(Math.min(Math.max(0, y), maxY)) };
+}
+function selectDeskApp(id){
+  document.querySelectorAll('.desk-app').forEach(el => el.classList.toggle('sel', el.dataset.app === id));
+}
+function clearDeskSel(){
+  document.querySelectorAll('.desk-app.sel').forEach(el => el.classList.remove('sel'));
+}
+
+function renderDeskIcons(){
+  const wrap = $('deskIcons');
+  if(!wrap) return;
+  wrap.innerHTML = '';
+  DESK_APPS.forEach((app, i) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'desk-app';
+    el.dataset.app = app.id;
+    el.title = app.name;
+    const saved = deskPos[app.id];
+    el.innerHTML = `
+      <span class="desk-app-icon" style="background:${app.grad}">
+        ${deskSvg(app.glyph)}
+        ${deskStateOf(app.id) === null ? '' : '<span class="desk-app-state"></span>'}
+      </span>
+      <span class="desk-app-label">${app.name}</span>`;
+    wrap.appendChild(el);
+    const p = deskClamp(saved ? saved.x : 20, saved ? saved.y : 20 + i * 96, el);
+    el.style.left = p.x + 'px';
+    el.style.top = p.y + 'px';
+    pinDeskDrag(el, app);
+  });
+  refreshDeskStates();
+}
+
+function refreshDeskStates(){
+  document.querySelectorAll('.desk-app[data-app]').forEach(el => {
+    const ok = deskStateOf(el.dataset.app);
+    if(ok === null) return;
+    const dot = el.querySelector('.desk-app-state');
+    if(dot) dot.style.background = ok ? '#3dd68c' : '#ffb454';
+  });
+}
+
+function pinDeskDrag(el, app){
+  let sx = 0, sy = 0, ox = 0, oy = 0, moved = false, active = false;
+  el.addEventListener('pointerdown', e => {
+    if(e.button) return;
+    active = true; moved = false;
+    sx = e.clientX; sy = e.clientY;
+    const cs = getComputedStyle(el);
+    ox = parseFloat(cs.left) || 0; oy = parseFloat(cs.top) || 0;
+    selectDeskApp(app.id);
+    try { el.setPointerCapture(e.pointerId); } catch(err){}
+  });
+  el.addEventListener('pointermove', e => {
+    if(!active) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if(!moved){
+      if(Math.abs(dx) + Math.abs(dy) < 4) return;
+      moved = true;
+      el.classList.add('dragging');
+    }
+    e.preventDefault();
+    const p = deskClamp(ox + dx, oy + dy, el);
+    el.style.left = p.x + 'px';
+    el.style.top = p.y + 'px';
+  });
+  const end = () => {
+    if(!active) return;
+    active = false;
+    el.classList.remove('dragging');
+    if(moved){
+      deskPos[app.id] = { x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0 };
+      saveDeskPos();
+    }
+  };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+  el.addEventListener('dblclick', e => {
+    e.preventDefault();
+    if(!moved) openDeskApp(app.id);
+  });
+  el.addEventListener('keydown', e => { if(e.key === 'Enter') openDeskApp(app.id); });
+}
+
+function renderDeskDock(){
+  const dock = $('deskDock');
+  if(!dock) return;
+  dock.innerHTML = '';
+  const addApp = app => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'dock-app';
+    b.title = app.name;
+    b.setAttribute('aria-label', app.name);
+    b.style.background = app.grad;
+    b.innerHTML = deskSvg(app.glyph);
+    b.addEventListener('click', () => openDeskApp(app.id));
+    dock.appendChild(b);
+  };
+  const sep = () => { const s = document.createElement('span'); s.className = 'dock-sep'; dock.appendChild(s); };
+  DESK_APPS.filter(a => a.id === 'chat' || a.id === 't2i' || a.id === 'i2i').forEach(addApp);
+  sep();
+  DESK_APPS.filter(a => a.id === 'flows' || a.id === 'settings').forEach(addApp);
+  sep();
+  const clock = document.createElement('span');
+  clock.className = 'dock-clock';
+  clock.id = 'deskClock';
+  clock.textContent = deskClockText();
+  dock.appendChild(clock);
+}
+
+function deskClockText(){
+  const d = new Date();
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+let deskClockTimer = 0;
+function startDeskClock(){
+  if(deskClockTimer) return;
+  deskClockTimer = setInterval(() => {
+    const c = $('deskClock');
+    if(c) c.textContent = deskClockText();
+  }, 15000);
+}
+
+function openDeskApp(id){
+  if(id === 'flows'){ $('flowsWin').classList.remove('hidden'); return; }
+  if(id === 'settings'){ openSettings(); return; }
+  if(id === 'chat' || id === 't2i' || id === 'i2i') openBase(id);
+}
+
+function closeFlowsWin(){
+  $('flowsWin').classList.add('hidden');
+}
+
+$('deskWall').addEventListener('pointerdown', e => {
+  if(e.target === $('deskWall') || e.target === $('deskIcons')) clearDeskSel();
+});
+
+function openBase(id){
+  baseSetTab(id);
+  showView('base');
+}
+
+function baseSetTab(name){
+  baseTab = ['chat','t2i','i2i'].includes(name) ? name : 'chat';
+  localStorage.setItem('hf_base_tab', baseTab);
+  document.querySelectorAll('.base-tab').forEach(t => {
+    const on = t.dataset.base === baseTab;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', String(on));
+  });
+  document.querySelectorAll('.base-pane').forEach(p => {
+    p.classList.toggle('hidden', p.dataset.pane !== baseTab);
+  });
+  refreshBaseState();
+}
+
+function refreshBaseState(){
+  const imgOk = imageReady();
+  $('t2iMeta').textContent = imgOk ? '就绪' : '待配置';
+  $('i2iEngine').textContent = isTripo() ? 'Tripo V3' : 'OpenAI 兼容';
+  $('i2iMeta').textContent = baseRefImage ? '已载入' : '未载入';
+}
+
+function setBaseStatus(id, msg, cls){
+  const el = $(id);
+  if(!el) return;
+  el.textContent = msg || '';
+  el.className = 'base-status ' + (cls || '');
+}
+
+function renderBaseChat(){
+  const log = $('chatLog');
+  log.innerHTML = '';
+  if(!baseMsgs.length){
+    log.innerHTML = '<div class="chat-empty">输入一句话，验证语言模型是否可用。支持多轮上下文。</div>';
+    return;
+  }
+  baseMsgs.forEach(m => {
+    const row = document.createElement('div');
+    row.className = 'msg ' + m.role + (m.error ? ' msg-error' : '');
+    const role = document.createElement('div');
+    role.className = 'msg-role';
+    role.textContent = m.role === 'user' ? '你' : 'AI';
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+    body.textContent = m.content;
+    row.append(role, body);
+    log.appendChild(row);
+  });
+  log.scrollTop = log.scrollHeight;
+}
+
+async function baseChatSend(){
+  if(baseChatBusy) return;
+  const input = $('chatInput');
+  const text = input.value.trim();
+  if(!text) return;
+  if(!llmReady()){
+    setBaseStatus('chatStatus', '语言模型未配置：填写 API Key、接口地址与模型后再试', 'error');
+    openSettings('llm');
+    return;
+  }
+  input.value = '';
+  baseMsgs.push({ role:'user', content:text });
+  renderBaseChat();
+  baseChatBusy = true;
+  const btn = $('btnChatSend');
+  btn.disabled = true;
+  btn.textContent = '发送中…';
+  setBaseStatus('chatStatus', '请求中…');
+  try{
+    const messages = baseMsgs.filter(m => !m.error).map(m => ({ role: m.role, content: m.content }));
+    const replyMsg = { role:'assistant', content:'' };
+    baseMsgs.push(replyMsg);
+    renderBaseChat();
+    const reply = await llmChatMessagesStream($('chatSystem').value.trim(), messages, acc => {
+      replyMsg.content = acc;
+      setBaseStatus('chatStatus', '生成中 ' + acc.length + ' 字');
+      renderBaseChat();
+    });
+    if(!reply) throw new Error('模型没有返回内容');
+    replyMsg.content = reply;
+    renderBaseChat();
+    setBaseStatus('chatStatus', '已返回 · ' + ($('llmModel').value.trim() || '模型'), 'ok');
+  } catch(e){
+    const empty = baseMsgs.findIndex(m => m.role === 'assistant' && !m.content && !m.error);
+    if(empty >= 0) baseMsgs.splice(empty, 1);
+    baseMsgs.push({ role:'assistant', content:friendlyErr(e), error:true });
+    renderBaseChat();
+    setBaseStatus('chatStatus', friendlyErr(e), 'error');
+  } finally {
+    baseChatBusy = false;
+    btn.disabled = false;
+    btn.textContent = '发送';
+  }
+}
+
+function baseImageGuard(statusId){
+  if(imageReady()) return true;
+  if(isTripoWeb()){
+    setBaseStatus(statusId, 'Tripo 网页账号未连接：运行 start-tripo-bridge.bat，并在设置中打开登录页', 'error');
+    openSettings('image');
+    return false;
+  }
+  setBaseStatus(statusId, '图像模型未配置：在设置 → 图像生成中选择引擎并填写 Key 与模型', 'error');
+  openSettings('image');
+  return false;
+}
+
+function showBaseImage(boxId, url, openBtnId){
+  const box = $(boxId);
+  box.innerHTML = '';
+  const img = document.createElement('img');
+  img.src = url;
+  img.alt = '生成结果';
+  img.addEventListener('click', () => window.open(url, '_blank'));
+  box.appendChild(img);
+  if(openBtnId){
+    const b = $(openBtnId);
+    b.classList.remove('hidden');
+    b.onclick = () => window.open(url, '_blank');
+  }
+}
+
+async function baseT2I(){
+  const prompt = $('t2iPrompt').value.trim();
+  if(!prompt){ setBaseStatus('t2iStatus', '请先填写提示词', 'error'); return; }
+  if(!baseImageGuard('t2iStatus')) return;
+  const btn = $('btnT2I');
+  btn.disabled = true;
+  btn.textContent = '生成中…';
+  setBaseStatus('t2iStatus', isTripoWeb() ? '通过 Tripo 网页账号生成，请留意浏览器窗口…' : (isTripo() ? '提交 Tripo 文生图任务并等待结果…' : '请求图像接口…'));
+  try{
+    const url = await wfImage(prompt);
+    showBaseImage('t2iResult', url, 'btnT2IOpen');
+    setBaseStatus('t2iStatus', '生成完成 · ' + (isTripoWeb() ? 'Tripo 网页账号' : (isTripo() ? 'Tripo' : ($('imgModel').value.trim() || $('llmModel').value.trim()))), 'ok');
+  } catch(e){
+    setBaseStatus('t2iStatus', friendlyErr(e), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '生成图片';
+  }
+}
+
+function readBaseRef(file){
+  if(!file) return;
+  const r = new FileReader();
+  r.onload = () => {
+    baseRefImage = r.result;
+    $('i2iPreview').innerHTML = `<img src="${r.result}" alt="参考图">`;
+    $('i2iDrop').classList.add('has-image');
+    $('i2iMeta').textContent = '已载入';
+  };
+  r.readAsDataURL(file);
+}
+
+async function baseI2I(){
+  const prompt = $('i2iPrompt').value.trim();
+  if(!baseRefImage){ setBaseStatus('i2iStatus', '请先载入参考图', 'error'); return; }
+  if(!prompt){ setBaseStatus('i2iStatus', '请先填写提示词', 'error'); return; }
+  if(!baseImageGuard('i2iStatus')) return;
+  const btn = $('btnI2I');
+  btn.disabled = true;
+  btn.textContent = '生成中…';
+  setBaseStatus('i2iStatus', isTripo() ? '上传参考图并提交 Tripo 图生图任务…' : '请求图像接口…');
+  try{
+    const url = await wfImage(prompt, baseRefImage);
+    showBaseImage('i2iResult', url);
+    setBaseStatus('i2iStatus', '生成完成 · ' + (isTripo() ? 'Tripo' : ($('imgModel').value.trim() || $('llmModel').value.trim())), 'ok');
+  } catch(e){
+    setBaseStatus('i2iStatus', friendlyErr(e), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '生成变体';
+  }
+}
+
+$('btnBaseBack').addEventListener('click', () => showView('home'));
+$('btnBaseSettings').addEventListener('click', () => openSettings(baseTab === 'chat' ? 'llm' : 'image'));
+document.querySelectorAll('.base-tab').forEach(t => t.addEventListener('click', () => baseSetTab(t.dataset.base)));
+$('btnChatSend').addEventListener('click', baseChatSend);
+$('chatInput').addEventListener('keydown', e => {
+  if(e.key === 'Enter' && (e.ctrlKey || e.metaKey)){ e.preventDefault(); baseChatSend(); }
+});
+$('btnChatClear').addEventListener('click', () => {
+  if(baseChatBusy) return;
+  baseMsgs = [];
+  renderBaseChat();
+  setBaseStatus('chatStatus', '');
+});
+$('btnT2I').addEventListener('click', baseT2I);
+$('btnI2I').addEventListener('click', baseI2I);
+$('i2iDrop').addEventListener('click', () => $('i2iFile').click());
+$('btnI2IPick').addEventListener('click', () => $('i2iFile').click());
+$('i2iFile').addEventListener('change', e => {
+  if(e.target.files[0]) readBaseRef(e.target.files[0]);
+  e.target.value = '';
+});
+['dragover','dragenter'].forEach(ev => $('i2iDrop').addEventListener(ev, e => { e.preventDefault(); $('i2iDrop').classList.add('drag'); }));
+['dragleave','drop'].forEach(ev => $('i2iDrop').addEventListener(ev, e => { e.preventDefault(); $('i2iDrop').classList.remove('drag'); }));
+$('i2iDrop').addEventListener('drop', e => { if(e.dataTransfer.files[0]) readBaseRef(e.dataTransfer.files[0]); });
+
+function taskPin(name, type){
+  return { id: uid(), name, type };
+}
+
+// 旧版「图像分析 / 文本任务」节点统一迁移为「分析任务」，并重映射引脚
+function migrateAiTaskNodes(flow){
+  (flow.nodes || []).forEach(n => {
+    if(n.type !== 'analyze' && n.type !== 'textTask') return;
+    const old = n.type;
+    const data = n.data || {};
+    n.type = 'aiTask';
+    n.data = {
+      instruction: data.instruction || data.note || '',
+      timeout: Number(data.timeout) || TASK_TIMEOUT_DEFAULT,
+      inputs: old === 'analyze'
+        ? [taskPin('图像', 'image'), taskPin('补充', 'string')]
+        : [taskPin('文本', 'string'), taskPin('补充', 'string')],
+      outputs: [taskPin('结果', 'string')]
+    };
+    const firstIn = n.data.inputs[0].id;
+    const hintIn = n.data.inputs[1].id;
+    const outPin = n.data.outputs[0].id;
+    (flow.links || []).forEach(l => {
+      if(l.from.node === n.id && l.from.key === 'text') l.from.key = outPin;
+      if(l.to.node === n.id){
+        if(l.to.key === 'image' || l.to.key === 'text') l.to.key = firstIn;
+        else if(l.to.key === 'hint') l.to.key = hintIn;
+      }
+    });
+  });
+}
+
+function newNode(type, x, y){
+  const n = { id: uid(), type, x, y, data: {}, out: {}, status: '' };
+  if(type === 'start' || type === 'end') n.params = [];
+  if(type === 'text') n.data.text = '';
+  if(type === 'imageGen') n.data.prompt = '';
+  if(type === 'tripoImg'){
+    n.data.prompt = '';
+    n.data.timeout = 240;
+    n.data.ratio = 'auto';
+    n.data.mode = 'auto';
+  }
+  if(type === 'imageCompress'){
+    n.data.maxEdge = 1024;
+    n.data.quality = 80;
+  }
+  if(type === 'aiTask'){
+    n.data.instruction = '';
+    n.data.timeout = TASK_TIMEOUT_DEFAULT;
+    n.data.inputs = [taskPin('文本', 'string')];
+    n.data.outputs = [taskPin('结果', 'string')];
+  }
+  if(type === 'condition') n.data.instruction = '';
+  if(type === 'boolNode') n.data.value = true;
+  if(type === 'imageIn') n.data.image = '';
+  if(type === 'modelIn') n.data.model = '';
+  return n;
+}
+
+function newParam(name, type){
+  const v = type === 'bool' ? true : (type === 'int' || type === 'float') ? 0 : '';
+  return { id: uid(), name, type, value: v, fileName: '' };
+}
+
+function paramValue(p){
+  if(p.type === 'int') return Math.trunc(Number(p.value) || 0);
+  if(p.type === 'float') return Number(p.value) || 0;
+  if(p.type === 'bool') return p.value !== false;
+  if(p.type === 'string') return p.value == null ? '' : String(p.value);
+  return p.value || '';
+}
+
+function coerceVar(v, val){
+  if(v.type === 'int') return Math.trunc(Number(val) || 0);
+  if(v.type === 'float') return Number(val) || 0;
+  if(v.type === 'bool') return toBool(val);
+  if(v.type === 'string') return val == null ? '' : String(val);
+  return val == null ? '' : val;
+}
+
+function createFlow(){
+  const s = newNode('start', 40, 100);
+  const pIn = newParam('图像', 'image');
+  s.params = [pIn];
+  const b = newNode('aiTask', 350, 70);
+  b.data.instruction = '诊断图像中的无意义结构，并拟写中性修复提示词。';
+  b.data.inputs = [taskPin('图像', 'image'), taskPin('补充', 'string')];
+  b.data.outputs = [taskPin('结果', 'string')];
+  const bImg = b.data.inputs[0].id;
+  const bOut = b.data.outputs[0].id;
+  const c = newNode('imageGen', 660, 90);
+  const e = newNode('end', 970, 70);
+  const pOut = newParam('结果图像', 'image');
+  e.params = [pOut];
+  const flow = {
+    id: uid(), name:'图像修复流程', nodes:[s, b, c, e], links:[
+      { id: uid(), from:{ node:s.id, key:pIn.id }, to:{ node:b.id, key:bImg } },
+      { id: uid(), from:{ node:b.id, key:bOut }, to:{ node:c.id, key:'prompt' } },
+      { id: uid(), from:{ node:c.id, key:'image' }, to:{ node:e.id, key:pOut.id } },
+      { id: uid(), from:{ node:s.id, key:'exec' }, to:{ node:b.id, key:'exec' } },
+      { id: uid(), from:{ node:b.id, key:'exec' }, to:{ node:c.id, key:'exec' } },
+      { id: uid(), from:{ node:c.id, key:'exec' }, to:{ node:e.id, key:'exec' } },
+    ], updated: Date.now(), lastRun: null, vars: []
+  };
+  FLOWS.unshift(flow);
+  persistFlows();
+  openFlow(flow.id);
+}
+
+function openFlow(id){
+  const found = FLOWS.find(f => f.id === id);
+  if(!found) return;
+  bp = JSON.parse(JSON.stringify(found));
+  bp.links = bp.links || [];
+  bp.vars = Array.isArray(bp.vars) ? bp.vars : [];
+  migrateAiTaskNodes(bp);
+  bp.nodes.forEach(n => {
+    n.out = {};
+    n.status = '';
+    n.error = '';
+    if((n.type === 'start' || n.type === 'end') && !Array.isArray(n.params)) n.params = [];
+  });
+  $('bpName').value = bp.name || '';
+  $('bpState').textContent = '';
+  bpVarAddOpen = false;
+  hideVarMenu();
+  showView('bp');
+  renderNodes();
+  requestAnimationFrame(fitView);
+}
+
+function snapshotBp(){
+  return {
+    id: bp.id, name: bp.name, updated: bp.updated || Date.now(),
+    lastRun: bp.lastRun || null,
+    vars: (bp.vars || []).map(v => ({ id:v.id, name:v.name, type:v.type, value:v.value, fileName:v.fileName || '' })),
+    nodes: bp.nodes.map(n => ({
+      id:n.id, type:n.type, x:Math.round(n.x), y:Math.round(n.y), data:n.data,
+      params: n.params ? n.params.map(p => ({ id:p.id, name:p.name, type:p.type, value:p.value, fileName:p.fileName || '' })) : undefined
+    })),
+    links: bp.links.map(l => ({ id:l.id, from:l.from, to:l.to })),
+  };
+}
+function saveFlowNow(){
+  if(!bp) return;
+  bp.updated = Date.now();
+  const snap = snapshotBp();
+  const i = FLOWS.findIndex(f => f.id === bp.id);
+  if(i >= 0) FLOWS[i] = snap; else FLOWS.unshift(snap);
+  $('bpState').textContent = persistFlows() ? '已保存' : '未保存';
+}
+function scheduleFlowSave(){
+  if(!bp) return;
+  $('bpState').textContent = '保存中…';
+  clearTimeout(bpSaveTimer);
+  bpSaveTimer = setTimeout(saveFlowNow, 350);
+}
+
+function applyBpTransform(){
+  $('bpWorld').style.transform = `translate(${bpPan.x}px, ${bpPan.y}px) scale(${bpZoom})`;
+}
+function fitView(){
+  if(!bp || !bp.nodes.length){
+    bpPan = { x: 40, y: 50 }; bpZoom = 1;
+    applyBpTransform();
+    return;
+  }
+  const cw = $('bpCanvas').clientWidth, ch = $('bpCanvas').clientHeight;
+  const minX = Math.min(...bp.nodes.map(n => n.x));
+  const minY = Math.min(...bp.nodes.map(n => n.y));
+  const w = Math.max(...bp.nodes.map(n => n.x)) - minX + 240;
+  const h = Math.max(...bp.nodes.map(n => n.y)) - minY + 180;
+  bpZoom = Math.max(.45, Math.min(1.1, Math.min((cw - 100) / w, (ch - 100) / h)));
+  bpPan.x = (cw - w * bpZoom) / 2 - minX * bpZoom;
+  bpPan.y = (ch - h * bpZoom) / 2 - minY * bpZoom;
+  applyBpTransform();
+  renderLinks();
+}
+
+function screenToWorld(cx, cy){
+  const r = $('bpCanvas').getBoundingClientRect();
+  return { x: (cx - r.left - bpPan.x) / bpZoom, y: (cy - r.top - bpPan.y) / bpZoom };
+}
+function portPos(nodeId, dir, key){
+  const el = $('n-' + nodeId);
+  if(!el) return null;
+  const pin = el.querySelector(`.pin[data-dir="${dir}"][data-key="${key}"]`);
+  if(!pin) return null;
+  const r = pin.getBoundingClientRect();
+  const c = $('bpCanvas').getBoundingClientRect();
+  return { x: (r.left + r.width / 2 - c.left - bpPan.x) / bpZoom, y: (r.top + r.height / 2 - c.top - bpPan.y) / bpZoom };
+}
+function linkD(a, b){
+  const dx = Math.max(42, Math.abs(b.x - a.x) * .5);
+  return `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`;
+}
+
+function nodeById(id){
+  return bp ? bp.nodes.find(n => n.id === id) : null;
+}
+function paramOf(n, key){
+  if(n && Array.isArray(n.params)) return n.params.find(p => p.id === key) || null;
+  return null;
+}
+function varOf(key){
+  if(bp && Array.isArray(bp.vars)) return bp.vars.find(v => v.id === key) || null;
+  return null;
+}
+function taskPinsOf(n){
+  if(!n || n.type !== 'aiTask' || !n.data) return [];
+  return (n.data.inputs || []).concat(n.data.outputs || []);
+}
+function taskPinOf(n, key){
+  return taskPinsOf(n).find(p => p.id === key) || null;
+}
+function pinType(n, key){
+  const p = paramOf(n, key) || taskPinOf(n, key);
+  if(p) return p.type;
+  const v = varOf(key);
+  if(v) return v.type;
+  return PIN_META[key] ? PIN_META[key].type : 'string';
+}
+
+function renderLinks(){
+  if(!bp) return;
+  const svg = $('bpLinks');
+  svg.querySelectorAll('.bp-link:not(.temp)').forEach(el => el.remove());
+  bp.links.forEach(l => {
+    const a = portPos(l.from.node, 'out', l.from.key);
+    const b = portPos(l.to.node, 'in', l.to.key);
+    if(!a || !b) return;
+    const p = document.createElementNS(SVG_NS, 'path');
+    const pt = pinType(nodeById(l.from.node), l.from.key);
+    p.setAttribute('class', 'bp-link t-' + pt + (l.id === bpRunLinkId ? ' active' : ''));
+    p.setAttribute('d', linkD(a, b));
+    p.addEventListener('click', () => {
+      bp.links = bp.links.filter(x => x.id !== l.id);
+      renderNodes();
+      scheduleFlowSave();
+    });
+    svg.appendChild(p);
+  });
+}
+
+function makePort(key, dir, meta){
+  meta = meta || PIN_META[key] || { label:key, type:'string' };
+  const row = document.createElement('div');
+  row.className = 'port-row';
+  const pin = document.createElement('span');
+  pin.className = 'pin ' + dir;
+  pin.dataset.dir = dir;
+  pin.dataset.key = key;
+  pin.dataset.type = meta.type;
+  pin.style.setProperty('--pin-c', PIN_COLORS[meta.type] || '#5d6bb8');
+  const label = document.createElement('span');
+  label.textContent = meta.label;
+  if(dir === 'in') row.append(pin, label); else row.append(label, pin);
+  return row;
+}
+
+function makeExecPort(key, dir, label){
+  const row = document.createElement('div');
+  row.className = 'exec-row ' + dir;
+  const pin = document.createElement('span');
+  pin.className = 'pin exec ' + dir + (key === 'true' ? ' true' : key === 'false' ? ' false' : '');
+  pin.dataset.dir = dir;
+  pin.dataset.key = key;
+  pin.dataset.type = 'exec';
+  const span = document.createElement('span');
+  span.textContent = label;
+  if(dir === 'in') row.append(pin, span); else row.append(span, pin);
+  return row;
+}
+
+function nodeEl(n){
+  const d = NODE_DEFS[n.type];
+  const isVarNode = n.type === 'varGet' || n.type === 'varSet';
+  const v = isVarNode ? varOf(n.data.varId) : null;
+  const el = document.createElement('div');
+  el.className = 'node';
+  el.id = 'n-' + n.id;
+  el.dataset.id = n.id;
+  el.style.left = n.x + 'px';
+  el.style.top = n.y + 'px';
+
+  const head = document.createElement('div');
+  head.className = 'node-head';
+  const dot = document.createElement('span');
+  dot.className = 'node-dot ' + d.dot;
+  if(isVarNode && v) dot.style.background = PIN_COLORS[v.type] || '#7c8cff';
+  const title = document.createElement('span');
+  title.className = 'node-title';
+  title.textContent = isVarNode
+    ? (v ? (n.type === 'varSet' ? '设置 ' + v.name : v.name) : '变量已删除')
+    : d.title;
+  const status = document.createElement('span');
+  status.className = 'node-status ' + (n.status || '');
+  status.textContent = n.status === 'ok' ? '完成' : n.status === 'error' ? '失败' : n.status === 'running' ? '运行中' : '';
+  const del = document.createElement('button');
+  del.className = 'node-del';
+  del.title = '删除节点';
+  del.textContent = '×';
+  if(n.type === 'start' || n.type === 'end'){
+    const plus = document.createElement('button');
+    plus.className = 'node-plus';
+    plus.title = '添加参数';
+    plus.textContent = '+';
+    plus.addEventListener('click', e => {
+      e.stopPropagation();
+      n._showAdd = !n._showAdd;
+      renderNodes();
+    });
+    head.append(dot, title, plus, status, del);
+  } else {
+    head.append(dot, title, status, del);
+  }
+
+  const exec = document.createElement('div');
+  exec.className = 'node-exec';
+  if(d.execIn) exec.appendChild(makeExecPort('exec', 'in', '执行'));
+  if(d.execOut && d.execOut.length){
+    const outWrap = document.createElement('div');
+    outWrap.className = 'exec-out';
+    d.execOut.forEach(k => outWrap.appendChild(makeExecPort(k, 'out', k === 'true' ? '真' : k === 'false' ? '假' : '执行')));
+    exec.appendChild(outWrap);
+  }
+  const hasExec = !!d.execIn || !!(d.execOut && d.execOut.length);
+
+  const body = document.createElement('div');
+  body.className = 'node-body';
+  const inCol = document.createElement('div');
+  inCol.className = 'node-col in';
+  d.inputs.forEach(k => inCol.appendChild(makePort(k, 'in')));
+  const outCol = document.createElement('div');
+  outCol.className = 'node-col out';
+  d.outputs.forEach(k => outCol.appendChild(makePort(k, 'out')));
+  if(n.type === 'start') (n.params || []).forEach(p => outCol.appendChild(makePort(p.id, 'out', { label:p.name, type:p.type })));
+  if(n.type === 'end') (n.params || []).forEach(p => inCol.appendChild(makePort(p.id, 'in', { label:p.name, type:p.type })));
+  if(n.type === 'varGet' && v) outCol.appendChild(makePort(v.id, 'out', { label:v.name, type:v.type }));
+  if(n.type === 'varSet' && v) inCol.appendChild(makePort(v.id, 'in', { label:'值', type:v.type }));
+  if(n.type === 'aiTask'){
+    (n.data.inputs || []).forEach(p => inCol.appendChild(makePort(p.id, 'in', { label:p.name || '输入', type:p.type })));
+    (n.data.outputs || []).forEach(p => outCol.appendChild(makePort(p.id, 'out', { label:p.name || '输出', type:p.type })));
+  }
+  body.append(inCol, outCol);
+
+  const fields = document.createElement('div');
+  fields.className = 'node-fields';
+
+  if(n.type === 'imageIn'){
+    const drop = document.createElement('div');
+    drop.className = 'node-drop';
+    if(n.data.image){
+      const img = document.createElement('img');
+      img.src = n.data.image;
+      drop.appendChild(img);
+    } else {
+      drop.textContent = '点击或拖入图像';
+    }
+    drop.addEventListener('click', () => {
+      bpPickedNode = n;
+      $('bpFile').value = '';
+      $('bpFile').click();
+    });
+    drop.addEventListener('dragover', e => e.preventDefault());
+    drop.addEventListener('drop', e => {
+      e.preventDefault();
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if(file) loadNodeImage(n, file);
+    });
+    fields.appendChild(drop);
+  }
+
+  if(n.type === 'modelIn'){
+    const drop = document.createElement('div');
+    drop.className = 'node-drop';
+    if(n.data.model){
+      const info = document.createElement('div');
+      info.className = 'node-file';
+      const name = document.createElement('b');
+      name.textContent = n.data.fileName || '3D 模型文件';
+      const meta = document.createElement('small');
+      meta.textContent = (n.data.fileSize ? formatBytes(n.data.fileSize) + ' · ' : '') + '点击更换';
+      info.append(name, meta);
+      drop.appendChild(info);
+    } else {
+      drop.textContent = '点击或拖入 3D 模型';
+    }
+    drop.addEventListener('click', () => {
+      bpPickedModelNode = n;
+      $('bpModelFile').value = '';
+      $('bpModelFile').click();
+    });
+    drop.addEventListener('dragover', e => e.preventDefault());
+    drop.addEventListener('drop', e => {
+      e.preventDefault();
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if(file) loadNodeModel(n, file);
+    });
+    fields.appendChild(drop);
+  }
+
+  if(n.type === 'text'){
+    fields.appendChild(bindTextarea(n, 'text', '文本内容'));
+  }
+  if(n.type === 'imageGen'){
+    fields.appendChild(bindTextarea(n, 'prompt', '提示词（未连线时使用）'));
+  }
+  if(n.type === 'tripoImg'){
+    fields.appendChild(bindTextarea(n, 'prompt', '提示词（未连线时使用）'));
+    const tRow = document.createElement('div');
+    tRow.className = 'task-timeout';
+    const tLabel = document.createElement('span');
+    tLabel.textContent = '超时';
+    const tInput = document.createElement('input');
+    tInput.type = 'number';
+    tInput.min = '10';
+    tInput.max = '900';
+    tInput.step = '10';
+    tInput.value = String(Number(n.data.timeout) || 240);
+    tInput.addEventListener('input', () => {
+      n.data.timeout = Math.max(10, Math.min(900, Math.trunc(Number(tInput.value) || 0) || 240));
+      scheduleFlowSave();
+    });
+    const tUnit = document.createElement('span');
+    tUnit.textContent = '秒';
+    tRow.append(tLabel, tInput, tUnit);
+    fields.appendChild(tRow);
+
+    const mode = document.createElement('select');
+    mode.className = 'node-input';
+    [['auto','模式 · 自动（有参考图走图生图）'],['text','模式 · 文生图'],['image','模式 · 图生图']].forEach(([v, label]) => {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = label;
+      mode.appendChild(opt);
+    });
+    mode.value = n.data.mode || 'auto';
+    mode.addEventListener('change', () => { n.data.mode = mode.value; scheduleFlowSave(); });
+    fields.appendChild(mode);
+
+    const ratio = document.createElement('select');
+    ratio.className = 'node-input';
+    [['auto','比例 · 自动'],['1:1','比例 · 1:1'],['16:9','比例 · 16:9'],['9:16','比例 · 9:16'],['4:3','比例 · 4:3'],['3:4','比例 · 3:4']].forEach(([v, label]) => {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = label;
+      ratio.appendChild(opt);
+    });
+    ratio.value = n.data.ratio || 'auto';
+    ratio.addEventListener('change', () => { n.data.ratio = ratio.value; scheduleFlowSave(); });
+    fields.appendChild(ratio);
+
+    const tip = document.createElement('div');
+    tip.className = 'node-result';
+    tip.textContent = '使用 Tripo 网页账号；运行时会先自动切到文生图 / 图生图面板，参考图引脚可接图像。结果保存到 tripo_out，需先在设置 → 图像生成中连接账号。';
+    fields.appendChild(tip);
+  }
+  if(n.type === 'imageCompress'){
+    const numRow = (label, val, min, max, step, unit, apply) => {
+      const row = document.createElement('div');
+      row.className = 'task-timeout';
+      const l = document.createElement('span');
+      l.textContent = label;
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.min = String(min);
+      inp.max = String(max);
+      inp.step = String(step);
+      inp.value = String(val);
+      inp.addEventListener('input', () => { apply(inp.value); scheduleFlowSave(); });
+      const u = document.createElement('span');
+      u.textContent = unit;
+      row.append(l, inp, u);
+      return row;
+    };
+    fields.appendChild(numRow('最长边', Number(n.data.maxEdge) || 1024, 64, 4096, 64, 'px', v => {
+      n.data.maxEdge = Math.max(64, Math.min(4096, Math.trunc(Number(v) || 0) || 1024));
+    }));
+    fields.appendChild(numRow('质量', Number(n.data.quality) || 80, 10, 100, 5, '%', v => {
+      n.data.quality = Math.max(10, Math.min(100, Math.trunc(Number(v) || 0) || 80));
+    }));
+    const tip = document.createElement('div');
+    tip.className = 'node-result';
+    tip.textContent = n.out && n.out.imageInfo
+      ? n.out.imageInfo
+      : '把输入图像等比缩小到最长边限制，并转成 JPEG 输出。';
+    fields.appendChild(tip);
+  }
+  if(n.type === 'aiTask'){
+    fields.appendChild(bindTextarea(n, 'instruction', '任务指令（例如：总结输入文本并列出风险点）'));
+    const tRow = document.createElement('div');
+    tRow.className = 'task-timeout';
+    const tLabel = document.createElement('span');
+    tLabel.textContent = '超时';
+    const tInput = document.createElement('input');
+    tInput.type = 'number';
+    tInput.min = '0';
+    tInput.max = '3600';
+    tInput.step = '10';
+    tInput.value = Number(n.data.timeout) > 0 ? n.data.timeout : '';
+    tInput.placeholder = String(TASK_TIMEOUT_DEFAULT);
+    tInput.addEventListener('input', () => {
+      n.data.timeout = Math.max(0, Math.min(3600, Math.trunc(Number(tInput.value) || 0)));
+      scheduleFlowSave();
+    });
+    const tUnit = document.createElement('span');
+    tUnit.textContent = '秒，0 表示不限时';
+    tRow.append(tLabel, tInput, tUnit);
+    fields.appendChild(tRow);
+    fields.appendChild(taskPinSection(n, 'in'));
+    fields.appendChild(taskPinSection(n, 'out'));
+  }
+  if(n.type === 'condition'){
+    fields.appendChild(bindTextarea(n, 'instruction', '判断条件（例如：输入内容是否描述了人物）'));
+  }
+  if(n.type === 'boolNode'){
+    const sel = document.createElement('select');
+    sel.className = 'node-input';
+    [['true','真'],['false','假']].forEach(([v, label]) => {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = label;
+      sel.appendChild(opt);
+    });
+    sel.value = n.data.value === false ? 'false' : 'true';
+    sel.addEventListener('change', () => { n.data.value = sel.value === 'true'; scheduleFlowSave(); });
+    fields.appendChild(sel);
+  }
+  if(n.type === 'branch'){
+    const tip = document.createElement('div');
+    tip.className = 'node-result';
+    tip.textContent = '按布尔引脚的值决定走「真」或「假」执行线。';
+    fields.appendChild(tip);
+  }
+  if(isVarNode){
+    if(!v){
+      const tip = document.createElement('div');
+      tip.className = 'node-result';
+      tip.textContent = '变量已删除，请在变量面板重新创建。';
+      fields.appendChild(tip);
+    } else {
+      fields.appendChild(varPreviewEl(v));
+      if(n.type === 'varSet'){
+        const tip = document.createElement('div');
+        tip.className = 'node-result';
+        tip.textContent = '运行到此处时，把「值」引脚的数据写入该变量。';
+        fields.appendChild(tip);
+      }
+    }
+  }
+  if(n.type === 'start' || n.type === 'end'){
+    (n.params || []).forEach(p => fields.appendChild(paramRow(n, p)));
+    if(n._showAdd) fields.appendChild(paramAddForm(n));
+    if(!(n.params || []).length && !n._showAdd){
+      const tip = document.createElement('div');
+      tip.className = 'node-result';
+      tip.textContent = '点击右上角 + 添加' + (n.type === 'start' ? '输入' : '输出') + '参数';
+      fields.appendChild(tip);
+    }
+    if(n.type === 'end' && bp && bp.lastRun && bp.lastRun.at){
+      const t = document.createElement('div');
+      t.className = 'node-result';
+      t.textContent = '上次运行：' + new Date(bp.lastRun.at).toLocaleTimeString();
+      fields.appendChild(t);
+    }
+  }
+  if(n.type === 'result' && !(n.out && (n.out.text || n.out.image || n.out.model))){
+    const tip = document.createElement('div');
+    tip.className = 'node-result';
+    tip.textContent = '连接文本、图像或模型，运行后在此汇总结果。';
+    fields.appendChild(tip);
+  }
+  if(n.type === 'model3d'){
+    const tip = document.createElement('div');
+    tip.className = 'node-result';
+    tip.textContent = '使用设置中的 Tripo 版本，输出 GLB 模型。';
+    fields.appendChild(tip);
+  }
+
+  body.appendChild(fields);
+
+  if(n.out && n.out.text){
+    const box = document.createElement('div');
+    box.className = 'node-out-box';
+    const out = document.createElement('div');
+    out.className = 'node-result';
+    out.textContent = n.out.text;
+    box.appendChild(out);
+    body.appendChild(box);
+  }
+  if(n.out && n.out.image){
+    const box = document.createElement('div');
+    box.className = 'node-out-box';
+    const img = document.createElement('img');
+    img.className = 'node-img';
+    img.src = n.out.image;
+    box.appendChild(img);
+    body.appendChild(box);
+  }
+  if(n.out && n.out.model){
+    const box = document.createElement('div');
+    box.className = 'node-out-box';
+    const a = document.createElement('a');
+    a.className = 'node-model';
+    a.href = n.out.model;
+    if(n.out.model.indexOf('data:') === 0){
+      a.download = modelNameFor(n);
+      a.textContent = '下载 3D 模型';
+    } else {
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = '下载 GLB 模型';
+    }
+    box.appendChild(a);
+    body.appendChild(box);
+  }
+  if(n.out && typeof n.out.bool === 'boolean'){
+    const box = document.createElement('div');
+    box.className = 'node-out-box';
+    const out = document.createElement('div');
+    out.className = 'node-result';
+    out.textContent = '布尔结果：' + (n.out.bool ? '真' : '假');
+    box.appendChild(out);
+    body.appendChild(box);
+  }
+  if(n.type === 'aiTask'){
+    (n.data.outputs || []).forEach(p => {
+      const v = n.out ? n.out[p.id] : undefined;
+      if(v === undefined || v === null || v === '') return;
+      const box = document.createElement('div');
+      box.className = 'node-out-box';
+      const name = document.createElement('div');
+      name.className = 'node-out-name';
+      name.textContent = p.name || '输出';
+      const out = document.createElement('div');
+      out.className = 'node-result';
+      out.textContent = typeof v === 'object' ? JSON.stringify(v) : String(v);
+      box.append(name, out);
+      body.appendChild(box);
+    });
+  }
+  if(n.error){
+    const err = document.createElement('div');
+    err.className = 'node-err';
+    err.textContent = n.error;
+    body.appendChild(err);
+  }
+
+  el.append(head);
+  if(hasExec) el.append(exec);
+  el.append(body);
+
+  del.addEventListener('click', e => {
+    e.stopPropagation();
+    bp.nodes = bp.nodes.filter(x => x.id !== n.id);
+    bp.links = bp.links.filter(l => l.from.node !== n.id && l.to.node !== n.id);
+    renderNodes();
+    scheduleFlowSave();
+  });
+
+  head.addEventListener('pointerdown', e => {
+    if(e.target.closest('.node-del') || e.target.closest('.node-plus')) return;
+    e.preventDefault();
+    nodeDrag = { n, el, sx: e.clientX, sy: e.clientY, ox: n.x, oy: n.y };
+    document.querySelectorAll('.node.sel').forEach(x => x.classList.remove('sel'));
+    el.classList.add('sel');
+    head.setPointerCapture(e.pointerId);
+  });
+  head.addEventListener('pointermove', e => {
+    if(!nodeDrag || nodeDrag.n !== n) return;
+    n.x = nodeDrag.ox + (e.clientX - nodeDrag.sx) / bpZoom;
+    n.y = nodeDrag.oy + (e.clientY - nodeDrag.sy) / bpZoom;
+    el.style.left = n.x + 'px';
+    el.style.top = n.y + 'px';
+    renderLinks();
+  });
+  head.addEventListener('pointerup', () => {
+    if(nodeDrag && nodeDrag.n === n){ nodeDrag = null; scheduleFlowSave(); }
+  });
+
+  return el;
+}
+
+function paramEditor(n, p){
+  if(p.type === 'image' || p.type === 'model'){
+    const btn = document.createElement('button');
+    btn.className = 'param-file';
+    btn.textContent = p.value ? (p.fileName || '已选择，点击更换') : (p.type === 'image' ? '选择图像' : '选择模型');
+    btn.title = p.fileName || '';
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      bpPickedVar = null;
+      bpPickedParam = { n, p };
+      const inp = $('bpParamFile');
+      inp.accept = p.type === 'image' ? 'image/*' : '.obj,.glb,.gltf,.fbx,.stl,.ply,.3mf';
+      inp.value = '';
+      inp.click();
+    });
+    return btn;
+  }
+  if(p.type === 'bool'){
+    const sel = document.createElement('select');
+    [['true','真'],['false','假']].forEach(([v, label]) => {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = label;
+      sel.appendChild(opt);
+    });
+    sel.value = p.value === false ? 'false' : 'true';
+    sel.addEventListener('change', () => { p.value = sel.value === 'true'; scheduleFlowSave(); });
+    return sel;
+  }
+  const inp = document.createElement('input');
+  if(p.type === 'int' || p.type === 'float'){
+    inp.type = 'number';
+    inp.step = p.type === 'int' ? '1' : '0.01';
+    inp.value = p.value === '' ? 0 : p.value;
+    inp.addEventListener('input', () => {
+      p.value = inp.value === '' ? 0 : Number(inp.value);
+      scheduleFlowSave();
+    });
+  } else {
+    inp.type = 'text';
+    inp.value = p.value || '';
+    inp.addEventListener('input', () => { p.value = inp.value; scheduleFlowSave(); });
+  }
+  return inp;
+}
+
+function paramRow(n, p){
+  const row = document.createElement('div');
+  row.className = 'param-row';
+  const head = document.createElement('div');
+  head.className = 'param-head';
+  const name = document.createElement('b');
+  name.textContent = p.name || '参数';
+  name.title = p.name || '';
+  const type = document.createElement('span');
+  type.className = 'param-type';
+  type.textContent = TYPE_META[p.type] ? TYPE_META[p.type].label : p.type;
+  const del = document.createElement('button');
+  del.className = 'param-del';
+  del.title = '删除参数';
+  del.textContent = '×';
+  del.addEventListener('click', e => { e.stopPropagation(); removeParam(n, p); });
+  head.append(name, type, del);
+  row.appendChild(head);
+
+  if(n.type === 'start'){
+    row.appendChild(paramEditor(n, p));
+  } else {
+    const v = document.createElement('div');
+    v.className = 'param-val';
+    if(p.type === 'image' && p.value){
+      const img = document.createElement('img');
+      img.src = p.value;
+      v.append('已接收图像', img);
+    } else if(p.type === 'model' && p.value){
+      v.textContent = '已接收模型：' + (p.fileName || 'model');
+    } else if(p.type === 'bool' && p.value !== '' && p.value !== undefined){
+      v.textContent = p.value ? '真' : '假';
+    } else if((p.type === 'int' || p.type === 'float') && p.value !== ''){
+      v.textContent = String(p.value);
+    } else if(p.type === 'string' && p.value){
+      v.textContent = String(p.value);
+    } else {
+      v.textContent = p.value ? String(p.value) : '未接收';
+    }
+    row.appendChild(v);
+  }
+  return row;
+}
+
+function paramAddForm(n){
+  const form = document.createElement('div');
+  form.className = 'param-add';
+  const prow = document.createElement('div');
+  prow.className = 'prow';
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.placeholder = '参数名';
+  const sel = document.createElement('select');
+  TYPE_ORDER.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = TYPE_META[t].label;
+    sel.appendChild(opt);
+  });
+  sel.value = 'string';
+  prow.append(name, sel);
+  const ok = document.createElement('button');
+  ok.className = 'btn primary';
+  ok.textContent = n.type === 'start' ? '添加输入' : '添加输出';
+  ok.addEventListener('click', e => {
+    e.stopPropagation();
+    const pname = name.value.trim() || (TYPE_META[sel.value].label + (n.params.length + 1));
+    n.params.push(newParam(pname, sel.value));
+    n._showAdd = false;
+    renderNodes();
+    scheduleFlowSave();
+  });
+  name.addEventListener('keydown', e => { if(e.key === 'Enter') ok.click(); });
+  form.append(prow, ok);
+  return form;
+}
+
+function removeParam(n, p){
+  n.params = n.params.filter(x => x.id !== p.id);
+  if(bp){
+    bp.links = bp.links.filter(l =>
+      !(l.from.node === n.id && l.from.key === p.id) &&
+      !(l.to.node === n.id && l.to.key === p.id)
+    );
+  }
+  renderNodes();
+  scheduleFlowSave();
+}
+
+function loadParamFile(n, p, file){
+  if(p.type === 'model'){
+    if(!/\.(obj|glb|gltf|fbx|stl|ply|3mf)$/i.test(file.name)){ bpToast('模型格式不支持'); return; }
+    if(file.size > 2 * 1024 * 1024){ bpToast('模型超过 2MB，无法写入工作流本地存储'); return; }
+  } else if(p.type === 'image' && !/^image\//.test(file.type)){
+    bpToast('请选择图像文件');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    p.value = reader.result;
+    p.fileName = file.name;
+    renderNodes();
+    scheduleFlowSave();
+  };
+  reader.readAsDataURL(file);
+}
+
+function modelNameFor(n){
+  if(n.data && n.data.fileName) return n.data.fileName;
+  if(n.type === 'model3d') return 'model.glb';
+  if(bp){
+    const l = bp.links.find(x => x.to.node === n.id && x.to.key === 'model');
+    if(l){
+      const src = bp.nodes.find(x => x.id === l.from.node);
+      if(src && src.data && src.data.fileName) return src.data.fileName;
+    }
+  }
+  return 'model';
+}
+
+const TA_COLLAPSED_H = 148;
+function bindTextarea(n, key, placeholder){
+  const wrap = document.createElement('div');
+  wrap.className = 'node-ta';
+
+  const ta = document.createElement('textarea');
+  ta.className = 'node-text';
+  ta.placeholder = placeholder;
+  ta.value = n.data[key] || '';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'node-ta-toggle hidden';
+  btn.textContent = '展开全文';
+
+  let expanded = !!n['_expand_' + key];
+  let lastH = 0;
+  const fit = () => {
+    ta.style.height = 'auto';
+    const full = ta.scrollHeight;
+    const over = full > TA_COLLAPSED_H + 4;
+    btn.classList.toggle('hidden', !over);
+    if(over && expanded){
+      ta.style.height = full + 'px';
+      wrap.classList.remove('collapsed');
+      btn.textContent = '收起';
+    } else {
+      expanded = false;
+      ta.style.height = Math.max(52, Math.min(full, TA_COLLAPSED_H)) + 'px';
+      wrap.classList.toggle('collapsed', over);
+      btn.textContent = '展开全文';
+    }
+    const h = ta.offsetHeight;
+    if(lastH && Math.abs(lastH - h) > 1) renderLinks();
+    lastH = h;
+  };
+
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    expanded = !expanded;
+    n['_expand_' + key] = expanded;
+    fit();
+  });
+  ta.addEventListener('input', () => {
+    n.data[key] = ta.value;
+    scheduleFlowSave();
+    fit();
+  });
+
+  wrap.append(ta, btn);
+  requestAnimationFrame(fit);
+  return wrap;
+}
+
+function loadNodeImage(n, file){
+  const reader = new FileReader();
+  reader.onload = () => {
+    n.data.image = reader.result;
+    renderNodes();
+    scheduleFlowSave();
+  };
+  reader.readAsDataURL(file);
+}
+
+function formatBytes(size){
+  if(size >= 1024 * 1024) return (size / 1024 / 1024).toFixed(1) + ' MB';
+  return Math.max(1, Math.round(size / 1024)) + ' KB';
+}
+
+function loadNodeModel(n, file){
+  if(!/\.(obj|glb|gltf|fbx|stl|ply|3mf)$/i.test(file.name)){
+    bpToast('仅支持 OBJ / GLB / GLTF / FBX / STL / PLY / 3MF');
+    return;
+  }
+  if(file.size > 2 * 1024 * 1024){
+    bpToast('模型超过 2MB，无法写入工作流本地存储');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    n.data.model = reader.result;
+    n.data.fileName = file.name;
+    n.data.fileSize = file.size;
+    renderNodes();
+    scheduleFlowSave();
+  };
+  reader.readAsDataURL(file);
+}
+
+function taskPinSection(n, kind){
+  const wrap = document.createElement('div');
+  wrap.className = 'task-sec';
+  const head = document.createElement('div');
+  head.className = 'task-sec-head';
+  const title = document.createElement('span');
+  title.textContent = kind === 'in' ? '输入引脚' : '输出引脚';
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'task-add';
+  add.textContent = '+ 添加';
+  add.addEventListener('click', e => {
+    e.stopPropagation();
+    const list = kind === 'in' ? n.data.inputs : n.data.outputs;
+    list.push(taskPin((kind === 'in' ? '输入' : '输出') + (list.length + 1), 'string'));
+    renderNodes();
+    scheduleFlowSave();
+  });
+  head.append(title, add);
+  wrap.appendChild(head);
+  const list = kind === 'in' ? n.data.inputs : n.data.outputs;
+  list.forEach(p => wrap.appendChild(taskPinRow(n, kind, p)));
+  return wrap;
+}
+
+function taskPinRow(n, kind, p){
+  const row = document.createElement('div');
+  row.className = 'param-row task-pin';
+  const head = document.createElement('div');
+  head.className = 'param-head';
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.value = p.name || '';
+  name.title = '引脚名称';
+  name.addEventListener('input', () => {
+    p.name = name.value;
+    scheduleFlowSave();
+  });
+  const sel = document.createElement('select');
+  (kind === 'in' ? TYPE_ORDER : TASK_OUT_TYPES).forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = TYPE_META[t] ? TYPE_META[t].label : t;
+    sel.appendChild(opt);
+  });
+  sel.value = p.type;
+  sel.addEventListener('change', () => {
+    p.type = sel.value;
+    renderNodes();
+    scheduleFlowSave();
+  });
+  const del = document.createElement('button');
+  del.className = 'param-del';
+  del.title = '删除引脚';
+  del.textContent = '×';
+  del.addEventListener('click', e => { e.stopPropagation(); removeTaskPin(n, kind, p); });
+  head.append(name, sel, del);
+  row.appendChild(head);
+  return row;
+}
+
+function removeTaskPin(n, kind, p){
+  const key = kind === 'in' ? 'inputs' : 'outputs';
+  n.data[key] = (n.data[key] || []).filter(x => x.id !== p.id);
+  if(bp){
+    bp.links = bp.links.filter(l =>
+      !(l.from.node === n.id && l.from.key === p.id) &&
+      !(l.to.node === n.id && l.to.key === p.id)
+    );
+  }
+  renderNodes();
+  scheduleFlowSave();
+}
+
+function renderNodes(){
+  if(!bp) return;
+  const host = $('bpNodes');
+  host.innerHTML = '';
+  bp.nodes.forEach(n => {
+    const el = nodeEl(n);
+    if(n.id === bpRunNodeId) el.classList.add('running');
+    host.appendChild(el);
+  });
+
+  host.querySelectorAll('.pin').forEach(pin => {
+    const nodeId = pin.closest('.node').dataset.id;
+    const dir = pin.dataset.dir, key = pin.dataset.key;
+    const on = bp.links.some(l => dir === 'out'
+      ? (l.from.node === nodeId && l.from.key === key)
+      : (l.to.node === nodeId && l.to.key === key));
+    pin.classList.toggle('linked', on);
+  });
+
+  $('bpEmpty').classList.toggle('hidden', bp.nodes.length > 0);
+  renderVars();
+  requestAnimationFrame(renderLinks);
+}
+
+function bpToast(msg){
+  const t = $('bpToast');
+  t.textContent = msg;
+  t.classList.remove('hidden');
+  clearTimeout(bpToastTimer);
+  bpToastTimer = setTimeout(() => t.classList.add('hidden'), 2600);
+}
+
