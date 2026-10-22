@@ -473,6 +473,14 @@ function newNode(type, x, y){
   if(type === 'condition') n.data.instruction = '';
   if(type === 'boolNode') n.data.bool = true;
   if(type === 'numNode') n.data.value = 0;
+  if(type === 'tripoModel'){
+    n.data.mode = 'smart';
+    n.data.version = 'P2.0';
+    n.data.faceCount = 0;
+    n.data.count = 1;
+    n.data.format = '';
+    n.data.timeout = 420;
+  }
   if(type === 'imageIn') n.data.image = '';
   if(type === 'modelIn') n.data.model = '';
   return n;

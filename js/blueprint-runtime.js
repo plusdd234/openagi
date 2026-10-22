@@ -714,6 +714,40 @@ async function wfTripoWebImage(prompt, image, opts){
   }
 }
 
+/* Tripo 网页账号：图生 3D 模型（智能网格 / 高精度模型、P2.0、面数、数量、格式） */
+async function wfTripoWebModel(image, opts){
+  const o = opts || {};
+  const timeoutSec = Math.max(30, Math.min(1800, Math.trunc(Number(o.timeoutSec) || 0) || 420));
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), (timeoutSec + 60) * 1000);
+  try{
+    const res = await fetch(TRIPO_WEB_BASE + '/generate-model', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({
+        image: image || '',
+        mode: o.mode || '',
+        version: o.version || '',
+        faceCount: Math.max(0, Math.trunc(Number(o.faceCount) || 0)),
+        count: Math.max(0, Math.trunc(Number(o.count) || 0)),
+        format: o.format || '',
+        timeoutSec
+      }),
+      signal: ctrl.signal
+    });
+    let data = null;
+    try { data = await res.json(); } catch(e) {}
+    if(!res.ok || !data || !data.url) throw new Error((data && data.message) || ('Tripo 助手返回 HTTP ' + res.status));
+    return { url: data.url + '?t=' + Date.now(), file: data.file || '', size: data.size || 0, message: data.message || '' };
+  }catch(e){
+    if(e && e.name === 'AbortError') throw new Error('Tripo 网页生成超时（' + (timeoutSec + 60) + ' 秒）');
+    if(e instanceof TypeError) throw new Error('无法连接 Tripo 助手：请先运行 start-tripo-bridge.bat');
+    throw e;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
 async function wfImage(prompt, image){
   if(isTripoWeb()){
     const r = await wfTripoWebImage(prompt, image, { timeoutSec: 240 });
@@ -1039,6 +1073,23 @@ async function runFlow(){
         const edge = Math.max(64, Math.min(4096, Math.trunc(Number(await paramIn('maxEdge')) || 0) || 1024));
         const q = Math.max(10, Math.min(100, Math.trunc(Number(await paramIn('quality')) || 0) || 80)) / 100;
         n.out = await wfCompressImage(src, edge, q);
+      } else if(n.type === 'tripoModel' || (n.type === 'model3d' && isTripoWeb())){
+        const img = await input('image');
+        if(!img) throw new Error('缺少参考图输入');
+        if(n.type === 'tripoModel'){
+          const r = await wfTripoWebModel(img, {
+            mode: await paramIn('mode'),
+            version: await paramIn('version'),
+            faceCount: await paramIn('faceCount'),
+            count: await paramIn('count'),
+            format: await paramIn('format'),
+            timeoutSec: await paramIn('timeout')
+          });
+          n.out.model = r.url;
+          n.out.text = '网页生成模型完成 · ' + (r.file || '模型已下载') + (r.size ? ' · ' + (r.size / 1024).toFixed(0) + ' KB' : '');
+        } else {
+          n.out.model = (await wfTripoWebModel(img, { timeoutSec: 300 })).url;
+        }
       } else if(n.type === 'model3d'){
         const img = await input('image');
         if(!img) throw new Error('缺少图像输入');
