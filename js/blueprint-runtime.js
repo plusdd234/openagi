@@ -390,11 +390,14 @@ function initNodeLib(){
   host.innerHTML = '';
   menu.innerHTML = '<option value="">+ 添加节点</option>';
   NODE_LIB.forEach(g => {
+    // 已存在的骨架节点不再出现在库里（不可删除，避免误加第二个）
+    const types = g.types.filter(t => !(isSingleton(t) && hasNodeType(t)));
+    if(!types.length) return;
     const group = document.createElement('div');
     group.className = 'lib-group';
     group.textContent = g.group;
     host.appendChild(group);
-    g.types.forEach(type => {
+    types.forEach(type => {
       const d = NODE_DEFS[type];
       const item = document.createElement('div');
       item.className = 'lib-item';
@@ -454,8 +457,16 @@ function endLibDrag(e){
   addNodeAt(drag.type, x, y);
 }
 
+// 流程骨架节点唯一：既然不可删除，就不允许出现第二个
+function isSingleton(type){ return type === 'start' || type === 'end'; }
+function hasNodeType(type){ return !!(bp && bp.nodes.some(n => n.type === type)); }
+
 function addNodeAt(type, x, y){
   if(!bp) return;
+  if(isSingleton(type) && hasNodeType(type)){
+    bpToast('「' + NODE_DEFS[type].title + '」只能有一个');
+    return;
+  }
   const n = newNode(type, Math.round(x), Math.round(y));
   bp.nodes.push(n);
   renderNodes();

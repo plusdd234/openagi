@@ -135,11 +135,80 @@ const IMG = path.join(__dirname, '..', 'samples', 'ui_linked.png');
   const migOk = mig.dropped === 1 && mig.left.length === 1 && mig.left[0].endsWith('.exec');
   console.log(' 只清掉输入节点的执行线、保留任务开始的: ' + (migOk ? '✅' : '❌'));
 
+  /* ---------- 5. 任务开始 / 任务结束不可删除 ---------- */
+  const lock = await page.evaluate(() => {
+    const flow = {
+      id: 'lock_' + Date.now(), name: '骨架锁定',
+      nodes: [newNode('start', 0, 0), newNode('end', 320, 0), newNode('text', 0, 220)],
+      links: [], vars: [], updated: Date.now()
+    };
+    FLOWS.unshift(flow);
+    openFlow(flow.id);
+    const dels = Array.from(document.querySelectorAll('.node')).map(el => {
+      const n = bp.nodes.find(x => x.id === el.dataset.id);
+      return { type: n.type, hasDel: !!el.querySelector('.node-del') };
+    });
+    const libTypes = Array.from(document.querySelectorAll('#bpLibBody .lib-item')).map(e => e.dataset.type);
+    const menuTypes = Array.from(document.querySelectorAll('#bpAdd option')).map(o => o.value).filter(Boolean);
+    const before = bp.nodes.length;
+    addNodeAt('start', 900, 0);
+    addNodeAt('end', 900, 200);
+    const afterAdd = bp.nodes.length;
+    removeNode(bp.nodes.find(n => n.type === 'start'));
+    removeNode(bp.nodes.find(n => n.type === 'end'));
+    const afterDel = bp.nodes.length;
+    return { dels, libTypes, menuTypes, before, afterAdd, afterDel, toast: document.getElementById('bpToast').textContent };
+  });
+  console.log('\n=== 5. 任务开始 / 任务结束不可删除 ===');
+  lock.dels.forEach(d => console.log(` ${d.type.padEnd(6)} 删除按钮: ${d.hasDel ? '有' : '无'}`));
+  console.log(' 节点库是否仍列出骨架节点: ' + (lock.libTypes.filter(t => t === 'start' || t === 'end').join(',') || '否 ✅'));
+  console.log(' 下拉菜单是否仍列出骨架节点: ' + (lock.menuTypes.filter(t => t === 'start' || t === 'end').join(',') || '否 ✅'));
+  console.log(` 重复添加 start/end: ${lock.before} → ${lock.afterAdd}（应不变）· 强行删除: → ${lock.afterDel}（应不变）`);
+  console.log(' 提示: ' + lock.toast);
+  const noDelBtn = lock.dels.filter(d => (d.type === 'start' || d.type === 'end') && !d.hasDel).length === 2;
+  const textHasDel = lock.dels.find(d => d.type === 'text').hasDel;
+  const lockOk = noDelBtn && textHasDel && lock.afterAdd === lock.before && lock.afterDel === lock.before
+    && !lock.libTypes.includes('start') && !lock.libTypes.includes('end');
+
+  // 普通节点仍可正常删除（真实点击）
+  const beforeClick = await page.evaluate(() => bp.nodes.length);
+  const tid = await page.evaluate(() => bp.nodes.find(n => n.type === 'text').id);
+  await page.click(`#n-${tid} .node-del`);
+  await page.waitForTimeout(150);
+  const afterClick = await page.evaluate(() => bp.nodes.length);
+  console.log(` 普通节点点击删除: ${beforeClick} → ${afterClick}`);
+  const delWorks = afterClick === beforeClick - 1;
+
+  // 历史流程里重复的骨架节点应可清理，但必须保留一个
+  const dup = await page.evaluate(() => {
+    const flow = {
+      id: 'dup_' + Date.now(), name: '重复骨架',
+      nodes: [newNode('start', 0, 0), newNode('start', 0, 260), newNode('end', 320, 0)],
+      links: [], vars: [], updated: Date.now()
+    };
+    FLOWS.unshift(flow);
+    openFlow(flow.id);
+    const dels = Array.from(document.querySelectorAll('.node')).map(el => {
+      const n = bp.nodes.find(x => x.id === el.dataset.id);
+      return { type: n.type, hasDel: !!el.querySelector('.node-del') };
+    });
+    const second = bp.nodes.filter(n => n.type === 'start')[1];
+    removeNode(second);
+    const afterDup = bp.nodes.filter(n => n.type === 'start').length;
+    const last = bp.nodes.find(n => n.type === 'start');
+    removeNode(last);
+    const afterLast = bp.nodes.filter(n => n.type === 'start').length;
+    return { dels, afterDup, afterLast };
+  });
+  console.log(` 重复的骨架节点: 两个 start 的删除按钮 = ${dup.dels.filter(d => d.type === 'start').map(d => d.hasDel).join('/')}`);
+  console.log(` 删掉多余的一个: 剩余 ${dup.afterDup} 个 · 再删最后一个: 剩余 ${dup.afterLast} 个（应仍为 1）`);
+  const dupOk = dup.afterDup === 1 && dup.afterLast === 1;
+
   console.log('\n=== 错误 (' + errors.length + ') ===');
   errors.slice(0, 8).forEach(e => console.log(' - ' + e));
   await page.screenshot({ path: path.join(__dirname, '..', 'samples', 'exec_model.png') });
   await browser.close();
-  const ok = !pureWithExec.length && icOk && idleOk && noneRan && numPulled && edgeUsed && migOk && !errors.length;
+  const ok = !pureWithExec.length && icOk && idleOk && noneRan && numPulled && edgeUsed && migOk && lockOk && delWorks && dupOk && !errors.length;
   console.log('\n总体: ' + (ok ? '符合新执行模型 ✅' : '存在偏差 ❌'));
   process.exit(ok ? 0 : 1);
 })().catch(e => { console.error('FAILED:', e); process.exit(2); });

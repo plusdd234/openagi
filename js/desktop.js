@@ -547,6 +547,7 @@ function openFlow(id){
   bpVarAddOpen = false;
   hideVarMenu();
   showView('bp');
+  initNodeLib();   // 节点库要按当前流程刷新：已存在的骨架节点不再列出
   renderNodes();
   requestAnimationFrame(fitView);
 }
@@ -953,10 +954,17 @@ function nodeEl(n){
   const status = document.createElement('span');
   status.className = 'node-status ' + (n.status || '');
   status.textContent = n.status === 'ok' ? '完成' : n.status === 'error' ? '失败' : n.status === 'running' ? '运行中' : '';
-  const del = document.createElement('button');
-  del.className = 'node-del';
-  del.title = '删除节点';
-  del.textContent = '×';
+  // 任务开始 / 任务结束是流程骨架不给删除按钮；
+  // 只有历史流程里重复出现时，才对多余的那些放开删除（保证至少留存一个）
+  const sameCount = bp ? bp.nodes.filter(x => x.type === n.type).length : 1;
+  const locked = (n.type === 'start' || n.type === 'end') && sameCount <= 1;
+  let del = null;
+  if(!locked){
+    del = document.createElement('button');
+    del.className = 'node-del';
+    del.title = '删除节点';
+    del.textContent = '×';
+  }
   // 纯参数节点：不占执行线，标一下避免误以为「连了就该执行」
   if(d.pure){
     const tag = document.createElement('span');
@@ -975,9 +983,11 @@ function nodeEl(n){
       n._showAdd = !n._showAdd;
       renderNodes();
     });
-    head.append(dot, title, plus, status, del);
+    head.append(dot, title, plus, status);
+    if(del) head.appendChild(del);
   } else {
-    head.append(dot, title, status, del);
+    head.append(dot, title, status);
+    if(del) head.appendChild(del);
   }
 
   const exec = document.createElement('div');
@@ -1171,12 +1181,9 @@ function nodeEl(n){
   if(hasExec) el.append(exec);
   el.append(body);
 
-  del.addEventListener('click', e => {
+  if(del) del.addEventListener('click', e => {
     e.stopPropagation();
-    bp.nodes = bp.nodes.filter(x => x.id !== n.id);
-    bp.links = bp.links.filter(l => l.from.node !== n.id && l.to.node !== n.id);
-    renderNodes();
-    scheduleFlowSave();
+    removeNode(n);
   });
 
   head.addEventListener('pointerdown', e => {
@@ -1538,6 +1545,22 @@ function removeTaskPin(n, kind, p){
       !(l.to.node === n.id && l.to.key === p.id)
     );
   }
+  renderNodes();
+  scheduleFlowSave();
+}
+
+// 删除节点：任务开始 / 任务结束是流程骨架，必须至少保留一个
+function removeNode(n){
+  if(!bp || !n) return;
+  if(n.type === 'start' || n.type === 'end'){
+    const same = bp.nodes.filter(x => x.type === n.type);
+    if(same.length <= 1){
+      bpToast('「' + (NODE_DEFS[n.type] || {}).title + '」是流程骨架，不可删除');
+      return;
+    }
+  }
+  bp.nodes = bp.nodes.filter(x => x.id !== n.id);
+  bp.links = bp.links.filter(l => l.from.node !== n.id && l.to.node !== n.id);
   renderNodes();
   scheduleFlowSave();
 }
