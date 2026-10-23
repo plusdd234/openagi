@@ -17,7 +17,7 @@ const NODE_DEFS = {
   varGet:   { title:'获取变量', dot:'var', desc:'读取变量当前值', inputs:[], outputs:[], execIn:false, execOut:[], pure:true },
   varSet:   { title:'设置变量', dot:'var', desc:'把输入值写入变量', inputs:[], outputs:[], execIn:true, execOut:['exec'] },
   imageGen: { title:'图像生成', dot:'gen', desc:'文生图或图生图', inputs:['prompt','image'], outputs:['image'], execIn:true, execOut:['exec'] },
-  tripoImg: { title:'Tripo 网页生图', dot:'gen', desc:'通过 Tripo 网页账号文生图 / 图生图', inputs:['prompt','image'], outputs:['image','text'], execIn:true, execOut:['exec'] },
+  tripoImg: { title:'Tripo 网页生图', dot:'gen', desc:'通过 Tripo 网页账号文生图 / 图生图，最多可传 3 张参考图', inputs:['prompt','image','image2','image3'], outputs:['image','text'], execIn:true, execOut:['exec'] },
   imageCompress: { title:'压缩图像', dot:'image', desc:'缩放并压缩图像，降低分析 / 生成请求的数据量', inputs:['image'], outputs:['image'], execIn:true, execOut:['exec'] },
   imageSplit: { title:'图像拆分', dot:'image', desc:'AI 按提示词把图中多个视图 / 对象分别拆分出来；每个视图输出一张图 + 一个「是否有」布尔，视图可动态增减', inputs:['image','prompt'], outputs:['text'], execIn:true, execOut:['exec'] },
   model3d:  { title:'3D 生成', dot:'model', desc:'图生 3D 模型（Tripo API 或网页账号）', inputs:['image'], outputs:['model'], execIn:true, execOut:['exec'] },
@@ -78,7 +78,8 @@ const NODE_PARAMS = {
     { key:'ratio', label:'比例', ctl:'select', default:'auto', options:[
       ['auto','自动'], ['1:1','1:1'], ['16:9','16:9'], ['9:16','9:16'], ['4:3','4:3'], ['3:4','3:4']
     ] },
-    { tip:'使用 Tripo 网页账号；运行时先自动切到文生图 / 图生图面板，参考图引脚可接图像。' }
+    { tip:'使用 Tripo 网页账号；运行时先自动切到文生图 / 图生图面板，参考图引脚可接图像。' },
+    { tip:'最多可接 3 张参考图：图像 / 参考图2 / 参考图3，按引脚顺序一起上传；只接一张时与原来一致。' }
   ],
 
   imageCompress: [
@@ -194,6 +195,8 @@ const PIN_META = {
   int:    { label:'整数', type:'int' },
   float:  { label:'浮点', type:'float' },
   image:  { label:'图像', type:'image' },
+  image2: { label:'参考图2', type:'image' },
+  image3: { label:'参考图3', type:'image' },
   front:  { label:'前视图', type:'image' },
   left:   { label:'左视图', type:'image' },
   right:  { label:'右视图', type:'image' },

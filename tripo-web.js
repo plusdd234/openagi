@@ -158,6 +158,58 @@ async function attachReference(page, file) {
   return false;
 }
 
+// 多张参考图上传
+// 真实页面实测结论：参考图控件虽带 multiple，但一次性写入多张不会触发页面逐图处理，
+// 因此主路径是「逐张写入」——每次写一张，页面追加进参考图列表；
+// 一次性写入仅作兜底（供支持数组写入的页面使用）。
+async function attachReferences(page, files) {
+  const list = (files || []).filter(Boolean);
+  if (!list.length) return { ok: false, uploaded: 0 };
+  if (list.length === 1) {
+    const ok = await attachReference(page, list[0]);
+    return { ok, uploaded: ok ? 1 : 0 };
+  }
+
+  const before = await visibleImageSrcs(page);
+  let written = 0;
+  for (const f of list) {
+    if (await attachReference(page, f)) written++;
+    await sleep(700);
+  }
+  const after = await visibleImageSrcs(page);
+  const grew = after.filter(s => !before.includes(s)).length;
+  if (written > 0 || grew > 0) {
+    log(`已逐张上传参考图：写入 ${written} 张，新增预览 ${grew} 张`);
+    return { ok: true, uploaded: Math.max(written, grew) };
+  }
+
+  // 兜底：一次性写入带 multiple 的控件
+  const handles = await page.$$('input[type=file]');
+  for (const el of handles) {
+    const info = await el.evaluate(e => {
+      const r = e.getBoundingClientRect();
+      const a = (e.getAttribute('accept') || '').toLowerCase();
+      return { visible: r.width > 0 && r.height > 0, multiple: !!e.multiple, accept: a };
+    }).catch(() => null);
+    if (!info || !info.visible || !info.multiple) continue;
+    if (!/image|png|jpe?g|webp|\*/.test(info.accept)) continue;
+    try {
+      await el.setInputFiles(list, { timeout: 15000 });
+      await sleep(1800);
+      const after2 = await visibleImageSrcs(page);
+      const grew2 = after2.filter(s => !before.includes(s)).length;
+      if (grew2 > 0) {
+        log(`已一次性写入 ${grew2} 张参考图`);
+        return { ok: true, uploaded: grew2 };
+      }
+    } catch (e) {
+      log('一次性写入失败：' + e.message);
+    }
+    break;
+  }
+  return { ok: false, uploaded: 0 };
+}
+
 async function selectRatio(page, ratio) {
   if (!ratio || ratio === 'auto') return false;
   const els = await page.$$('button, [role="button"], [class*="ratio"], [class*="aspect"], [class*="size"]');
@@ -536,22 +588,23 @@ async function runOnce(context, page, prompt, opts = {}) {
       : `未找到${mode === 'image' ? '图生图' : '文生图'}切换入口，沿用当前面板`);
   }
 
-  if (opts.image) {
-    let file = null;
-    try {
-      file = await resolveImageFile(opts.image);
-    } catch (e) {
-      return { ok: false, message: '参考图处理失败：' + e.message };
+  // 参考图：支持多张（最多 3 张）
+  const refList = (Array.isArray(opts.images) ? opts.images : (opts.image ? [opts.image] : [])).filter(Boolean);
+  if (refList.length) {
+    const files = [];
+    for (const src of refList) {
+      try { files.push(await resolveImageFile(src)); }
+      catch (e) { return { ok: false, message: '参考图处理失败：' + e.message }; }
     }
-    const attached = await attachReference(page, file);
-    if (!attached) {
+    const attached = await attachReferences(page, files);
+    if (!attached.ok) {
       const dbg = await probeData(page).catch(() => null);
       const hint = dbg && dbg.files.length
         ? '（页面文件输入：' + dbg.files.map(f => f.accept || f.name || '无 accept').join(' / ') + '）'
         : '（页面上没有可见的文件输入）';
       return { ok: false, message: '参考图没有成功上传' + hint };
     }
-    log('已上传参考图，等待页面处理…');
+    log(`已上传 ${attached.uploaded} 张参考图，等待页面处理…`);
     await sleep(1800);
   }
 
@@ -1158,7 +1211,9 @@ async function startServer() {
       if (u.pathname === '/generate' && req.method === 'POST') {
         const body = await readJson(req, 25 * 1024 * 1024);
         const prompt = String(body.prompt || '').trim();
-        const image = String(body.image || '');
+        // 参考图：兼容旧的单张 image 字段，也接受最多 3 张的 images 数组
+        const rawImages = Array.isArray(body.images) ? body.images : (body.image ? [body.image] : []);
+        const images = rawImages.map(s => String(s || '')).filter(Boolean).slice(0, 3);
         const ratio = String(body.ratio || '');
         const mode = String(body.mode || '');
         const timeoutSec = Math.max(10, Math.min(900, Number(body.timeoutSec) || TIMEOUT_SEC));
@@ -1176,7 +1231,7 @@ async function startServer() {
         }
         srvBusy = true;
         try {
-          const r = await runOnce(context, page, prompt, { image, ratio, mode, timeoutSec });
+          const r = await runOnce(context, page, prompt, { images, ratio, mode, timeoutSec });
           if (!r.file) { sendJson(res, 500, { ok: false, message: r.message || '生成失败' }); return; }
           sendJson(res, 200, {
             ok: !!r.ok,
@@ -1246,14 +1301,24 @@ async function startServer() {
   });
 }
 
-if (SERVE) {
-  startServer().catch(e => {
-    console.error('启动服务失败：' + e.stack);
-    process.exit(1);
-  });
-} else {
-  mainCli().catch(e => {
-    console.error('运行出错：' + e.stack);
-    process.exit(1);
-  });
+// 导出核心函数供单测使用（tools/ 下以 mock 页面验证多文件写入等逻辑）
+module.exports = {
+  attachReference, attachReferences, visibleImageSrcs, resolveImageFile,
+  clickTextEl, selectRatio, findPromptInput, findGenerateButton,
+  openTopologyPanel, pickTopologyType, setFaceCount, closeTopologyPanel,
+  countImageInputs, setMultiViewMode, attachMultiView, pickGenerateCount,
+};
+
+if (require.main === module) {
+  if (SERVE) {
+    startServer().catch(e => {
+      console.error('启动服务失败：' + e.stack);
+      process.exit(1);
+    });
+  } else {
+    mainCli().catch(e => {
+      console.error('运行出错：' + e.stack);
+      process.exit(1);
+    });
+  }
 }

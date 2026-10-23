@@ -683,8 +683,9 @@ async function wfCondition(instruction, text){
   return toBool(out);
 }
 
-async function wfTripoWebImage(prompt, image, opts){
+async function wfTripoWebImage(prompt, images, opts){
   const o = opts || {};
+  const list = (Array.isArray(images) ? images : (images ? [images] : [])).filter(Boolean).slice(0, 3);
   const timeoutSec = Math.max(10, Math.min(900, Math.trunc(Number(o.timeoutSec) || 0) || 240));
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), (timeoutSec + 40) * 1000);
@@ -694,7 +695,8 @@ async function wfTripoWebImage(prompt, image, opts){
       headers:{ 'Content-Type':'application/json' },
       body: JSON.stringify({
         prompt,
-        image: image || '',
+        image: list[0] || '',
+        images: list,
         ratio: o.ratio && o.ratio !== 'auto' ? o.ratio : '',
         mode: o.mode === 'text' || o.mode === 'image' ? o.mode : '',
         timeoutSec
@@ -704,7 +706,7 @@ async function wfTripoWebImage(prompt, image, opts){
     let data = null;
     try { data = await res.json(); } catch(e) {}
     if(!res.ok || !data || !data.url) throw new Error((data && data.message) || ('Tripo 助手返回 HTTP ' + res.status));
-    return { url: data.url + '?t=' + Date.now(), file: data.file || '', canvas: !!data.canvas, message: data.message || '' };
+    return { url: data.url + '?t=' + Date.now(), file: data.file || '', canvas: !!data.canvas, message: data.message || '', refs: list.length };
   }catch(e){
     if(e && e.name === 'AbortError') throw new Error('Tripo 网页生成超时（' + (timeoutSec + 40) + ' 秒）');
     if(e instanceof TypeError) throw new Error('无法连接 Tripo 助手：请先运行 start-relay.bat（或 start-tripo-bridge.bat）');
@@ -1229,15 +1231,21 @@ async function runFlow(){
       } else if(n.type === 'tripoImg'){
         const p = ((await input('prompt')) || n.data.prompt || '').trim();
         if(!p) throw new Error('缺少提示词');
-        const ref = await input('image');
+        // 最多 3 张参考图：图像 / 参考图2 / 参考图3，按引脚顺序上传
+        const refs = [];
+        for(const k of ['image','image2','image3']){
+          const v = await input(k);
+          if(v) refs.push(v);
+        }
         const timeoutSec = Math.max(10, Math.min(900, Math.trunc(Number(await paramIn('timeout')) || 0) || 240));
-        const r = await wfTripoWebImage(p, ref, {
+        const r = await wfTripoWebImage(p, refs, {
           timeoutSec,
           ratio: await paramIn('ratio'),
           mode: await paramIn('mode')
         });
         n.out.image = r.url;
-        n.out.text = r.file ? ('已保存：' + r.file) : r.url;
+        const refNote = refs.length > 1 ? (' · ' + refs.length + ' 张参考图') : '';
+        n.out.text = (r.file ? ('已保存：' + r.file) : r.url) + refNote;
       } else if(n.type === 'imageCompress'){
         const src = await input('image');
         if(!src) throw new Error('缺少图像输入');
