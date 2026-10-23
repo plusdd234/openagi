@@ -49,6 +49,9 @@ const NODE_DEFS = {
 const DATA_PARAMS = (list) => list.map(o => Object.assign({ store:'data' }, o));
 const PARAM_PARAMS = (list) => list.map(o => Object.assign({ store:'param' }, o));
 
+// 分析任务的默认超时（秒）。必须定义在 NODE_PARAMS 之前，否则声明表里引用不到
+const TASK_TIMEOUT_DEFAULT = 300;
+
 const NODE_PARAMS = {
   start: [
     { key:'__params__', ctl:'paramList' }
@@ -157,7 +160,7 @@ const NODE_PARAMS = {
 
   aiTask: [
     { key:'instruction', ctl:'textarea', ph:'任务指令（例如：总结输入文本并列出风险点）' },
-    { key:'timeout', label:'超时', ctl:'number', type:'int', min:0, max:3600, step:10, unit:'秒，0 表示不限时', default:300 },
+    { key:'timeout', label:'超时', ctl:'number', type:'int', min:0, max:3600, step:10, unit:'秒，0 表示不限时', default:TASK_TIMEOUT_DEFAULT },
     { key:'__taskPins__', ctl:'taskPins' }
   ],
 
@@ -224,7 +227,6 @@ const TYPE_META = {
 };
 const TYPE_ORDER = ['int','float','string','bool','image','model'];
 const TASK_OUT_TYPES = ['string','int','float','bool'];
-const TASK_TIMEOUT_DEFAULT = 120;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // 节点内可编辑控件必须拦下这几个事件，否则一按就开始拖节点 / 框选画布
 const NAME_EVENTS = ['pointerdown', 'mousedown', 'click', 'dblclick'];

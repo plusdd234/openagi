@@ -503,16 +503,23 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
   const ctrl = new AbortController();
   let idle = null;
   let hard = null;
+  let firstTimer = null;
   let waitingFirst = true;
+  let gotBytes = false;          // 是否收到过上游的任何字节
   let abortReason = '';
+  const startedAt = Date.now();
+  const elapsedSec = () => Math.round((Date.now() - startedAt) / 1000);
   const abortWith = reason => { abortReason = reason; ctrl.abort(); };
+  // 空闲计时：只在流建立（收到过字节）后才启动，避免把「首段等待」误判成「流中断」
   const bump = ms => {
+    if(!gotBytes) return;
     clearTimeout(idle);
     idle = setTimeout(() => abortWith('idle'), ms || 60000);
   };
-  // 首段响应等待：任务配置了超时则按配置等待，否则默认 30 秒
-  const firstWaitMs = limitMs > 0 ? limitMs : 30000;
-  bump(firstWaitMs);
+  // 首段内容等待上限：优先用任务配置的超时；「不限时」时给 2 分钟
+  // （此前硬编码 30 秒，视觉模型分析大图根本不够，且老流程节点没有 timeout 字段时会踩到）
+  const firstWaitMs = limitMs > 0 ? limitMs : 120000;
+  firstTimer = setTimeout(() => abortWith('first'), firstWaitMs);
   hard = setTimeout(() => abortWith('limit'), limitMs || 600000);
 
   const req = apiRequest(base + '/chat/completions', {
@@ -556,6 +563,9 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
     throw last || new Error('请求失败');
   };
 
+  // 保留最后几行原始 SSE，出错时带出来，便于判断上游到底发了什么
+  const rawTail = [];
+
   try{
     const res = await fetchWithRetry();
     if(!res.ok){
@@ -578,6 +588,7 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
     let doneFlag = false;
     const pushLine = line => {
       const s = line.replace(/\r$/, '').trim();
+      if(s){ rawTail.push(s.slice(0, 120)); if(rawTail.length > 4) rawTail.shift(); }
       if(!s || s.startsWith(':') || !s.startsWith('data:')) return;
       const payload = s.slice(5).trim();
       if(payload === '[DONE]'){ doneFlag = true; return; }
@@ -587,6 +598,7 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
         const piece = d && typeof d.content === 'string' ? d.content : '';
         if(piece){
           waitingFirst = false;
+          clearTimeout(firstTimer);   // 首段内容已到，首段计时器完成使命
           acc += piece;
           if(onDelta) onDelta(acc, piece);
         }
@@ -596,6 +608,7 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
     while(true){
       const { done, value } = await reader.read();
       if(done) break;
+      gotBytes = true;
       bump();
       buf += dec.decode(value, { stream:true });
       let idx;
@@ -612,14 +625,23 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
     return text;
   }catch(e){
     if(e && e.name === 'AbortError'){
+      const el = elapsedSec();
       if(abortReason === 'limit') throw new Error('任务超时（' + Math.round((limitMs || 600000) / 1000) + ' 秒）已中止');
-      throw new Error(waitingFirst
-        ? '等待模型首段响应超过 ' + Math.round(firstWaitMs / 1000) + ' 秒（图像分析较慢，可在节点的「超时」里调大；也可能是地址/密钥/模型名错误，或模型不支持图像输入）'
-        : '流式响应中断：连续 60 秒没有收到新内容');
+      if(abortReason === 'first'){
+        if(!gotBytes){
+          throw new Error('上游没有返回任何数据（已等待 ' + el + ' 秒，首段上限 ' + Math.round(firstWaitMs / 1000) + ' 秒）：'
+            + '请检查接口地址 / 密钥 / 模型名，以及本机网络与代理；本地中转已自动重试上游断连');
+        }
+        throw new Error('上游返回了数据但没有内容（已等待 ' + el + ' 秒，首段上限 ' + Math.round(firstWaitMs / 1000) + ' 秒）：'
+          + '可能是模型不支持图像输入，或响应被中转截断；可在节点「超时」里调大后重试'
+          + (rawTail.length ? '｜上游最后几行：' + rawTail.join(' ⏎ ').slice(0, 260) : ''));
+      }
+      throw new Error('流式响应中断：连续 60 秒没有收到新数据（本次已运行 ' + el + ' 秒）');
     }
     throw e;
   }finally{
     clearTimeout(idle);
+    clearTimeout(firstTimer);
     clearTimeout(hard);
   }
 }
@@ -1080,6 +1102,20 @@ async function wf3D(image){
   return url;
 }
 
+// 参数取值兜底：节点上没有该字段时，回退到声明表里的缺省值。
+// 必要场景：老流程里的节点建于某个参数加入之前，data 里根本没有这个键，
+// 若不回退就会拿到 undefined（超时类参数会退化成硬编码的短等待）。
+function paramFallback(n, key){
+  const list = (typeof NODE_PARAMS !== 'undefined' && NODE_PARAMS[n.type]) || [];
+  const spec = list.find(s => s.key === key);
+  if(!spec) return undefined;
+  const dk = spec.dataKey || spec.key;
+  const d = n.data ? n.data[dk] : undefined;
+  if(d !== undefined && d !== null && d !== '') return d;
+  const def = (typeof spec.default === 'function') ? spec.default() : spec.default;
+  return (def === undefined || def === null) ? undefined : def;
+}
+
 async function runFlow(){
   if(bpRunBusy || !bp) return;
   if(!bp.nodes.length){ bpToast('请先添加节点'); return; }
@@ -1158,8 +1194,8 @@ async function runFlow(){
     const paramIn = async key => {
       const v = await input(key);
       if(v !== undefined && v !== null && v !== '') return v;
-      const d = n.data ? n.data[key] : undefined;
-      return (d === undefined || d === null) ? undefined : d;
+      // 节点上没有就地值时，回退到声明缺省值（老流程节点可能根本没有这个字段）
+      return paramFallback(n, key);
     };
     try {
       if(n.type === 'start'){
