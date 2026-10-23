@@ -19,8 +19,10 @@ const NODE_DEFS = {
   imageGen: { title:'图像生成', dot:'gen', desc:'文生图或图生图', inputs:['prompt','image'], outputs:['image'], execIn:true, execOut:['exec'] },
   tripoImg: { title:'Tripo 网页生图', dot:'gen', desc:'通过 Tripo 网页账号文生图 / 图生图', inputs:['prompt','image'], outputs:['image','text'], execIn:true, execOut:['exec'] },
   imageCompress: { title:'压缩图像', dot:'image', desc:'缩放并压缩图像，降低分析 / 生成请求的数据量', inputs:['image'], outputs:['image'], execIn:true, execOut:['exec'] },
+  imageSplit: { title:'图像拆分', dot:'image', desc:'AI 按提示词把图中多个视图 / 对象分别拆分出来；每个视图输出一张图 + 一个「是否有」布尔，视图可动态增减', inputs:['image','prompt'], outputs:['text'], execIn:true, execOut:['exec'] },
   model3d:  { title:'3D 生成', dot:'model', desc:'图生 3D 模型（Tripo API 或网页账号）', inputs:['image'], outputs:['model'], execIn:true, execOut:['exec'] },
-  tripoModel:{ title:'Tripo 网页生成模型', dot:'model', desc:'通过 Tripo 网页账号图生 3D 模型，可选智能网格 P2.0、面数、数量、导出格式', inputs:['image'], outputs:['model','text'], execIn:true, execOut:['exec'] },
+  tripoModel:{ title:'Tripo 网页生成模型', dot:'model', desc:'通过 Tripo 网页账号图生 3D 模型（单张参考图），可选智能网格 P2.0、拓扑 / 面数、数量、导出格式', inputs:['image'], outputs:['model','text'], execIn:true, execOut:['exec'] },
+  tripoModelMulti:{ title:'Tripo 网页多视图生成', dot:'model', desc:'通过 Tripo 网页账号多视图生 3D 模型（前 / 左 / 右 / 后 四张参考图），可选智能网格 P2.0、拓扑 / 面数、数量、导出格式', inputs:['front','left','right','back'], outputs:['model','text'], execIn:true, execOut:['exec'] },
   modelViews:{ title:'3D 模型转四视图', dot:'model', desc:'把 3D 模型渲染为 2×2 四视图（前/后/左/右），可直接喂给生图 AI', inputs:['model'], outputs:['image','text'], execIn:true, execOut:['exec'] },
   result:   { title:'结果输出', dot:'out', desc:'汇总文本、图像与模型结果', inputs:['text','image','model'], outputs:[], execIn:true, execOut:[] },
 };
@@ -85,6 +87,19 @@ const NODE_PARAMS = {
     { tip:'等比缩小到最长边限制，并转成 JPEG 输出' }
   ],
 
+  /* 图像拆分：提示词 + 输出形式 + 动态视图列表（viewPins 控件）。
+     每个视图生成两条输出引脚：id → 图像（该视图的拆分结果），id__has → 布尔（图中是否有该视图）。 */
+  imageSplit: [
+    { key:'prompt', label:'提示词', ctl:'textarea', ph:'拆分要求（例如：把图中角色的各个视图分别拆出来，背景忽略）' },
+    { key:'output', label:'输出形式', ctl:'select', default:'cutout', options:[
+      ['cutout','抠图（透明背景）'], ['crop','矩形裁剪'], ['mask','蒙版图']
+    ] },
+    { key:'feather', label:'边缘羽化', ctl:'number', type:'int', min:0, max:32, step:1, unit:'px', default:2 },
+    { key:'timeout', label:'超时', ctl:'number', type:'int', min:10, max:600, step:10, unit:'秒', default:120 },
+    { key:'__views__', ctl:'viewPins' },
+    { tip:'每个视图输出两张引脚：图像（拆分结果，找不到时为空）+ 布尔（图中是否有该视图）。点「+ 添加视图」或常用视图标签动态增减。' }
+  ],
+
   model3d: [ { tip:'使用设置中的 Tripo 版本，输出 GLB 模型' } ],
 
   tripoModel: [
@@ -95,12 +110,34 @@ const NODE_PARAMS = {
     { key:'version', label:'网格版本', ctl:'select', default:'P2.0', options:[
       ['P2.0','P2.0'], ['P1.0','P1.0'], ['','页面默认']
     ] },
-    { key:'faceCount', label:'面数', ctl:'number', type:'int', min:0, max:200000, step:1000, unit:'面，0=默认', default:0 },
+    { key:'topology', label:'拓扑', ctl:'select', default:'', options:[
+      ['','页面默认'], ['quad','四边面'], ['tri','三角面']
+    ] },
+    { key:'faceCount', label:'面数', ctl:'number', type:'int', min:0, max:25000, step:100, unit:'面（500–25000，0=默认）', default:0 },
     { key:'count', label:'数量', ctl:'select', type:'int', default:1, options:[[1,'1'],[2,'2'],[4,'4']] },
     { key:'format', label:'格式', ctl:'select', default:'', options:[
       ['','页面默认'], ['glb','GLB'], ['obj','OBJ'], ['fbx','FBX'], ['stl','STL'], ['usdz','USDZ']
     ] },
     { key:'timeout', label:'超时', ctl:'number', type:'int', min:30, max:1800, step:30, unit:'秒', default:420 },
+    { tip:'生成走网页自动化，会消耗网页账号积分；存在风控风险。' }
+  ],
+  tripoModelMulti: [
+    { tip:'前 / 左 / 右 / 后 四个引脚各接一张参考图（至少接一个）；页面会自动切到多视图上传模式' },
+    { key:'mode', label:'模式', ctl:'select', default:'smart', options:[
+      ['smart','智能网格'], ['hd','高精度模型'], ['','页面默认']
+    ] },
+    { key:'version', label:'网格版本', ctl:'select', default:'P2.0', options:[
+      ['P2.0','P2.0'], ['P1.0','P1.0'], ['','页面默认']
+    ] },
+    { key:'topology', label:'拓扑', ctl:'select', default:'', options:[
+      ['','页面默认'], ['quad','四边面'], ['tri','三角面']
+    ] },
+    { key:'faceCount', label:'面数', ctl:'number', type:'int', min:0, max:25000, step:100, unit:'面（500–25000，0=默认）', default:0 },
+    { key:'count', label:'数量', ctl:'select', type:'int', default:1, options:[[1,'1'],[2,'2'],[4,'4']] },
+    { key:'format', label:'格式', ctl:'select', default:'', options:[
+      ['','页面默认'], ['glb','GLB'], ['obj','OBJ'], ['fbx','FBX'], ['stl','STL'], ['usdz','USDZ']
+    ] },
+    { key:'timeout', label:'超时', ctl:'number', type:'int', min:30, max:1800, step:30, unit:'秒', default:600 },
     { tip:'生成走网页自动化，会消耗网页账号积分；存在风控风险。' }
   ],
 
@@ -143,8 +180,8 @@ const NODE_LIB = [
   // 「输入」组按数据类型排齐：文本 / 数值 / 布尔 / 图像 / 3D 模型，与 TYPE_META 一一对应
   { group:'输入', types:['text','numNode','boolNode','imageIn','modelIn'] },
   { group:'分析任务', types:['aiTask'] },
-  { group:'图像任务', types:['imageGen','imageCompress','tripoImg'] },
-  { group:'3D 任务', types:['model3d','modelViews','tripoModel'] },
+  { group:'图像任务', types:['imageGen','imageCompress','imageSplit','tripoImg'] },
+  { group:'3D 任务', types:['model3d','modelViews','tripoModel','tripoModelMulti'] },
   { group:'逻辑', types:['condition','branch'] },
   { group:'流程', types:['start','end'] },
   { group:'输出', types:['result'] },
@@ -157,6 +194,10 @@ const PIN_META = {
   int:    { label:'整数', type:'int' },
   float:  { label:'浮点', type:'float' },
   image:  { label:'图像', type:'image' },
+  front:  { label:'前视图', type:'image' },
+  left:   { label:'左视图', type:'image' },
+  right:  { label:'右视图', type:'image' },
+  back:   { label:'后视图', type:'image' },
   hint:   { label:'补充', type:'string' },
   prompt: { label:'提示词', type:'string' },
   text:   { label:'文本', type:'string' },

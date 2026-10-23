@@ -1,11 +1,12 @@
-/* tripoModel 节点体检（全程不触发生成、不消耗积分）
+/* tripoModel / tripoModelMulti 节点体检（全程不触发生成、不消耗积分）
  * 护栏：window.fetch 一律拦截 127.0.0.1:8790（Tripo 网页桥）的真实调用，
  *       改为记录并返回合成响应——任何路径都不可能误触网页生成。
- * 1) 节点库可添加；引脚与参数渲染（模式 / 网格版本 / 面数 / 数量 / 格式 / 超时）
+ * 1) 节点库可添加；引脚与参数渲染（模式 / 网格版本 / 拓扑 / 面数 / 数量 / 格式 / 超时）
  * 2) 缺参考图 → 友好报错，且不发起任何请求
  * 3) 打桩 fetch：executeNode → wfTripoWebModel 的请求体 / 输出键 / 日志
  * 4) 数值引脚连线覆盖就地参数（faceCount）
  * 5) model3d 在非 Tripo 引擎下给出明确门禁提示（零请求）
+ * 6) 多视图节点：四路图像引脚、至少一图的校验、multi+views 请求体
  * 用法：node tools/tripo-model-node.js
  */
 const { chromium } = require('playwright-core');
@@ -24,10 +25,13 @@ const check = (ok, name, extra) => {
 
 (async () => {
   const errors = [];
+  const relayDown = [];
   const browser = await chromium.launch({ channel: 'msedge' });
   const page = await browser.newPage();
   page.on('pageerror', e => errors.push('pageerror: ' + (e && e.message)));
   page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  // 本地服务（relay 8787 / Tripo 桥 8790）不在线时页面启动探测会静默失败，属环境噪声
+  page.on('requestfailed', r => { if (/127\.0\.0\.1:(8787|8790)|localhost:(8787|8790)/.test(r.url())) relayDown.push(r.url()); });
 
   await page.goto(TARGET, { waitUntil: 'load' });
   await page.waitForTimeout(1500);
@@ -83,14 +87,14 @@ const check = (ok, name, extra) => {
   const dataOut = ui.out.filter(p => p.type !== 'exec');
   check(ui.in.some(p => p.key === 'image' && p.type === 'image'), '输入引脚：image', JSON.stringify(ui.in));
   check(JSON.stringify(dataOut.map(p => p.key)) === '["model","text"]', '输出数据引脚：model + text', JSON.stringify(dataOut));
-  check(dataIn.length === 7, '参数同时是可连线输入引脚（7 个）', String(dataIn.length));
+  check(dataIn.length === 8, '参数同时是可连线输入引脚（8 个）', String(dataIn.length));
   check(dataIn.find(p => p.key === 'faceCount').type === 'int' && dataIn.find(p => p.key === 'count').type === 'int', '面数/数量引脚为 int');
   check(dataOut.find(p => p.key === 'model').type === 'model', 'model 引脚类型为 model');
   check(dataOut.find(p => p.key === 'text').type === 'string', 'text 引脚类型为 string');
   check(ui.def && ui.def.execIn === true && (ui.def.execOut || []).length === 1, '带执行引脚（接入执行线）');
   console.log(' 参数行: ' + JSON.stringify(ui.rows));
   const labels = ui.rows.map(r => r.label).join('|');
-  ['模式', '网格版本', '面数', '数量', '格式', '超时'].forEach(k => check(labels.includes(k), '参数行含「' + k + '」'));
+  ['模式', '网格版本', '拓扑', '面数', '数量', '格式', '超时'].forEach(k => check(labels.includes(k), '参数行含「' + k + '」'));
   const modeRow = ui.rows.find(r => r.label === '模式');
   check(modeRow && modeRow.value === 'smart', '模式默认「智能网格」', modeRow && modeRow.value);
   const verRow = ui.rows.find(r => r.label === '网格版本');
@@ -134,6 +138,7 @@ const check = (ok, name, extra) => {
       bp.nodes.push(ii);
       bp.links.push({ id: uid(), from: { node: ii.id, key: 'image' }, to: { node: tm.id, key: 'image' } });
       // 就地参数也改一下，验证连线优先
+      tm.data.topology = 'quad';
       tm.data.format = 'glb';
       tm.data.count = 2;
       tm.data.timeout = 600;
@@ -156,6 +161,8 @@ const check = (ok, name, extra) => {
     check(call.method === 'POST', '方法为 POST');
     check(body.mode === 'smart', 'mode=smart', body.mode);
     check(body.version === 'P2.0', 'version=P2.0', body.version);
+    check(body.topology === 'quad', 'topology=quad（四边面）', body.topology);
+    check(body.multi === false, '单视图节点 multi=false');
     check(body.faceCount === 15000, '面数取连线值 15000（覆盖就地 0）', String(body.faceCount));
     check(body.count === 2, '数量取就地值 2', String(body.count));
     check(body.format === 'glb', '格式取就地值 glb', body.format);
@@ -197,9 +204,100 @@ const check = (ok, name, extra) => {
   check(apiEngine.status === 'error' && /Tripo 引擎/.test(apiEngine.err), '非 Tripo 引擎下给出明确提示', apiEngine.err);
   check(apiEngine.bridgeCalls === 0, '门禁在发请求前生效（零桥调用）', '调用数=' + apiEngine.bridgeCalls);
 
-  console.log('\n错误: ' + errors.length);
-  errors.slice(0, 5).forEach(e => console.log('  ' + e));
-  check(errors.length === 0, '无页面错误');
+  /* ---------- 5. 多视图节点 tripoModelMulti ---------- */
+  const mvUi = await page.evaluate(() => {
+    const flow = { id: 'tmm_' + Date.now(), name: '多视图节点体检', nodes: [], links: [], vars: [], updated: Date.now(), lastRun: null };
+    const s = newNode('start', -300, 0);
+    const mm = newNode('tripoModelMulti', 60, 0);
+    const rs = newNode('result', 620, 0);
+    flow.nodes = [s, mm, rs];
+    flow.links = [
+      { id: uid(), from: { node: s.id, key: 'exec' }, to: { node: mm.id, key: 'exec' } },
+      { id: uid(), from: { node: mm.id, key: 'exec' }, to: { node: rs.id, key: 'exec' } },
+      { id: uid(), from: { node: mm.id, key: 'model' }, to: { node: rs.id, key: 'model' } }
+    ];
+    FLOWS.unshift(flow);
+    openFlow(flow.id);
+    const el = document.getElementById('n-' + mm.id);
+    const pins = d => Array.from(el.querySelectorAll('.pin.' + d)).map(p => ({ key: p.dataset.key, type: p.dataset.type }));
+    const libHas = NODE_LIB.reduce((a, g) => a.concat(g.types), []).includes('tripoModelMulti');
+    return {
+      in: pins('in').filter(p => p.type !== 'exec'), out: pins('out').filter(p => p.type !== 'exec'),
+      libHas, title: ((el.querySelector('.node-title') || {}).textContent || '').trim(),
+      def: NODE_DEFS.tripoModelMulti
+    };
+  });
+  console.log('\n=== 5. 多视图节点渲染 ===');
+  check(mvUi.libHas, '节点库可添加 tripoModelMulti');
+  check(mvUi.title === 'Tripo 网页多视图生成', '节点标题正确', mvUi.title);
+  const imgPins = mvUi.in.filter(p => p.type === 'image');
+  check(JSON.stringify(imgPins.map(p => p.key)) === '["front","left","right","back"]', '四个图像输入引脚 前/左/右/后', JSON.stringify(imgPins.map(p => p.key)));
+  check(mvUi.in.filter(p => p.type === 'int').length === 3, '面数/数量/超时为 int 引脚');
+  check(JSON.stringify(mvUi.out.map(p => p.key)) === '["model","text"]', '输出 model + text', JSON.stringify(mvUi.out.map(p => p.key)));
+
+  // 5.1 一图不接 → 明确报错、零请求
+  const mvNoImg = await page.evaluate(async () => {
+    window.__bridgeCalls = [];
+    const mm = bp.nodes.find(n => n.type === 'tripoModelMulti');
+    bp.nodes.forEach(n => { n.out = {}; n.status = ''; n.error = ''; });
+    await runFlow();
+    return { status: mm.status, err: mm.error || '', calls: window.__bridgeCalls.slice() };
+  });
+  check(mvNoImg.status === 'error' && /至少.*一张参考图/.test(mvNoImg.err), '未接视图时明确报错', mvNoImg.err);
+  check(mvNoImg.calls.length === 0, '零请求', '请求数=' + mvNoImg.calls.length);
+
+  // 5.2 打桩 fetch：一个图像输入节点扇出到四路视图
+  const mvRun = await page.evaluate(async (png) => {
+    const guard = window.fetch;
+    window.__calls = [];
+    window.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : (input && input.url) || '';
+      window.__calls.push({ url: String(url), method: (init || {}).method, body: (init || {}).body });
+      return new Response(JSON.stringify({
+        url: 'http://127.0.0.1:8790/out/model_multi.glb',
+        file: 'model_multi.glb', size: 51200, message: ''
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    try {
+      const mm = bp.nodes.find(n => n.type === 'tripoModelMulti');
+      const ii = newNode('imageIn', -300, 320);
+      ii.data.image = png; ii.data.fileName = 'ref.png';
+      bp.nodes.push(ii);
+      ['front', 'left', 'right', 'back'].forEach(k =>
+        bp.links.push({ id: uid(), from: { node: ii.id, key: 'image' }, to: { node: mm.id, key: k } }));
+      mm.data.topology = 'tri';
+      mm.data.faceCount = 12000;
+      bp.nodes.forEach(n => { n.out = {}; n.status = ''; n.error = ''; });
+      await runFlow();
+      return {
+        calls: window.__calls.slice(),
+        status: mm.status, err: mm.error || '',
+        out: { model: mm.out.model, text: mm.out.text }
+      };
+    } finally { window.fetch = guard; }
+  }, PNG_1PX);
+  console.log('--- 多视图请求 ---');
+  const mvCall = mvRun.calls.find(c => /\/generate-model$/.test(c.url));
+  check(!!mvCall, 'POST /generate-model 被调用');
+  if (mvCall) {
+    const body = JSON.parse(mvCall.body);
+    check(body.multi === true, 'multi=true（多视图模式）');
+    check(body.topology === 'tri', 'topology=tri（三角面）', body.topology);
+    check(body.faceCount === 12000, '面数取就地值 12000', String(body.faceCount));
+    check(body.views && body.views.front && body.views.left && body.views.right && body.views.back,
+      '四路视图随请求发出', JSON.stringify(Object.keys(body.views || {})));
+    check(body.views && body.views.front === body.views.back, '同一图像输入扇出到四路');
+  }
+  check(mvRun.status === 'ok', '多视图节点执行成功', mvRun.status + (mvRun.err ? ' · ' + mvRun.err : ''));
+  check(/多视图生成完成 · 4 张参考图/.test(mvRun.out.text || ''), '输出 text 记录参考图张数', mvRun.out.text);
+  check(/model_multi\.glb/.test(mvRun.out.model || ''), '输出 model 为下载地址', mvRun.out.model);
+
+  console.log('\n错误: ' + errors.length + (relayDown.length ? '（本地服务未在线，忽略 ' + relayDown.length + ' 条连接失败）' : ''));
+  // 「Failed to load resource」是浏览器对本地服务不在线的资源级噪声（relay 8787 / 桥 8790 未开时
+  // 页面启动会静默探测），不计入页面错误；真实的 JS 错误会以 pageerror 或带消息的 console 出现
+  const real = errors.filter(e => !/Failed to load resource/.test(e));
+  real.slice(0, 5).forEach(e => console.log('  ' + e));
+  check(real.length === 0, '无页面错误');
   console.log(fails === 0 ? '\n总体: 通过 ✅' : '\n总体: ' + fails + ' 项不符合预期 ❌');
   await browser.close();
   process.exit(fails === 0 ? 0 : 1);

@@ -714,7 +714,8 @@ async function wfTripoWebImage(prompt, image, opts){
   }
 }
 
-/* Tripo 网页账号：图生 3D 模型（智能网格 / 高精度模型、P2.0、面数、数量、格式） */
+/* Tripo 网页账号：图生 3D 模型（智能网格 / 高精度模型、P2.0、拓扑 / 面数、数量、格式）
+   multi=true 时走多视图上传（前 / 左 / 右 / 后 四张参考图） */
 async function wfTripoWebModel(image, opts){
   const o = opts || {};
   const timeoutSec = Math.max(30, Math.min(1800, Math.trunc(Number(o.timeoutSec) || 0) || 420));
@@ -726,8 +727,11 @@ async function wfTripoWebModel(image, opts){
       headers:{ 'Content-Type':'application/json' },
       body: JSON.stringify({
         image: image || '',
+        multi: !!o.multi,
+        views: o.views || null,
         mode: o.mode || '',
         version: o.version || '',
+        topology: o.topology || '',
         faceCount: Math.max(0, Math.trunc(Number(o.faceCount) || 0)),
         count: Math.max(0, Math.trunc(Number(o.count) || 0)),
         format: o.format || '',
@@ -863,6 +867,173 @@ async function wfCompressImage(src, maxEdge, quality){
   }finally{
     if(revoke) revoke();
   }
+}
+
+/* 图像拆分：视觉模型按提示词定位多个视图 → 画布拆分
+ * views: [{ id, name, hint }]
+ * 输出：{ text, [id]: 图像 dataURL（找不到为 ''）, [id + '__has']: 布尔 } */
+async function wfImageSplit(src, prompt, views, opts, onDelta){
+  const o = opts || {};
+  const output = o.output === 'crop' || o.output === 'mask' ? o.output : 'cutout';
+  const feather = Math.max(0, Math.min(32, Math.trunc(Number(o.feather) || 0)));
+  // 1) 压缩一份送给视觉模型（返回归一化坐标，映射回原图不受影响）
+  const small = await wfCompressImage(src, 768, 0.7);
+  // 2) 让模型返回各视图的区域（polygon 优先，box 兜底）
+  const result = await wfSplitViews(small.image, prompt, views, o.timeoutSec, onDelta);
+  // 3) 在原图上按输出形式拆分
+  const { img, revoke } = await loadImageForCanvas(src);
+  try{
+    const w = img.naturalWidth || img.width || 0;
+    const h = img.naturalHeight || img.height || 0;
+    if(!w || !h) throw new Error('无法读取图像尺寸');
+    const out = { text: '' };
+    const lines = [];
+    for(const v of views){
+      const hit = result.views[v.id];
+      const geom = hit && hit.present
+        ? (hit.polygon && hit.polygon.length >= 3 ? { polygon: hit.polygon } : (hit.box ? { box: hit.box } : null))
+        : null;
+      if(!geom){
+        out[v.id] = '';
+        out[v.id + '__has'] = false;
+        lines.push(v.name + '：未找到');
+        continue;
+      }
+      out[v.id] = await renderSplit(img, w, h, geom, output, feather);
+      out[v.id + '__has'] = true;
+      lines.push(v.name + '：已拆分' + (hit.confidence ? '（置信度 ' + hit.confidence.toFixed(2) + '）' : ''));
+    }
+    out.text = '图像拆分完成 · ' + lines.join('；');
+    return out;
+  } finally{
+    if(revoke) revoke();
+  }
+}
+
+/* 让视觉模型逐视图判断「是否存在 + 区域」，返回 { views:{ [id]:{present,box,polygon,confidence} } } */
+async function wfSplitViews(imageUrl, prompt, views, timeoutSec, onDelta){
+  const sys = '你是图像拆分标注器。用户在图中寻找若干个指定的视图 / 对象，你需要判断每个视图是否存在，并给出存在视图的区域轮廓。只输出 JSON，不要输出 JSON 之外的任何文字。';
+  const list = views.map((v, i) => (i + 1) + '. ' + v.name + (v.hint ? '（' + v.hint + '）' : '')).join('\n');
+  const user = [
+    '请分析附图，按下面的清单逐一检查每个视图是否存在，并给出存在视图的区域。',
+    '拆分要求：' + (prompt || '把图中各个视图分别拆出来'),
+    '视图清单：',
+    list,
+    '以图片左上角为原点，输出归一化坐标（0~1，保留 3 位小数）。只返回这个 JSON：',
+    '{"views":[{"name":"正视图","present":true,"confidence":0.9,"box":[x,y,w,h],"polygon":[[x,y],[x,y],...]},{"name":"背视图","present":false}]}',
+    'box 是该视图区域的最小外接矩形 [左,上,宽,高]；polygon 是贴合区域边缘的多边形顶点（至少 6 个点，不要自交；无法给多边形时可省略，只给 box）。',
+    '一个都找不到时，所有 present 均为 false。'
+  ].join('\n');
+  const timeoutMs = Math.round((Number(timeoutSec) || 120) * 1000);
+  const raw = await llmStreamRequest(sys, [{ role:'user', content:[
+    { type:'text', text: user },
+    { type:'image_url', image_url:{ url: imageUrl } }
+  ]}], onDelta, { timeoutMs });
+  return parseSplitJson(raw, views);
+}
+
+/* 容错解析拆分 JSON：兼容 markdown 代码围栏与前后杂语；按视图名归并 */
+function parseSplitJson(raw, views){
+  const text = String(raw || '').trim();
+  let obj = null;
+  const m = text.match(/\{[\s\S]*\}/);
+  if(m){ try { obj = JSON.parse(m[0]); } catch(e) { obj = null; } }
+  if(!obj) throw new Error('模型返回的拆分结果无法解析（未找到 JSON）');
+  const arr = Array.isArray(obj.views) ? obj.views : [];
+  const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, '');
+  const clamp01 = v => { const x = Number(v); return isFinite(x) ? Math.max(0, Math.min(1, x)) : null; };
+  const byName = {};
+  arr.forEach(item => {
+    if(!item || typeof item !== 'object') return;
+    const nm = norm(item.name);
+    if(nm) byName[nm] = item;
+  });
+  const result = { views: {} };
+  views.forEach(v => {
+    const item = byName[norm(v.name)];
+    if(!item || item.present === false){ result.views[v.id] = { present: false }; return; }
+    let box = null;
+    if(Array.isArray(item.box) && item.box.length === 4){
+      const b = item.box.map(clamp01);
+      if(b.every(x => x !== null)) box = b;
+    }
+    let polygon = [];
+    if(Array.isArray(item.polygon)){
+      polygon = item.polygon
+        .map(p => (Array.isArray(p) && p.length >= 2) ? [clamp01(p[0]), clamp01(p[1])] : null)
+        .filter(p => p && p[0] !== null && p[1] !== null);
+    }
+    const conf = Number(item.confidence);
+    result.views[v.id] = {
+      present: true,
+      confidence: isFinite(conf) ? Math.max(0, Math.min(1, conf)) : 0,
+      box,
+      polygon: polygon.length >= 3 ? polygon : []
+    };
+  });
+  return result;
+}
+
+/* 按区域把原图拆成：cutout 透明底抠图 / crop 矩形裁剪 / mask 蒙版图 */
+async function renderSplit(img, w, h, geom, output, feather){
+  // 区域蒙版（白 = 保留，黑 = 去除）
+  const mask = document.createElement('canvas');
+  mask.width = w; mask.height = h;
+  const mctx = mask.getContext('2d');
+  mctx.fillStyle = '#000'; mctx.fillRect(0, 0, w, h);
+  mctx.fillStyle = '#fff';
+  if(geom.polygon){
+    mctx.beginPath();
+    geom.polygon.forEach(([x, y], i) => {
+      const px = x * w, py = y * h;
+      if(i) mctx.lineTo(px, py); else mctx.moveTo(px, py);
+    });
+    mctx.closePath(); mctx.fill();
+  } else {
+    const [x, y, bw, bh] = geom.box;
+    mctx.fillRect(x * w, y * h, bw * w, bh * h);
+  }
+  // 羽化：模糊蒙版得到半透明边缘（canvas filter 不支持时自动跳过）
+  let alpha = mask;
+  if(feather > 0){
+    try{
+      const soft = document.createElement('canvas');
+      soft.width = w; soft.height = h;
+      const sctx = soft.getContext('2d');
+      sctx.filter = 'blur(' + feather + 'px)';
+      sctx.drawImage(mask, 0, 0);
+      alpha = soft;
+    }catch(e){ /* 保持硬边缘 */ }
+  }
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if(output === 'mask'){
+    canvas.width = w; canvas.height = h;
+    ctx.drawImage(alpha, 0, 0);
+  } else if(output === 'crop'){
+    let x0 = 0, y0 = 0, x1 = 1, y1 = 1;
+    if(geom.polygon){
+      const xs = geom.polygon.map(p => p[0]), ys = geom.polygon.map(p => p[1]);
+      x0 = Math.min.apply(null, xs); x1 = Math.max.apply(null, xs);
+      y0 = Math.min.apply(null, ys); y1 = Math.max.apply(null, ys);
+    } else {
+      const bx = geom.box[0], by = geom.box[1];
+      x0 = bx; y0 = by; x1 = bx + geom.box[2]; y1 = by + geom.box[3];
+    }
+    const sx = Math.max(0, Math.round(x0 * w)), sy = Math.max(0, Math.round(y0 * h));
+    const sw = Math.max(1, Math.min(w - sx, Math.round((x1 - x0) * w)));
+    const sh = Math.max(1, Math.min(h - sy, Math.round((y1 - y0) * h)));
+    canvas.width = sw; canvas.height = sh;
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  } else {
+    canvas.width = w; canvas.height = h;
+    ctx.drawImage(img, 0, 0);
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(alpha, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  try{ return canvas.toDataURL('image/png'); }
+  catch(e){ throw new Error('图像受跨域限制，无法导出；请改用本地图像或启用本地中转'); }
 }
 
 async function wf3D(image){
@@ -1073,13 +1244,55 @@ async function runFlow(){
         const edge = Math.max(64, Math.min(4096, Math.trunc(Number(await paramIn('maxEdge')) || 0) || 1024));
         const q = Math.max(10, Math.min(100, Math.trunc(Number(await paramIn('quality')) || 0) || 80)) / 100;
         n.out = await wfCompressImage(src, edge, q);
-      } else if(n.type === 'tripoModel' || (n.type === 'model3d' && isTripoWeb())){
+      } else if(n.type === 'imageSplit'){
+        const src = await input('image');
+        if(!src) throw new Error('缺少图像输入');
+        const prompt = String((await input('prompt')) || n.data.prompt || '').trim();
+        if(!prompt) throw new Error('缺少提示词（描述要拆分出的视图 / 对象）');
+        const views = n.data.views || [];
+        if(!views.length) throw new Error('还没有添加任何视图输出（在节点里点「+ 添加视图」）');
+        const output = String(await paramIn('output') || 'cutout');
+        const feather = Math.max(0, Math.min(32, Math.trunc(Number(await paramIn('feather')) || 0)));
+        const tSec = Math.max(10, Math.min(600, Math.trunc(Number(await paramIn('timeout')) || 0) || 120));
+        const live = bpLog('图像拆分：请求已发出，等待模型分析…', '', true);
+        try{
+          n.out = await wfImageSplit(src, prompt, views, { output, feather, timeoutSec: tSec }, acc => {
+            setStatus(n, '分析中 ' + acc.length + ' 字', 'running');
+            if(live) live.set('模型分析中 ' + acc.length + ' 字 · …' + acc.slice(-200));
+          });
+        }catch(e){
+          if(live) live.done('图像拆分失败 · ' + friendlyErr(e), 'error');
+          if(e) e._bpLogged = true;
+          throw e;
+        }
+        const found = views.filter(v => n.out[v.id + '__has']).length;
+        if(live) live.done('图像拆分完成 · ' + views.length + ' 个视图中找到 ' + found + ' 个 · '
+          + (Date.now() - nodeStarted) + 'ms · ' + bpPreview(n.out.text, 160), 'ok');
+      } else if(n.type === 'tripoModel' || n.type === 'tripoModelMulti' || (n.type === 'model3d' && isTripoWeb())){
         const img = await input('image');
-        if(!img) throw new Error('缺少参考图输入');
-        if(n.type === 'tripoModel'){
+        if(n.type === 'tripoModelMulti'){
+          // 多视图：前 / 左 / 右 / 后 四个引脚，至少接一个
+          const views = {
+            front: await input('front'), left: await input('left'),
+            right: await input('right'), back: await input('back')
+          };
+          if(!views.front && !views.left && !views.right && !views.back) throw new Error('至少需要一张参考图（前 / 左 / 右 / 后任一）');
+          const r = await wfTripoWebModel(views.front || '', {
+            multi: true, views,
+            mode: await paramIn('mode'), version: await paramIn('version'),
+            topology: await paramIn('topology'), faceCount: await paramIn('faceCount'),
+            count: await paramIn('count'), format: await paramIn('format'),
+            timeoutSec: await paramIn('timeout')
+          });
+          n.out.model = r.url;
+          const used = ['front','left','right','back'].filter(k => views[k]).length;
+          n.out.text = '多视图生成完成 · ' + used + ' 张参考图 · ' + (r.file || '模型已下载') + (r.size ? ' · ' + (r.size / 1024).toFixed(0) + ' KB' : '');
+        } else if(n.type === 'tripoModel'){
+          if(!img) throw new Error('缺少参考图输入');
           const r = await wfTripoWebModel(img, {
             mode: await paramIn('mode'),
             version: await paramIn('version'),
+            topology: await paramIn('topology'),
             faceCount: await paramIn('faceCount'),
             count: await paramIn('count'),
             format: await paramIn('format'),
@@ -1088,6 +1301,7 @@ async function runFlow(){
           n.out.model = r.url;
           n.out.text = '网页生成模型完成 · ' + (r.file || '模型已下载') + (r.size ? ' · ' + (r.size / 1024).toFixed(0) + ' KB' : '');
         } else {
+          if(!img) throw new Error('缺少图像输入');
           n.out.model = (await wfTripoWebModel(img, { timeoutSec: 300 })).url;
         }
       } else if(n.type === 'model3d'){

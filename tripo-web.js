@@ -693,39 +693,165 @@ async function pickMeshVersion(page, ver) {
   return hit;
 }
 
+/* ---- 拓扑面板：四边面 / 三角面 + 面数控制（滑杆 500–25000 + 数值框） ---- */
+// 打开「通用设置 → 拓扑」面板
+async function openTopologyPanel(page) {
+  const hit = await clickTextEl(page, ['^拓扑$'], { maxLen: 8 });
+  if (!hit) { log('未找到「拓扑」设置入口（可能当前模式不支持），沿用页面默认拓扑'); return ''; }
+  await sleep(1000);
+  return hit;
+}
+
+// 面板里选 四边面(quad) / 三角面(tri)
+async function pickTopologyType(page, type) {
+  const label = type === 'quad' ? '四边面' : type === 'tri' ? '三角面' : '';
+  if (!label) return '';
+  const hit = await clickTextEl(page, ['^' + label], { maxLen: 8 });
+  log(hit ? `已选择拓扑：${hit}` : `未找到拓扑选项「${label}」，沿用页面当前设置`);
+  return hit;
+}
+
+// 面数：拓扑面板里的数值框（type=text，紧邻滑杆）。找不到锚点时用第一个可见数值框
 async function setFaceCount(page, n) {
-  if (!n || n <= 0) return false;
-  const hit = await clickTextEl(page, ['^自定义面数$', '自定义面数'], { maxLen: 12 });
-  if (!hit) { log('未找到「自定义面数」入口，沿用页面默认面数'); return false; }
-  // 在「自定义面数」附近找数字输入框：取中心距最近的那个，避免误抓页面其它数值输入
+  n = Math.trunc(Number(n) || 0);
+  if (n <= 0) return false;
+  n = Math.max(500, Math.min(25000, n)); // 页面滑杆范围 500–25000
   const idx = await page.evaluate(() => {
     const vis = el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
-    const sels = '[role="tab"],[role="radio"],[role="option"],[role="switch"],[role="button"],button,label,li,[class*="option"],[class*="chip"],[class*="select"]';
+    // 锚点：拓扑面板里带「面数」文本的容器
     let anchor = null;
-    for (const el of document.querySelectorAll(sels)) {
+    for (const el of document.querySelectorAll('div,section,li,label')) {
       const t = ((el.innerText) || '').trim().replace(/\s+/g, ' ');
-      if (t === '自定义面数' && vis(el)) { anchor = el.getBoundingClientRect(); break; }
+      if (/面数/.test(t) && t.length < 30 && vis(el)) { anchor = el.getBoundingClientRect(); break; }
     }
-    if (!anchor) return -1;
-    // 注意：不过滤列表，保证索引与 Node 侧 page.$$ 的结果一一对应
-    const inputs = Array.from(document.querySelectorAll('input[type=number], input[inputmode="numeric"], input[type=text]'));
+    // 注意：不过滤列表，保证索引与 Node 侧 page.$$ 一一对应
+    const inputs = Array.from(document.querySelectorAll('input[type=text], input[type=number], input[inputmode="numeric"], input[inputmode="decimal"]'));
     let best = -1, bestD = Infinity;
     inputs.forEach((el, i) => {
       if (!vis(el)) return;
       const b = el.getBoundingClientRect();
-      const d = Math.hypot((b.x + b.width / 2) - (anchor.x + anchor.width / 2), (b.y + b.height / 2) - (anchor.y + anchor.height / 2));
-      if (d < bestD) { bestD = d; best = i; }
+      if (anchor) {
+        const d = Math.hypot((b.x + b.width / 2) - (anchor.x + anchor.width / 2), (b.y + b.height / 2) - (anchor.y + anchor.height / 2));
+        if (d < bestD) { bestD = d; best = i; }
+      } else if (best < 0) {
+        best = i; // 没有锚点就取第一个可见数值框
+      }
     });
     return best;
   });
-  if (idx < 0) { log('「自定义面数」附近没有找到可填写的输入框'); return false; }
-  const inputs = await page.$$('input[type=number], input[inputmode="numeric"], input[type=text]');
+  if (idx < 0) { log('拓扑面板里没有找到面数输入框'); return false; }
+  const inputs = await page.$$('input[type=text], input[type=number], input[inputmode="numeric"], input[inputmode="decimal"]');
   const target = inputs[idx];
-  if (!target) { log('「自定义面数」输入框定位失败'); return false; }
-  await target.click().catch(() => {});
-  await target.fill(String(n)).catch(async () => { await page.keyboard.insertText(String(n)); });
-  log(`已填写自定义面数：${n}`);
-  return true;
+  if (!target) { log('面数输入框定位失败'); return false; }
+  // React 受控输入：用原生 setter 赋值再抛 input/change，确保 onChange 收到
+  const got = await page.evaluate((i, val) => {
+    const els = Array.from(document.querySelectorAll('input[type=text], input[type=number], input[inputmode="numeric"], input[inputmode="decimal"]'));
+    const el = els[i];
+    if (!el) return '';
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(el, String(val));
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new Event('blur', { bubbles: true }));
+    return el.value;
+  }, idx, n);
+  await sleep(400);
+  const ok = String(got) === String(n);
+  log(ok ? `已设置面数：${n}` : `面数设置可能未生效（期望 ${n}，读到 ${got || '空'}）`);
+  return ok;
+}
+
+// 关闭拓扑面板（优先点 ×，兜底 Esc）
+async function closeTopologyPanel(page) {
+  const hit = await page.evaluate(() => {
+    const vis = el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+    for (const el of document.querySelectorAll('button,[role=button]')) {
+      const al = (el.getAttribute('aria-label') || '').toLowerCase();
+      const t = ((el.innerText) || '').trim();
+      if (vis(el) && (al === 'close' || al === '关闭' || t === '×' || t === '✕' || t === 'X')) { el.click(); return al || t; }
+    }
+    return '';
+  });
+  if (!hit) await page.keyboard.press('Escape').catch(() => {});
+  await sleep(600);
+  return hit || 'Esc';
+}
+
+/* ---- 多视图上传模式（前 / 左 / 右 / 后 四个槽位） ---- */
+const IMAGE_INPUT_SEL = 'input[type=file]';
+
+// 当前页面可见的图片上传控件数量：1 = 单图模式，4 = 多视图模式
+async function countImageInputs(page) {
+  return page.evaluate(() => {
+    const vis = el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+    return Array.from(document.querySelectorAll('input[type=file]')).filter(el => {
+      if (!vis(el)) return false;
+      const accept = (el.getAttribute('accept') || '').toLowerCase();
+      return /image|png|jpe?g|webp/.test(accept) && !/glb|fbx|obj|stl|model|video|mp4/.test(accept);
+    }).length;
+  });
+}
+
+// 切换单图 / 多视图上传模式（on=true 多视图）。页面图标类名含 multi-view
+async function setMultiViewMode(page, on) {
+  const n = await countImageInputs(page);
+  if ((on && n >= 4) || (!on && n <= 1)) return n; // 已是目标态
+  const hit = await page.evaluate(() => {
+    const vis = el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+    const els = Array.from(document.querySelectorAll('[class*="multi-view" i], [class*="multiView" i]'));
+    for (const el of els) {
+      if (!vis(el)) continue;
+      const clickable = el.closest('button,[role=button],label') || el;
+      clickable.click();
+      return String(el.className).slice(0, 60);
+    }
+    return '';
+  });
+  if (hit) { await sleep(1500); return await countImageInputs(page); }
+  return n;
+}
+
+// 多视图上传：views = { front, left, right, back }，值为图片 dataURL / http / 本地路径
+// 槽位与视图固定对应：front→第1格、left→第2格、right→第3格、back→第4格；未提供的视图跳过不错位
+async function attachMultiView(page, views) {
+  await setMultiViewMode(page, true);
+  const order = ['front', 'left', 'right', 'back'];
+  const names = { front: '前', left: '左', right: '右', back: '后' };
+  // 一次性取齐 4 个可见图片上传控件（DOM 顺序 = 前/左/右/后）。
+  // 注意：某槽位上传成功后页面会隐藏/替换该输入框，若逐个现查+可见性过滤会错位
+  // （左图传到右槽、后续槽位找不到控件），因此必须在上传前固定句柄。
+  const handles = await page.$$(IMAGE_INPUT_SEL);
+  const slots = [];
+  for (const h of handles) {
+    const ok = await h.evaluate(el => {
+      const b = el.getBoundingClientRect();
+      if (!(b.width > 0 && b.height > 0)) return false;
+      const accept = (el.getAttribute('accept') || '').toLowerCase();
+      return /image|png|jpe?g|webp/.test(accept) && !/glb|fbx|obj|stl|model|video|mp4/.test(accept);
+    }).catch(() => false);
+    if (ok) slots.push(h);
+  }
+  if (slots.length < 4) log(`多视图槽位不足 4 个（当前 ${slots.length}），按可用槽位上传`);
+  let uploaded = 0;
+  for (let slot = 0; slot < order.length; slot++) {
+    const key = order[slot];
+    const src = views && views[key];
+    if (!src) continue; // 未提供的视图跳过，不错位
+    let file = null;
+    try { file = await resolveImageFile(src); }
+    catch (e) { log(`${names[key]}视图参考图处理失败：${e.message}`); continue; }
+    const target = slots[slot];
+    if (!target) { log(`未找到${names[key]}视图上传控件（槽位 ${slot + 1}）`); continue; }
+    try {
+      await target.setInputFiles(file, { timeout: 8000 });
+      uploaded++;
+      log(`${names[key]}视图已上传（槽位 ${slot + 1}）`);
+      await sleep(900);
+    } catch (e) {
+      log(`${names[key]}视图上传失败：${e.message}`);
+    }
+  }
+  return uploaded;
 }
 
 async function pickGenerateCount(page, n) {
@@ -777,6 +903,7 @@ async function saveModelDownload(download) {
 
 async function runModelOnce(context, page, opts = {}) {
   const waitSec = Math.max(30, Math.min(1800, Number(opts.timeoutSec) || 420));
+  const multi = !!opts.multi;
   await ensureModelPage(page);
   const ready = await computeModelReady(page);
   if (!ready.ready) {
@@ -787,7 +914,11 @@ async function runModelOnce(context, page, opts = {}) {
     };
   }
 
-  if (opts.image) {
+  if (multi) {
+    const uploaded = await attachMultiView(page, opts.views || {});
+    if (!uploaded) return { ok: false, message: '多视图参考图没有成功上传；至少需要一张（前 / 左 / 右 / 后）' };
+    await sleep(1500);
+  } else if (opts.image) {
     let file = null;
     try { file = await resolveImageFile(opts.image); }
     catch (e) { return { ok: false, message: '参考图处理失败：' + e.message }; }
@@ -798,7 +929,15 @@ async function runModelOnce(context, page, opts = {}) {
 
   await pickModelMode(page, opts.mode);
   await pickMeshVersion(page, opts.version);
-  await setFaceCount(page, Number(opts.faceCount) || 0);
+  // 拓扑 / 面数：打开「通用设置 → 拓扑」面板设置（当前模式不支持时自动跳过）
+  if (opts.topology || (Number(opts.faceCount) || 0) > 0) {
+    const opened = await openTopologyPanel(page);
+    if (opened) {
+      await pickTopologyType(page, opts.topology);
+      await setFaceCount(page, Number(opts.faceCount) || 0);
+      await closeTopologyPanel(page);
+    }
+  }
   await pickGenerateCount(page, Number(opts.count) || 0);
 
   const clicked = await clickGenerateModel(page);
@@ -1054,11 +1193,19 @@ async function startServer() {
 
       if (u.pathname === '/generate-model' && req.method === 'POST') {
         const body = await readJson(req, 25 * 1024 * 1024);
-        const image = String(body.image || '');
+        const views = body.views && typeof body.views === 'object' ? body.views : null;
         const opts = {
-          image,
+          image: String(body.image || ''),
+          multi: !!body.multi,
+          views: views ? {
+            front: String(views.front || ''),
+            left: String(views.left || ''),
+            right: String(views.right || ''),
+            back: String(views.back || '')
+          } : null,
           mode: String(body.mode || ''),
           version: String(body.version || ''),
+          topology: String(body.topology || ''),
           faceCount: Number(body.faceCount) || 0,
           count: Number(body.count) || 0,
           format: String(body.format || ''),

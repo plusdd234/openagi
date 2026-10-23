@@ -390,6 +390,13 @@ function taskPin(name, type){
   return { id: uid(), name, type };
 }
 
+/* 图像拆分节点的视图条目：每条生成两张输出引脚
+   （id → 图像、id + '__has' → 布尔），name 为视图名，hint 为可选补充说明 */
+function viewEntry(name, hint){
+  return { id: uid(), name: name || '视图', hint: hint || '' };
+}
+const VIEW_PRESETS = ['正视图', '背视图', '左侧视图', '右侧视图', '顶视图', '底视图'];
+
 // 旧版「图像分析 / 文本任务」节点统一迁移为「分析任务」，并重映射引脚
 function migrateAiTaskNodes(flow){
   (flow.nodes || []).forEach(n => {
@@ -450,6 +457,13 @@ function newNode(type, x, y){
     n.data.maxEdge = 1024;
     n.data.quality = 80;
   }
+  if(type === 'imageSplit'){
+    n.data.prompt = '';
+    n.data.output = 'cutout';
+    n.data.feather = 2;
+    n.data.timeout = 120;
+    n.data.views = [ viewEntry('正视图'), viewEntry('背视图') ];
+  }
   if(type === 'aiTask'){
     n.data.instruction = '';
     n.data.timeout = TASK_TIMEOUT_DEFAULT;
@@ -476,10 +490,20 @@ function newNode(type, x, y){
   if(type === 'tripoModel'){
     n.data.mode = 'smart';
     n.data.version = 'P2.0';
+    n.data.topology = '';
     n.data.faceCount = 0;
     n.data.count = 1;
     n.data.format = '';
     n.data.timeout = 420;
+  }
+  if(type === 'tripoModelMulti'){
+    n.data.mode = 'smart';
+    n.data.version = 'P2.0';
+    n.data.topology = '';
+    n.data.faceCount = 0;
+    n.data.count = 1;
+    n.data.format = '';
+    n.data.timeout = 600;
   }
   if(type === 'imageIn') n.data.image = '';
   if(type === 'modelIn') n.data.model = '';
@@ -643,8 +667,21 @@ function taskPinsOf(n){
   if(n.type === 'modelViews') return n.data.params || [];   // 参数引脚
   return [];
 }
+/* 图像拆分节点的动态视图引脚：条目 id → 图像引脚；id + '__has' → 布尔引脚 */
+function viewPinOf(n, key){
+  if(!n || n.type !== 'imageSplit' || !n.data) return null;
+  const views = n.data.views || [];
+  const v = views.find(x => x.id === key);
+  if(v) return { id:key, name:v.name, type:'image' };
+  if(/__has$/.test(key)){
+    const base = key.replace(/__has$/, '');
+    const v2 = views.find(x => x.id === base);
+    if(v2) return { id:key, name:'是否有' + v2.name, type:'bool' };
+  }
+  return null;
+}
 function taskPinOf(n, key){
-  return taskPinsOf(n).find(p => p.id === key) || null;
+  return viewPinOf(n, key) || taskPinsOf(n).find(p => p.id === key) || null;
 }
 function pinType(n, key){
   const p = paramOf(n, key) || taskPinOf(n, key);
@@ -1019,7 +1056,7 @@ function nodeEl(n){
 
   // 有参数但缺同名引脚的，补一条输入引脚（值可视化于其右侧）
   specs.forEach(s => {
-    if(s.ctl === 'paramList' || s.ctl === 'taskPins' || s.ctl === 'filePick' || s.tip) return;
+    if(s.ctl === 'paramList' || s.ctl === 'taskPins' || s.ctl === 'viewPins' || s.ctl === 'filePick' || s.tip) return;
     if(s.side === 'out') return;   // 数据源参数：挂在输出引脚上，不生成输入引脚
     if(s.store === 'param'){
       if(!inputKeys.includes(s.key)) inputKeys.push(s.key);
@@ -1042,7 +1079,7 @@ function nodeEl(n){
   inputKeys.forEach(k => {
     const spec = specByKey[k] || null;
     if(spec && spec.tip) return;
-    if(spec && (spec.ctl === 'paramList' || spec.ctl === 'taskPins')) return;
+    if(spec && (spec.ctl === 'paramList' || spec.ctl === 'taskPins' || spec.ctl === 'viewPins')) return;
     if(n.type === 'start') return;
     if(n.type === 'end'){
       const p = (n.params || []).find(x => x.id === k);
@@ -1071,10 +1108,11 @@ function nodeEl(n){
   if(n.type === 'aiTask'){
     (n.data.outputs || []).forEach(p => outCol.appendChild(makePort(p.id, 'out', { label:p.name || '输出', type:p.type })));
   }
+  // 图像拆分的动态视图引脚由 viewPinSection 在字段区渲染（紧跟各自的视图控件），不在这里重复
 
   // 2) 含参数的节点让引脚列占满整行，取值控件才有位置（输入侧 / 输出侧都算）
   const hasParamRow = specs.some(s => !s.tip
-    && s.ctl !== 'paramList' && s.ctl !== 'taskPins' && s.ctl !== 'filePick');
+    && s.ctl !== 'paramList' && s.ctl !== 'taskPins' && s.ctl !== 'filePick' && s.ctl !== 'viewPins');
   if(hasParamRow) body.classList.add('wide-in');
   body.append(inCol);
   if((d.outputs || []).length || isVarNode || n.type === 'start' || n.type === 'aiTask'){
@@ -1097,6 +1135,8 @@ function nodeEl(n){
     } else if(s.ctl === 'taskPins'){
       fields.appendChild(taskPinSection(n, 'in'));
       fields.appendChild(taskPinSection(n, 'out'));
+    } else if(s.ctl === 'viewPins'){
+      fields.appendChild(viewPinSection(n));
     } else if(s.tip){
       fields.appendChild(tipEl(
         (n.out && n.out.text && n.type !== 'aiTask') ? n.out.text
@@ -1555,6 +1595,122 @@ function removeTaskPin(n, kind, p){
   }
   renderNodes();
   scheduleFlowSave();
+}
+
+/* ---------- 图像拆分：动态视图输出（每视图 = 图像引脚 + 布尔引脚） ---------- */
+function nextViewName(n){
+  const list = (n && n.data && n.data.views) || [];
+  let i = list.length + 1;
+  while(list.some(v => v.name === '视图 ' + i)) i++;
+  return '视图 ' + i;
+}
+function addView(n, name){
+  const list = n.data.views || (n.data.views = []);
+  const nm = name || nextViewName(n);
+  if(list.some(v => v.name === nm)){ bpToast('已存在「' + nm + '」'); return; }
+  list.push(viewEntry(nm));
+  renderNodes();
+  scheduleFlowSave();
+}
+function removeView(n, v){
+  n.data.views = (n.data.views || []).filter(x => x.id !== v.id);
+  if(bp){
+    bp.links = bp.links.filter(l =>
+      !(l.from.node === n.id && (l.from.key === v.id || l.from.key === v.id + '__has')) &&
+      !(l.to.node === n.id && (l.to.key === v.id || l.to.key === v.id + '__has'))
+    );
+  }
+  renderNodes();
+  scheduleFlowSave();
+}
+function viewPinSection(n){
+  const wrap = document.createElement('div');
+  wrap.className = 'task-sec';
+  const head = document.createElement('div');
+  head.className = 'task-sec-head';
+  const title = document.createElement('span');
+  title.textContent = '视图输出';
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'task-add';
+  add.textContent = '+ 添加视图';
+  add.addEventListener('click', e => { e.stopPropagation(); addView(n); });
+  head.append(title, add);
+  wrap.appendChild(head);
+  // 常用视图一键添加
+  const presets = document.createElement('div');
+  presets.className = 'view-presets';
+  VIEW_PRESETS.forEach(name => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'view-preset';
+    b.textContent = name;
+    b.addEventListener('click', e => { e.stopPropagation(); addView(n, name); });
+    presets.appendChild(b);
+  });
+  wrap.appendChild(presets);
+  (n.data.views || []).forEach(v => wrap.appendChild(viewPinRow(n, v)));
+  return wrap;
+}
+function viewPinRow(n, v){
+  const row = document.createElement('div');
+  row.className = 'param-row view-pin';
+  // 图像输出引脚（页面右侧探出；与布尔引脚错开 17px）
+  const pinImg = document.createElement('span');
+  pinImg.className = 'pin out view-pin-img';
+  pinImg.dataset.dir = 'out';
+  pinImg.dataset.key = v.id;
+  pinImg.dataset.type = 'image';
+  pinImg.style.setProperty('--pin-c', PIN_COLORS.image);
+  row.appendChild(pinImg);
+  // 视图名称（可改）；布尔引脚标签跟随名称实时更新
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.className = 'view-name';
+  name.value = v.name || '';
+  name.title = '视图名称';
+  for(const ev of NAME_EVENTS) name.addEventListener(ev, e => e.stopPropagation());
+  row.appendChild(name);
+  // 布尔输出引脚（页面右侧探出）
+  const pinBool = document.createElement('span');
+  pinBool.className = 'pin out view-pin-bool';
+  pinBool.dataset.dir = 'out';
+  pinBool.dataset.key = v.id + '__has';
+  pinBool.dataset.type = 'bool';
+  pinBool.style.setProperty('--pin-c', PIN_COLORS.bool);
+  row.appendChild(pinBool);
+  const boolLabel = document.createElement('span');
+  boolLabel.className = 'view-bool-label';
+  boolLabel.textContent = '是否有' + (v.name || '');
+  row.appendChild(boolLabel);
+  name.addEventListener('input', () => {
+    v.name = name.value;
+    boolLabel.textContent = '是否有' + (v.name || '');
+    scheduleFlowSave();
+  });
+  name.addEventListener('change', () => renderNodes());
+  // 删除
+  const del = document.createElement('button');
+  del.className = 'param-del';
+  del.title = '删除该视图';
+  del.textContent = '×';
+  del.addEventListener('click', e => { e.stopPropagation(); removeView(n, v); });
+  row.appendChild(del);
+  // 第二行：可选补充说明（送 AI 的该视图描述）
+  const hintRow = document.createElement('div');
+  hintRow.className = 'view-hint-row';
+  const hint = document.createElement('input');
+  hint.type = 'text';
+  hint.className = 'view-hint';
+  hint.value = v.hint || '';
+  hint.placeholder = '补充说明（可选，送 AI 辅助识别）';
+  for(const ev of NAME_EVENTS) hint.addEventListener(ev, e => e.stopPropagation());
+  hint.addEventListener('input', () => { v.hint = hint.value; scheduleFlowSave(); });
+  hintRow.appendChild(hint);
+  const box = document.createElement('div');
+  box.className = 'view-box';
+  box.append(row, hintRow);
+  return box;
 }
 
 // 删除节点：任务开始 / 任务结束是流程骨架，必须至少保留一个

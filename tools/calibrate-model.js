@@ -4,7 +4,7 @@ const path = require('path');
 const { chromium } = require('playwright-core');
 
 const ROOT = __dirname;
-const PROFILE_DIR = path.join(ROOT, '.tripo-profile');
+const PROFILE_DIR = path.join(ROOT, '..', '.tripo-profile');
 const PAGE_URL = 'https://studio.tripo3d.ai/zh/workspace/generate';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
