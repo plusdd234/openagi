@@ -851,6 +851,11 @@
     flex: 1 1 100%; margin-left: 0; min-height: 34px; height: auto;
     padding: 4px 5px; line-height: 1.45; resize: vertical; white-space: pre-wrap;
   }
+  /* 文本域：随内容自动增高（高度由 JS 按 scrollHeight 设置），完整显示字符串，
+     不出现滚动框，也不提供手动拖拽把手 */
+  .port-row.has-param.wide .port-param.ctl-textarea {
+    overflow: hidden; resize: none; box-sizing: border-box;
+  }
   .port-row.has-param .port-param.ctl-text { min-width: 90px; }
 
   /* 已连线：隐藏取值控件，仅保留引脚与名称 */

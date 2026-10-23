@@ -816,6 +816,19 @@ function writeParamValue(spec, n, p, raw){
   scheduleFlowSave();
 }
 
+// 文本域随内容自动增高：完整显示字符串，不裁切、不出滚动框
+// 必须元素已在文档中（scrollHeight 才有意义），故渲染后再统一调用
+function autoGrowTextarea(el){
+  if(!el || el.tagName !== 'TEXTAREA') return;
+  el.style.height = 'auto';
+  // scrollHeight 不含边框，而 height 为 border-box，补上上下边框避免差 2px 被裁
+  const cs = getComputedStyle(el);
+  const extra = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+  const need = Math.max(el.scrollHeight + extra, 24);
+  el.style.height = need + 'px';
+  el.style.overflow = 'hidden';
+}
+
 // 生成一个参数控件（不含标签行），统一处理范围夹取、颜色校验与事件隔离
 function makeFieldControl(spec, n, p){
   const cur = paramSpecValue(spec, n, p);
@@ -864,7 +877,10 @@ function makeFieldControl(spec, n, p){
     el.rows = 2;
     if(spec.ph) el.placeholder = spec.ph;
     el.value = val == null ? '' : String(val);
-    el.addEventListener('input', () => writeParamValue(spec, n, p, el.value));
+    el.addEventListener('input', () => {
+      writeParamValue(spec, n, p, el.value);
+      autoGrowTextarea(el);
+    });
   } else {
     el = document.createElement('input');
     el.type = 'text';
@@ -1738,6 +1754,9 @@ function renderNodes(){
     if(n.id === bpRunNodeId) el.classList.add('running');
     host.appendChild(el);
   });
+
+  // 文本域按内容撑开：元素入文档后再量高度，保证字符串完整可见、无滚动框
+  host.querySelectorAll('textarea').forEach(autoGrowTextarea);
 
   host.querySelectorAll('.pin').forEach(pin => {
     const nodeId = pin.closest('.node').dataset.id;
