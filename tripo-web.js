@@ -23,6 +23,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const readline = require('readline');
+const { spawn } = require('child_process');
 const { chromium } = require('playwright-core');
 
 const DEFAULT_URL = 'https://studio.tripo3d.com/';
@@ -54,20 +55,64 @@ const log = (...a) => console.log(...a);
 // 背景：Playwright 自己 launch 的浏览器带自动化特征，Cloudflare 会反复弹「验证真人」，
 // 人工点完还会再弹。改成连接一个普通启动的 Edge（无自动化特征）后，挑战基本能一次通过。
 const CDP_URL = process.env.TRI_CDP_URL || 'http://127.0.0.1:9222';
+const CDP_PORT = Number(String(CDP_URL).match(/:(\d+)/)?.[1] || 9222);
+// 额外的 Edge 启动参数（例如 TRI_EDGE_ARGS=--proxy-server=direct://）
+const EDGE_EXTRA_ARGS = String(process.env.TRI_EDGE_ARGS || '').split(/\s+/).filter(Boolean);
+
+function edgeExecutable() {
+  const cands = [
+    process.env.TRI_EDGE_PATH,
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+  ].filter(Boolean);
+  for (const p of cands) { try { if (fs.existsSync(p)) return p; } catch (e) {} }
+  return '';
+}
+
+async function cdpAlive(timeoutMs = 1500) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(CDP_URL + '/json/version', { signal: ctrl.signal });
+    clearTimeout(timer);
+    return res.ok;
+  } catch (e) { return false; }
+}
+
+// 用普通方式拉起一个 Edge（带远程调试端口），而不是用 Playwright 启动 ——
+// 这样浏览器没有任何自动化特征，Cloudflare 不会反复弹验证。
+function spawnPlainEdge() {
+  const exe = edgeExecutable();
+  if (!exe) return false;
+  const args = [
+    '--remote-debugging-port=' + CDP_PORT,
+    '--user-data-dir=' + PROFILE_DIR,
+    '--no-first-run',
+    '--no-default-browser-check',
+    ...EDGE_EXTRA_ARGS,
+    TARGET_URL,
+  ];
+  try {
+    const child = spawn(exe, args, {
+      detached: true, stdio: 'ignore', windowsHide: false,
+    });
+    child.unref();
+    log('已启动普通 Edge（远程调试端口 ' + CDP_PORT + '），等待它就绪…');
+    return true;
+  } catch (e) {
+    log('启动 Edge 失败：' + e.message);
+    return false;
+  }
+}
 
 async function tryConnectCDP() {
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 1500);
-    const res = await fetch(CDP_URL + '/json/version', { signal: ctrl.signal });
-    clearTimeout(timer);
-    if (!res.ok) return null;
     const browser = await chromium.connectOverCDP(CDP_URL, { timeout: 15000 });
     const ctx = browser.contexts()[0];
     if (!ctx) return null;
     const pages = ctx.pages().filter(p => !p.isClosed());
     const page = pages[0] || await ctx.newPage();
-    log('已连接到手动启动的 Edge（CDP 模式），自动化特征更低，不易触发 Cloudflare 验证');
+    log('已连接到 Edge（CDP 模式），自动化特征更低，不易触发 Cloudflare 验证');
     return { context: ctx, page };
   } catch (e) {
     return null;
@@ -75,13 +120,33 @@ async function tryConnectCDP() {
 }
 
 async function launch() {
-  const cdp = await tryConnectCDP();
-  if (cdp) {
-    cdp.context.on('page', p => recordPage(p));
-    recordPage(cdp.page);
-    return cdp;
+  // ① 已有 CDP 浏览器在跑就直接连
+  if (await cdpAlive()) {
+    const cdp = await tryConnectCDP();
+    if (cdp) {
+      cdp.context.on('page', p => recordPage(p));
+      recordPage(cdp.page);
+      return cdp;
+    }
   }
 
+  // ② 没有就自己拉起一个普通 Edge，再连上去
+  if (spawnPlainEdge()) {
+    for (let i = 0; i < 40; i++) {
+      await sleep(500);
+      if (await cdpAlive()) {
+        const cdp = await tryConnectCDP();
+        if (cdp) {
+          cdp.context.on('page', p => recordPage(p));
+          recordPage(cdp.page);
+          return cdp;
+        }
+      }
+    }
+    log('Edge 未能就绪，回退到 Playwright 启动方式');
+  }
+
+  // ③ 兜底：Playwright 自己启动（带反检测参数）
   const args = ['--start-maximized'];
   // 反自动化检测：Playwright 默认会带上 --enable-automation 且暴露 navigator.webdriver，
   // Cloudflare 的挑战会因此反复弹「验证真人」循环。以下措施把特征抹掉。
@@ -91,7 +156,6 @@ async function launch() {
     '--no-default-browser-check',
     '--no-first-run',
   );
-  if (!SELFTEST) args.push('--start-maximized');
   const context = await chromium.launchPersistentContext(PROFILE_DIR, {
     channel: 'msedge',
     headless: SELFTEST,
@@ -211,6 +275,34 @@ async function attachReference(page, file) {
 // 真实页面实测结论：参考图控件虽带 multiple，但一次性写入多张不会触发页面逐图处理，
 // 因此主路径是「逐张写入」——每次写一张，页面追加进参考图列表；
 // 一次性写入仅作兜底（供支持数组写入的页面使用）。
+// 关掉页面上的引导/教程弹窗（如「选择生图模型 2/2 … 知道了」）
+// 这些弹窗会挡住参考图上传区与生成按钮，必须先关掉
+async function dismissOnboarding(page) {
+  const hit = await page.evaluate(() => {
+    const vis = el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+    const WANT = /^(知道了|我知道了|跳过|不再提示|稍后再说|立即体验|开始使用|关闭)$/;
+    // 优先点弹窗内的按钮
+    const dialogs = Array.from(document.querySelectorAll('[role=dialog],[class*=modal],[class*=Modal],[class*=dialog],[class*=popup]'));
+    for (const dlg of dialogs) {
+      if (!vis(dlg)) continue;
+      for (const el of dlg.querySelectorAll('button,[role=button]')) {
+        if (!vis(el)) continue;
+        const t = (el.innerText || '').trim();
+        if (t && WANT.test(t)) { el.click(); return t; }
+      }
+    }
+    // 没有弹窗容器时，退而求其次找页面上的同名按钮
+    for (const el of document.querySelectorAll('button,[role=button]')) {
+      if (!vis(el)) continue;
+      const t = (el.innerText || '').trim();
+      if (t && WANT.test(t)) { el.click(); return t; }
+    }
+    return '';
+  }).catch(() => '');
+  if (hit) { await sleep(900); log('已关闭页面引导弹窗：' + hit); }
+  return hit;
+}
+
 // 清空页面上已有的参考图
 // 背景：Tripo 的上传区是「追加」式的——不清空的话，每次运行都会把新图叠在上一轮的旧图上，
 // 模型会拿到一堆残留参考图。策略：
@@ -744,6 +836,7 @@ async function runOnce(context, page, prompt, opts = {}) {
   const refList = (Array.isArray(opts.images) ? opts.images : (opts.image ? [opts.image] : [])).filter(Boolean);
 
   // ① 上传区是「追加」式的：不清空的话，新图会叠在上一轮的旧图上，模型会拿到一堆残留参考图
+  await dismissOnboarding(page);
   if (refList.length) {
     const cl = await clearReferences(page);
     if (!cl.ok) {
@@ -1141,6 +1234,7 @@ async function runModelOnce(context, page, opts = {}) {
   }
 
   // 上传区是追加式的：先清掉上一轮残留的参考图，否则新旧图会叠在一起
+  await dismissOnboarding(page);
   if (multi || opts.image) {
     const cl = await clearReferences(page);
     if (!cl.ok) {
