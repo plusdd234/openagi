@@ -8,7 +8,7 @@ const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href;
+const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';   // 禁止测试写入真实本地存储
 const OBJ = process.argv[2] || 'C:/Users/30297/Desktop/自研贴图系统/AIGC工具包/pipeline/model.obj';
 
 (async () => {

@@ -13,7 +13,7 @@ const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
 
-const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href;
+const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';   // 禁止测试写入真实本地存储
 const BRIDGE_RE = /127\.0\.0\.1:8790|localhost:8790/;
 const PNG_1PX = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 

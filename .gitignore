@@ -33,3 +33,6 @@ openagi-store.json
 # ===== 专利申请材料（临时保护） =====
 # 仓库转私有后如需纳入版本管理，删除下面两行再 `git add -f ip/`
 ip/
+
+# ===== 工作流存储备份（含用户数据，勿提交） =====
+openagi-store.backup/

@@ -2,7 +2,7 @@
 const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
-const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href;
+const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';   // 禁止测试写入真实本地存储
 const LONG = '分析这张图片的特征，拟写生成灰度正效果\n图提示词，并且把每一处的细节、'
   + '光影层次、材质表现、构图意图都逐条列出来，不要遗漏任何可见元素，'
   + '最后再给出一份可直接用于生图的完整提示词。';

@@ -10,6 +10,17 @@ if(_dropped){ persistFlows(); console.info('[blueprint] 已清理 ' + _dropped +
 
 // ---- 交互绑定 ----
 $('btnNewFlow').addEventListener('click', createFlow);
+// 工作流导出 / 导入（手动备份，防丢失）
+$('btnExportFlows').addEventListener('click', exportFlows);
+$('btnImportFlows').addEventListener('click', () => $('fileImportFlows').click());
+$('fileImportFlows').addEventListener('change', e => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { importFlowsText(String(reader.result || '')); e.target.value = ''; };
+  reader.onerror = () => { bpToast('读取文件失败'); e.target.value = ''; };
+  reader.readAsText(file);
+});
 $('btnFlowsWinClose').addEventListener('click', closeFlowsWin);
 document.addEventListener('keydown', e => {
   if(e.key !== 'Escape') return;

@@ -8,7 +8,7 @@ const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href;
+const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';   // 禁止测试写入真实本地存储
 const IMG = path.join(__dirname, '..', 'samples', 'ui_linked.png');
 
 (async () => {

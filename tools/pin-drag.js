@@ -5,7 +5,7 @@ const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
 
-const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href;
+const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';   // 禁止测试写入真实本地存储
 
 (async () => {
   const errors = [];

@@ -7,8 +7,12 @@
  * 用法：node tools/relay-retry.js
  */
 const http = require('http');
+const os = require('os');
+const fs = require('fs');
 const { spawn } = require('child_process');
 const path = require('path');
+
+const BACKUP_DIR = path.join(os.tmpdir(), 'relay-retry-backups');
 
 const RELAY_PORT = 8899;
 const RELAY_BASE = 'http://127.0.0.1:' + RELAY_PORT;
@@ -85,6 +89,8 @@ function waitHealth(tries = 40){
       RELAY_RETRY: '2',
       RELAY_RETRY_DELAY: '120',   // 测试里退避快一点
       RELAY_TIMEOUT: '30',
+      RELAY_STORE_FILE: path.join(os.tmpdir(), 'relay-retry-test-store.json'),  // 绝不动真实存储
+      RELAY_BACKUP_DIR: BACKUP_DIR,
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -130,6 +136,50 @@ function waitHealth(tries = 40){
     check(r4.status === 200 && /"ok":true/.test(r4.body), '正常请求一次成功', 'status=' + r4.status);
     check(m4.state.hits === 1, '正常请求不重试', 'hits=' + m4.state.hits);
     m4.srv.close();
+
+    /* ---------- 6. 工作流合并：不同源的流程互不覆盖 ---------- */
+    console.log('=== 6. 工作流存储合并 ===');
+    const postStore = (key, body) => new Promise(resolve => {
+      const req = http.request({
+        host: '127.0.0.1', port: RELAY_PORT, path: '/store/' + key, method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, res => {
+        let b = ''; res.on('data', d => b += d); res.on('end', () => resolve({ status: res.statusCode, body: b }));
+      });
+      req.on('error', e => resolve({ status: 0, body: '', error: e.message }));
+      req.end(typeof body === 'string' ? body : JSON.stringify(body));
+    });
+    const getStore = (key) => new Promise(resolve => {
+      const req = http.request({
+        host: '127.0.0.1', port: RELAY_PORT, path: '/store/' + key, method: 'GET',
+      }, res => {
+        let b = ''; res.on('data', d => b += d); res.on('end', () => resolve(b));
+      });
+      req.on('error', () => resolve(''));
+      req.end();
+    });
+
+    const mk = (id, name, updated) => ({ id, name, updated, nodes: [{ id: 'n1', type: 'start' }], links: [] });
+    await postStore('hf_flows', [mk('flowA', '源A的流程', 1000)]);
+    await postStore('hf_flows', [mk('flowB', '源B的流程', 2000)]);
+    await new Promise(r => setTimeout(r, 400));
+    let merged = [];
+    try { merged = JSON.parse(await getStore('hf_flows')); } catch (e) {}
+    check(merged.length === 2, '两个源各写一次后磁盘上有 2 个流程（不再互相覆盖）', 'count=' + merged.length);
+    check(merged.some(f => f.id === 'flowA') && merged.some(f => f.id === 'flowB'), '两个流程都在');
+
+    // 同 id 写入更新版本 → 取较新的
+    await postStore('hf_flows', [mk('flowA', '源A的流程·新版', 5000)]);
+    await new Promise(r => setTimeout(r, 400));
+    merged = [];
+    try { merged = JSON.parse(await getStore('hf_flows')); } catch (e) {}
+    const fa = merged.find(f => f.id === 'flowA');
+    check(merged.length === 2, '同 id 更新不会减少流程数', 'count=' + merged.length);
+    check(fa && fa.updated === 5000 && fa.name === '源A的流程·新版', '同 id 取较新的版本', JSON.stringify(fa && { u: fa.updated, n: fa.name }));
+
+    // 备份目录里应留下历史版本
+    const backups = fs.existsSync(BACKUP_DIR) ? fs.readdirSync(BACKUP_DIR) : [];
+    check(backups.length >= 1, '覆盖前已备份旧版本', '备份数=' + backups.length);
 
     const logs = relayLog.join('');
     check(/重试/.test(logs), '中转日志里有重试记录', logs.split('\n').filter(l => /重试/.test(l)).slice(0, 1).join(' | ').slice(0, 90));

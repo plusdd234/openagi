@@ -51,6 +51,9 @@
       <div class="os-win-body">
         <div class="os-win-actions">
           <button class="btn primary sm" id="btnNewFlow">新建工作流</button>
+          <button class="btn sm" id="btnExportFlows" title="把所有工作流导出为 JSON 文件（手动备份，可跨浏览器/跨机器使用）">导出备份</button>
+          <button class="btn sm" id="btnImportFlows" title="从 JSON 文件导入工作流（同 id 取较新版本，不覆盖更新的）">导入</button>
+          <input type="file" id="fileImportFlows" accept="application/json,.json" hidden>
         </div>
         <div class="wf-grid" id="wfGrid"></div>
       </div>

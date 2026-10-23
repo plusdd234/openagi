@@ -11,7 +11,9 @@ const { URL } = require('url');
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '127.0.0.1';
-const STORE_FILE = path.join(__dirname, 'openagi-store.json');
+// 存储文件路径可用 RELAY_STORE_FILE 覆盖（自动化测试必须指向临时文件，
+// 否则测试产生的脏数据会覆盖用户的真实工作流）
+const STORE_FILE = process.env.RELAY_STORE_FILE || path.join(__dirname, 'openagi-store.json');
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -67,8 +69,53 @@ const agentOpts = {
 const httpAgent = new http.Agent(agentOpts);
 const httpsAgent = new https.Agent(agentOpts);
 
+// ---------------------------------------------------------------------------
+// 工作流存储的合并与备份
+//
+// localStorage 按 origin 隔离（file:// / 预览面板随机端口 / TRAE 内置预览 = 三个源），
+// 各源的 localStorage 互不相通，而磁盘上只有一份 openagi-store.json。
+// 若直接覆盖，任一源的一次写入就会抹掉其他源的流程（2026-10-24 实际发生过）。
+// 因此：写 hf_flows 时与已有值**合并**（按 id 取较新版本），并在覆盖前备份旧值。
+// ---------------------------------------------------------------------------
+const BACKUP_DIR = process.env.RELAY_BACKUP_DIR || path.join(__dirname, 'openagi-store.backup');
+const BACKUP_KEEP = 20;
+
 // 统计：便于 /health 查看重试情况
 const relayStats = { proxied: 0, retried: 0, failed: 0 };
+
+function mergeFlowLists(a, b){
+  const pa = Array.isArray(a) ? a : [];
+  const pb = Array.isArray(b) ? b : [];
+  const map = new Map();
+  const put = f => {
+    if(!f || !f.id) return;
+    const old = map.get(f.id);
+    if(!old || (Number(f.updated) || 0) > (Number(old.updated) || 0)) map.set(f.id, f);
+  };
+  pa.forEach(put);
+  pb.forEach(put);
+  return Array.from(map.values()).sort((x, y) => (Number(y.updated) || 0) - (Number(x.updated) || 0));
+}
+function parseFlowList(str){
+  try { const v = JSON.parse(str); return Array.isArray(v) ? v : null; } catch(e) { return null; }
+}
+
+// 覆盖前把旧值存一份带时间戳的备份，最多保留 BACKUP_KEEP 份
+function backupStoreValue(key, oldValue){
+  if(!oldValue) return;
+  try {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    fs.writeFileSync(path.join(BACKUP_DIR, key + '-' + stamp + '.json'), String(oldValue), 'utf8');
+    const files = fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.startsWith(key + '-'))
+      .sort();
+    while (files.length > BACKUP_KEEP) {
+      const old = files.shift();
+      try { fs.unlinkSync(path.join(BACKUP_DIR, old)); } catch (e) {}
+    }
+  } catch (e) { /* 备份失败不影响主流程 */ }
+}
 
 function log(msg) {
   const t = new Date().toTimeString().slice(0, 8);
@@ -132,6 +179,22 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.url.startsWith('/store/') && req.method === 'GET') {
+    // 读取单个键的原始值（便于排查与备份）
+    const key = decodeURIComponent(req.url.slice('/store/'.length));
+    if (!/^hf_[A-Za-z0-9_]+$/.test(key)) {
+      sendJson(res, 400, { error: '非法键名' });
+      return;
+    }
+    const val = loadStore()[key];
+    res.writeHead(val === undefined ? 404 : 200, Object.assign({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    }, CORS));
+    res.end(val === undefined ? '' : String(val));
+    return;
+  }
+
   if (req.url.startsWith('/store/') && req.method === 'POST') {
     const key = decodeURIComponent(req.url.slice('/store/'.length));
     if (!/^hf_[A-Za-z0-9_]+$/.test(key)) {
@@ -147,7 +210,20 @@ const server = http.createServer((req, res) => {
     });
     req.on('end', () => {
       const val = Buffer.concat(chunks).toString('utf8');
-      loadStore()[key] = val;
+      const store = loadStore();
+      const old = store[key];
+      if (key === 'hf_flows') {
+        // 工作流：与已有值合并（按 id 取较新版本），并先备份旧值
+        const merged = mergeFlowLists(parseFlowList(old), parseFlowList(val));
+        if (merged.length) {
+          backupStoreValue(key, old);
+          store[key] = JSON.stringify(merged);
+          scheduleStoreFlush();
+          sendJson(res, 200, { ok: true, count: merged.length });
+          return;
+        }
+      }
+      store[key] = val;
       scheduleStoreFlush();
       sendJson(res, 200, { ok: true });
     });

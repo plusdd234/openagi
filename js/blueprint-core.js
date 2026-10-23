@@ -255,6 +255,15 @@ let bpRunLinkId = null;
 
 function persistFlows(){
   try {
+    // 安全网：内存列表为空时**不覆盖**已存储的流程。
+    // 场景：磁盘/其他源有流程，但本源的 localStorage 还没从磁盘回填完（hydrate 是异步的），
+    // 此时任何一次保存都会把「空列表」写回去，等于把用户的流程抹掉。
+    if (!FLOWS.length) {
+      try {
+        const cur = JSON.parse(localStorage.getItem('hf_flows') || '[]');
+        if (Array.isArray(cur) && cur.length) return true;   // 保持原样，不覆盖
+      } catch (e) {}
+    }
     localStorage.setItem('hf_flows', JSON.stringify(FLOWS));
     return true;
   } catch(e){
@@ -277,6 +286,57 @@ function renderHome(){
   renderDeskDock();
   renderFlowsWindow();
   startDeskClock();
+}
+
+// ---- 工作流导出 / 导入（手动备份）----
+// localStorage 按 origin 隔离，磁盘只有一份；导出文件是唯一能跨浏览器/跨机器带走的副本。
+// 导入时按 id 归并，同 id 取 updated 更大的版本，不会用旧文件盖掉新工作流。
+function exportFlows(){
+  const payload = {
+    app: 'openagi', kind: 'workflows', version: 1,
+    exportedAt: new Date().toISOString(),
+    flows: FLOWS,
+  };
+  const text = JSON.stringify(payload, null, 1);
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '');
+  const filename = 'openagi-workflows-' + stamp + '.json';
+  try {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    bpToast('已导出 ' + FLOWS.length + ' 个工作流：' + filename);
+  } catch (e) {
+    bpToast('导出失败：' + e.message);
+  }
+}
+
+function importFlowsText(text){
+  let data = null;
+  try { data = JSON.parse(text); } catch (e) { bpToast('导入失败：不是合法的 JSON 文件'); return false; }
+  const arr = Array.isArray(data) ? data : (data && Array.isArray(data.flows) ? data.flows : null);
+  if (!arr) { bpToast('导入失败：文件里没有找到工作流列表'); return false; }
+  const before = FLOWS.length;
+  const map = new Map(FLOWS.map(f => [f.id, f]));
+  let added = 0, updated = 0;
+  arr.forEach(f => {
+    if (!f || !f.id || !Array.isArray(f.nodes)) return;
+    // 兼容旧版节点类型
+    if (typeof migrateAiTaskNodes === 'function') { try { migrateAiTaskNodes(f); } catch (e) {} }
+    const old = map.get(f.id);
+    if (!old) { map.set(f.id, f); added++; }
+    else if ((Number(f.updated) || 0) > (Number(old.updated) || 0)) { map.set(f.id, f); updated++; }
+  });
+  FLOWS = Array.from(map.values()).sort((a, b) => (Number(b.updated) || 0) - (Number(a.updated) || 0));
+  persistFlows();
+  renderFlowsWindow();
+  bpToast('导入完成：新增 ' + added + ' 个，更新 ' + updated + ' 个，共 ' + FLOWS.length + ' 个工作流');
+  return true;
 }
 
 function renderFlowsWindow(){

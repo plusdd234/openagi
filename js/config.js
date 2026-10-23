@@ -2,8 +2,39 @@
  * 原 index.html 1336-1778 行
  * 由解耦脚本机械切分，内容与顺序保持原样
  */
-const STORE_BASE = 'http://127.0.0.1:8787';
+// 中转地址可用 ?relay=http://127.0.0.1:xxxx 覆盖（自动化测试指向自己的 mock 中转，
+// 也方便多开一套中转时切换）
+const RELAY_PARAM = (location.search.match(/[?&]relay=([^&]+)/) || [])[1];
+const STORE_BASE = RELAY_PARAM ? decodeURIComponent(RELAY_PARAM).replace(/\/$/, '') : 'http://127.0.0.1:8787';
 // 本地中转会把 hf_* 配置落盘；浏览器存储被清空或预览端口变化时，从这里回填
+//
+// ⚠️ 两个关键约束（2026-10-24 事故后加）：
+// 1) localStorage 按 origin 隔离，同一个 index.html 用不同方式打开（file:// /
+//    预览面板的随机端口 / TRAE 内置预览）就是**不同的源**，彼此的 localStorage 不互通，
+//    而磁盘上 openagi-store.json 只有一份 → 谁后写谁赢。
+//    所以 hf_flows 的写入与回填都必须**合并**（按流程 id 取较新版本），
+//    否则任一源的一次写入都会抹掉其他源的流程。
+// 2) 自动化测试一律加 ?nostore=1，禁止把测试产生的数据写进真实存储。
+const STORE_SYNC_OFF = /(^|[?&])nostore=1(&|$)/.test(location.search);
+
+// 合并两个工作流列表：按 id 归并，同 id 取 updated 更大的那份；两边都没有的保留
+function mergeFlowLists(a, b){
+  const pa = Array.isArray(a) ? a : [];
+  const pb = Array.isArray(b) ? b : [];
+  const map = new Map();
+  const put = f => {
+    if(!f || !f.id) return;
+    const old = map.get(f.id);
+    if(!old || (Number(f.updated) || 0) > (Number(old.updated) || 0)) map.set(f.id, f);
+  };
+  pa.forEach(put);
+  pb.forEach(put);
+  return Array.from(map.values()).sort((x, y) => (Number(y.updated) || 0) - (Number(x.updated) || 0));
+}
+function parseFlowList(str){
+  try { const v = JSON.parse(str); return Array.isArray(v) ? v : null; } catch(e) { return null; }
+}
+
 (function(){
   const rawSet = Storage.prototype.setItem;
   const isHf = k => String(k).indexOf('hf_') === 0;
@@ -12,6 +43,7 @@ const STORE_BASE = 'http://127.0.0.1:8787';
   Storage.prototype.setItem = function(k, v){
     rawSet.call(this, k, v);
     if(!isHf(k)) return;
+    if(STORE_SYNC_OFF) return;
     try{
       if(String(v).length > 4 * 1024 * 1024) return;
       fetch(STORE_BASE + '/store/' + encodeURIComponent(k), { method:'POST', body:String(v), keepalive:true }).catch(() => {});
@@ -20,6 +52,7 @@ const STORE_BASE = 'http://127.0.0.1:8787';
 
   // 异步读取落盘配置；中转可能比页面晚启动，因此带几次重试。
   // 只补齐本地缺失的键，不覆盖浏览器里已有的新值。
+  // hf_flows 特殊处理：与本地列表**合并**（并把合并结果写回本地与磁盘）。
   async function hydrate(){
     for(const wait of [0, 700, 1600]){
       if(wait) await new Promise(r => setTimeout(r, wait));
@@ -40,6 +73,36 @@ const STORE_BASE = 'http://127.0.0.1:8787';
       Object.keys(data).forEach(k => {
         if(!isHf(k) || typeof data[k] !== 'string') return;
         try{
+          if(k === 'hf_flows'){
+            const disk = parseFlowList(data[k]);
+            const mine = parseFlowList(localStorage.getItem('hf_flows'));
+            let merged = null;
+            if(disk && mine){
+              merged = mergeFlowLists(mine, disk);
+            }else if(disk && !mine){
+              merged = disk;
+            }
+            if(merged){
+              const js = JSON.stringify(merged);
+              if(js !== localStorage.getItem('hf_flows')){
+                rawSet.call(localStorage, 'hf_flows', js);
+                filled++;
+                // 合并结果回写磁盘，保证各源最终收敛到同一份
+                if(!STORE_SYNC_OFF) fetch(STORE_BASE + '/store/' + encodeURIComponent(k), { method:'POST', body:js, keepalive:true }).catch(() => {});
+              }
+              // ⚠️ 关键：FLOWS 是在脚本加载时同步读 localStorage 的，
+              // hydrate 是异步的 → 不刷新内存列表的话，界面仍然是空的，
+              // 而且此后任何一次保存都会把「空列表」写回去，把磁盘上的流程抹掉。
+              if(typeof FLOWS !== 'undefined' && Array.isArray(FLOWS)){
+                const before = FLOWS.length;
+                FLOWS = merged;
+                if(FLOWS.length !== before && typeof renderFlowsWindow === 'function'){
+                  try { renderFlowsWindow(); } catch(e){}
+                }
+              }
+            }
+            return;
+          }
           if(localStorage.getItem(k) == null){ rawSet.call(localStorage, k, data[k]); filled++; }
         }catch(e){}
       });
