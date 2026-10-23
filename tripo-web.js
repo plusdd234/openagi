@@ -50,8 +50,47 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log(...a);
 
 // ---------- 启动浏览器 ----------
+// 优先连接「用户手动启动的 Edge」（CDP 模式）
+// 背景：Playwright 自己 launch 的浏览器带自动化特征，Cloudflare 会反复弹「验证真人」，
+// 人工点完还会再弹。改成连接一个普通启动的 Edge（无自动化特征）后，挑战基本能一次通过。
+const CDP_URL = process.env.TRI_CDP_URL || 'http://127.0.0.1:9222';
+
+async function tryConnectCDP() {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 1500);
+    const res = await fetch(CDP_URL + '/json/version', { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const browser = await chromium.connectOverCDP(CDP_URL, { timeout: 15000 });
+    const ctx = browser.contexts()[0];
+    if (!ctx) return null;
+    const pages = ctx.pages().filter(p => !p.isClosed());
+    const page = pages[0] || await ctx.newPage();
+    log('已连接到手动启动的 Edge（CDP 模式），自动化特征更低，不易触发 Cloudflare 验证');
+    return { context: ctx, page };
+  } catch (e) {
+    return null;
+  }
+}
+
 async function launch() {
-  const args = [];
+  const cdp = await tryConnectCDP();
+  if (cdp) {
+    cdp.context.on('page', p => recordPage(p));
+    recordPage(cdp.page);
+    return cdp;
+  }
+
+  const args = ['--start-maximized'];
+  // 反自动化检测：Playwright 默认会带上 --enable-automation 且暴露 navigator.webdriver，
+  // Cloudflare 的挑战会因此反复弹「验证真人」循环。以下措施把特征抹掉。
+  args.push(
+    '--disable-blink-features=AutomationControlled',
+    '--disable-features=IsolateOrigins,site-per-process',
+    '--no-default-browser-check',
+    '--no-first-run',
+  );
   if (!SELFTEST) args.push('--start-maximized');
   const context = await chromium.launchPersistentContext(PROFILE_DIR, {
     channel: 'msedge',
@@ -59,6 +98,16 @@ async function launch() {
     viewport: null,
     acceptDownloads: true,
     args,
+    ignoreDefaultArgs: ['--enable-automation'],
+  });
+  // 抹掉 navigator.webdriver
+  await context.addInitScript(() => {
+    try {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+      if (window.chrome) window.chrome.runtime = window.chrome.runtime || {};
+      Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'], configurable: true });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5], configurable: true });
+    } catch (e) { /* 忽略 */ }
   });
   context.on('page', p => recordPage(p));
   const page = context.pages()[0] || await context.newPage();
@@ -162,6 +211,84 @@ async function attachReference(page, file) {
 // 真实页面实测结论：参考图控件虽带 multiple，但一次性写入多张不会触发页面逐图处理，
 // 因此主路径是「逐张写入」——每次写一张，页面追加进参考图列表；
 // 一次性写入仅作兜底（供支持数组写入的页面使用）。
+// 清空页面上已有的参考图
+// 背景：Tripo 的上传区是「追加」式的——不清空的话，每次运行都会把新图叠在上一轮的旧图上，
+// 模型会拿到一堆残留参考图。策略：
+//   ① 优先点「清空 / 重置 / 清除」类按钮
+//   ② 否则逐个点缩略图上的删除控件
+//   ③ 都不可行时返回 ok=false，由调用方整页重载来保证干净状态
+async function clearReferences(page) {
+  const countBlobs = () => page.evaluate(() => Array.from(document.querySelectorAll('img'))
+    .filter(i => /^blob:/.test(i.src || '') && i.naturalWidth > 0).length).catch(() => 0);
+
+  const before = await countBlobs();
+  if (!before) return { ok: true, method: 'empty', removed: 0 };
+
+  // ① 文本类清空按钮
+  const byText = await page.evaluate(() => {
+    const vis = el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+    for (const el of document.querySelectorAll('button,[role=button],span,div,label,a')) {
+      if (!vis(el)) continue;
+      const t = (el.innerText || '').trim();
+      if (!t || t.length > 6) continue;
+      if (/^(清空|清除|重置|移除|删除|全部清空|clear|reset|remove|delete)$/i.test(t)) {
+        el.click();
+        return t;
+      }
+    }
+    return '';
+  }).catch(() => '');
+  if (byText) {
+    await sleep(1200);
+    const after = await countBlobs();
+    if (after < before) {
+      log(`已通过「${byText}」清空参考图（${before} → ${after}）`);
+      return { ok: true, method: 'text:' + byText, removed: before - after };
+    }
+  }
+
+  // ② 逐个点缩略图上的删除控件
+  let removed = 0;
+  for (let round = 0; round < 8; round++) {
+    const n = await countBlobs();
+    if (!n) break;
+    const hit = await page.evaluate(() => {
+      const vis = el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+      const imgs = Array.from(document.querySelectorAll('img'))
+        .filter(i => /^blob:/.test(i.src || '') && i.naturalWidth > 0);
+      if (!imgs.length) return '';
+      const img = imgs[0];
+      const b = img.getBoundingClientRect();
+      let node = img.parentElement;
+      for (let d = 0; d < 5 && node && node !== document.body; d++, node = node.parentElement) {
+        for (const el of node.querySelectorAll('button,[role=button],svg,span,div,i')) {
+          if (!vis(el)) return '';
+          const bb = el.getBoundingClientRect();
+          if (bb.x + bb.width < b.x - 48 || bb.x > b.x + b.width + 48) continue;
+          const cls = String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : (el.className || ''));
+          const t = (el.innerText || '').trim();
+          const aria = (el.getAttribute('aria-label') || '') + '|' + (el.getAttribute('title') || '');
+          if (/delete|remove|clear|close|trash/i.test(cls) || /delete|remove|clear|close/i.test(aria) || t === '×' || t === '✕') {
+            el.click();
+            return cls.slice(0, 40) || t || aria.slice(0, 20) || 'del';
+          }
+        }
+      }
+      return '';
+    }).catch(() => '');
+    if (!hit) break;
+    removed++;
+    await sleep(700);
+  }
+  const after = await countBlobs();
+  if (after < before) {
+    log(`已清空参考图（${before} → ${after}）`);
+    return { ok: true, method: 'delete-btn', removed: before - after };
+  }
+  log(`未能清空参考图（仍有 ${after} 张），需要整页重载`);
+  return { ok: false, method: 'none', removed: 0, remain: after };
+}
+
 async function attachReferences(page, files) {
   const list = (files || []).filter(Boolean);
   if (!list.length) return { ok: false, uploaded: 0 };
@@ -538,10 +665,42 @@ async function probeData(page) {
         });
       });
 
+    // 参考图区：已上传的 blob 预览图 + 它们附近的删除类控件（用于实现「先清空再上传」）
+    const refs = (() => {
+      const blobImgs = Array.from(document.querySelectorAll('img'))
+        .filter(i => /^blob:/.test(i.src || '') && i.naturalWidth > 0);
+      const out = blobImgs.map(i => {
+        const b = i.getBoundingClientRect();
+        const ctrls = [];
+        let node = i.parentElement;
+        for (let d = 0; d < 5 && node && node !== document.body; d++, node = node.parentElement) {
+          Array.from(node.querySelectorAll('button,[role=button],svg,span,div,i')).forEach(el => {
+            const bb = el.getBoundingClientRect();
+            if (!(bb.width > 0 && bb.height > 0)) return;
+            // 只看缩略图附近（左右各放宽 48px）的控件
+            if (bb.x + bb.width < b.x - 48 || bb.x > b.x + b.width + 48) return;
+            const cls = String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : (el.className || ''));
+            const t = (el.innerText || '').trim();
+            const aria = (el.getAttribute('aria-label') || '') + '|' + (el.getAttribute('title') || '');
+            if (/delete|remove|clear|close|trash/i.test(cls) || /delete|remove|clear|close/i.test(aria) || t === '×' || t === '✕') {
+              ctrls.push({
+                tag: el.tagName.toLowerCase(), cls: cls.slice(0, 70),
+                aria: (el.getAttribute('aria-label') || el.getAttribute('title') || '').slice(0, 30),
+                txt: t.slice(0, 10),
+                x: Math.round(bb.x), y: Math.round(bb.y), w: Math.round(bb.width), h: Math.round(bb.height),
+              });
+            }
+          });
+        }
+        return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height), ctrls: ctrls.slice(0, 8) };
+      });
+      return out;
+    })();
+
     return {
       url: location.href, title: document.title, inputs,
       buttons: Array.from(new Set(buttons)).slice(0, 60),
-      files, imgs, options: options.slice(0, 120),
+      files, imgs, options: options.slice(0, 120), refs,
     };
   });
 }
@@ -581,6 +740,21 @@ async function runOnce(context, page, prompt, opts = {}) {
   const waitSec = Math.max(10, Math.min(900, Number(opts.timeoutSec) || TIMEOUT_SEC));
   // 只有显式指定模式时才切 tab；Tripo 当前是统一的「生成图片」面板，自动模式不点任何按钮
   const mode = opts.mode === 'text' || opts.mode === 'image' ? opts.mode : '';
+  // 参考图：支持多张（最多 3 张）
+  const refList = (Array.isArray(opts.images) ? opts.images : (opts.image ? [opts.image] : [])).filter(Boolean);
+
+  // ① 上传区是「追加」式的：不清空的话，新图会叠在上一轮的旧图上，模型会拿到一堆残留参考图
+  if (refList.length) {
+    const cl = await clearReferences(page);
+    if (!cl.ok) {
+      log('参考图未能清空，重新加载页面以保证干净状态…');
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 })
+        .catch(e => log('页面重载失败：' + e.message));
+      await sleep(4500);
+    }
+  }
+
+  // ② 切模式（重载后需要重新切一次）
   if (mode) {
     const switched = await clickModeTab(page, mode);
     log(switched
@@ -588,8 +762,7 @@ async function runOnce(context, page, prompt, opts = {}) {
       : `未找到${mode === 'image' ? '图生图' : '文生图'}切换入口，沿用当前面板`);
   }
 
-  // 参考图：支持多张（最多 3 张）
-  const refList = (Array.isArray(opts.images) ? opts.images : (opts.image ? [opts.image] : [])).filter(Boolean);
+  // ③ 上传参考图
   if (refList.length) {
     const files = [];
     for (const src of refList) {
@@ -967,6 +1140,18 @@ async function runModelOnce(context, page, opts = {}) {
     };
   }
 
+  // 上传区是追加式的：先清掉上一轮残留的参考图，否则新旧图会叠在一起
+  if (multi || opts.image) {
+    const cl = await clearReferences(page);
+    if (!cl.ok) {
+      log('参考图未能清空，重新加载页面以保证干净状态…');
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 })
+        .catch(e => log('页面重载失败：' + e.message));
+      await sleep(4500);
+      await ensureModelPage(page);
+    }
+  }
+
   if (multi) {
     const uploaded = await attachMultiView(page, opts.views || {});
     if (!uploaded) return { ok: false, message: '多视图参考图没有成功上传；至少需要一张（前 / 左 / 右 / 后）' };
@@ -1093,13 +1278,20 @@ async function ensureBrowser() {
 async function computeReady(page) {
   const now = Date.now();
   if (readyCache.at && now - readyCache.at < 4000) return readyCache;
-  let ready = false, title = '', url = '';
+  let ready = false, title = '', url = '', blocked = '';
   try {
     title = await page.title();
     url = page.url();
-    ready = !!(await findPromptInput(page)) && !!(await findGenerateButton(page));
+    // Cloudflare 人机验证页：标题是「请稍候…」，页面文案含「验证您是否是真人」
+    if (/请稍候|just a moment|attention required/i.test(title || '')) {
+      blocked = 'cloudflare';
+    } else {
+      const body = await page.evaluate(() => (document.body ? document.body.innerText : '').slice(0, 400)).catch(() => '');
+      if (/验证您是否是真人|正在验证您是否是真人|checking your browser/i.test(body || '')) blocked = 'cloudflare';
+    }
+    ready = !blocked && !!(await findPromptInput(page)) && !!(await findGenerateButton(page));
   } catch {}
-  readyCache = { at: now, ready, url, title };
+  readyCache = { at: now, ready, url, title, blocked };
   return readyCache;
 }
 
@@ -1307,6 +1499,7 @@ module.exports = {
   clickTextEl, selectRatio, findPromptInput, findGenerateButton,
   openTopologyPanel, pickTopologyType, setFaceCount, closeTopologyPanel,
   countImageInputs, setMultiViewMode, attachMultiView, pickGenerateCount,
+  clearReferences,
 };
 
 if (require.main === module) {
