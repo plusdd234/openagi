@@ -76,22 +76,37 @@ function apiRequest(url, opts){
   const headers = Object.assign({}, (opts && opts.headers) || {}, { 'X-Relay-Target': url });
   return { url: relayBase() + '/proxy', init: Object.assign({}, opts || {}, { headers }) };
 }
+// 客户端重试：浏览器 fetch 抛 TypeError 说明请求根本没送达（网络瞬断 / 中转刚重启），
+// 重试是安全的；上游返回 502/503/504（网关抖动）同样重试一次。
+// 超时（AbortError）不重试——请求可能已在服务端执行中，重放会造成重复计费。
+const API_RETRY_MAX = 2;
 async function apiFetch(url, opts, timeoutMs){
   const ms = timeoutMs || 180000;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
   const req = apiRequest(url, opts);
-  const init = Object.assign({}, req.init, { signal: ctrl.signal });
-  try{
-    return await fetch(req.url, init);
-  }catch(e){
-    if(e && e.name === 'AbortError'){
-      throw new Error('请求超时（' + Math.round(ms / 1000) + ' 秒）：服务商没有响应');
+  let lastErr = null;
+  for(let attempt = 0; attempt <= API_RETRY_MAX; attempt++){
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try{
+      const res = await fetch(req.url, Object.assign({}, req.init, { signal: ctrl.signal }));
+      if(res.status >= 502 && res.status <= 504 && attempt < API_RETRY_MAX){
+        lastErr = new Error('HTTP ' + res.status);
+        await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+        continue;
+      }
+      return res;
+    }catch(e){
+      if(e && e.name === 'AbortError'){
+        throw new Error('请求超时（' + Math.round(ms / 1000) + ' 秒）：服务商没有响应');
+      }
+      lastErr = e;
+      if(attempt >= API_RETRY_MAX) throw e;
+      await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+    }finally{
+      clearTimeout(timer);
     }
-    throw e;
-  }finally{
-    clearTimeout(timer);
   }
+  throw lastErr || new Error('请求失败');
 }
 
 // ---- Tripo v3（图像编辑 / 3D 建模）----

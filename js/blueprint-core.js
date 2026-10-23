@@ -157,7 +157,7 @@ const NODE_PARAMS = {
 
   aiTask: [
     { key:'instruction', ctl:'textarea', ph:'任务指令（例如：总结输入文本并列出风险点）' },
-    { key:'timeout', label:'超时', ctl:'number', type:'int', min:0, max:3600, step:10, unit:'秒，0 表示不限时', default:120 },
+    { key:'timeout', label:'超时', ctl:'number', type:'int', min:0, max:3600, step:10, unit:'秒，0 表示不限时', default:300 },
     { key:'__taskPins__', ctl:'taskPins' }
   ],
 

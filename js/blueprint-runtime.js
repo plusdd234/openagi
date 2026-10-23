@@ -530,11 +530,37 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
     })
   });
 
+  // 建立连接的瞬时失败可安全重试：此时还没收到任何响应内容，
+  // 请求基本没被上游处理，重放不会造成重复计费。
+  // （流已开始输出后不再重试，避免拼接出重复内容。）
+  const FETCH_RETRY_MAX = 2;
+  const fetchWithRetry = async () => {
+    let last = null;
+    for (let i = 0; i <= FETCH_RETRY_MAX; i++) {
+      try {
+        const r = await fetch(req.url, Object.assign({}, req.init, { signal: ctrl.signal }));
+        // 网关类错误（502/503/504）同样重试：多半是上游或中转的瞬时抖动
+        if (r.status >= 502 && r.status <= 504 && i < FETCH_RETRY_MAX) {
+          last = new Error('HTTP ' + r.status);
+          await new Promise(rs => setTimeout(rs, 700 * (i + 1)));
+          continue;
+        }
+        return r;
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw e;
+        last = e;
+        if (i >= FETCH_RETRY_MAX) throw e;
+        await new Promise(rs => setTimeout(rs, 700 * (i + 1)));
+      }
+    }
+    throw last || new Error('请求失败');
+  };
+
   try{
-    const res = await fetch(req.url, Object.assign({}, req.init, { signal: ctrl.signal }));
+    const res = await fetchWithRetry();
     if(!res.ok){
       const detail = await res.text();
-      throw new Error('HTTP ' + res.status + '：' + String(detail).slice(0, 200));
+      throw new Error('HTTP ' + res.status + '：' + (typeof prettyError === 'function' ? prettyError(detail) : String(detail).slice(0, 200)));
     }
     const ctype = (res.headers.get('content-type') || '').toLowerCase();
     if(!res.body || ctype.includes('application/json')){

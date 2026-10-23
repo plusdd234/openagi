@@ -211,7 +211,7 @@ async function post(base, key, path, body){
   });
   if(!res.ok){
     const t = await res.text();
-    throw new Error('HTTP ' + res.status + ': ' + t.slice(0,300));
+    throw new Error('HTTP ' + res.status + ': ' + prettyError(t));
   }
   return res.json();
 }
@@ -225,6 +225,16 @@ function lookupPath(o, path){
   }, o);
 }
 
+// 中转返回的 JSON 错误体（{"error":"..."}）比裸文本更可读
+function prettyError(text){
+  const t = String(text || '');
+  try{
+    const j = JSON.parse(t);
+    if(j && (j.error || j.message)) return String(j.error || j.message);
+  }catch(e){}
+  return t.slice(0, 300);
+}
+
 function friendlyErr(e){
   const m = (e && e.message) || String(e);
   if(/Failed to fetch|NetworkError|Load failed|Network request failed/i.test(m)){
@@ -235,6 +245,16 @@ function friendlyErr(e){
       return '网络或跨域失败：当前以 file:// 直接打开，多数接口会拒绝。请改用本地 HTTP 服务打开，或换用支持浏览器直连的服务商';
     }
     return '网络或跨域(CORS)失败：该服务商未开放浏览器跨域。可换用 OpenRouter / DeepSeek / 硅基流动，或通过本地代理转发';
+  }
+  // 中转层报上来的上游故障：给出下一步动作
+  if(/ECONNRESET|socket hang up|上游连接被重置/i.test(m)){
+    return m + '｜本机中转已自动重试仍未成功：可稍后重试，或检查本机代理 / 网络，或把该节点的「超时」调大后重跑。';
+  }
+  if(/上游响应超时/.test(m)){
+    return m + '｜可调大该节点的「超时」参数，或减少单次请求的图片体积。';
+  }
+  if(/无法连接上游服务|域名解析失败/.test(m)){
+    return m + '｜请检查本机网络与代理设置是否可用。';
   }
   return m;
 }
