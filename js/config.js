@@ -135,9 +135,29 @@ const RELAY_DEFAULT = 'http://127.0.0.1:8787';
 function relayEnabled(){
   return !!($('relayOn') && $('relayOn').checked);
 }
+// 中转地址必须是 http(s) 地址。输入框里混进别的内容（比如一段提示词）时不能直接拿去发请求，
+// 否则 relay 明明在跑，页面却报「中转未连接」——实际是请求打到了一个不存在的地址。
+function isHttpUrl(s){ return /^https?:\/\/[^\s]+$/i.test(String(s || '').trim()); }
+// 少写了协议头的域名（api.xxx.com/v1）自动补上，补不上（中文、空格等）才认为无效
+function fixUrl(v){
+  v = String(v || '').trim();
+  if(!v) return '';
+  if(isHttpUrl(v)) return v;
+  if(!/^[\w.-]+(:\d+)?(\/\S*)?$/.test(v)) return '';
+  return (/^(127\.0\.0\.1|localhost)(:|$|\/)/i.test(v) ? 'http://' : 'https://') + v;
+}
+function relayRaw(){
+  return ($('relayUrl') && $('relayUrl').value.trim()) || '';
+}
 function relayBase(){
-  const v = ($('relayUrl') && $('relayUrl').value.trim()) || RELAY_DEFAULT;
-  return v.replace(/\/$/, '');
+  const v = relayRaw();
+  return (v && isHttpUrl(v) ? v : RELAY_DEFAULT).replace(/\/$/, '');
+}
+// 地址有问题时返回说明文字，没有问题返回 ''
+function relayUrlIssue(){
+  const v = relayRaw();
+  if(!v) return '';
+  return isHttpUrl(v) ? '' : '中转地址「' + v + '」不是合法的 http 地址，已改用默认 ' + RELAY_DEFAULT;
 }
 function apiRequest(url, opts){
   // 本地助手（127.0.0.1 / localhost）不经过中转，避免被代理转发
@@ -481,11 +501,44 @@ function setInputValue(el, val){
   if(el.type === 'checkbox') el.checked = val === 'true' || val === true;
   else el.value = val;
 }
+/* 配置自愈：地址/尺寸这类字段被填进别的内容（误把提示词粘进来）时，
+ * 不改掉的话请求会一直打到非法地址，表现为「服务明明开着却连不上」。
+ * 只修格式明确不合法的字段；模型名这类自由文本只提示、不擅自改。 */
+function sanitizeCfg(){
+  const fixed = [], warned = [];
+  const set = (id, val, why) => { $(id).value = val; fixed.push(why + '（原值「' + $(id).dataset.badVal + '」）'); };
+  ['llmBaseUrl', 'imgBaseUrl', 'relayUrl'].forEach(id => {
+    const v = $(id).value.trim();
+    if(!v || isHttpUrl(v)) return;
+    const name = id === 'relayUrl' ? '中转地址' : id === 'llmBaseUrl' ? '分析 Base URL' : '生图 Base URL';
+    const ok = fixUrl(v);
+    $(id).dataset.badVal = v;
+    set(id, ok, ok ? name + '缺少协议头，已补全为 ' + ok : name + '不是 http(s) 地址，已清空');
+  });
+  const ep = $('imgEndpoint').value.trim();
+  if(ep && ep[0] !== '/'){ $('imgEndpoint').dataset.badVal = ep; set('imgEndpoint', '/images/edits', '生图接口路径应以 / 开头，已恢复默认'); }
+  const sz = $('imgSize').value.trim();
+  if(sz && !/^\d{2,5}\s*[x×]\s*\d{2,5}$/i.test(sz)){ $('imgSize').dataset.badVal = sz; set('imgSize', '1024x1024', '图片尺寸格式应为 宽x高，已恢复默认'); }
+  const rp = $('respPath').value.trim();
+  if(rp && /[\u4e00-\u9fa5\s]/.test(rp)){ $('respPath').dataset.badVal = rp; set('respPath', 'data[0].url', '取图路径应是字段表达式（如 data[0].url），已恢复默认'); }
+  ['llmModel', 'imgModel'].forEach(id => {
+    const v = $(id).value.trim();
+    if(v && /[\u4e00-\u9fa5\s]/.test(v)) warned.push((id === 'llmModel' ? '分析模型' : '生图模型') + '「' + v + '」不像模型 id，请到模型列表里点选');
+  });
+  return { fixed, warned };
+}
+
 function loadAll(){
   CFG.forEach(id => setInputValue($(id), loadKey(id)));
   setInputValue($('llmKey'), loadKey('llmKey'));
   setInputValue($('imgKey'), loadKey('imgKey'));
   setInputValue($('tripoKey'), loadKey('tripoKey'));
+  try{
+    const r = sanitizeCfg();
+    if(r.fixed.length) saveAll();
+    const msg = r.fixed.concat(r.warned).join('；');
+    if(msg && typeof setStatus === 'function') setStatus('配置异常已处理：' + msg, 'warn');
+  }catch(e){}
   // 旧版本保存的灵算地址不是 API 域名，自动迁移
   let migrated = false;
   ['llmBaseUrl', 'imgBaseUrl'].forEach(id => {

@@ -333,17 +333,32 @@ function closeSettings(){
 }
 async function testRelay(){
   $('relayStatus').textContent = '测试中…';
+  const issue = relayUrlIssue();          // 地址被填成别的内容时，先说清楚，别只报「未连接」
+  const target = relayBase();
   const t0 = performance.now();
   try{
-    const res = await fetch(relayBase() + '/health');
+    const res = await fetch(target + '/health');
     if(!res.ok) throw new Error('HTTP ' + res.status);
     const d = await res.json();
-    if(!d || !d.ok) throw new Error('返回异常');
-    $('relayStatus').textContent = `中转正常 · ${relayBase()} · ${Math.round(performance.now() - t0)}ms`;
+    if(!d || !d.ok) throw new Error('返回内容异常');
+    $('relayStatus').textContent = `中转正常 · ${target} · ${Math.round(performance.now() - t0)}ms`
+      + (issue ? '（' + issue + '）' : '');
   }catch(e){
-    $('relayStatus').textContent = `中转未连接：请双击 start-relay.bat 启动，或运行 node relay.js（${relayBase()}）`;
+    // Failed to fetch = 请求根本没发出去（服务没开 / 被代理拦 / 地址不对）
+    const why = (!e || e instanceof TypeError || /Failed to fetch|NetworkError/i.test(String(e.message)))
+      ? '请求发不出去'
+      : String(e.message || '未知错误');
+    $('relayStatus').textContent = `中转未连接（${why}）· 目标 ${target}。`
+      + '请双击 start-relay.bat 启动，或运行 node relay.js'
+      + (issue ? '；另外：' + issue : '')
+      + '。若开了系统代理，请确认代理放行 127.0.0.1。';
   }
 }
+$('btnRelayDefault') && $('btnRelayDefault').addEventListener('click', () => {
+  $('relayUrl').value = '';
+  saveAll();
+  $('relayStatus').textContent = '已恢复默认中转地址：' + relayBase() + '。点「测试中转」确认。';
+});
 $('btnTestRelay').addEventListener('click', testRelay);
 $('relayOn').addEventListener('change', () => {
   $('relayStatus').textContent = relayEnabled()

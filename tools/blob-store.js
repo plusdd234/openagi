@@ -95,8 +95,13 @@ const COUNT_KEYS = `(() => new Promise(res => {
       setTimeout(() => res(window.__exported || ''), 150);
     });
   }));
-  check('导出内容包含完整图片', exported.indexOf(BIG) >= 0, 'len=' + exported.length);
-  check('导出内容不含未解析的存根', exported.indexOf('"blob:') < 0);
+  // 导出包含磁盘上合并进来的全部工作流（它们的大块数据不在这个测试库的 IndexedDB 里），
+  // 所以只针对本次写入的 f1 断言
+  const exp = (() => { try { return JSON.parse(exported); } catch (e) { return null; } })();
+  const expF1 = exp && Array.isArray(exp.flows) ? exp.flows.find(f => f.id === 'f1') : null;
+  const expImg = expF1 && expF1.nodes[0] ? expF1.nodes[0].data.image : '';
+  check('导出内容包含完整图片', expImg === BIG, 'len=' + exported.length + ' img=' + String(expImg).slice(0, 30));
+  check('导出内容不含未解析的存根', String(expImg).indexOf('blob:') < 0);
 
   console.log('\n=== 6. 删除工作流后回收大块数据 ===');
   await page.waitForTimeout(150);
