@@ -50,6 +50,7 @@ $('bpAdd').addEventListener('change', e => {
   addNodeAt(type, (c.clientWidth / 2 - bpPan.x) / bpZoom - 120 + off, (c.clientHeight / 2 - bpPan.y) / bpZoom - 40 + off);
 });
 $('btnBpRun').addEventListener('click', runFlow);
+$('btnBpStop').addEventListener('click', stopFlow);
 $('btnBpFit').addEventListener('click', fitView);
 
 $('varMenu').addEventListener('pointerdown', e => e.stopPropagation());

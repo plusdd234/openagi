@@ -261,6 +261,9 @@ let bpPickedModelNode = null;
 let bpPickedParam = null;
 let bpPickedVar = null;
 let bpRunBusy = false;
+// 运行期中断：停止按钮按下后，置标志并 abort 控制器，所有在途请求一并中止
+let bpRunAbort = false;
+let bpRunCtrl = null;
 let bpRunNodeId = null;
 let bpRunLinkId = null;
 

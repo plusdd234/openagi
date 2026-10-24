@@ -128,6 +128,10 @@
   .btn.primary:hover { filter: brightness(1.06); }
   .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
   .btn.ghost:hover { color: var(--text); background: rgba(255,255,255,.05); }
+  .btn.danger {
+    background: #2a1d1f; border-color: rgba(255,120,120,.45); color: #ff9c9c;
+  }
+  .btn.danger:hover:not(:disabled) { background: #3a2326; border-color: #ff8a8a; color: #ffb4b4; }
   .btn.sm { height: 30px; padding: 0 11px; font-size: 11.5px; border-radius: 8px; }
   .linkbtn {
     display: inline-flex; align-items: center; gap: 5px; background: none; border: none;
@@ -781,6 +785,7 @@
   .node-status.ok { color: #6fdc9f; }
   .node-status.error { color: #ff8a8a; }
   .node-status.running { color: #ffd35c; animation: pulse 1s ease-in-out infinite; }
+  .node-status.stopped { color: #f2c14e; }
   @keyframes pulse { 50% { opacity: .45; } }
   .node-exec {
     display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;

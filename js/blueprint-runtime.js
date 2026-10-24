@@ -475,6 +475,24 @@ function addNodeAt(type, x, y){
   if(el) el.classList.add('sel');
 }
 
+// ---- 运行期中断（停止按钮）----
+// 停止时置 bpRunAbort 并 abort bpRunCtrl：在途的 LLM 流 / 网页生成请求会立刻断开，
+// 节点之间靠 bpRunAbort 提前返回，不再继续往下走。
+function runSignal(){ return bpRunCtrl ? bpRunCtrl.signal : undefined; }
+function isStopped(){ return !!bpRunAbort || !!(bpRunCtrl && bpRunCtrl.signal.aborted); }
+function stopError(){ const e = new Error('已手动停止'); e._stopped = true; return e; }
+// 停止按钮：只置标志，真正的收尾（按钮复位 / 日志）由 runFlow 自己完成
+function stopFlow(){
+  if(!bpRunBusy) return;
+  bpRunAbort = true;
+  if(bpRunCtrl) bpRunCtrl.abort();
+  bpLog('已请求停止，正在中断当前节点…', 'warn');
+  const b = $('btnBpStop');
+  if(b) b.disabled = true;
+  const run = $('btnBpRun');
+  if(run) run.textContent = '停止中…';
+}
+
 // ---- 节点执行 ----
 async function llmChat(sys, userText, image){
   const key = $('llmKey').value.trim();
@@ -501,6 +519,13 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
 
   const limitMs = opts && Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 0;
   const ctrl = new AbortController();
+  /* 外部中断（停止按钮）：跟着一起 abort，并单独记原因，
+     否则会被下面当成「超时」或「上游没有返回数据」报出来。 */
+  const ext = opts && opts.signal;
+  if(ext){
+    if(ext.aborted) throw stopError();
+    ext.addEventListener('abort', () => abortWith('stop'));
+  }
   let idle = null;
   let hard = null;
   let firstTimer = null;
@@ -626,6 +651,7 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
   }catch(e){
     if(e && e.name === 'AbortError'){
       const el = elapsedSec();
+      if(abortReason === 'stop') throw stopError();
       if(abortReason === 'limit') throw new Error('任务超时（' + Math.round((limitMs || 600000) / 1000) + ' 秒）已中止');
       if(abortReason === 'first'){
         if(!gotBytes){
@@ -710,7 +736,7 @@ async function wfAiTask(instruction, sections, images, outs, onDelta, timeoutMs)
   }
   const content = [{ type:'text', text: parts.join('\n\n') }];
   images.forEach(url => content.push({ type:'image_url', image_url:{ url } }));
-  const raw = await llmStreamRequest(sys, [{ role:'user', content }], onDelta, { timeoutMs });
+  const raw = await llmStreamRequest(sys, [{ role:'user', content }], onDelta, { timeoutMs, signal: runSignal() });
   if(!raw) throw new Error('分析任务未返回内容');
   return parseAiTaskResult(raw, outs);
 }
@@ -736,6 +762,11 @@ async function wfTripoWebImage(prompt, images, opts){
   const list = (Array.isArray(images) ? images : (images ? [images] : [])).filter(Boolean).slice(0, 3);
   const timeoutSec = Math.max(10, Math.min(900, Math.trunc(Number(o.timeoutSec) || 0) || 240));
   const ctrl = new AbortController();
+  const ext = o.signal;                       // 停止按钮：网页生成是长任务，必须能中断
+  if(ext){
+    if(ext.aborted) throw stopError();
+    ext.addEventListener('abort', () => ctrl.abort());
+  }
   const timer = setTimeout(() => ctrl.abort(), (timeoutSec + 40) * 1000);
   try{
     const res = await fetch(TRIPO_WEB_BASE + '/generate', {
@@ -756,7 +787,10 @@ async function wfTripoWebImage(prompt, images, opts){
     if(!res.ok || !data || !data.url) throw new Error((data && data.message) || ('Tripo 助手返回 HTTP ' + res.status));
     return { url: data.url + '?t=' + Date.now(), file: data.file || '', canvas: !!data.canvas, message: data.message || '', refs: list.length };
   }catch(e){
-    if(e && e.name === 'AbortError') throw new Error('Tripo 网页生成超时（' + (timeoutSec + 40) + ' 秒）');
+    if(e && e.name === 'AbortError'){
+      if(ext && ext.aborted) throw stopError();
+      throw new Error('Tripo 网页生成超时（' + (timeoutSec + 40) + ' 秒）');
+    }
     if(e instanceof TypeError) throw new Error('无法连接 Tripo 助手：请先运行 start-relay.bat（或 start-tripo-bridge.bat）');
     throw e;
   }finally{
@@ -770,6 +804,11 @@ async function wfTripoWebModel(image, opts){
   const o = opts || {};
   const timeoutSec = Math.max(30, Math.min(1800, Math.trunc(Number(o.timeoutSec) || 0) || 420));
   const ctrl = new AbortController();
+  const ext = o.signal;                       // 同上：模型生成同样要能立刻中断
+  if(ext){
+    if(ext.aborted) throw stopError();
+    ext.addEventListener('abort', () => ctrl.abort());
+  }
   const timer = setTimeout(() => ctrl.abort(), (timeoutSec + 60) * 1000);
   try{
     const res = await fetch(TRIPO_WEB_BASE + '/generate-model', {
@@ -794,7 +833,10 @@ async function wfTripoWebModel(image, opts){
     if(!res.ok || !data || !data.url) throw new Error((data && data.message) || ('Tripo 助手返回 HTTP ' + res.status));
     return { url: data.url + '?t=' + Date.now(), file: data.file || '', size: data.size || 0, message: data.message || '' };
   }catch(e){
-    if(e && e.name === 'AbortError') throw new Error('Tripo 网页生成超时（' + (timeoutSec + 60) + ' 秒）');
+    if(e && e.name === 'AbortError'){
+      if(ext && ext.aborted) throw stopError();
+      throw new Error('Tripo 网页生成超时（' + (timeoutSec + 60) + ' 秒）');
+    }
     if(e instanceof TypeError) throw new Error('无法连接 Tripo 助手：请先运行 start-tripo-bridge.bat');
     throw e;
   }finally{
@@ -804,7 +846,7 @@ async function wfTripoWebModel(image, opts){
 
 async function wfImage(prompt, image){
   if(isTripoWeb()){
-    const r = await wfTripoWebImage(prompt, image, { timeoutSec: 240 });
+    const r = await wfTripoWebImage(prompt, image, { timeoutSec: 240, signal: runSignal() });
     return r.url;
   }
   if(isTripo()){
@@ -978,7 +1020,7 @@ async function wfSplitViews(imageUrl, prompt, views, timeoutSec, onDelta){
   const raw = await llmStreamRequest(sys, [{ role:'user', content:[
     { type:'text', text: user },
     { type:'image_url', image_url:{ url: imageUrl } }
-  ]}], onDelta, { timeoutMs });
+  ]}], onDelta, { timeoutMs, signal: runSignal() });
   return parseSplitJson(raw, views);
 }
 
@@ -1001,7 +1043,7 @@ async function wfAiBranch(instruction, branches, ctx, timeoutSec, onDelta){
   const content = [{ type:'text', text: user }];
   if(c.image) content.push({ type:'image_url', image_url:{ url: c.image } });
   const timeoutMs = Math.round((Number(timeoutSec) || 120) * 1000);
-  const raw = await llmStreamRequest(sys, [{ role:'user', content }], onDelta, { timeoutMs });
+  const raw = await llmStreamRequest(sys, [{ role:'user', content }], onDelta, { timeoutMs, signal: runSignal() });
   if(!raw) throw new Error('AI 分支未返回内容');
   return parseAiBranchResult(raw, branches);
 }
@@ -1179,11 +1221,15 @@ async function runFlow(){
   const activated = new Set();     // 本次实际被求值的节点，用于提示「未接入执行线」
 
   bpRunBusy = true;
+  bpRunAbort = false;
+  bpRunCtrl = new AbortController();     // 停止时 abort：在途请求一起断
   bpRunNodeId = null;
   bpRunLinkId = null;
   const btn = $('btnBpRun');
   btn.disabled = true;
   btn.textContent = '运行中…';
+  const stopBtn = $('btnBpStop');
+  if(stopBtn){ stopBtn.classList.remove('hidden'); stopBtn.disabled = false; }
   bp.nodes.forEach(n => { n.status = ''; n.error = ''; n.out = {}; });
   renderNodes();
 
@@ -1233,6 +1279,7 @@ async function runFlow(){
   }
 
   async function executeNode(n, viaLinkId){
+    if(isStopped()) throw stopError();      // 停止后不再启动新节点
     highlight(n.id, viaLinkId);
     setStatus(n, '运行中', 'running');
     const nodeStarted = Date.now();
@@ -1314,7 +1361,8 @@ async function runFlow(){
             if(live) live.set('流式生成 ' + acc.length + ' 字 · …' + acc.slice(-200));
           }, limitMs);
         }catch(e){
-          if(live) live.done('分析任务失败 · ' + friendlyErr(e), 'error');
+          const stopped = !!(e && e._stopped);
+          if(live) live.done(stopped ? '已手动停止' : ('分析任务失败 · ' + friendlyErr(e)), stopped ? 'warn' : 'error');
           if(e) e._bpLogged = true;
           throw e;
         }
@@ -1345,7 +1393,8 @@ async function runFlow(){
           n.out.choice = picked.id;
           n.out.text = '已选择「' + picked.name + '」' + (r.reason ? ' · ' + r.reason : '') + note;
         }catch(e){
-          if(live) live.done('AI 分支失败 · ' + friendlyErr(e), 'error');
+          const stopped = !!(e && e._stopped);
+          if(live) live.done(stopped ? '已手动停止' : ('AI 分支失败 · ' + friendlyErr(e)), stopped ? 'warn' : 'error');
           if(e) e._bpLogged = true;
           throw e;
         }
@@ -1382,7 +1431,8 @@ async function runFlow(){
         const r = await wfTripoWebImage(p, refs, {
           timeoutSec,
           ratio: await paramIn('ratio'),
-          mode: await paramIn('mode')
+          mode: await paramIn('mode'),
+          signal: runSignal()
         });
         n.out.image = r.url;
         const refNote = refs.length > 1 ? (' · ' + refs.length + ' 张参考图') : '';
@@ -1410,7 +1460,8 @@ async function runFlow(){
             if(live) live.set('模型分析中 ' + acc.length + ' 字 · …' + acc.slice(-200));
           });
         }catch(e){
-          if(live) live.done('图像拆分失败 · ' + friendlyErr(e), 'error');
+          const stopped = !!(e && e._stopped);
+          if(live) live.done(stopped ? '已手动停止' : ('图像拆分失败 · ' + friendlyErr(e)), stopped ? 'warn' : 'error');
           if(e) e._bpLogged = true;
           throw e;
         }
@@ -1431,7 +1482,7 @@ async function runFlow(){
             mode: await paramIn('mode'), version: await paramIn('version'),
             topology: await paramIn('topology'), faceCount: await paramIn('faceCount'),
             count: await paramIn('count'), format: await paramIn('format'),
-            timeoutSec: await paramIn('timeout')
+            timeoutSec: await paramIn('timeout'), signal: runSignal()
           });
           n.out.model = r.url;
           const used = ['front','left','right','back'].filter(k => views[k]).length;
@@ -1445,13 +1496,14 @@ async function runFlow(){
             faceCount: await paramIn('faceCount'),
             count: await paramIn('count'),
             format: await paramIn('format'),
-            timeoutSec: await paramIn('timeout')
+            timeoutSec: await paramIn('timeout'),
+            signal: runSignal()
           });
           n.out.model = r.url;
           n.out.text = '网页生成模型完成 · ' + (r.file || '模型已下载') + (r.size ? ' · ' + (r.size / 1024).toFixed(0) + ' KB' : '');
         } else {
           if(!img) throw new Error('缺少图像输入');
-          n.out.model = (await wfTripoWebModel(img, { timeoutSec: 300 })).url;
+          n.out.model = (await wfTripoWebModel(img, { timeoutSec: 300, signal: runSignal() })).url;
         }
       } else if(n.type === 'model3d'){
         const img = await input('image');
@@ -1490,6 +1542,14 @@ async function runFlow(){
       if(n.type !== 'aiTask') bpLog('✓ ' + bpNodeLabel(n) + ' · ' + (Date.now() - nodeStarted) + 'ms · ' + bpOutPreview(n.out), 'ok');
       return n.out;
     } catch(err){
+      // 手动停止不是失败：单独一种状态，不进失败计数
+      if(err && err._stopped){
+        n.status = 'stopped';
+        n.error = '已停止';
+        setStatus(n, '已停止', 'stopped');
+        bpLog('■ ' + bpNodeLabel(n) + ' 已停止', 'warn');
+        throw err;
+      }
       n.status = 'error';
       n.error = friendlyErr(err);
       setStatus(n, '失败', 'error');
@@ -1499,6 +1559,7 @@ async function runFlow(){
   }
 
   async function execFrom(link, visited){
+    if(isStopped()) return;
     const target = byId[link.to.node];
     if(!target || visited.has(target.id)) return;
     visited.add(target.id);
@@ -1512,6 +1573,7 @@ async function runFlow(){
   }
 
   async function followExec(n, out, visited){
+    if(isStopped()) return;
     const d = NODE_DEFS[n.type] || {};
     let key = 'exec';
     if(d.execOutFrom) key = (out && out.choice) || '';           // AI 分支：走模型选中的那条出口
@@ -1522,7 +1584,7 @@ async function runFlow(){
       const picked = ((n.data && n.data[d.execOutFrom]) || []).find(b => b.id === key);
       bpLog('· AI 分支选择了「' + (picked ? picked.name : key) + '」，但该出口没有连接执行线', 'warn');
     }
-    for(const l of outs) await execFrom(l, visited);
+    for(const l of outs){ if(isStopped()) break; await execFrom(l, visited); }
   }
 
   /* 执行流只从「任务开始」出发：往下沿执行线依次激活；
@@ -1532,6 +1594,7 @@ async function runFlow(){
     bpLog('没有「任务开始」节点，本次没有执行任何步骤', 'error');
   }
   for(const s of starts){
+    if(isStopped()) break;
     const visited = new Set([s.id]);
     try {
       const out = await evalNode(s, null);
@@ -1541,10 +1604,13 @@ async function runFlow(){
     }
   }
 
-  // 需要执行线驱动、却没被激活的节点，明确提示出来
-  const idle = bp.nodes.filter(n => (NODE_DEFS[n.type] || {}).execIn && !activated.has(n.id));
-  if(idle.length){
-    bpLog('· ' + idle.length + ' 个节点未接入执行线，本次未激活：' + idle.map(bpNodeLabel).join('、'));
+  const wasStopped = isStopped();
+  // 需要执行线驱动、却没被激活的节点，明确提示出来（中途停止时不唠叨这事）
+  if(!wasStopped){
+    const idle = bp.nodes.filter(n => (NODE_DEFS[n.type] || {}).execIn && !activated.has(n.id));
+    if(idle.length){
+      bpLog('· ' + idle.length + ' 个节点未接入执行线，本次未激活：' + idle.map(bpNodeLabel).join('、'));
+    }
   }
 
   highlight(null, null);
@@ -1552,11 +1618,19 @@ async function runFlow(){
   bpRunBusy = false;
   btn.disabled = false;
   btn.textContent = '运行';
+  if(stopBtn){ stopBtn.classList.add('hidden'); stopBtn.disabled = false; }
+  bpRunCtrl = null;
+  bpRunAbort = false;
   scheduleFlowSave();
   const errs = bp.nodes.filter(n => n.status === 'error').length;
-  bpLog('运行结束 · ' + activated.size + ' 个节点已激活 · ' + errs + ' 失败 · ' + (Date.now() - runStarted) + 'ms', errs ? 'error' : 'ok');
-  bpToast(errs ? '运行结束，有节点失败'
-    : starts.length ? '运行完成'
-      : '没有「任务开始」节点，未执行任何步骤');
+  if(wasStopped){
+    bpLog('运行已停止 · ' + activated.size + ' 个节点已激活 · ' + (Date.now() - runStarted) + 'ms', 'warn');
+    bpToast('已停止运行');
+  } else {
+    bpLog('运行结束 · ' + activated.size + ' 个节点已激活 · ' + errs + ' 失败 · ' + (Date.now() - runStarted) + 'ms', errs ? 'error' : 'ok');
+    bpToast(errs ? '运行结束，有节点失败'
+      : starts.length ? '运行完成'
+        : '没有「任务开始」节点，未执行任何步骤');
+  }
 }
 
