@@ -982,6 +982,55 @@ async function wfSplitViews(imageUrl, prompt, views, timeoutSec, onDelta){
   return parseSplitJson(raw, views);
 }
 
+/* AI 分支：让模型按选择依据 + 上下文从出口清单里挑一条
+ * branches: [{ id, name, hint }]
+ * 返回 { id, name, reason, matched }；matched=false 表示模型没给出可识别的出口 */
+async function wfAiBranch(instruction, branches, ctx, timeoutSec, onDelta){
+  const c = ctx || {};
+  const sys = '你是工作流路由器。根据选择依据与上下文，从给定的出口清单中选出唯一一条最合适的执行线。只输出 JSON，不要输出 JSON 之外的任何文字。';
+  const list = branches.map((b, i) => (i + 1) + '. ' + b.name + (b.hint ? '（' + b.hint + '）' : '')).join('\n');
+  const user = [
+    '请从下面的出口清单中选择唯一一条执行线。',
+    '选择依据：' + (instruction || '根据上下文选择最合适的处理方式'),
+    '出口清单：',
+    list,
+    c.text ? '上下文：\n' + c.text : '',
+    '只返回这个 JSON：{"choice":"出口名称","reason":"一句话理由"}',
+    'choice 必须与出口清单里的某个名称完全一致；实在无法确定时，选最接近的一条。'
+  ].filter(Boolean).join('\n');
+  const content = [{ type:'text', text: user }];
+  if(c.image) content.push({ type:'image_url', image_url:{ url: c.image } });
+  const timeoutMs = Math.round((Number(timeoutSec) || 120) * 1000);
+  const raw = await llmStreamRequest(sys, [{ role:'user', content }], onDelta, { timeoutMs });
+  if(!raw) throw new Error('AI 分支未返回内容');
+  return parseAiBranchResult(raw, branches);
+}
+
+/* 容错解析分支选择：兼容 markdown 代码围栏、前后杂语，以及模型只回了出口名的情况；
+   出口名允许大小写 / 空格差异与互相包含 */
+function parseAiBranchResult(raw, branches){
+  const text = String(raw || '').trim();
+  const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, '');
+  const findByName = nm => {
+    if(!nm) return null;
+    const n = norm(nm);
+    return branches.find(b => norm(b.name) === n)
+      || branches.find(b => b.name && n && (n.indexOf(norm(b.name)) >= 0 || norm(b.name).indexOf(n) >= 0))
+      || null;
+  };
+  let obj = null;
+  const m = text.match(/\{[\s\S]*\}/);
+  if(m){ try { obj = JSON.parse(m[0]); } catch(e) { obj = null; } }
+  let name = '', reason = '';
+  if(obj && typeof obj === 'object'){
+    name = String(obj.choice || obj.branch || obj.name || obj.select || obj.pick || '').trim();
+    reason = String(obj.reason || obj.why || obj.remark || '').trim();
+  }
+  const hit = findByName(name) || (name ? null : findByName(text));
+  if(hit) return { id:hit.id, name:hit.name, reason: reason || '', matched:true };
+  return { id:'', name: name || '', reason: reason || text.slice(0, 120), matched:false };
+}
+
 /* 容错解析拆分 JSON：兼容 markdown 代码围栏与前后杂语；按视图名归并 */
 function parseSplitJson(raw, views){
   const text = String(raw || '').trim();
@@ -1271,6 +1320,36 @@ async function runFlow(){
         }
         const first = outs.length ? n.out[outs[0].id] : '';
         if(live) live.done('分析任务完成 · ' + outs.length + ' 个输出 · ' + (Date.now() - nodeStarted) + 'ms · ' + bpPreview(first, 160), 'ok');
+      } else if(n.type === 'aiBranch'){
+        const branches = n.data.branches || [];
+        if(!branches.length) throw new Error('还没有添加任何出口（在节点里点「+ 添加出口」）');
+        const instruction = String((await paramIn('instruction')) || '').trim();
+        const context = await input('text');
+        const image = await input('image');
+        if(!instruction && context === undefined && !image) throw new Error('缺少选择依据或上下文（文本 / 图像）');
+        const tSec = Math.max(10, Math.min(600, Math.trunc(Number(await paramIn('timeout')) || 0) || 120));
+        const live = bpLog('AI 分支：请求已发出，等待模型选择…', '', true);
+        let picked, note = '';
+        try{
+          const r = await wfAiBranch(instruction, branches, { text: context, image }, tSec, acc => {
+            setStatus(n, '判断中 ' + acc.length + ' 字', 'running');
+            if(live) live.set('模型判断中 ' + acc.length + ' 字 · …' + acc.slice(-160));
+          });
+          picked = r.matched ? branches.find(b => b.id === r.id) : null;
+          if(!picked){
+            // 模型没给出可识别出口：走标了「兜底」的那条，否则走第一条
+            picked = branches.find(b => b.fallback) || branches[0];
+            note = r.name ? '（模型给的「' + r.name + '」不在出口清单中，已回退）' : '（模型未给出可识别出口，已回退）';
+            bpLog('· AI 分支未匹配到出口，回退到「' + picked.name + '」', 'warn');
+          }
+          n.out.choice = picked.id;
+          n.out.text = '已选择「' + picked.name + '」' + (r.reason ? ' · ' + r.reason : '') + note;
+        }catch(e){
+          if(live) live.done('AI 分支失败 · ' + friendlyErr(e), 'error');
+          if(e) e._bpLogged = true;
+          throw e;
+        }
+        if(live) live.done('AI 分支选择「' + picked.name + '」· ' + (Date.now() - nodeStarted) + 'ms' + note, 'ok');
       } else if(n.type === 'condition'){
         const text = await input('text');
         n.out.bool = await wfCondition(String((await paramIn('instruction')) || ''), text);
@@ -1433,8 +1512,16 @@ async function runFlow(){
   }
 
   async function followExec(n, out, visited){
-    const key = n.type === 'branch' ? (out && out.bool ? 'true' : 'false') : 'exec';
+    const d = NODE_DEFS[n.type] || {};
+    let key = 'exec';
+    if(d.execOutFrom) key = (out && out.choice) || '';           // AI 分支：走模型选中的那条出口
+    else if(n.type === 'branch') key = (out && out.bool) ? 'true' : 'false';
+    if(!key) return;
     const outs = execLinks.filter(l => l.from.node === n.id && l.from.key === key);
+    if(!outs.length && d.execOutFrom){
+      const picked = ((n.data && n.data[d.execOutFrom]) || []).find(b => b.id === key);
+      bpLog('· AI 分支选择了「' + (picked ? picked.name : key) + '」，但该出口没有连接执行线', 'warn');
+    }
     for(const l of outs) await execFrom(l, visited);
   }
 

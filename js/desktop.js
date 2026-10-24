@@ -397,6 +397,13 @@ function viewEntry(name, hint){
 }
 const VIEW_PRESETS = ['正视图', '背视图', '左侧视图', '右侧视图', '顶视图', '底视图'];
 
+/* AI 分支节点的出口条目：每条生成一条执行线出口引脚（key = id）
+   name 为出口名（送 AI 判断，也是引脚标签），hint 为可选说明，fallback 标记为兜底出口 */
+function branchEntry(name, hint){
+  return { id: uid(), name: name || '出口', hint: hint || '', fallback: false };
+}
+const BRANCH_PRESETS = ['兜底', '重试', '跳过'];
+
 // 旧版「图像分析 / 文本任务」节点统一迁移为「分析任务」，并重映射引脚
 function migrateAiTaskNodes(flow){
   (flow.nodes || []).forEach(n => {
@@ -483,6 +490,11 @@ function newNode(type, x, y){
       P('背景不透明度', 'float', 1),
       P('模式', 'string', 'line')
     ];
+  }
+  if(type === 'aiBranch'){
+    n.data.instruction = '';
+    n.data.timeout = 120;
+    n.data.branches = [ branchEntry('分支 A'), branchEntry('分支 B') ];
   }
   if(type === 'condition') n.data.instruction = '';
   if(type === 'boolNode') n.data.bool = true;
@@ -680,8 +692,17 @@ function viewPinOf(n, key){
   }
   return null;
 }
+/* 动态执行线出口：声明里 execOutFrom 指向 node.data 上的某个列表（如 branches），
+   每条生成一条执行出口。pinType 必须认得它们，否则这类连线会被当成数据线，执行流就断了。 */
+function execPinsOf(n){
+  if(!n || !n.data) return [];
+  const key = (NODE_DEFS[n.type] || {}).execOutFrom;
+  if(!key) return [];
+  return (n.data[key] || []).map(b => ({ id:b.id, name:b.name, type:'exec' }));
+}
 function taskPinOf(n, key){
-  return viewPinOf(n, key) || taskPinsOf(n).find(p => p.id === key) || null;
+  return viewPinOf(n, key) || execPinsOf(n).find(p => p.id === key)
+    || taskPinsOf(n).find(p => p.id === key) || null;
 }
 function pinType(n, key){
   const p = paramOf(n, key) || taskPinOf(n, key);
@@ -1054,13 +1075,16 @@ function nodeEl(n){
   const exec = document.createElement('div');
   exec.className = 'node-exec';
   if(d.execIn) exec.appendChild(makeExecPort('exec', 'in', '执行'));
-  if(d.execOut && d.execOut.length){
+  // 出口分两类：声明里写死的（真 / 假 / 执行）与取自数据的动态出口（AI 分支的分支列表）
+  const execOutDyn = execPinsOf(n);
+  if((d.execOut && d.execOut.length) || execOutDyn.length){
     const outWrap = document.createElement('div');
     outWrap.className = 'exec-out';
-    d.execOut.forEach(k => outWrap.appendChild(makeExecPort(k, 'out', k === 'true' ? '真' : k === 'false' ? '假' : '执行')));
+    (d.execOut || []).forEach(k => outWrap.appendChild(makeExecPort(k, 'out', k === 'true' ? '真' : k === 'false' ? '假' : '执行')));
+    execOutDyn.forEach(p => outWrap.appendChild(makeExecPort(p.id, 'out', p.name || '出口')));
     exec.appendChild(outWrap);
   }
-  const hasExec = !!d.execIn || !!(d.execOut && d.execOut.length);
+  const hasExec = !!d.execIn || !!(d.execOut && d.execOut.length) || !!execOutDyn.length;
 
   /* ---------- 节点主体：统一由 NODE_PARAMS 声明驱动 ---------- */
   const specs = (NODE_PARAMS[n.type] || []).slice();
@@ -1072,7 +1096,7 @@ function nodeEl(n){
 
   // 有参数但缺同名引脚的，补一条输入引脚（值可视化于其右侧）
   specs.forEach(s => {
-    if(s.ctl === 'paramList' || s.ctl === 'taskPins' || s.ctl === 'viewPins' || s.ctl === 'filePick' || s.tip) return;
+    if(s.ctl === 'paramList' || s.ctl === 'taskPins' || s.ctl === 'viewPins' || s.ctl === 'branchPins' || s.ctl === 'filePick' || s.tip) return;
     if(s.side === 'out') return;   // 数据源参数：挂在输出引脚上，不生成输入引脚
     if(s.store === 'param'){
       if(!inputKeys.includes(s.key)) inputKeys.push(s.key);
@@ -1095,7 +1119,7 @@ function nodeEl(n){
   inputKeys.forEach(k => {
     const spec = specByKey[k] || null;
     if(spec && spec.tip) return;
-    if(spec && (spec.ctl === 'paramList' || spec.ctl === 'taskPins' || spec.ctl === 'viewPins')) return;
+    if(spec && (spec.ctl === 'paramList' || spec.ctl === 'taskPins' || spec.ctl === 'viewPins' || spec.ctl === 'branchPins')) return;
     if(n.type === 'start') return;
     if(n.type === 'end'){
       const p = (n.params || []).find(x => x.id === k);
@@ -1128,7 +1152,8 @@ function nodeEl(n){
 
   // 2) 含参数的节点让引脚列占满整行，取值控件才有位置（输入侧 / 输出侧都算）
   const hasParamRow = specs.some(s => !s.tip
-    && s.ctl !== 'paramList' && s.ctl !== 'taskPins' && s.ctl !== 'filePick' && s.ctl !== 'viewPins');
+    && s.ctl !== 'paramList' && s.ctl !== 'taskPins' && s.ctl !== 'filePick'
+    && s.ctl !== 'viewPins' && s.ctl !== 'branchPins');
   if(hasParamRow) body.classList.add('wide-in');
   body.append(inCol);
   if((d.outputs || []).length || isVarNode || n.type === 'start' || n.type === 'aiTask'){
@@ -1153,6 +1178,8 @@ function nodeEl(n){
       fields.appendChild(taskPinSection(n, 'out'));
     } else if(s.ctl === 'viewPins'){
       fields.appendChild(viewPinSection(n));
+    } else if(s.ctl === 'branchPins'){
+      fields.appendChild(branchPinSection(n));
     } else if(s.tip){
       fields.appendChild(tipEl(
         (n.out && n.out.text && n.type !== 'aiTask') ? n.out.text
@@ -1725,6 +1752,116 @@ function viewPinRow(n, v){
   hintRow.appendChild(hint);
   const box = document.createElement('div');
   box.className = 'view-box';
+  box.append(row, hintRow);
+  return box;
+}
+
+/* ---------- AI 分支：动态出口列表（每出口 = 一条执行线出口引脚） ---------- */
+function nextBranchName(n){
+  const list = (n && n.data && n.data.branches) || [];
+  let i = list.length + 1;
+  while(list.some(b => b.name === '分支 ' + i)) i++;
+  return '分支 ' + i;
+}
+function addBranch(n, name){
+  const list = n.data.branches || (n.data.branches = []);
+  const nm = name || nextBranchName(n);
+  if(list.some(b => b.name === nm)){ bpToast('已存在「' + nm + '」'); return; }
+  list.push(branchEntry(nm));
+  renderNodes();
+  scheduleFlowSave();
+}
+function removeBranch(n, b){
+  n.data.branches = (n.data.branches || []).filter(x => x.id !== b.id);
+  if(bp){
+    bp.links = bp.links.filter(l =>
+      !(l.from.node === n.id && l.from.key === b.id) &&
+      !(l.to.node === n.id && l.to.key === b.id)
+    );
+  }
+  renderNodes();
+  scheduleFlowSave();
+}
+// 兜底出口互斥：同一时刻只能有一条
+function setFallbackBranch(n, b){
+  (n.data.branches || []).forEach(x => { x.fallback = (x.id === b.id) ? !x.fallback : false; });
+  renderNodes();
+  scheduleFlowSave();
+}
+function branchPinSection(n){
+  const wrap = document.createElement('div');
+  wrap.className = 'task-sec';
+  const head = document.createElement('div');
+  head.className = 'task-sec-head';
+  const title = document.createElement('span');
+  title.textContent = '执行线出口';
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'task-add';
+  add.textContent = '+ 添加出口';
+  add.addEventListener('click', e => { e.stopPropagation(); addBranch(n); });
+  head.append(title, add);
+  wrap.appendChild(head);
+  const presets = document.createElement('div');
+  presets.className = 'view-presets';
+  BRANCH_PRESETS.forEach(name => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'view-preset';
+    b.textContent = name;
+    b.addEventListener('click', e => { e.stopPropagation(); addBranch(n, name); });
+    presets.appendChild(b);
+  });
+  wrap.appendChild(presets);
+  (n.data.branches || []).forEach(b => wrap.appendChild(branchPinRow(n, b)));
+  return wrap;
+}
+function branchPinRow(n, b){
+  const chosen = !!(n.out && n.out.choice === b.id);
+  const box = document.createElement('div');
+  box.className = 'view-box branch-box' + (chosen ? ' chosen' : '');
+  const row = document.createElement('div');
+  row.className = 'param-row view-pin branch-pin';
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.className = 'view-name';
+  name.value = b.name || '';
+  name.title = '出口名称（送 AI 判断，也是引脚标签）';
+  for(const ev of NAME_EVENTS) name.addEventListener(ev, e => e.stopPropagation());
+  name.addEventListener('input', () => { b.name = name.value; scheduleFlowSave(); });
+  name.addEventListener('change', () => renderNodes());
+  row.appendChild(name);
+  // 兜底标记：模型选不出 / 找不到匹配出口时走这条
+  const fb = document.createElement('button');
+  fb.type = 'button';
+  fb.className = 'branch-fallback' + (b.fallback ? ' on' : '');
+  fb.textContent = '兜底';
+  fb.title = '模型未给出可识别出口时，改走这条';
+  for(const ev of NAME_EVENTS) fb.addEventListener(ev, e => e.stopPropagation());
+  fb.addEventListener('click', e => { e.stopPropagation(); setFallbackBranch(n, b); });
+  row.appendChild(fb);
+  if(chosen){
+    const tag = document.createElement('span');
+    tag.className = 'branch-chosen';
+    tag.textContent = '已选择';
+    row.appendChild(tag);
+  }
+  const del = document.createElement('button');
+  del.className = 'param-del';
+  del.title = '删除该出口';
+  del.textContent = '×';
+  del.addEventListener('click', e => { e.stopPropagation(); removeBranch(n, b); });
+  row.appendChild(del);
+  const hintRow = document.createElement('div');
+  hintRow.className = 'view-hint-row';
+  const hint = document.createElement('input');
+  hint.type = 'text';
+  hint.className = 'view-hint';
+  hint.value = b.hint || '';
+  hint.placeholder = '出口说明（可选，送 AI 辅助判断）';
+  for(const ev of NAME_EVENTS) hint.addEventListener(ev, e => e.stopPropagation());
+  hint.addEventListener('input', () => { b.hint = hint.value; scheduleFlowSave(); });
+  hintRow.appendChild(hint);
   box.append(row, hintRow);
   return box;
 }

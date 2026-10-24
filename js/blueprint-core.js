@@ -14,6 +14,8 @@ const NODE_DEFS = {
   aiTask:   { title:'分析任务', dot:'text', desc:'按指令分析文本 / 图像，自定义输入输出引脚与超时', inputs:[], outputs:[], execIn:true, execOut:['exec'] },
   condition:{ title:'IF 条件判断', dot:'logic', desc:'让语言模型判断条件是否成立', inputs:['text'], outputs:['bool'], execIn:true, execOut:['exec'] },
   branch:   { title:'条件分支', dot:'logic', desc:'按布尔值走真 / 假执行线', inputs:['bool'], outputs:[], execIn:true, execOut:['true','false'] },
+  // execOutFrom：执行线出口取自 node.data[branches]，每条一条执行线（动态出口）
+  aiBranch: { title:'AI 分支', dot:'logic', desc:'让语言模型按需求从多个出口里选一条执行线；出口可动态增减', inputs:['text','image'], outputs:['text'], execIn:true, execOut:[], execOutFrom:'branches' },
   varGet:   { title:'获取变量', dot:'var', desc:'读取变量当前值', inputs:[], outputs:[], execIn:false, execOut:[], pure:true },
   varSet:   { title:'设置变量', dot:'var', desc:'把输入值写入变量', inputs:[], outputs:[], execIn:true, execOut:['exec'] },
   imageGen: { title:'图像生成', dot:'gen', desc:'文生图或图生图', inputs:['prompt','image'], outputs:['image'], execIn:true, execOut:['exec'] },
@@ -149,6 +151,15 @@ const NODE_PARAMS = {
 
   branch: [ { tip:'按布尔引脚的值决定走「真」或「假」执行线' } ],
 
+  /* AI 分支：选择依据 + 动态出口列表（branchPins 控件）。
+     每个出口生成一条执行线出口引脚（key = 出口 id）；模型选中哪条，执行流就走哪条。 */
+  aiBranch: [
+    { key:'instruction', label:'选择依据', ctl:'textarea', ph:'让 AI 据此挑一条出口（例如：按图像复杂度选择修复方式）' },
+    { key:'timeout', label:'超时', ctl:'number', type:'int', min:10, max:600, step:10, unit:'秒', default:120 },
+    { key:'__branches__', ctl:'branchPins' },
+    { tip:'每个出口一条执行线，AI 只会走其中一条；名称与说明会一起送给模型判断。把某条标为「兜底」，模型选不出时走它（否则走第一条）。' }
+  ],
+
   // 取值控件挂在输出引脚上（side:'out'），布尔节点本身是数据源，没有输入引脚
   boolNode: [ { key:'bool', label:'取值', ctl:'bool', default:true, side:'out' } ],
 
@@ -186,7 +197,7 @@ const NODE_LIB = [
   { group:'分析任务', types:['aiTask'] },
   { group:'图像任务', types:['imageGen','imageCompress','imageSplit','tripoImg'] },
   { group:'3D 任务', types:['model3d','modelViews','tripoModel','tripoModelMulti'] },
-  { group:'逻辑', types:['condition','branch'] },
+  { group:'逻辑', types:['condition','branch','aiBranch'] },
   { group:'流程', types:['start','end'] },
   { group:'输出', types:['result'] },
 ];
