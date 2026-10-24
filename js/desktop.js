@@ -229,7 +229,20 @@ function renderBaseChat(){
     role.textContent = m.role === 'user' ? '你' : 'AI';
     const body = document.createElement('div');
     body.className = 'msg-body';
-    body.textContent = m.content;
+    // 思考过程单独折叠，默认收起：正文优先，需要排查时再展开
+    if(m.reasoning){
+      const det = document.createElement('details');
+      det.className = 'msg-think';
+      const sum = document.createElement('summary');
+      sum.textContent = '思考过程 · ' + m.reasoning.length + ' 字';
+      const pre = document.createElement('div');
+      pre.textContent = m.reasoning;
+      det.append(sum, pre);
+      body.appendChild(det);
+    }
+    const text = document.createElement('div');
+    text.textContent = m.content;
+    body.appendChild(text);
     row.append(role, body);
     log.appendChild(row);
   });
@@ -259,9 +272,10 @@ async function baseChatSend(){
     const replyMsg = { role:'assistant', content:'' };
     baseMsgs.push(replyMsg);
     renderBaseChat();
-    const reply = await llmChatMessagesStream($('chatSystem').value.trim(), messages, acc => {
+    const reply = await llmChatMessagesStream($('chatSystem').value.trim(), messages, (acc, piece, info) => {
       replyMsg.content = acc;
-      setBaseStatus('chatStatus', '生成中 ' + acc.length + ' 字');
+      if(info && info.reasoning) replyMsg.reasoning = info.reasoning;
+      setBaseStatus('chatStatus', streamPhaseText(acc, info));
       renderBaseChat();
     });
     if(!reply) throw new Error('模型没有返回内容');
@@ -1201,6 +1215,21 @@ function nodeEl(n){
   if(fields.childNodes.length) body.appendChild(fields);
 
 
+  // 思考过程：模型有 reasoning 时折叠展示，运行结束后仍能回看（判断它到底在想什么 / 有没有在工作）
+  if(n.reasoning){
+    const box = document.createElement('div');
+    box.className = 'node-out-box';
+    const det = document.createElement('details');
+    det.className = 'node-think';
+    const sum = document.createElement('summary');
+    sum.textContent = '思考过程 · ' + n.reasoning.length + ' 字';
+    const pre = document.createElement('div');
+    pre.className = 'node-result';
+    pre.textContent = n.reasoning;
+    det.append(sum, pre);
+    box.appendChild(det);
+    body.appendChild(box);
+  }
   if(n.out && n.out.text){
     const box = document.createElement('div');
     box.className = 'node-out-box';

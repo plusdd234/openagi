@@ -498,6 +498,18 @@
     background: #151a23; font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-word;
   }
   .msg.user .msg-body { background: #1a2233; }
+  /* 对话里的思考过程：灰色斜体 + 折叠，和正文区分开 */
+  .msg-think { margin-bottom: 6px; }
+  .msg-think > summary {
+    cursor: pointer; font-size: 10.5px; color: #8b9bb8; list-style: none; user-select: none;
+  }
+  .msg-think > summary::-webkit-details-marker { display: none; }
+  .msg-think > summary::before { content: '▸ '; }
+  .msg-think[open] > summary::before { content: '▾ '; }
+  .msg-think > div {
+    margin-top: 4px; padding-left: 8px; border-left: 2px solid #2c3034;
+    color: #7f8794; font-size: 11.5px; font-style: italic; white-space: pre-wrap; word-break: break-word;
+  }
   .msg-body img { display: block; max-width: 200px; border-radius: 7px; margin-bottom: 6px; }
   .msg-error .msg-body { color: #ff9c9c; border-color: rgba(255,107,107,.3); background: rgba(255,107,107,.06); }
   .chat-compose { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
@@ -908,6 +920,15 @@
     white-space: pre-wrap; word-break: break-word;
   }
   .node-out-box { grid-column: 1 / -1; padding: 6px 9px 0; }
+  /* 思考过程：默认折叠，展开后可读完整推理 */
+  .node-think > summary {
+    cursor: pointer; font-size: 8.5px; color: #8b9bb8; list-style: none;
+    padding: 2px 0; user-select: none;
+  }
+  .node-think > summary::-webkit-details-marker { display: none; }
+  .node-think > summary::before { content: '▸ '; }
+  .node-think[open] > summary::before { content: '▾ '; }
+  .node-think > .node-result { color: #7f8794; font-style: italic; }
   .node-out-name { font-size: 8.5px; color: #7c8288; margin-bottom: 2px; }
   .node-err { grid-column: 1 / -1; padding: 4px 9px 0; font-size: 9px; color: #ff8a8a; word-break: break-word; }
   .node-model { font-size: 9px; color: #9aa6ff; word-break: break-all; }

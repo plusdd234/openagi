@@ -318,6 +318,12 @@
           </div>
         </details>
 
+        <label class="check" for="llmThink">
+          <input type="checkbox" id="llmThink">
+          <span>请求思考过程（thinking）</span>
+        </label>
+        <div class="note">勾选后请求体带 enable_thinking，让 Qwen3 这类默认不吐思考的模型也输出推理过程；模型本来就会返回思考内容时不勾也照样显示。思考过程会实时显示在节点状态与运行日志里 —— 能看到它在涨，就说明模型一直在工作，不是连接断了。</div>
+
         <div class="test-row">
           <button class="linkbtn" id="testLLM">测试分析接口</button>
         </div>

@@ -475,6 +475,60 @@ function addNodeAt(type, x, y){
   if(el) el.classList.add('sel');
 }
 
+/* 部分网关 / 本地模型把思考内联进正文：`<think>……</think>答案`。
+   整段文本已到手时（非流式 / 兜底）用它一次拆干净。 */
+function splitInlineThink(text){
+  const s = String(text == null ? '' : text);
+  const out = { answer:'', reasoning:'' };
+  let i = 0;
+  while(i < s.length){
+    const a = s.indexOf('<think>', i);
+    if(a < 0){ out.answer += s.slice(i); break; }
+    out.answer += s.slice(i, a);
+    const b = s.indexOf('</think>', a + 7);
+    if(b < 0){ out.reasoning += s.slice(a + 7); break; }
+    out.reasoning += s.slice(a + 7, b);
+    i = b + 8;
+  }
+  return out;
+}
+
+/* 分片可能在标签中间断开（'<th' + 'ink>'），末尾像是某个标签开头时先扣住不发，
+   等下一片来了再拼起来判断，避免把半个标签当正文显示出来。 */
+function partialTail(str, tag){
+  for(let k = tag.length - 1; k >= 1; k--){
+    if(str.endsWith(tag.slice(0, k))) return tag.slice(0, k);
+  }
+  return '';
+}
+
+/* ---- 思考过程（reasoning / thinking）----
+ * 各家字段不统一：DeepSeek-R1 / Qwen3 / OpenRouter 用 delta.reasoning_content，
+ * 部分网关用 delta.reasoning 或 reasoning_details[].text；非流式则挂在 message 上。
+ * 只要能取到就原样透出，取不到就当没有，不影响正文。 */
+function readReasoning(obj){
+  if(!obj || typeof obj !== 'object') return '';
+  if(typeof obj.reasoning_content === 'string') return obj.reasoning_content;
+  if(typeof obj.reasoning === 'string') return obj.reasoning;
+  if(Array.isArray(obj.reasoning_details)){
+    return obj.reasoning_details.map(d => (d && (d.text || d.content)) || '').filter(Boolean).join('');
+  }
+  return '';
+}
+// 设置里勾选后才请求开启思考：默认不带该字段，避免不认识它的网关直接报错
+function thinkingRequestBody(){
+  try{ return ($('llmThink') && $('llmThink').checked) ? { enable_thinking: true } : {}; }
+  catch(e){ return {}; }
+}
+/* 流式进度文案：思考阶段与正文阶段分开显示。
+   能看到「思考中」在涨，就说明上游一直在推数据，不是连接断了。 */
+function streamPhaseText(acc, info){
+  const i = info || {};
+  const r = String(i.reasoning || '');
+  if(i.phase === 'thinking') return '思考中 ' + r.length + ' 字';
+  return '生成中 ' + String(acc || '').length + ' 字';
+}
+
 // ---- 运行期中断（停止按钮）----
 // 停止时置 bpRunAbort 并 abort bpRunCtrl：在途的 LLM 流 / 网页生成请求会立刻断开，
 // 节点之间靠 bpRunAbort 提前返回，不再继续往下走。
@@ -531,15 +585,21 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
   let firstTimer = null;
   let waitingFirst = true;
   let gotBytes = false;          // 是否收到过上游的任何字节
+  let gotReasoning = false;      // 是否收到过思考内容（思考也算「上游在工作」）
+  let startedAnswer = false;     // 是否已开始输出正文
+  let rsn = '';                  // 累计的思考过程
   let abortReason = '';
   const startedAt = Date.now();
   const elapsedSec = () => Math.round((Date.now() - startedAt) / 1000);
   const abortWith = reason => { abortReason = reason; ctrl.abort(); };
-  // 空闲计时：只在流建立（收到过字节）后才启动，避免把「首段等待」误判成「流中断」
+  /* 空闲计时：只在流建立（收到过字节）后才启动，避免把「首段等待」误判成「流中断」。
+     思考阶段的宽限放到 3 分钟：推理模型经常长时间地想，期间一个字都不吐，
+     拿正文阶段的 60 秒去卡它，会把「正在思考」误判成「连接断了」。 */
+  const idleMs = () => (gotReasoning && !startedAnswer) ? 180000 : 60000;
   const bump = ms => {
     if(!gotBytes) return;
     clearTimeout(idle);
-    idle = setTimeout(() => abortWith('idle'), ms || 60000);
+    idle = setTimeout(() => abortWith('idle'), ms || idleMs());
   };
   // 首段内容等待上限：优先用任务配置的超时；「不限时」时给 2 分钟
   // （此前硬编码 30 秒，视觉模型分析大图根本不够，且老流程节点没有 timeout 字段时会踩到）
@@ -554,12 +614,12 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
       'Content-Type': 'application/json',
       'Accept': 'text/event-stream'
     },
-    body: JSON.stringify({
+    body: JSON.stringify(Object.assign({
       model,
       messages: (sys ? [{ role:'system', content: sys }] : []).concat(messages),
       temperature: .3,
       stream: true
-    })
+    }, thinkingRequestBody()))
   });
 
   // 建立连接的瞬时失败可安全重试：此时还没收到任何响应内容，
@@ -600,9 +660,13 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
     const ctype = (res.headers.get('content-type') || '').toLowerCase();
     if(!res.body || ctype.includes('application/json')){
       const data = await res.json();
-      const text = ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '').trim();
+      const msg = (data.choices && data.choices[0] && data.choices[0].message) || {};
+      const sp = splitInlineThink(msg.content || '');
+      const text = sp.answer.trim();
+      const think = (readReasoning(msg) + sp.reasoning).trim();
+      if(think){ gotReasoning = true; rsn = think; }
       if(!text) throw new Error('模型没有返回内容');
-      if(onDelta) onDelta(text, text);
+      if(onDelta) onDelta(text, text, { phase:'answer', reasoning: rsn });
       return text;
     }
 
@@ -611,6 +675,54 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
     let buf = '';
     let acc = '';
     let doneFlag = false;
+    let inThink = false;          // 内联 <think> 块跨越多个分片，需要记忆状态
+    let pending = '';             // 疑似半个标签的尾巴，等下一片再判断
+    const notify = phase => { if(onDelta) onDelta(acc, '', { phase, reasoning: rsn }); };
+    const addContent = t => {
+      if(!t) return;
+      waitingFirst = false;
+      startedAnswer = true;
+      clearTimeout(firstTimer);   // 首段内容已到，首段计时器完成使命
+      acc += t;
+      if(onDelta) onDelta(acc, t, { phase:'answer', reasoning: rsn });
+    };
+    /* 正文分片里可能内联 <think>…</think>（部分网关 / 本地模型这么干），
+       按分片边界逐段处理：块内的进思考，块外的进正文。 */
+    const feed = raw => {
+      let s = pending + String(raw == null ? '' : raw);
+      pending = '';
+      while(s){
+        if(inThink){
+          const end = s.indexOf('</think>');
+          if(end < 0){
+            const hold = partialTail(s, '</think>');
+            rsn += hold ? s.slice(0, s.length - hold.length) : s;
+            gotReasoning = true;
+            pending = hold;
+            notify('thinking');
+            return;
+          }
+          rsn += s.slice(0, end);
+          gotReasoning = true;
+          inThink = false;
+          s = s.slice(end + 8);
+          notify('thinking');
+          continue;
+        }
+        const start = s.indexOf('<think>');
+        if(start < 0){
+          const hold = partialTail(s, '<think>');
+          if(hold){ addContent(s.slice(0, s.length - hold.length)); pending = hold; return; }
+          addContent(s);
+          return;
+        }
+        addContent(s.slice(0, start));
+        s = s.slice(start + 7);
+        inThink = true;
+        gotReasoning = true;
+        notify('thinking');
+      }
+    };
     const pushLine = line => {
       const s = line.replace(/\r$/, '').trim();
       if(s){ rawTail.push(s.slice(0, 120)); if(rawTail.length > 4) rawTail.shift(); }
@@ -621,12 +733,17 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
         const j = JSON.parse(payload);
         const d = j.choices && j.choices[0] && (j.choices[0].delta || j.choices[0].message || {});
         const piece = d && typeof d.content === 'string' ? d.content : '';
-        if(piece){
+        // 思考内容：R1 / Qwen3 这类模型会先推一大段推理，此时正文一个字都还没有
+        const think = readReasoning(d);
+        if(think){
+          gotReasoning = true;
+          rsn += think;
+          // 思考也是「上游在推数据」的证据：清掉首段计时器，别把长思考判成没响应
           waitingFirst = false;
-          clearTimeout(firstTimer);   // 首段内容已到，首段计时器完成使命
-          acc += piece;
-          if(onDelta) onDelta(acc, piece);
+          clearTimeout(firstTimer);
+          notify('thinking');
         }
+        if(piece) feed(piece);
       }catch(_){ /* 跳过非 JSON 行 */ }
     };
 
@@ -644,6 +761,7 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
       if(doneFlag) break;
     }
     if(buf) pushLine(buf);
+    if(pending){ const rest = pending; pending = ''; addContent(rest); }   // 结尾没等来标签，那它就只是普通文本
 
     const text = acc.trim();
     if(!text) throw new Error('模型没有返回内容');
@@ -654,6 +772,11 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
       if(abortReason === 'stop') throw stopError();
       if(abortReason === 'limit') throw new Error('任务超时（' + Math.round((limitMs || 600000) / 1000) + ' 秒）已中止');
       if(abortReason === 'first'){
+        if(gotReasoning){
+          // 说明连接是好的：模型一直在思考，只是还没吐正文
+          throw new Error('模型一直在输出思考内容，还没开始输出正文（已等待 ' + el + ' 秒，首段上限 '
+            + Math.round(firstWaitMs / 1000) + ' 秒）：调大节点「超时」，或换用思考更短的模型');
+        }
         if(!gotBytes){
           throw new Error('上游没有返回任何数据（已等待 ' + el + ' 秒，首段上限 ' + Math.round(firstWaitMs / 1000) + ' 秒）：'
             + '请检查接口地址 / 密钥 / 模型名，以及本机网络与代理；本地中转已自动重试上游断连');
@@ -662,7 +785,8 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
           + '可能是模型不支持图像输入，或响应被中转截断；可在节点「超时」里调大后重试'
           + (rawTail.length ? '｜上游最后几行：' + rawTail.join(' ⏎ ').slice(0, 260) : ''));
       }
-      throw new Error('流式响应中断：连续 60 秒没有收到新数据（本次已运行 ' + el + ' 秒）');
+      throw new Error('流式响应中断：连续 ' + Math.round(idleMs() / 1000) + ' 秒没有收到新数据（本次已运行 ' + el + ' 秒）'
+        + (gotReasoning && !startedAnswer ? '；中断发生在思考阶段，模型可能已停止输出或网关未流式下发思考内容' : ''));
     }
     throw e;
   }finally{
@@ -1230,7 +1354,7 @@ async function runFlow(){
   btn.textContent = '运行中…';
   const stopBtn = $('btnBpStop');
   if(stopBtn){ stopBtn.classList.remove('hidden'); stopBtn.disabled = false; }
-  bp.nodes.forEach(n => { n.status = ''; n.error = ''; n.out = {}; });
+  bp.nodes.forEach(n => { n.status = ''; n.error = ''; n.out = {}; n.reasoning = ''; });
   renderNodes();
 
   const runStarted = Date.now();
@@ -1356,10 +1480,18 @@ async function runFlow(){
         const limitMs = tSec > 0 ? Math.round(tSec * 1000) : 0;
         const live = bpLog('分析任务：请求已发出，等待首段输出…', '', true);
         try{
-          n.out = await wfAiTask(instruction, sections, images, outs, acc => {
+          let rsn = '';
+          n.out = await wfAiTask(instruction, sections, images, outs, (acc, piece, info) => {
+            if(info && info.reasoning) rsn = info.reasoning;
+            if(info && info.phase === 'thinking'){
+              setStatus(n, '思考中 ' + rsn.length + ' 字', 'running');
+              if(live) live.set('思考中 ' + rsn.length + ' 字 · …' + rsn.slice(-160));
+              return;
+            }
             setStatus(n, '生成中 ' + acc.length + ' 字', 'running');
             if(live) live.set('流式生成 ' + acc.length + ' 字 · …' + acc.slice(-200));
           }, limitMs);
+          if(rsn) n.reasoning = rsn.slice(0, 4000);
         }catch(e){
           const stopped = !!(e && e._stopped);
           if(live) live.done(stopped ? '已手动停止' : ('分析任务失败 · ' + friendlyErr(e)), stopped ? 'warn' : 'error');
@@ -1379,10 +1511,18 @@ async function runFlow(){
         const live = bpLog('AI 分支：请求已发出，等待模型选择…', '', true);
         let picked, note = '';
         try{
-          const r = await wfAiBranch(instruction, branches, { text: context, image }, tSec, acc => {
+          let rsn = '';
+          const r = await wfAiBranch(instruction, branches, { text: context, image }, tSec, (acc, piece, info) => {
+            if(info && info.reasoning) rsn = info.reasoning;
+            if(info && info.phase === 'thinking'){
+              setStatus(n, '思考中 ' + rsn.length + ' 字', 'running');
+              if(live) live.set('思考中 ' + rsn.length + ' 字 · …' + rsn.slice(-160));
+              return;
+            }
             setStatus(n, '判断中 ' + acc.length + ' 字', 'running');
             if(live) live.set('模型判断中 ' + acc.length + ' 字 · …' + acc.slice(-160));
           });
+          if(rsn) n.reasoning = rsn.slice(0, 4000);
           picked = r.matched ? branches.find(b => b.id === r.id) : null;
           if(!picked){
             // 模型没给出可识别出口：走标了「兜底」的那条，否则走第一条
@@ -1455,10 +1595,18 @@ async function runFlow(){
         const tSec = Math.max(10, Math.min(600, Math.trunc(Number(await paramIn('timeout')) || 0) || 120));
         const live = bpLog('图像拆分：请求已发出，等待模型分析…', '', true);
         try{
-          n.out = await wfImageSplit(src, prompt, views, { output, feather, timeoutSec: tSec }, acc => {
+          let rsn = '';
+          n.out = await wfImageSplit(src, prompt, views, { output, feather, timeoutSec: tSec }, (acc, piece, info) => {
+            if(info && info.reasoning) rsn = info.reasoning;
+            if(info && info.phase === 'thinking'){
+              setStatus(n, '思考中 ' + rsn.length + ' 字', 'running');
+              if(live) live.set('思考中 ' + rsn.length + ' 字 · …' + rsn.slice(-160));
+              return;
+            }
             setStatus(n, '分析中 ' + acc.length + ' 字', 'running');
             if(live) live.set('模型分析中 ' + acc.length + ' 字 · …' + acc.slice(-200));
           });
+          if(rsn) n.reasoning = rsn.slice(0, 4000);
         }catch(e){
           const stopped = !!(e && e._stopped);
           if(live) live.done(stopped ? '已手动停止' : ('图像拆分失败 · ' + friendlyErr(e)), stopped ? 'warn' : 'error');

@@ -121,7 +121,7 @@ const $ = id => document.getElementById(id);
 const loadKey = k => localStorage.getItem('hf_' + k);
 
 // ---- 配置持久化 ----
-const CFG = ['llmBaseUrl','llmModel','imgBaseUrl','imgEndpoint','imgModel','imgSize','respPath','sendImage','genEngine','tripoVersion','tripoWebUrl','relayUrl','relayOn'];
+const CFG = ['llmBaseUrl','llmModel','llmThink','imgBaseUrl','imgEndpoint','imgModel','imgSize','respPath','sendImage','genEngine','tripoVersion','tripoWebUrl','relayUrl','relayOn'];
 let saveTimer = null;
 
 // ---- 本地中转（绕过服务商 CORS 限制）----
