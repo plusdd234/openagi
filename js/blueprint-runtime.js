@@ -368,14 +368,14 @@ function addVarNode(v, mode, x, y){
 function loadVarFile(v, file){
   if(v.type === 'model'){
     if(!/\.(obj|glb|gltf|fbx|stl|ply|3mf)$/i.test(file.name)){ bpToast('模型格式不支持'); return; }
-    if(file.size > 2 * 1024 * 1024){ bpToast('模型超过 2MB，无法写入工作流本地存储'); return; }
+    if(file.size > 20 * 1024 * 1024){ bpToast('模型超过 20MB，请用更轻的模型文件'); return; }
   } else if(!/^image\//.test(file.type)){
     bpToast('请选择图像文件');
     return;
   }
   const reader = new FileReader();
-  reader.onload = () => {
-    v.value = reader.result;
+  reader.onload = async () => {
+    v.value = v.type === 'image' ? await shrinkImageDataUrl(String(reader.result)) : String(reader.result);
     v.fileName = file.name;
     renderNodes();
     scheduleFlowSave();
@@ -1334,6 +1334,9 @@ function paramFallback(n, key){
 async function runFlow(){
   if(bpRunBusy || !bp) return;
   if(!bp.nodes.length){ bpToast('请先添加节点'); return; }
+  // 图片 / 模型可能还只是存根（IndexedDB 尚未载入完成），运行前先还原
+  if(typeof blobEnsure === 'function') await blobEnsure();
+  if(typeof blobResolveFlows === 'function') blobResolveFlows([bp]);
 
   const byId = {};
   bp.nodes.forEach(n => { byId[n.id] = n; });

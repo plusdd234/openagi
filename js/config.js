@@ -96,6 +96,12 @@ function parseFlowList(str){
               if(typeof FLOWS !== 'undefined' && Array.isArray(FLOWS)){
                 const before = FLOWS.length;
                 FLOWS = merged;
+                // 合并进来的流程里可能带着存根（大块数据在 IndexedDB），要解析回原文
+                if(typeof blobResolveFlowsAsync === 'function'){
+                  blobResolveFlowsAsync(FLOWS).then(() => {
+                    try { if(typeof renderFlowsWindow === 'function') renderFlowsWindow(); } catch(e){}
+                  });
+                }
                 if(FLOWS.length !== before && typeof renderFlowsWindow === 'function'){
                   try { renderFlowsWindow(); } catch(e){}
                 }

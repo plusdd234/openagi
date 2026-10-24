@@ -55,6 +55,7 @@
           <button class="btn sm" id="btnImportFlows" title="从 JSON 文件导入工作流（同 id 取较新版本，不覆盖更新的）">导入</button>
           <input type="file" id="fileImportFlows" accept="application/json,.json" hidden>
         </div>
+        <div class="wf-storage hidden" id="wfStorage"></div>
         <div class="wf-grid" id="wfGrid"></div>
       </div>
     </div>
@@ -468,6 +469,7 @@
 <script src="js/model3d.js"></script>
 
 <script src="js/config.js"></script>
+<script src="js/blob-store.js"></script>
 <script src="js/api.js"></script>
 <script src="js/workbench.js"></script>
 <script src="js/blueprint-core.js"></script>

@@ -1464,17 +1464,47 @@ function removeParam(n, p){
   scheduleFlowSave();
 }
 
+/* 上传的图先压缩再入库：一张 4000px 的原图 base64 后动辄 5~10MB，
+ * 直接塞进工作流会瞬间吃满本地存储。压到长边 1600px + WebP 0.82 通常只剩几百 KB，
+ * 肉眼几乎无损。压完反而更大（已是优化过的图）就保留原图。 */
+function shrinkImageDataUrl(dataUrl, maxEdge, quality){
+  return new Promise(resolve => {
+    if(typeof dataUrl !== 'string' || !/^data:image\//.test(dataUrl)) return resolve(dataUrl);
+    const edge = maxEdge || 1600;
+    const q = quality || .82;
+    const img = new Image();
+    img.onload = () => {
+      try{
+        const sw = img.naturalWidth || 0, sh = img.naturalHeight || 0;
+        if(!sw || !sh) return resolve(dataUrl);
+        const scale = Math.min(1, edge / Math.max(sw, sh));
+        const cw = Math.max(1, Math.round(sw * scale)), ch = Math.max(1, Math.round(sh * scale));
+        const cv = document.createElement('canvas');
+        cv.width = cw; cv.height = ch;
+        cv.getContext('2d').drawImage(img, 0, 0, cw, ch);
+        const webp = cv.toDataURL('image/webp', q);
+        if(/^data:image\/webp/.test(webp) && webp.length < dataUrl.length) return resolve(webp);
+        const jpg = cv.toDataURL('image/jpeg', q);
+        if(jpg.length < dataUrl.length) return resolve(jpg);
+        resolve(dataUrl);
+      }catch(e){ resolve(dataUrl); }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 function loadParamFile(n, p, file){
   if(p.type === 'model'){
     if(!/\.(obj|glb|gltf|fbx|stl|ply|3mf)$/i.test(file.name)){ bpToast('模型格式不支持'); return; }
-    if(file.size > 2 * 1024 * 1024){ bpToast('模型超过 2MB，无法写入工作流本地存储'); return; }
+    if(file.size > 20 * 1024 * 1024){ bpToast('模型超过 20MB，请用更轻的模型文件'); return; }
   } else if(p.type === 'image' && !/^image\//.test(file.type)){
     bpToast('请选择图像文件');
     return;
   }
   const reader = new FileReader();
-  reader.onload = () => {
-    p.value = reader.result;
+  reader.onload = async () => {
+    p.value = p.type === 'image' ? await shrinkImageDataUrl(String(reader.result)) : String(reader.result);
     p.fileName = file.name;
     renderNodes();
     scheduleFlowSave();
@@ -1551,8 +1581,8 @@ function bindTextarea(n, key, placeholder){
 
 function loadNodeImage(n, file){
   const reader = new FileReader();
-  reader.onload = () => {
-    n.data.image = reader.result;
+  reader.onload = async () => {
+    n.data.image = await shrinkImageDataUrl(String(reader.result));
     renderNodes();
     scheduleFlowSave();
   };
@@ -1569,8 +1599,8 @@ function loadNodeModel(n, file){
     bpToast('仅支持 OBJ / GLB / GLTF / FBX / STL / PLY / 3MF');
     return;
   }
-  if(file.size > 2 * 1024 * 1024){
-    bpToast('模型超过 2MB，无法写入工作流本地存储');
+  if(file.size > 20 * 1024 * 1024){
+    bpToast('模型超过 20MB，请用更轻的模型文件');
     return;
   }
   const reader = new FileReader();

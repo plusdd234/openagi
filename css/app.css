@@ -450,6 +450,18 @@
   .wf-card.new { border-style: dashed; align-items: center; justify-content: center; color: var(--muted); font-size: 11.5px; gap: 8px; }
   .wf-card.new:hover { color: var(--text); border-color: #41506e; }
   .wf-plus { font-size: 22px; line-height: 1; font-weight: 300; }
+  /* 存储用量条：localStorage 约 5MB，快满时提前预警 */
+  .wf-storage { display: flex; align-items: center; gap: 9px; margin: -4px 0 12px; }
+  .wf-storage-label { font-size: 10px; color: var(--muted); font-family: var(--mono); white-space: nowrap; }
+  .wf-storage-bar { flex: 1; height: 5px; border-radius: 3px; background: rgba(255,255,255,.07); overflow: hidden; }
+  .wf-storage-fill { display: block; height: 100%; border-radius: 3px; background: #4b7bff; transition: width .2s; }
+  .wf-storage-fill.warn { background: var(--warn); }
+  .wf-storage-fill.hot { background: #ff6b6b; }
+  .wf-size {
+    font-size: 9.5px; padding: 2px 6px; border-radius: 4px; font-family: var(--mono);
+    color: #6a7488; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.07);
+  }
+  .wf-size.hot { color: #ff9a9a; background: rgba(255,107,107,.1); border-color: rgba(255,107,107,.25); }
   .wf-state { font-size: 9.5px; padding: 2px 6px; border-radius: 4px; font-family: var(--mono); border: 1px solid transparent; }
   .wf-state.ok { color: var(--ok); background: rgba(61,214,140,.1); border-color: rgba(61,214,140,.22); }
   .wf-state.wait { color: var(--warn); background: rgba(255,180,84,.1); border-color: rgba(255,180,84,.22); }
