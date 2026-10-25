@@ -222,13 +222,131 @@ async function visibleImageSrcs(page) {
   }).map(i => i.currentSrc || i.src).filter(Boolean)).catch(() => []);
 }
 
-async function attachReference(page, file) {
-  const beforeSrcs = await visibleImageSrcs(page);
-  const previewAppeared = async () => {
-    await sleep(1200);
-    const after = await visibleImageSrcs(page);
-    return after.some(s => !beforeSrcs.includes(s));
+/* ---------- 参考图就绪探测 ----------
+ * 背景（真实 bug）：写入文件控件只代表「浏览器接受了文件」，页面还要转码 / 上传 / 处理，
+ * 之后才会渲染出参考图缩略图。原来的实现是「写完就固定等 1.8 秒」，
+ * 上传稍慢就会出现「参考图还没传完就点了生成」，模型只看到部分参考图。
+ *
+ * 探测口径与 clearReferences 保持一致：可见的 blob:/data: 图片（自然尺寸 > 0）算一张已就绪参考图。
+ * busy 信号（进度条 / 上传中文案 / 百分比）只用于「多等一会儿」，不作为成败判据：
+ * 页面上可能有与参考图无关的常驻动画，卡它会把正常流程拖死。 */
+async function refsSnapshot(page) {
+  return page.evaluate(() => {
+    const vis = el => { const b = el.getBoundingClientRect(); return b.width > 4 && b.height > 4; };
+    const thumbs = Array.from(document.images).filter(i => {
+      const s = i.currentSrc || i.src || '';
+      if (!/^blob:|^data:/i.test(s)) return false;
+      return vis(i);
+    });
+    const loaded = thumbs.filter(i => i.naturalWidth > 0).length;
+    let busy = 0, busyText = '';
+    const progSel = '[role="progressbar"],[class*="progress" i],[class*="loading" i],[class*="uploading" i],[class*="spinner" i]';
+    for (const el of Array.from(document.querySelectorAll(progSel))) {
+      if (!vis(el)) continue;
+      busy++;
+      if (!busyText) busyText = String(el.className || '').slice(0, 40);
+    }
+    if (busyText === '') {
+      const BUSY = /(上传中|上传失败|处理中|解析中|分析中|\d{1,3}\s*%)/;
+      for (const el of Array.from(document.querySelectorAll('div,span,p,li,button,small'))) {
+        if (!vis(el) || el.children.length) continue;
+        const t = (el.textContent || '').trim();
+        if (!t || t.length > 12) continue;
+        if (!BUSY.test(t)) continue;
+        busy++;
+        busyText = t;
+        break;
+      }
+    }
+    return { total: thumbs.length, loaded, busy, busyText };
+  }).catch(() => ({ total: 0, loaded: 0, busy: 0, busyText: '' }));
+}
+
+/* 等参考图全部就绪。
+ * 返回 ok = 已就绪数量是否达标（无法识别缩略图时按 ok 处理并标记 verified:false，
+ * 避免把「探测不到」误判成「上传失败」而阻断正常流程）。 */
+async function waitRefsReady(page, expect, opts = {}) {
+  const need = Math.max(1, Number(expect) || 1);
+  const timeoutMs = Math.max(3000, Math.min(180000, Number(opts.timeoutMs) || 45000));
+  const quietMs = Math.max(0, Number(opts.quietMs) || 1200);
+  const busyGraceMs = Math.max(0, Number(opts.busyGraceMs) || 10000);
+  const t0 = Date.now();
+  let last = null, goodMs = 0, busySince = 0;
+  while (Date.now() - t0 < timeoutMs) {
+    last = await refsSnapshot(page);
+    const enough = last.loaded >= need;
+    if (!enough) { goodMs = 0; busySince = 0; }
+    else if (last.busy > 0) {
+      goodMs = 0;
+      if (!busySince) busySince = Date.now();
+      // 数量够了但页面还在忙：给一段宽限，超过就按就绪放行（busy 可能来自无关动画）
+      if (Date.now() - busySince >= busyGraceMs) {
+        return { ok: true, verified: true, reason: 'busy-ignored', ...last, waited: Date.now() - t0 };
+      }
+    } else {
+      busySince = 0;
+      goodMs += 600;
+      if (goodMs >= quietMs) {
+        return { ok: true, verified: true, reason: 'ready', ...last, waited: Date.now() - t0 };
+      }
+    }
+    // 一张都识别不到：说明探测口径不适用当前页面，退回固定静默等待，不阻断
+    if (last.total === 0 && last.busy === 0 && Date.now() - t0 >= 3000) {
+      return { ok: true, verified: false, reason: 'no-thumbs', loaded: 0, total: 0, waited: Date.now() - t0 };
+    }
+    await sleep(600);
+  }
+  const verified = !!last && last.loaded >= need;
+  return {
+    ok: verified, verified: !!last && last.total > 0 && verified,
+    reason: verified ? 'timeout-quiet' : 'timeout',
+    loaded: last ? last.loaded : 0, total: last ? last.total : 0,
+    busy: last ? last.busy : 0, busyText: last ? last.busyText : '',
+    waited: Date.now() - t0
   };
+}
+
+/* 等「已就绪缩略图数量超过 before」——页面真的把新图渲染出来了。
+ * 用于逐张上传时「写完一张等一张就绪再写下一张」。
+ * 页面上压根识别不到缩略图（total 一直是 0）时只短等 noThumbMs 后放过，
+ * 避免把探测口径不适用的页面（如缩略图用背景图渲染）拖死；是否真的就绪由就绪闸门复核。 */
+async function waitThumbGrow(page, before, opts = {}) {
+  const timeoutMs = Math.max(1000, Math.min(60000, Number(opts.timeoutMs) || 12000));
+  const noThumbMs = Math.max(1000, Math.min(timeoutMs, Number(opts.noThumbMs) || 4000));
+  const t0 = Date.now();
+  let st = null;
+  while (Date.now() - t0 < timeoutMs) {
+    st = await refsSnapshot(page);
+    if (st.loaded > before) return { ok: true, loaded: st.loaded, total: st.total, waited: Date.now() - t0 };
+    if (st.total === 0 && Date.now() - t0 >= noThumbMs) break;
+    await sleep(400);
+  }
+  return { ok: false, loaded: st ? st.loaded : before, total: st ? st.total : 0, waited: Date.now() - t0 };
+}
+
+async function attachReference(page, file, opts = {}) {
+  const base = typeof opts.base === 'number' ? opts.base : (await refsSnapshot(page)).loaded;
+  // expectTotal：多张上传时按累计数量等待（第 2 张要等到 2 张就绪），避免漏等后漏判
+  const target = typeof opts.expectTotal === 'number' ? Math.max(base + 1, opts.expectTotal) : base + 1;
+  const waitMs = Math.max(2000, Math.min(60000, Number(opts.waitMs) || 25000));
+  // 等到「新的一张缩略图真正加载出来」，而不是只看到 src 出现。
+  // 返回 'preview'（看到新缩略图）/ 'unknown'（页面不渲染可识别缩略图、明确报失败、
+  // 或等满超时也没看到——都按「已写入」继续，由就绪闸门给出最终判断）
+  const previewAppeared = async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < waitMs) {
+      const st = await refsSnapshot(page);
+      if (st.loaded >= target) return 'preview';
+      // 页面压根不渲染可识别的缩略图：短等后按「已写入」处理，由就绪闸门复核
+      if (st.total === 0 && st.busy === 0 && Date.now() - t0 >= 3000) return 'unknown';
+      // 页面明确报失败（上传失败 / 格式不支持…）：不再干等，交给就绪闸门给出最终判断
+      if (/失败|错误|不支持|error|fail|invalid/i.test(st.busyText || '')) return 'unknown';
+      await sleep(500);
+    }
+    const after = await visibleImageSrcs(page);
+    return after.some(s => !beforeSrcs.includes(s)) ? 'preview' : 'unknown';
+  };
+  const beforeSrcs = await visibleImageSrcs(page);
 
   // 1) 页面里已有、可见且接受图片的文件输入（排除模型/视频上传）
   const inputs = await page.$$('input[type=file]');
@@ -241,7 +359,7 @@ async function attachReference(page, file) {
     try {
       await el.setInputFiles(file, { timeout: 5000 });
       const seen = await previewAppeared();
-      log(seen ? '参考图已上传并出现预览' : '参考图已写入上传控件（未检测到新预览，继续执行）');
+      log(seen === 'preview' ? '参考图已上传并出现预览' : '参考图已写入上传控件（未检测到新预览，继续执行）');
       return true;
     } catch {}
   }
@@ -261,7 +379,7 @@ async function attachReference(page, file) {
       try {
         await chooser.setFiles(file);
         const seen = await previewAppeared();
-        log(seen ? '参考图已上传并出现预览' : '参考图已写入上传控件（未检测到新预览，继续执行）');
+        log(seen === 'preview' ? '参考图已上传并出现预览' : '参考图已写入上传控件（未检测到新预览，继续执行）');
         return true;
       } catch (e) {
         log('参考图写入失败：' + e.message);
@@ -381,28 +499,43 @@ async function clearReferences(page) {
   return { ok: false, method: 'none', removed: 0, remain: after };
 }
 
-async function attachReferences(page, files) {
+async function attachReferences(page, files, opts = {}) {
   const list = (files || []).filter(Boolean);
   if (!list.length) return { ok: false, uploaded: 0 };
+  const base = (await refsSnapshot(page)).loaded;
   if (list.length === 1) {
-    const ok = await attachReference(page, list[0]);
-    return { ok, uploaded: ok ? 1 : 0 };
+    const ok = await attachReference(page, list[0], { base });
+    const st = await refsSnapshot(page);
+    const uploaded = Math.max(0, st.loaded - base);
+    // 单张：写进去且（出现缩略图 或 页面不渲染可识别缩略图）即算写入成功；
+    // 是否真的就绪由调用方的就绪闸门复核（上传慢/被页面静默丢弃时给出精确提示）
+    return { ok: ok && (uploaded >= 1 || st.total === 0), uploaded, state: st };
   }
 
-  const before = await visibleImageSrcs(page);
   let written = 0;
-  for (const f of list) {
-    if (await attachReference(page, f)) written++;
+  for (let i = 0; i < list.length; i++) {
+    // expectTotal 按累计数量等待：第 i 张要等到 base+i+1 张缩略图就绪
+    if (await attachReference(page, list[i], { base, expectTotal: base + i + 1 })) written++;
     await sleep(700);
   }
-  const after = await visibleImageSrcs(page);
-  const grew = after.filter(s => !before.includes(s)).length;
-  if (written > 0 || grew > 0) {
-    log(`已逐张上传参考图：写入 ${written} 张，新增预览 ${grew} 张`);
-    return { ok: true, uploaded: Math.max(written, grew) };
+  let st = await refsSnapshot(page);
+  let uploaded = Math.max(0, st.loaded - base);
+  // ok 只表示「文件都写进了控件」；参考图是否处理完由就绪闸门（waitRefsReady）判定，
+  // 避免把「写入成功但页面还在处理」误报成上传失败，也避免写入不全却放行去生成
+  const allWritten = written >= list.length;
+  if (uploaded >= list.length) {
+    log(`已逐张上传参考图：${uploaded}/${list.length} 张已就绪`);
+    return { ok: allWritten, uploaded, state: st };
   }
+  if (uploaded > 0) {
+    // 就绪了一部分却不足：不重写（重复写入会让页面出现两份参考图），
+    // 是否处理完交给就绪闸门复核，由它给出「已就绪 x/y」的精确提示
+    log(`逐张上传后 ${uploaded}/${list.length} 张就绪，是否处理完交由就绪闸门复核`);
+    return { ok: allWritten, uploaded, state: st };
+  }
+  log('逐张上传后未检测到就绪的缩略图，尝试一次性写入…');
 
-  // 兜底：一次性写入带 multiple 的控件
+  // 兜底：一次性写入带 multiple 的控件（仅供支持数组写入、逐张写不进去的页面）
   const handles = await page.$$('input[type=file]');
   for (const el of handles) {
     const info = await el.evaluate(e => {
@@ -414,19 +547,20 @@ async function attachReferences(page, files) {
     if (!/image|png|jpe?g|webp|\*/.test(info.accept)) continue;
     try {
       await el.setInputFiles(list, { timeout: 15000 });
+      written = Math.max(written, list.length);
       await sleep(1800);
-      const after2 = await visibleImageSrcs(page);
-      const grew2 = after2.filter(s => !before.includes(s)).length;
-      if (grew2 > 0) {
-        log(`已一次性写入 ${grew2} 张参考图`);
-        return { ok: true, uploaded: grew2 };
+      st = await refsSnapshot(page);
+      uploaded = Math.max(0, st.loaded - base);
+      if (uploaded > 0) {
+        log(`已一次性写入，当前 ${uploaded}/${list.length} 张就绪`);
+        return { ok: written >= list.length, uploaded, state: st };
       }
     } catch (e) {
       log('一次性写入失败：' + e.message);
     }
     break;
   }
-  return { ok: false, uploaded: 0 };
+  return { ok: written >= list.length, uploaded, state: st };
 }
 
 async function selectRatio(page, ratio) {
@@ -862,7 +996,19 @@ async function runOnce(context, page, prompt, opts = {}) {
       try { files.push(await resolveImageFile(src)); }
       catch (e) { return { ok: false, message: '参考图处理失败：' + e.message }; }
     }
-    const attached = await attachReferences(page, files);
+    let attached = await attachReferences(page, files);
+    if (!attached.ok) {
+      // 写入不完整：清掉残留再试一次（上传区是追加式的，不清会叠图）
+      log('参考图写入不完整，清空后重试一次…');
+      const cl = await clearReferences(page);
+      if (!cl.ok) {
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 })
+          .catch(e => log('页面重载失败：' + e.message));
+        await sleep(4500);
+        if (mode) await clickModeTab(page, mode);
+      }
+      attached = await attachReferences(page, files);
+    }
     if (!attached.ok) {
       const dbg = await probeData(page).catch(() => null);
       const hint = dbg && dbg.files.length
@@ -870,8 +1016,20 @@ async function runOnce(context, page, prompt, opts = {}) {
         : '（页面上没有可见的文件输入）';
       return { ok: false, message: '参考图没有成功上传' + hint };
     }
-    log(`已上传 ${attached.uploaded} 张参考图，等待页面处理…`);
-    await sleep(1800);
+    // ④ 就绪闸门：等页面把参考图全部处理完（缩略图真正加载出来、没有上传中状态）才继续。
+    //    这里原来是「写完固定等 1.8 秒」，上传稍慢就会带着不完整的参考图点生成。
+    const ready = await waitRefsReady(page, refList.length, {
+      timeoutMs: Math.max(15000, Math.min(60000, waitSec * 500))
+    });
+    if (!ready.ok) {
+      return {
+        ok: false,
+        message: `参考图尚未处理完成（已就绪 ${ready.loaded}/${refList.length}，等待 ${Math.round(ready.waited / 1000)} 秒），已中止生成；可调大超时后重试`
+      };
+    }
+    log(ready.verified
+      ? `参考图已全部就绪（${ready.loaded}/${refList.length}，${Math.round(ready.waited / 1000)}s）`
+      : `参考图写入完成（页面未提供可识别的缩略图，已静默等待 ${Math.round(ready.waited / 1000)}s）`);
   }
 
   if (opts.ratio && opts.ratio !== 'auto') {
@@ -1152,6 +1310,7 @@ async function attachMultiView(page, views) {
   }
   if (slots.length < 4) log(`多视图槽位不足 4 个（当前 ${slots.length}），按可用槽位上传`);
   let uploaded = 0;
+  let readySeen = (await refsSnapshot(page)).loaded;
   for (let slot = 0; slot < order.length; slot++) {
     const key = order[slot];
     const src = views && views[key];
@@ -1164,8 +1323,15 @@ async function attachMultiView(page, views) {
     try {
       await target.setInputFiles(file, { timeout: 8000 });
       uploaded++;
-      log(`${names[key]}视图已上传（槽位 ${slot + 1}）`);
-      await sleep(900);
+      // 写完控件 ≠ 页面处理完：等这一张的缩略图真正渲染出来再传下一张，
+      // 也避免全部写完后立刻点生成时页面还在解析（参考图竞态，同 runOnce 就绪闸门）
+      const grew = await waitThumbGrow(page, readySeen, { timeoutMs: 12000 });
+      if (grew.ok) {
+        readySeen = grew.loaded;
+        log(`${names[key]}视图已上传并就绪（槽位 ${slot + 1}）`);
+      } else {
+        log(`${names[key]}视图已写入上传控件（未检测到缩略图，继续执行）`);
+      }
     } catch (e) {
       log(`${names[key]}视图上传失败：${e.message}`);
     }
@@ -1249,14 +1415,32 @@ async function runModelOnce(context, page, opts = {}) {
   if (multi) {
     const uploaded = await attachMultiView(page, opts.views || {});
     if (!uploaded) return { ok: false, message: '多视图参考图没有成功上传；至少需要一张（前 / 左 / 右 / 后）' };
-    await sleep(1500);
   } else if (opts.image) {
     let file = null;
     try { file = await resolveImageFile(opts.image); }
     catch (e) { return { ok: false, message: '参考图处理失败：' + e.message }; }
     const uploaded = await attachReference(page, file);
     if (!uploaded) return { ok: false, message: '参考图没有成功上传；网页生成模型需要至少一张参考图' };
-    await sleep(1500);
+  }
+  // 就绪闸门：写入控件 ≠ 页面处理完，等参考图全部就绪再点生成（同 runOnce）。
+  // 这里原来是「写完固定等 1.5 秒」，逐槽上传 + 页面解析稍慢就会带着漏图的参考图生成
+  if (multi || opts.image) {
+    const views = opts.views || {};
+    const expect = multi
+      ? Math.max(1, ['front', 'left', 'right', 'back'].filter(k => views[k]).length)
+      : 1;
+    const ready = await waitRefsReady(page, expect, {
+      timeoutMs: Math.max(15000, Math.min(60000, waitSec * 500))
+    });
+    if (!ready.ok) {
+      return {
+        ok: false,
+        message: `参考图尚未处理完成（已就绪 ${ready.loaded}/${expect}，等待 ${Math.round(ready.waited / 1000)} 秒），已中止生成；可调大超时后重试`
+      };
+    }
+    log(ready.verified
+      ? `参考图已全部就绪（${ready.loaded}/${expect}，${Math.round(ready.waited / 1000)}s）`
+      : `参考图写入完成（页面未提供可识别的缩略图，已静默等待 ${Math.round(ready.waited / 1000)}s）`);
   }
 
   await pickModelMode(page, opts.mode);
@@ -1594,6 +1778,7 @@ module.exports = {
   openTopologyPanel, pickTopologyType, setFaceCount, closeTopologyPanel,
   countImageInputs, setMultiViewMode, attachMultiView, pickGenerateCount,
   clearReferences,
+  refsSnapshot, waitRefsReady, waitThumbGrow, runOnce, runModelOnce,
 };
 
 if (require.main === module) {

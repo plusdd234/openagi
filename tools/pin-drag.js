@@ -39,6 +39,12 @@ const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?
   };
 
   const drag = async (from, to, label) => {
+    // 等上一枚 toast 自动消失再拖：toast 停在画布顶部居中，会盖住靠上的节点，
+    // elementFromPoint 会命中 toast 而不是目标引脚（曾导致第 5 项误失败）
+    await page.waitForFunction(() => {
+      const t = document.getElementById('bpToast');
+      return !t || t.classList.contains('hidden');
+    }, { timeout: 6000 }).catch(() => {});
     const a = await pinCenter(from.node, 'out', from.key);
     const b = await pinCenter(to.node, 'in', to.key);
     if (!a || !b) return { label, ok: false, why: '找不到引脚 DOM' };
@@ -87,4 +93,5 @@ const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?
   console.log('\n错误: ' + errors.length);
   errors.forEach(e => console.log(' - ' + e));
   await browser.close();
+  process.exit(pass && errors.length === 0 ? 0 : 1);
 })().catch(e => { console.error('FAILED:', e); process.exit(2); });

@@ -655,8 +655,17 @@ function fitView(){
     return;
   }
   const cw = $('bpCanvas').clientWidth, ch = $('bpCanvas').clientHeight;
-  // 适应视图要同时框住节点和注释面板，否则刚框出来的注释会被挤到屏幕外
-  const boxes = bp.nodes.map(n => ({ x:n.x, y:n.y, w:230, h:160 }))
+  // 适应视图要同时框住节点和注释面板，否则刚框出来的注释会被挤到屏幕外。
+  // 节点按真实 DOM 尺寸量：固定 230×160 会漏掉多参数 / 多引脚的高节点
+  // （实测可到 340px+），适应视图后它的底部引脚被推到视口外，拖不了线
+  const boxes = bp.nodes.map(n => {
+    const el = $('n-' + n.id);
+    return {
+      x: n.x, y: n.y,
+      w: el ? Math.max(230, el.offsetWidth + 24) : 230,
+      h: el ? Math.max(160, el.offsetHeight + 24) : 160,
+    };
+  })
     .concat((bp.frames || []).map(f => ({ x:f.x, y:f.y, w:f.w, h:f.h })));
   const minX = Math.min(...boxes.map(b => b.x));
   const minY = Math.min(...boxes.map(b => b.y));
