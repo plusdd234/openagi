@@ -253,8 +253,7 @@ let bpZoom = 1;
 let bpSaveTimer = null;
 let bpToastTimer = null;
 let linkDrag = null;
-let nodeDrag = null;
-let panDrag = null;
+// 节点拖动 / 画布平移的上下文已收进 js/editor.js 的 Editor.drag（手势状态机统一管理）
 let libDrag = null;
 let bpPickedNode = null;
 let bpPickedModelNode = null;

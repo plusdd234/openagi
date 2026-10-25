@@ -592,6 +592,7 @@ function openFlow(id){
   bp = JSON.parse(JSON.stringify(found));
   bp.links = bp.links || [];
   bp.vars = Array.isArray(bp.vars) ? bp.vars : [];
+  bp.frames = Array.isArray(bp.frames) ? bp.frames : [];
   migrateAiTaskNodes(bp);
   migrateExecLinks(bp);
   bp.nodes.forEach(n => {
@@ -600,6 +601,7 @@ function openFlow(id){
     n.error = '';
     if((n.type === 'start' || n.type === 'end') && !Array.isArray(n.params)) n.params = [];
   });
+  if(window.Editor) Editor.reset();
   $('bpName').value = bp.name || '';
   $('bpState').textContent = '';
   bpVarAddOpen = false;
@@ -620,6 +622,11 @@ function snapshotBp(){
       params: n.params ? n.params.map(p => ({ id:p.id, name:p.name, type:p.type, value:p.value, fileName:p.fileName || '' })) : undefined
     })),
     links: bp.links.map(l => ({ id:l.id, from:l.from, to:l.to })),
+    // 注释面板：只存几何与文案，成员关系在拖动时按包含关系实时计算
+    frames: (bp.frames || []).map(f => ({
+      id: f.id, title: f.title || '', color: f.color || FRAME_COLORS[0],
+      x: Math.round(f.x), y: Math.round(f.y), w: Math.round(f.w), h: Math.round(f.h)
+    })),
   };
 }
 function saveFlowNow(){
@@ -639,19 +646,23 @@ function scheduleFlowSave(){
 
 function applyBpTransform(){
   $('bpWorld').style.transform = `translate(${bpPan.x}px, ${bpPan.y}px) scale(${bpZoom})`;
+  if(typeof edSyncZoom === 'function') edSyncZoom();
 }
 function fitView(){
-  if(!bp || !bp.nodes.length){
+  if(!bp || (!bp.nodes.length && !(bp.frames || []).length)){
     bpPan = { x: 40, y: 50 }; bpZoom = 1;
     applyBpTransform();
     return;
   }
   const cw = $('bpCanvas').clientWidth, ch = $('bpCanvas').clientHeight;
-  const minX = Math.min(...bp.nodes.map(n => n.x));
-  const minY = Math.min(...bp.nodes.map(n => n.y));
-  const w = Math.max(...bp.nodes.map(n => n.x)) - minX + 240;
-  const h = Math.max(...bp.nodes.map(n => n.y)) - minY + 180;
-  bpZoom = Math.max(.45, Math.min(1.1, Math.min((cw - 100) / w, (ch - 100) / h)));
+  // 适应视图要同时框住节点和注释面板，否则刚框出来的注释会被挤到屏幕外
+  const boxes = bp.nodes.map(n => ({ x:n.x, y:n.y, w:230, h:160 }))
+    .concat((bp.frames || []).map(f => ({ x:f.x, y:f.y, w:f.w, h:f.h })));
+  const minX = Math.min(...boxes.map(b => b.x));
+  const minY = Math.min(...boxes.map(b => b.y));
+  const w = Math.max(...boxes.map(b => b.x + b.w)) - minX;
+  const h = Math.max(...boxes.map(b => b.y + b.h)) - minY;
+  bpZoom = Math.max(.3, Math.min(1.1, Math.min((cw - 100) / w, (ch - 130) / h)));
   bpPan.x = (cw - w * bpZoom) / 2 - minX * bpZoom;
   bpPan.y = (ch - h * bpZoom) / 2 - minY * bpZoom;
   applyBpTransform();
@@ -1034,6 +1045,7 @@ function nodeEl(n){
   el.className = 'node';
   el.id = 'n-' + n.id;
   el.dataset.id = n.id;
+  el.dataset.kind = d.dot;      // 供样式按类别染色（标题栏渐变 / 选中环）
   el.style.left = n.x + 'px';
   el.style.top = n.y + 'px';
 
@@ -1306,24 +1318,12 @@ function nodeEl(n){
     removeNode(n);
   });
 
+  // 拖动交给编辑引擎：多选时整组移动，单选时只移动自己
   head.addEventListener('pointerdown', e => {
     if(e.target.closest('.node-del') || e.target.closest('.node-plus')) return;
+    if(e.button !== 0) return;
     e.preventDefault();
-    nodeDrag = { n, el, sx: e.clientX, sy: e.clientY, ox: n.x, oy: n.y };
-    document.querySelectorAll('.node.sel').forEach(x => x.classList.remove('sel'));
-    el.classList.add('sel');
-    head.setPointerCapture(e.pointerId);
-  });
-  head.addEventListener('pointermove', e => {
-    if(!nodeDrag || nodeDrag.n !== n) return;
-    n.x = nodeDrag.ox + (e.clientX - nodeDrag.sx) / bpZoom;
-    n.y = nodeDrag.oy + (e.clientY - nodeDrag.sy) / bpZoom;
-    el.style.left = n.x + 'px';
-    el.style.top = n.y + 'px';
-    renderLinks();
-  });
-  head.addEventListener('pointerup', () => {
-    if(nodeDrag && nodeDrag.n === n){ nodeDrag = null; scheduleFlowSave(); }
+    Editor.beginNodeDrag(e, n);
   });
 
   return el;
@@ -1973,6 +1973,7 @@ function renderNodes(){
 
   $('bpEmpty').classList.toggle('hidden', bp.nodes.length > 0);
   renderVars();
+  if(window.Editor) Editor.render();
   requestAnimationFrame(renderLinks);
 }
 

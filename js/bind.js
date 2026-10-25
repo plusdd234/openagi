@@ -121,11 +121,7 @@ $('bpNodes').addEventListener('pointerdown', e => {
 });
 
 $('bpCanvas').addEventListener('pointerdown', e => {
-  if(e.button !== 0) return;
   if(!e.target.closest('.var-menu')) hideVarMenu();
-  if(e.target.closest('.node') || e.target.closest('.bp-link')) return;
-  panDrag = { sx: e.clientX, sy: e.clientY, ox: bpPan.x, oy: bpPan.y };
-  $('bpCanvas').setPointerCapture(e.pointerId);
 });
 
 window.addEventListener('pointermove', e => {
@@ -139,11 +135,6 @@ window.addEventListener('pointermove', e => {
     varDrag.ghost.style.top = e.clientY + 'px';
     if(Math.abs(e.clientX - varDrag.x) > 4 || Math.abs(e.clientY - varDrag.y) > 4) varDrag.moved = true;
   }
-  if(panDrag){
-    bpPan.x = panDrag.ox + (e.clientX - panDrag.sx);
-    bpPan.y = panDrag.oy + (e.clientY - panDrag.sy);
-    applyBpTransform();
-  }
   if(linkDrag && linkDrag.temp){
     const a = portPos(linkDrag.nodeId, 'out', linkDrag.key);
     const p = screenToWorld(e.clientX, e.clientY);
@@ -154,7 +145,6 @@ window.addEventListener('pointermove', e => {
 window.addEventListener('pointerup', e => {
   if(libDrag) endLibDrag(e);
   if(varDrag) endVarDrag(e);
-  if(panDrag) panDrag = null;
   if(!linkDrag) return;
   const el = document.elementFromPoint(e.clientX, e.clientY);
   const pin = el && el.closest('.pin.in');
@@ -177,17 +167,12 @@ window.addEventListener('pointerup', e => {
   linkDrag = null;
 });
 
-$('bpCanvas').addEventListener('wheel', e => {
-  e.preventDefault();
-  const r = $('bpCanvas').getBoundingClientRect();
-  const mx = e.clientX - r.left, my = e.clientY - r.top;
-  const wx = (mx - bpPan.x) / bpZoom, wy = (my - bpPan.y) / bpZoom;
-  const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
-  bpZoom = Math.min(1.8, Math.max(.35, bpZoom * factor));
-  bpPan.x = mx - wx * bpZoom;
-  bpPan.y = my - wy * bpZoom;
-  applyBpTransform();
-}, { passive: false });
+// 滚轮缩放已由编辑引擎接管（以光标为锚点），这里只补齐工具按钮
+$('btnBpComment').addEventListener('click', () => Editor.comment());
+$('btnZoomIn').addEventListener('click', () => Editor.zoomIn());
+$('btnZoomOut').addEventListener('click', () => Editor.zoomOut());
+$('btnZoomReset').addEventListener('click', () => Editor.zoomReset());
+$('btnZoomFit').addEventListener('click', () => Editor.fit());
 
 // 初始加载
 initNodeLib();

@@ -73,6 +73,10 @@
       <select id="bpAdd" class="bp-add" aria-label="添加节点">
         <option value="">+ 添加节点</option>
       </select>
+      <button class="btn sm" id="btnBpComment" title="框选节点后点这里（或按 C）把选区包进注释面板">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5Z"/></svg>
+        注释
+      </button>
       <button class="btn sm" id="btnBpFit">适应视图</button>
       <button class="btn primary sm" id="btnBpRun">运行</button>
       <button class="btn danger sm hidden" id="btnBpStop" title="中断本次运行">停止</button>
@@ -96,11 +100,27 @@
     </aside>
     <div class="bp-canvas" id="bpCanvas">
       <div class="bp-world" id="bpWorld">
+        <div class="bp-frames" id="bpFrames"></div>
         <svg class="bp-links" id="bpLinks"></svg>
-        <div id="bpNodes"></div>
+        <div class="bp-nodes-layer" id="bpNodes"></div>
       </div>
+      <div class="bp-marquee hidden" id="bpMarquee" aria-hidden="true"></div>
       <div class="bp-empty hidden" id="bpEmpty">从左侧面板拖入节点开始搭建</div>
-      <div class="bp-hint">白线为执行线 · 彩色引脚按类型连接 · 变量拖到画布选「获取 / 设置」 · 滚轮缩放 · 拖空白平移 · 点击连线删除</div>
+      <div class="bp-statusbar">
+        <span class="sb-hint">
+          <b>中键</b>平移 · <b>左键</b>框选 · 选中后 <kbd>C</kbd> 建注释面板 ·
+          <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> 复制粘贴 · <b>滚轮</b>缩放 · 点连线删除
+        </span>
+        <span class="sb-sel hidden" id="bpSelInfo"></span>
+        <span class="sb-zoom" role="group" aria-label="缩放">
+          <button type="button" id="btnZoomOut" title="缩小（滚轮向下）">−</button>
+          <button type="button" id="btnZoomReset" title="恢复到 100%（Shift+0）">100%</button>
+          <button type="button" id="btnZoomIn" title="放大（滚轮向上）">+</button>
+          <button type="button" id="btnZoomFit" title="适应视图（F）">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+          </button>
+        </span>
+      </div>
       <div class="var-menu hidden" id="varMenu">
         <div class="var-menu-head" id="varMenuHead"></div>
         <button type="button" data-mode="get">获取 <span>读取变量值</span></button>
@@ -475,6 +495,7 @@
 <script src="js/workbench.js"></script>
 <script src="js/blueprint-core.js"></script>
 <script src="js/desktop.js"></script>
+<script src="js/editor.js"></script>
 <script src="js/blueprint-runtime.js"></script>
 <script src="js/bind.js"></script>
 </body>
