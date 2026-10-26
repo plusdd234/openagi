@@ -39,7 +39,6 @@ const REQUIRED_PINS = {
   tripoImg: { pins: ['prompt'], note: '提示词' },
   imageSplit: { pins: ['image', 'prompt'], note: '图像与提示词' },
   imageCompress: { pins: ['image'], note: '待压缩图像' },
-  condition: { pins: ['text'], note: '待判断文本' },
   model3d: { pins: ['image'], note: '参考图' },
   tripoModel: { pins: ['image'], note: '参考图' },
   modelViews: { pins: ['model'], note: '3D 模型' },
@@ -49,7 +48,6 @@ const REQUIRED_PINS = {
 // 就地参数被「连线或填写」任一满足即可
 const REQUIRED_PARAMS = {
   aiTask: ['instruction'],
-  condition: ['instruction'],
   smartBranch: ['instruction'],
   imageSplit: ['prompt'],
   tripoImg: ['prompt'],

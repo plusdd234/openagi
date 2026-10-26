@@ -69,9 +69,6 @@ function seedNodeData(type){
       data.inputs = [ seedPin('文本', 'string'), seedPin('图像', 'image') ];
       data.branches = [ seedBranch('分支 A'), seedBranch('分支 B') ];
       break;
-    case 'condition':
-      data.instruction = '';
-      break;
     case 'boolNode':
       data.bool = true;
       break;
@@ -111,6 +108,19 @@ function seedPin(name, type){ return { id: uid(), name, type }; }
 function seedParam(name, type, value){ return { id: uid(), name, type, value: value, fileName: '' }; }
 function seedView(name, hint){ return { id: uid(), name: name || '视图', hint: hint || '' }; }
 function seedBranch(name, hint){ return { id: uid(), name: name || '出口', hint: hint || '', fallback: false }; }
+
+/* 旧「IF 条件判断」已并入「分析任务」：转成「文本 → 布尔」的分析任务。
+   指令会补一句「只输出 true / false」，保证下游「条件分支」拿到的仍是布尔值。
+   迁移（desktop.js）与生成器（flow-gen.js）共用这一份形状，避免两处写歪。 */
+function conditionToTaskData(data, inId, outId){
+  const old = String((data && data.instruction) || '').trim();
+  return {
+    instruction: '判断以下条件是否成立，只输出 true 或 false，不要输出其他内容。\n条件：' + (old || '输入内容是否满足条件'),
+    timeout: Number(data && data.timeout) || TASK_TIMEOUT_DEFAULT,
+    inputs: [{ id: inId, name: '文本', type: 'string' }],
+    outputs: [{ id: outId, name: '结果', type: 'bool' }]
+  };
+}
 
 /* ---------------------------------------------------------------
  * 二、无 DOM 引脚解析（vars 由调用方传入，不读全局 bp）
@@ -232,7 +242,6 @@ const NODE_RULES = {
   boolNode: { note: '参数节点（pure）：data.bool 输出布尔值。', required: [] },
   imageIn: { note: '参数节点（pure）：data.image 放图像（上传后由用户填充）。', required: [] },
   modelIn: { note: '参数节点（pure）：data.model 放 3D 模型文件（上传后由用户填充）。', required: [] },
-  condition: { note: 'instruction 是判断条件；text 引脚接被判断的文本，输出布尔。', required: ['instruction'] },
   branch: { note: '按 bool 输入走 true / false 两条执行线。', required: [] },
   imageCompress: { note: '等比缩小到最长边并转 JPEG，降低下游数据量。', required: [] },
   result: { note: '汇总文本 / 图像 / 模型结果，运行后在此查看。', required: [] }

@@ -477,6 +477,25 @@ function migrateLegacyBranches(flow){
   return migrated;
 }
 
+/* 「IF 条件判断」已删除：转成「分析任务」（文本 → 布尔）。
+   执行位置不变，下游「条件分支」照旧拿布尔值，连线按新引脚 id 重映射。 */
+function migrateLegacyCondition(flow){
+  let migrated = 0;
+  (flow.nodes || []).forEach(node => {
+    if(node.type !== 'condition') return;
+    migrated++;
+    const inPin = taskPin('文本', 'string');
+    const outPin = taskPin('结果', 'bool');
+    node.data = conditionToTaskData(node.data || {}, inPin.id, outPin.id);
+    node.type = 'aiTask';
+    (flow.links || []).forEach(l => {
+      if(l.to.node === node.id && l.to.key === 'text') l.to.key = inPin.id;
+      if(l.from.node === node.id && l.from.key === 'bool') l.from.key = outPin.id;
+    });
+  });
+  return migrated;
+}
+
 function migrateExecLinks(flow){
   if(!flow || !Array.isArray(flow.links) || !Array.isArray(flow.nodes)) return 0;
   const before = flow.links.length;
@@ -558,10 +577,10 @@ function openFlow(id){
   bp.vars = Array.isArray(bp.vars) ? bp.vars : [];
   bp.frames = Array.isArray(bp.frames) ? bp.frames : [];
   migrateAiTaskNodes(bp);
-  const _branchMigrated = migrateLegacyBranches(bp);
+  const _legacyMigrated = migrateLegacyBranches(bp) + migrateLegacyCondition(bp);
   migrateExecLinks(bp);
   // 迁移结果要落盘，否则每次打开都重跑一遍迁移（且列表里一直显示旧类型）
-  if(_branchMigrated) scheduleFlowSave();
+  if(_legacyMigrated) scheduleFlowSave();
   bp.nodes.forEach(n => {
     n.out = {};
     n.status = '';
@@ -1203,7 +1222,8 @@ function nodeEl(n){
       }
     } else if(s.ctl === 'taskPins'){
       fields.appendChild(taskPinSection(n, 'in'));
-      fields.appendChild(taskPinSection(n, 'out'));
+      // 输出引脚已经渲染在右列，管理行不再重复画一个 pin（否则同一个输出会有两个引脚）
+      fields.appendChild(taskPinSection(n, 'out', { noPin: true }));
     } else if(s.ctl === 'inPins'){
       // 引脚本体已经渲染在左列（可拖线），这里只保留改名 / 改类型的行
       fields.appendChild(taskPinSection(n, 'in', { noPin: n.type === 'smartBranch' }));

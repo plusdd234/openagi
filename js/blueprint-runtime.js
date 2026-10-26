@@ -879,16 +879,6 @@ function toBool(v){
   return s.startsWith('true') || s === '1' || s === 'yes' || s === '是' || s === '真';
 }
 
-async function wfCondition(instruction, text){
-  const user = [
-    '判断条件：' + (instruction || '输入内容是否满足条件'),
-    text ? '输入文本：\n' + text : ''
-  ].filter(Boolean).join('\n\n');
-  const out = await llmChat('你是条件判断器。根据判断条件评估输入内容，只输出 true 或 false，不要输出任何其他文字。', user);
-  if(!out) throw new Error('条件判断未返回结果');
-  return toBool(out);
-}
-
 async function wfTripoWebImage(prompt, images, opts){
   const o = opts || {};
   const list = (Array.isArray(images) ? images : (images ? [images] : [])).filter(Boolean).slice(0, 3);
@@ -1571,9 +1561,6 @@ async function runFlow(){
           throw e;
         }
         if(live) live.done('AI 分支选择「' + picked.name + '」· ' + (Date.now() - nodeStarted) + 'ms' + note, 'ok');
-      } else if(n.type === 'condition'){
-        const text = await input('text');
-        n.out.bool = await wfCondition(String((await paramIn('instruction')) || ''), text);
       } else if(n.type === 'branch'){
         const v = await input('bool');
         if(v === undefined) throw new Error('条件引脚未连接布尔值');

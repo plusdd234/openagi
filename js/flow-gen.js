@@ -64,6 +64,12 @@ function normalizeDag(dag){
       }
       r = Object.assign({}, r, { type: 'smartBranch', data });
     }
+    if(!NODE_DEFS[r.type]){
+      /* 旧类型条件判断：转成「分析任务（文本 → 布尔）」，保留 text / bool 两个 key，连线不断 */
+      if(r.type === 'condition'){
+        r = Object.assign({}, r, { type: 'aiTask', data: conditionToTaskData(r.data || {}, 'text', 'bool') });
+      }
+    }
     if(!NODE_DEFS[r.type]) throw new Error('第 ' + (i + 1) + ' 个节点的类型「' + r.type + '」不存在');
     const seed = seedNodeData(r.type);
     const n = {

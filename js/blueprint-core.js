@@ -12,7 +12,6 @@ const NODE_DEFS = {
   numNode:  { title:'数值', dot:'logic', desc:'输出整数 / 浮点，供数值参数引脚连线使用；参数节点，由下游按需读取', inputs:[], outputs:['int','float'], execIn:false, execOut:[], pure:true },
   boolNode: { title:'布尔值', dot:'logic', desc:'手动输出真 / 假；参数节点，由下游按需读取', inputs:[], outputs:['bool'], execIn:false, execOut:[], pure:true },
   aiTask:   { title:'分析任务', dot:'text', desc:'按指令分析文本 / 图像，自定义输入输出引脚与超时', inputs:[], outputs:[], execIn:true, execOut:['exec'] },
-  condition:{ title:'IF 条件判断', dot:'logic', desc:'让语言模型判断条件是否成立', inputs:['text'], outputs:['bool'], execIn:true, execOut:['exec'] },
   branch:   { title:'条件分支', dot:'logic', desc:'按布尔值走真 / 假执行线', inputs:['bool'], outputs:[], execIn:true, execOut:['true','false'] },
   // execOutFrom：执行线出口取自 node.data[branches]，每条一条执行线（动态出口）
   /* 智能分支：数据输入引脚完全自定义（数量与类型都随便），出口同样可增减。
@@ -149,11 +148,9 @@ const NODE_PARAMS = {
     { tip:'生成走网页自动化，会消耗网页账号积分；存在风控风险。' }
   ],
 
-  condition: [ { key:'instruction', ctl:'textarea', ph:'判断条件（例如：输入内容是否描述了人物）' } ],
-
   branch: [ { tip:'按布尔引脚的值决定走「真」或「假」执行线' } ],
 
-  /* AI 分支：选择依据 + 动态出口列表（branchPins 控件）。
+  /* 智能分支：选择依据 + 动态输入列表（inPins）+ 动态出口列表（branchPins）。
      每个出口生成一条执行线出口引脚（key = 出口 id）；模型选中哪条，执行流就走哪条。 */
   smartBranch: [
     { key:'instruction', label:'选择依据', ctl:'textarea', ph:'让 AI 据此挑一条出口（例如：按画面内容与描述判断该走哪条路）' },
@@ -200,7 +197,7 @@ const NODE_LIB = [
   { group:'分析任务', types:['aiTask'] },
   { group:'图像任务', types:['imageGen','imageCompress','imageSplit','tripoImg'] },
   { group:'3D 任务', types:['model3d','modelViews','tripoModel','tripoModelMulti'] },
-  { group:'逻辑', types:['condition','branch','smartBranch'] },
+  { group:'逻辑', types:['branch','smartBranch'] },
   { group:'流程', types:['start','end'] },
   { group:'输出', types:['result'] },
 ];
@@ -446,6 +443,7 @@ function importFlowsText(text){
     // 兼容旧版节点类型
     if (typeof migrateAiTaskNodes === 'function') { try { migrateAiTaskNodes(f); } catch (e) {} }
     if (typeof migrateLegacyBranches === 'function') { try { migrateLegacyBranches(f); } catch (e) {} }
+    if (typeof migrateLegacyCondition === 'function') { try { migrateLegacyCondition(f); } catch (e) {} }
     const old = map.get(f.id);
     if (!old) { map.set(f.id, f); added++; }
     else if ((Number(f.updated) || 0) > (Number(old.updated) || 0)) { map.set(f.id, f); updated++; }

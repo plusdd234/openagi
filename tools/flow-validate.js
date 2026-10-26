@@ -91,11 +91,11 @@ const has = (arr, code) => (arr || []).indexOf(code) >= 0;
     // 5. 类型不匹配（image → string）
     {
       const c = mk();
-      const cond = newNode('condition', 0, 0);
-      cond.data.instruction = '判断';
-      c.flow.nodes.push(cond);
-      c.flow.links.push({ id: 'l7', from: { node: c.ai.id, key: 'exec' }, to: { node: cond.id, key: 'exec' } });
-      c.flow.links.push({ id: 'lx', from: { node: c.gen.id, key: 'image' }, to: { node: cond.id, key: 'text' } });
+      const badGen = newNode('imageGen', 0, 0);
+      badGen.data.prompt = '另一个生成';
+      c.flow.nodes.push(badGen);
+      c.flow.links.push({ id: 'l7', from: { node: c.ai.id, key: 'exec' }, to: { node: badGen.id, key: 'exec' } });
+      c.flow.links.push({ id: 'lx', from: { node: c.gen.id, key: 'image' }, to: { node: badGen.id, key: 'prompt' } });
       out.typeMismatch = codes(validateFlow(c.flow));
     }
 

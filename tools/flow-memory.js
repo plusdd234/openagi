@@ -101,7 +101,7 @@ const check = (name, ok, info) => {
     const aiHint = await flowMemoryHint(aiFlow);
     const imgFlow = { nodes: [{ id: 'b', type: 'imageGen' }] };
     const imgHint = await flowMemoryHint(imgFlow);
-    const emptyFlow = { nodes: [{ id: 'c', type: 'condition' }] };
+    const emptyFlow = { nodes: [{ id: 'c', type: 'tripoModel' }] };   // 没有任何文本参数节点
     const emptyHint = await flowMemoryHint(emptyFlow);
     return {
       allLines: allHint.split('\n').filter(Boolean).length,

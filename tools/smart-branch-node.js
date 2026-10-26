@@ -153,15 +153,15 @@ const check = (ok, name, extra) => {
     n.data.inputs = [{ id: 'i_str', name: '描述', type: 'string' }, { id: 'i_img', name: '图', type: 'image' }];
     n.data.branches = [{ id: 'b1', name: '走 A', hint: '', fallback: false }];
     n.data.instruction = '按描述分流';
-    const cond = newNode('condition', 0, 0);
-    cond.data.instruction = '判断';
+    const badGen = newNode('imageGen', 0, 0);
+    badGen.data.prompt = '对照节点';
     const img = newNode('imageIn', 0, 0);
     img.data.image = 'data:image/png;base64,AAAA';
     const res = validateFlow({
-      nodes: [n, cond, img], vars: [],
+      nodes: [n, badGen, img], vars: [],
       links: [
-        { id: 'l1', from: { node: img.id, key: 'image' }, to: { node: cond.id, key: 'text' } },   // image → string，应报 E-TYPE
-        { id: 'l2', from: { node: n.id, key: 'b1' }, to: { node: cond.id, key: 'exec' } }           // 动态出口 → exec，应放行
+        { id: 'l1', from: { node: img.id, key: 'image' }, to: { node: badGen.id, key: 'prompt' } },  // image → string，应报 E-TYPE
+        { id: 'l2', from: { node: n.id, key: 'b1' }, to: { node: badGen.id, key: 'exec' } }            // 动态出口 → exec，应放行
       ]
     });
     const bare = newNode('smartBranch', 0, 0);
