@@ -1,5 +1,5 @@
 /* smartBranch「智能分支」节点体检（不调真实 LLM、不触桥、不耗积分）
- * 1) 默认形态与节点库位置（aiBranch 不再出现在库里，但老流程仍可执行）
+ * 1) 默认形态与节点库位置（旧 aiBranch 已彻底移除，老流程由迁移转成智能分支）
  * 2) 引脚渲染：自定义输入（数量 / 类型任意）+ instruction / timeout + 动态执行出口 + text 输出
  * 3) 增删输入引脚：加一个、改类型、删一个（删时清理连线）
  * 4) pinType / pinDirOf 识别：动态输入按声明类型、出口识别成 exec
@@ -60,7 +60,7 @@ const check = (ok, name, extra) => {
       execOutFrom: NODE_DEFS.smartBranch.execOutFrom,
       inLib: lib.indexOf('smartBranch') >= 0,
       oldInLib: lib.indexOf('aiBranch') >= 0,
-      oldStillDefined: !!NODE_DEFS.aiBranch
+      oldDefined: !!NODE_DEFS.aiBranch
     };
   });
   check(JSON.stringify(r1.inputs) === JSON.stringify(['文本:string', '图像:image']), '默认两个输入引脚（文本 / 图像）', JSON.stringify(r1.inputs));
@@ -69,7 +69,7 @@ const check = (ok, name, extra) => {
   check(r1.hasExecIn === true, '有执行入口');
   check(r1.inLib === true, '节点库里有「智能分支」');
   check(r1.oldInLib === false, '旧的「AI 分支」已从节点库移除', '仍在库里会让人选错');
-  check(r1.oldStillDefined === true, '旧节点定义保留（老流程还能打开运行）');
+  check(r1.oldDefined === false, '旧类型已彻底删除（老流程靠迁移转成智能分支）');
 
   console.log('\n=== 2. 引脚渲染 ===');
   const r2 = await page.evaluate(() => {

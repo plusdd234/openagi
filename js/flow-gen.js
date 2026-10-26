@@ -51,7 +51,19 @@ function normalizeDag(dag){
   // ---- 节点 ----
   const usedNodeIds = new Set();
   const nodes = rawNodes.map((raw, i) => {
-    const r = raw && typeof raw === 'object' ? raw : {};
+    let r = raw && typeof raw === 'object' ? raw : {};
+    /* 兼容旧类型：旧提示词 / 旧经验里可能还写着 aiBranch。
+       转成 smartBranch 时保留固定引脚的 key（text / image）作为动态输入 id，连线就不断。 */
+    if(r.type === 'aiBranch'){
+      const data = Object.assign({}, r.data || {});
+      if(!Array.isArray(data.inputs)){
+        data.inputs = [
+          { id: 'text', name: '文本', type: 'string' },
+          { id: 'image', name: '图像', type: 'image' }
+        ];
+      }
+      r = Object.assign({}, r, { type: 'smartBranch', data });
+    }
     if(!NODE_DEFS[r.type]) throw new Error('第 ' + (i + 1) + ' 个节点的类型「' + r.type + '」不存在');
     const seed = seedNodeData(r.type);
     const n = {
@@ -94,7 +106,7 @@ function normalizeDag(dag){
         };
       });
     }
-    if((r.type === 'aiBranch' || r.type === 'smartBranch') && Array.isArray(data.branches)){
+    if(r.type === 'smartBranch' && Array.isArray(data.branches)){
       n.data.branches = data.branches.map((b, j) => {
         const o = b && typeof b === 'object' ? b : {};
         return {

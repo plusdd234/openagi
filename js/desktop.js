@@ -450,6 +450,33 @@ function migrateAiTaskNodes(flow){
    图像 / 模型 / 文本 / 数值 / 布尔等输入节点已改为纯参数节点，不再提供执行输出。
    老流程里从它们拉出的执行线会变成悬空线（既画不出来，下游也永远不会被触发），
    这里直接清掉，避免用户看到「连了线却不执行」。 */
+/* 旧「AI 分支」(aiBranch) 已并入「智能分支」(smartBranch)。
+   迁移方式：固定引脚 text / image 转成动态输入，并把所有入边按新 id 重映射，老流程打开即用。 */
+function migrateLegacyBranches(flow){
+  let migrated = 0;
+  (flow.nodes || []).forEach(n => {
+    if(n.type !== 'aiBranch') return;
+    migrated++;
+    const data = n.data || {};
+    n.type = 'smartBranch';
+    if(!Array.isArray(data.inputs) || !data.inputs.length){
+      const tIn = taskPin('文本', 'string');
+      const iIn = taskPin('图像', 'image');
+      data.inputs = [tIn, iIn];
+      (flow.links || []).forEach(l => {
+        if(l.to.node !== n.id) return;
+        if(l.to.key === 'text') l.to.key = tIn.id;
+        else if(l.to.key === 'image') l.to.key = iIn.id;
+      });
+    }
+    data.instruction = data.instruction || '';
+    data.timeout = Number(data.timeout) || 120;
+    data.branches = Array.isArray(data.branches) ? data.branches : [];
+    n.data = data;
+  });
+  return migrated;
+}
+
 function migrateExecLinks(flow){
   if(!flow || !Array.isArray(flow.links) || !Array.isArray(flow.nodes)) return 0;
   const before = flow.links.length;
@@ -531,7 +558,10 @@ function openFlow(id){
   bp.vars = Array.isArray(bp.vars) ? bp.vars : [];
   bp.frames = Array.isArray(bp.frames) ? bp.frames : [];
   migrateAiTaskNodes(bp);
+  const _branchMigrated = migrateLegacyBranches(bp);
   migrateExecLinks(bp);
+  // 迁移结果要落盘，否则每次打开都重跑一遍迁移（且列表里一直显示旧类型）
+  if(_branchMigrated) scheduleFlowSave();
   bp.nodes.forEach(n => {
     n.out = {};
     n.status = '';

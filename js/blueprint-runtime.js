@@ -1163,16 +1163,12 @@ async function wfAiBranch(instruction, branches, ctx, timeoutSec, onDelta){
   const c = ctx || {};
   const sys = '你是工作流路由器。根据选择依据与上下文，从给定的出口清单中选出唯一一条最合适的执行线。只输出 JSON，不要输出 JSON 之外的任何文字。';
   const list = branches.map((b, i) => (i + 1) + '. ' + b.name + (b.hint ? '（' + b.hint + '）' : '')).join('\n');
-  // 上下文两种形态：aiBranch 的 text / image，或 smartBranch 的任意命名输入
-  const imgs = (Array.isArray(c.images) && c.images.length)
-    ? c.images.filter(x => x && x.url)
-    : (c.image ? [{ name: '图像', url: c.image }] : []);
+  // 上下文：data.inputs 里的「名称：值」逐条列出，图像单独以 image_url 附带
+  const imgs = (Array.isArray(c.images) ? c.images : []).filter(x => x && x.url);
   let ctxBlock = '';
   if(Array.isArray(c.sections) && c.sections.length){
     ctxBlock = '输入数据：\n' + c.sections.map(s => '- ' + s.name + '：' + s.value).join('\n');
     if(imgs.length) ctxBlock += '\n图像输入：已附带 ' + imgs.length + ' 张（' + imgs.map(x => x.name).join('、') + '）';
-  } else if(c.text){
-    ctxBlock = '上下文：\n' + c.text;
   } else if(imgs.length){
     ctxBlock = '图像输入：已附带 ' + imgs.length + ' 张（' + imgs.map(x => x.name).join('、') + '）';
   }
@@ -1524,34 +1520,25 @@ async function runFlow(){
         }
         const first = outs.length ? n.out[outs[0].id] : '';
         if(live) live.done('分析任务完成 · ' + outs.length + ' 个输出 · ' + (Date.now() - nodeStarted) + 'ms · ' + bpPreview(first, 160), 'ok');
-      } else if(n.type === 'aiBranch' || n.type === 'smartBranch'){
+      } else if(n.type === 'smartBranch'){
         const branches = n.data.branches || [];
         if(!branches.length) throw new Error('还没有添加任何出口（在节点里点「+ 添加出口」）');
         const instruction = String((await paramIn('instruction')) || '').trim();
-        /* 两种分支的差别只在「上下文怎么来」：
-           aiBranch 固定 text + image；smartBranch 按 data.inputs 声明的引脚逐个取（类型任意）。 */
-        let ctx;
-        if(n.type === 'smartBranch'){
-          const pinList = n.data.inputs || [];
-          if(!pinList.length) throw new Error('还没有添加任何输入引脚（在节点里点「+ 添加输入」）');
-          const sections = [], images = [];
-          for(const p of pinList){
-            const v = await input(p.id);
-            if(v === undefined || v === null || v === '') continue;
-            if(p.type === 'image'){ images.push({ name: p.name || '图像', url: v }); continue; }
-            if(p.type === 'model'){ sections.push({ name: p.name || '模型', value: '已提供 3D 模型' }); continue; }
-            sections.push({ name: p.name || '输入', value: String(v) });
-          }
-          if(!instruction && !sections.length && !images.length){
-            throw new Error('缺少判断依据：至少连一个输入引脚，或填写「选择依据」');
-          }
-          ctx = { sections, images };
-        } else {
-          const context = await input('text');
-          const image = await input('image');
-          if(!instruction && context === undefined && !image) throw new Error('缺少选择依据或上下文（文本 / 图像）');
-          ctx = { text: context, image };
+        /* 按 data.inputs 声明的引脚逐个取（类型任意），未连线 / 空值的引脚跳过。 */
+        const pinList = n.data.inputs || [];
+        if(!pinList.length) throw new Error('还没有添加任何输入引脚（在节点里点「+ 添加输入」）');
+        const sections = [], images = [];
+        for(const p of pinList){
+          const v = await input(p.id);
+          if(v === undefined || v === null || v === '') continue;
+          if(p.type === 'image'){ images.push({ name: p.name || '图像', url: v }); continue; }
+          if(p.type === 'model'){ sections.push({ name: p.name || '模型', value: '已提供 3D 模型' }); continue; }
+          sections.push({ name: p.name || '输入', value: String(v) });
         }
+        if(!instruction && !sections.length && !images.length){
+          throw new Error('缺少判断依据：至少连一个输入引脚，或填写「选择依据」');
+        }
+        const ctx = { sections, images };
         const tSec = Math.max(10, Math.min(600, Math.trunc(Number(await paramIn('timeout')) || 0) || 120));
         const live = bpLog('AI 分支：请求已发出，等待模型选择…', '', true);
         let picked, note = '';

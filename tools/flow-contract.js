@@ -52,7 +52,7 @@ const check = (name, ok, info) => {
     const st = seedNodeData('start');
     const mv = seedNodeData('modelViews');
     const sp = seedNodeData('imageSplit');
-    const ab = seedNodeData('aiBranch');
+    const ab = seedNodeData('smartBranch');
     const tm = seedNodeData('tripoModelMulti');
     const b = seedNodeData('boolNode');
     return {
@@ -72,7 +72,7 @@ const check = (name, ok, info) => {
   check('start 带空参数表', r2.startParams === 0);
   check('modelViews 默认 8 个参数引脚', r2.mvParams === 8, String(r2.mvParams));
   check('imageSplit 默认 2 个视图', r2.splitViews === 2, String(r2.splitViews));
-  check('aiBranch 默认 2 个出口', r2.branchCount === 2, String(r2.branchCount));
+  check('智能分支默认 2 个出口', r2.branchCount === 2, String(r2.branchCount));
   check('tripoModelMulti 默认超时 600 秒', r2.multiTimeout === 600, String(r2.multiTimeout));
   check('boolNode 默认真', r2.boolDefault === true);
 
@@ -97,7 +97,7 @@ const check = (name, ok, info) => {
     const inId = ai.data.inputs[0].id, outId = ai.data.outputs[0].id;
     const sp = newNode('imageSplit', 0, 0);
     const vid = sp.data.views[0].id;
-    const br = newNode('aiBranch', 0, 0);
+    const br = newNode('smartBranch', 0, 0);
     const bid = br.data.branches[0].id;
     const vars = [{ id: 'v1', name: '素材', type: 'image' }];
     const vg = { id: 'vg', type: 'varGet', data: { varId: 'v1' } };
@@ -124,7 +124,7 @@ const check = (name, ok, info) => {
   check('aiTask 自定义输出引脚 = string/out', r4.aiOut === 'string/out', r4.aiOut);
   check('imageSplit 视图引脚 = image/out', r4.viewImg === 'image/out', r4.viewImg);
   check('imageSplit「是否有」引脚 = bool/out', r4.viewHas === 'bool/out', r4.viewHas);
-  check('aiBranch 出口引脚 = exec/out', r4.branch === 'exec/out', r4.branch);
+  check('智能分支出口引脚 = exec/out', r4.branch === 'exec/out', r4.branch);
   check('varGet 变量引脚 = image/out', r4.varGet === 'image/out', r4.varGet);
   check('varSet 变量引脚方向 = in', r4.varSet === 'in', String(r4.varSet));
   check('start 参数 = out/image', r4.startOut === 'out/image', r4.startOut);

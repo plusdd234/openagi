@@ -15,9 +15,8 @@ const NODE_DEFS = {
   condition:{ title:'IF 条件判断', dot:'logic', desc:'让语言模型判断条件是否成立', inputs:['text'], outputs:['bool'], execIn:true, execOut:['exec'] },
   branch:   { title:'条件分支', dot:'logic', desc:'按布尔值走真 / 假执行线', inputs:['bool'], outputs:[], execIn:true, execOut:['true','false'] },
   // execOutFrom：执行线出口取自 node.data[branches]，每条一条执行线（动态出口）
-  aiBranch: { title:'AI 分支', dot:'logic', desc:'让语言模型按需求从多个出口里选一条执行线；出口可动态增减', inputs:['text','image'], outputs:['text'], execIn:true, execOut:[], execOutFrom:'branches' },
   /* 智能分支：数据输入引脚完全自定义（数量与类型都随便），出口同样可增减。
-     旧的 aiBranch 固定 text + image，保留定义以兼容老流程，但不再出现在节点库里。 */
+     旧的 aiBranch 已并入本节点（老流程由 migrateLegacyBranches 自动迁移）。 */
   smartBranch: { title:'智能分支', dot:'logic', desc:'输入引脚可任意定义（名称与类型），让语言模型据此挑一条执行线；出口可动态增减', inputs:[], outputs:['text'], execIn:true, execOut:[], execOutFrom:'branches' },
   varGet:   { title:'获取变量', dot:'var', desc:'读取变量当前值', inputs:[], outputs:[], execIn:false, execOut:[], pure:true },
   varSet:   { title:'设置变量', dot:'var', desc:'把输入值写入变量', inputs:[], outputs:[], execIn:true, execOut:['exec'] },
@@ -156,13 +155,6 @@ const NODE_PARAMS = {
 
   /* AI 分支：选择依据 + 动态出口列表（branchPins 控件）。
      每个出口生成一条执行线出口引脚（key = 出口 id）；模型选中哪条，执行流就走哪条。 */
-  aiBranch: [
-    { key:'instruction', label:'选择依据', ctl:'textarea', ph:'让 AI 据此挑一条出口（例如：按图像复杂度选择修复方式）' },
-    { key:'timeout', label:'超时', ctl:'number', type:'int', min:10, max:600, step:10, unit:'秒', default:120 },
-    { key:'__branches__', ctl:'branchPins' },
-    { tip:'每个出口一条执行线，AI 只会走其中一条；名称与说明会一起送给模型判断。把某条标为「兜底」，模型选不出时走它（否则走第一条）。' }
-  ],
-
   smartBranch: [
     { key:'instruction', label:'选择依据', ctl:'textarea', ph:'让 AI 据此挑一条出口（例如：按画面内容与描述判断该走哪条路）' },
     { key:'timeout', label:'超时', ctl:'number', type:'int', min:10, max:600, step:10, unit:'秒', default:120 },
@@ -453,6 +445,7 @@ function importFlowsText(text){
     if (!f || !f.id || !Array.isArray(f.nodes)) return;
     // 兼容旧版节点类型
     if (typeof migrateAiTaskNodes === 'function') { try { migrateAiTaskNodes(f); } catch (e) {} }
+    if (typeof migrateLegacyBranches === 'function') { try { migrateLegacyBranches(f); } catch (e) {} }
     const old = map.get(f.id);
     if (!old) { map.set(f.id, f); added++; }
     else if ((Number(f.updated) || 0) > (Number(old.updated) || 0)) { map.set(f.id, f); updated++; }

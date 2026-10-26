@@ -4,6 +4,8 @@
  */
 // 旧版节点迁移：必须在所有模块加载完成后执行（migrateAiTaskNodes / taskPin 定义在 js/desktop.js）
 FLOWS.forEach(migrateAiTaskNodes);
+const _branchMigratedAll = FLOWS.reduce((sum, f) => sum + migrateLegacyBranches(f), 0);   // aiBranch → smartBranch
+if(_branchMigratedAll) persistFlows();
 // 大块数据（图片 / 模型）存在 IndexedDB 里，先读回内存再解析存根，否则界面上会是空图
 blobInit();
 // 输入节点改为纯参数节点后，清掉从它们拉出的旧执行线

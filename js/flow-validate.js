@@ -40,7 +40,6 @@ const REQUIRED_PINS = {
   imageSplit: { pins: ['image', 'prompt'], note: '图像与提示词' },
   imageCompress: { pins: ['image'], note: '待压缩图像' },
   condition: { pins: ['text'], note: '待判断文本' },
-  aiBranch: { pins: ['text'], note: '判断依据文本' },
   model3d: { pins: ['image'], note: '参考图' },
   tripoModel: { pins: ['image'], note: '参考图' },
   modelViews: { pins: ['model'], note: '3D 模型' },
@@ -51,7 +50,6 @@ const REQUIRED_PINS = {
 const REQUIRED_PARAMS = {
   aiTask: ['instruction'],
   condition: ['instruction'],
-  aiBranch: ['instruction'],
   smartBranch: ['instruction'],
   imageSplit: ['prompt'],
   tripoImg: ['prompt'],
@@ -208,7 +206,6 @@ function validateFlow(flow){
     if(n.type === 'aiTask'){
       if(!(n.data.inputs || []).length && !(n.data.outputs || []).length) warn('W-DYNAMIC', n, '「分析任务」没有声明任何自定义输入 / 输出引脚');
     }
-    if(n.type === 'aiBranch' && !(n.data.branches || []).length) warn('W-DYNAMIC', n, '「AI 分支」没有出口，无法继续执行流');
     if(n.type === 'smartBranch'){
       if(!(n.data.branches || []).length) warn('W-DYNAMIC', n, '「智能分支」没有出口，无法继续执行流');
       if(!(n.data.inputs || []).length) warn('W-DYNAMIC', n, '「智能分支」没有输入引脚，模型只会按「选择依据」判断');

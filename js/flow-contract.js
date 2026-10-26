@@ -63,11 +63,6 @@ function seedNodeData(type){
         seedParam('模式', 'string', 'line')
       ];
       break;
-    case 'aiBranch':
-      data.instruction = '';
-      data.timeout = 120;
-      data.branches = [ seedBranch('分支 A'), seedBranch('分支 B') ];
-      break;
     case 'smartBranch':
       data.instruction = '';
       data.timeout = 120;
@@ -215,13 +210,9 @@ const NODE_RULES = {
     note: '动态引脚：data.inputs / data.outputs 各为 {id,name,type} 列表；inputs 的 type 还可为 image。',
     required: ['instruction']
   },
-  aiBranch: {
-    note: '动态执行出口：data.branches 每项 {id,name,hint,fallback}，每个 id 是一条执行线出口引脚；fallback:true 表示兜底出口。旧节点，新流程请用 smartBranch。',
-    required: ['instruction']
-  },
   smartBranch: {
     note: '数据输入引脚完全自定义：data.inputs 每项 {id,name,type}（type 限 int/float/string/bool/image/model），全部值会随选择依据送给模型；'
-      + '动态执行出口与 aiBranch 相同：data.branches 每项 {id,name,hint,fallback}。',
+      + '动态执行出口：data.branches 每项 {id,name,hint,fallback}，每个 id 是一条执行线出口引脚，fallback:true 表示兜底出口。',
     required: ['instruction']
   },
   imageSplit: {

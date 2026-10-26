@@ -121,6 +121,8 @@ function flowMemoryFromVariant(flow, variant){
 function flowMemoryHint(flow){
   return memAll().then(list => {
     const types = new Set((((flow && flow.nodes) || [])).map(n => n.type));
+    // 旧经验里记的节点类型是 aiBranch；智能分支语义等价，别让老经验失效
+    if(types.has('smartBranch')) types.add('aiBranch');
     const rows = (types.size ? list.filter(m => types.has(m.nodeType)) : list).slice(0, MEM_HINT_MAX);
     if(!rows.length) return '';
     return rows.map(m => {
