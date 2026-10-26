@@ -71,26 +71,36 @@ $('btnBpLogToggle').addEventListener('click', () => {
 $('btnBpLogClear').addEventListener('click', bpLogClear);
 
 // ---- 变量面板 ----
-let bpSideTab = localStorage.getItem('hf_bp_side_tab') === 'vars' ? 'vars' : 'lib';
+let bpSideTab = ['vars', 'runs'].indexOf(localStorage.getItem('hf_bp_side_tab')) >= 0 ? localStorage.getItem('hf_bp_side_tab') : 'lib';
 let bpVarAddOpen = false;
 let varDrag = null;
 let varMenuTarget = null;
 
 function setBpSideTab(name){
-  bpSideTab = name === 'vars' ? 'vars' : 'lib';
+  bpSideTab = (name === 'vars' || name === 'runs') ? name : 'lib';
   localStorage.setItem('hf_bp_side_tab', bpSideTab);
   applySideTab();
 }
 
 function applySideTab(){
   const showVars = bpSideTab === 'vars';
-  $('tabLib').classList.toggle('active', !showVars);
-  $('tabLib').setAttribute('aria-selected', String(!showVars));
+  const showRuns = bpSideTab === 'runs';
+  const showLib = !showVars && !showRuns;
+  $('tabLib').classList.toggle('active', showLib);
+  $('tabLib').setAttribute('aria-selected', String(showLib));
   $('tabVars').classList.toggle('active', showVars);
   $('tabVars').setAttribute('aria-selected', String(showVars));
-  $('paneLib').classList.toggle('hidden', showVars);
+  const tabRuns = $('tabRuns');
+  if(tabRuns){
+    tabRuns.classList.toggle('active', showRuns);
+    tabRuns.setAttribute('aria-selected', String(showRuns));
+  }
+  $('paneLib').classList.toggle('hidden', !showLib);
   $('paneVars').classList.toggle('hidden', !showVars);
+  const paneRuns = $('paneRuns');
+  if(paneRuns) paneRuns.classList.toggle('hidden', !showRuns);
   if(showVars) renderVars();
+  if(showRuns && typeof renderRunHistory === 'function') renderRunHistory();
 }
 
 function varPreviewEl(v){
@@ -1783,5 +1793,31 @@ async function runFlow(){
       : starts.length ? '运行完成'
         : '没有「任务开始」节点，未执行任何步骤');
   }
+
+  /* 运行遥测：记一条历史（自我迭代的数据地基）。
+     只存概要，不存图片/模型内容；历史库不可用时静默跳过，绝不影响运行结果。 */
+  if(typeof recordRun === 'function'){
+    try {
+      const firstErr = bp.nodes.find(n => n.status === 'error');
+      recordRun({
+        at: Date.now(),
+        flowId: bp.id,
+        flowName: bp.name || '未命名工作流',
+        ok: !wasStopped && errs === 0 && starts.length > 0,
+        stopped: wasStopped,
+        ms: Date.now() - runStarted,
+        nodes: bp.nodes.length,
+        activated: activated.size,
+        failed: errs,
+        error: firstErr ? (bpNodeLabel(firstErr) + '：' + firstErr.error)
+          : (!starts.length ? '没有「任务开始」节点，未执行任何步骤' : ''),
+        outs: typeof runOutsSummary === 'function' ? runOutsSummary(bp.lastRun) : []
+      });
+    } catch(e){ /* 遥测失败不影响运行 */ }
+  }
+  // 历史页正开着时随手刷新一下，运行完就能看到这一条
+  try {
+    if(typeof bpSideTab !== 'undefined' && bpSideTab === 'runs' && typeof renderRunHistory === 'function') renderRunHistory();
+  } catch(e){}
 }
 

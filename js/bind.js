@@ -54,6 +54,26 @@ $('bpAdd').addEventListener('change', e => {
 $('btnBpRun').addEventListener('click', runFlow);
 $('btnBpStop').addEventListener('click', stopFlow);
 $('btnBpFit').addEventListener('click', fitView);
+$('btnBpCheck').addEventListener('click', checkCurrentFlow);
+
+// AI 搭建：自然语言 → 工作流（生成后必须人工确认才落盘）
+$('btnFlowGen').addEventListener('click', openFlowGen);
+$('genClose').addEventListener('click', closeFlowGen);
+$('genCancel').addEventListener('click', () => { if(genAbort){ try { genAbort.abort(); } catch(e){} } closeFlowGen(); });
+$('genRun').addEventListener('click', () => genStartRound($('genInput').value));
+$('genConfirm').addEventListener('click', genConfirm);
+$('genBackdrop').addEventListener('pointerdown', e => { if(e.target === $('genBackdrop')) closeFlowGen(); });
+$('genInput').addEventListener('keydown', e => {
+  if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); genStartRound($('genInput').value); }
+});
+
+// 运行历史
+$('tabRuns').addEventListener('click', () => setBpSideTab('runs'));
+$('btnRunRefresh').addEventListener('click', () => renderRunHistory());
+$('btnRunClear').addEventListener('click', () => {
+  if(!confirm('清空全部运行历史？只删记录，不影响工作流与结果。')) return;
+  runHistoryClear().then(() => renderRunHistory()).then(() => bpToast('运行历史已清空'));
+});
 
 $('varMenu').addEventListener('pointerdown', e => e.stopPropagation());
 $('varMenu').querySelectorAll('button[data-mode]').forEach(b => {

@@ -465,74 +465,11 @@ function migrateExecLinks(flow){
 
 function newNode(type, x, y){
   const n = { id: uid(), type, x, y, data: {}, out: {}, status: '' };
-  if(type === 'start' || type === 'end') n.params = [];
-  if(type === 'text') n.data.text = '';
-  if(type === 'imageGen') n.data.prompt = '';
-  if(type === 'tripoImg'){
-    n.data.prompt = '';
-    n.data.timeout = 240;
-    n.data.ratio = 'auto';
-    n.data.mode = 'auto';
-  }
-  if(type === 'imageCompress'){
-    n.data.maxEdge = 1024;
-    n.data.quality = 80;
-  }
-  if(type === 'imageSplit'){
-    n.data.prompt = '';
-    n.data.output = 'cutout';
-    n.data.feather = 2;
-    n.data.timeout = 120;
-    n.data.views = [ viewEntry('正视图'), viewEntry('背视图') ];
-  }
-  if(type === 'aiTask'){
-    n.data.instruction = '';
-    n.data.timeout = TASK_TIMEOUT_DEFAULT;
-    n.data.inputs = [taskPin('文本', 'string')];
-    n.data.outputs = [taskPin('结果', 'string')];
-  }
-  if(type === 'modelViews'){
-    // 每个参数既是可就地填写的字段，也是一个可连线的输入引脚（连线优先）
-    const P = (name, type, value) => { const p = newParam(name, type); p.value = value; return p; };
-    n.data.params = [
-      P('画布尺寸', 'int', 2048),
-      P('间距', 'int', 0),
-      P('线宽', 'float', 1.4),
-      P('线色', 'string', '#2b2b2b'),
-      P('填充色', 'string', '#ffffff'),
-      P('背景色', 'string', '#ffffff'),
-      P('背景不透明度', 'float', 1),
-      P('模式', 'string', 'line')
-    ];
-  }
-  if(type === 'aiBranch'){
-    n.data.instruction = '';
-    n.data.timeout = 120;
-    n.data.branches = [ branchEntry('分支 A'), branchEntry('分支 B') ];
-  }
-  if(type === 'condition') n.data.instruction = '';
-  if(type === 'boolNode') n.data.bool = true;
-  if(type === 'numNode') n.data.value = 0;
-  if(type === 'tripoModel'){
-    n.data.mode = 'smart';
-    n.data.version = 'P2.0';
-    n.data.topology = '';
-    n.data.faceCount = 0;
-    n.data.count = 1;
-    n.data.format = '';
-    n.data.timeout = 420;
-  }
-  if(type === 'tripoModelMulti'){
-    n.data.mode = 'smart';
-    n.data.version = 'P2.0';
-    n.data.topology = '';
-    n.data.faceCount = 0;
-    n.data.count = 1;
-    n.data.format = '';
-    n.data.timeout = 600;
-  }
-  if(type === 'imageIn') n.data.image = '';
-  if(type === 'modelIn') n.data.model = '';
+  // 默认值统一来自 flow-contract.js 的 seedNodeData：生成器与手工添加的节点必须同形，
+  // 两处硬编码迟早会漂移（历史上已经踩过一次）。
+  const seed = seedNodeData(type);
+  n.data = seed.data;
+  if(seed.params) n.params = seed.params;
   return n;
 }
 

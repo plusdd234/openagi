@@ -73,11 +73,16 @@
       <select id="bpAdd" class="bp-add" aria-label="添加节点">
         <option value="">+ 添加节点</option>
       </select>
+      <button class="btn sm" id="btnFlowGen" title="用自然语言描述需求，AI 生成工作流后由你确认创建">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z"/><path d="M18 15l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9L18 15Z"/></svg>
+        AI 搭建
+      </button>
       <button class="btn sm" id="btnBpComment" title="框选节点后点这里（或按 C）把选区包进注释面板">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5Z"/></svg>
         注释
       </button>
       <button class="btn sm" id="btnBpFit">适应视图</button>
+      <button class="btn sm" id="btnBpCheck" title="检查当前流程的引脚类型、执行线连通性与必填项">校验</button>
       <button class="btn primary sm" id="btnBpRun">运行</button>
       <button class="btn danger sm hidden" id="btnBpStop" title="中断本次运行">停止</button>
     </div>
@@ -87,6 +92,7 @@
       <div class="bp-side-tabs" role="tablist" aria-label="侧栏面板">
         <button class="bp-side-tab active" id="tabLib" role="tab" aria-selected="true" data-pane="lib">节点库</button>
         <button class="bp-side-tab" id="tabVars" role="tab" aria-selected="false" data-pane="vars">变量<span class="bp-tab-count hidden" id="varCount">0</span></button>
+        <button class="bp-side-tab" id="tabRuns" role="tab" aria-selected="false" data-pane="runs">历史</button>
       </div>
       <div class="bp-side-pane" id="paneLib">
         <div class="bp-side-head"><span>拖到画布添加节点</span></div>
@@ -96,6 +102,16 @@
         <div class="bp-side-head"><span>拖到画布选获取 / 设置</span></div>
         <div class="var-list" id="bpVarsBody"></div>
         <button class="var-add" id="btnAddVar">+ 新建变量</button>
+      </div>
+      <div class="bp-side-pane hidden" id="paneRuns">
+        <div class="bp-side-head run-head">
+          <span>运行历史</span>
+          <span class="run-tools">
+            <button type="button" id="btnRunRefresh">刷新</button>
+            <button type="button" id="btnRunClear">清空</button>
+          </span>
+        </div>
+        <div class="run-list" id="runHistoryList"></div>
       </div>
     </aside>
     <div class="bp-canvas" id="bpCanvas">
@@ -143,6 +159,35 @@
     </div>
   </div>
 </section>
+
+<div class="modal-backdrop hidden" id="genBackdrop">
+  <div class="settings gen-modal" role="dialog" aria-modal="true" aria-labelledby="genTitle">
+    <div class="settings-head">
+      <div>
+        <div class="settings-title" id="genTitle">AI 搭建工作流</div>
+        <div class="settings-sub">描述需求 → 生成 → 静态校验 → 你确认后才创建</div>
+      </div>
+      <button class="icon-btn" id="genClose" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="settings-body">
+      <div class="field">
+        <label for="genInput">需求描述</label>
+        <textarea id="genInput" class="gen-input" rows="5" placeholder="例如：读取一张图像，诊断画面里的无意义结构并拟写修复提示词，然后生成修复后的图像，最后把结果图和说明一起输出。"></textarea>
+      </div>
+      <div class="gen-questions hidden" id="genQuestions"></div>
+      <div class="gen-status hidden" id="genStatus"></div>
+      <div class="gen-preview hidden" id="genPreview"></div>
+    </div>
+    <div class="settings-foot">
+      <span class="gen-hint" id="genHint">生成只调用大语言模型，不会自动运行或保存</span>
+      <div class="gen-btns">
+        <button class="btn sm ghost hidden" id="genCancel" type="button">取消</button>
+        <button class="btn sm primary hidden" id="genConfirm" type="button">确认创建</button>
+        <button class="btn sm primary" id="genRun" type="button">生成</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <main class="shell hidden" id="toolView">
   <section class="content">
@@ -494,9 +539,14 @@
 <script src="js/api.js"></script>
 <script src="js/workbench.js"></script>
 <script src="js/blueprint-core.js"></script>
+<script src="js/flow-contract.js"></script>
+<script src="js/flow-validate.js"></script>
+<script src="js/flow-gen.js"></script>
+<script src="js/run-history.js"></script>
 <script src="js/desktop.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/blueprint-runtime.js"></script>
+<script src="js/flow-gen-panel.js"></script>
 <script src="js/bind.js"></script>
 </body>
 </html>
