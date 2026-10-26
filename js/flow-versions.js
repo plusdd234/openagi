@@ -13,6 +13,9 @@ const VER_STORE = 'versions';
 const VER_MAX_PER_FLOW = 10;
 const VER_MAX_BYTES = 30 * 1024 * 1024;
 const VER_MAX_ONE = 20 * 1024 * 1024;
+// 同一毫秒内连续存多份时，at 会并列；用自增序号做稳定排序的次级键，
+// 否则「最新的快照」会是随机的某一份（淘汰时也会挑错对象）
+let _verSeq = 0;
 
 function verAll(){
   return runDbOpen().then(db => {
@@ -22,7 +25,8 @@ function verAll(){
       try { t = db.transaction(VER_STORE, 'readonly'); } catch(e){ res([]); return; }
       let q;
       try { q = t.objectStore(VER_STORE).getAll(); } catch(e){ res([]); return; }
-      q.onsuccess = () => res((q.result || []).slice().sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0)));
+      q.onsuccess = () => res((q.result || []).slice().sort((a, b) =>
+        (Number(b.at) || 0) - (Number(a.at) || 0) || (Number(b.seq) || 0) - (Number(a.seq) || 0)));
       q.onerror = () => res([]);
     });
   }).catch(() => []);
@@ -58,6 +62,7 @@ function flowVersionSave(flow, opts){
     flowId: flow.id,
     flowName: flow.name || '未命名工作流',
     at: Date.now(),
+    seq: ++_verSeq,
     reason: String(o.reason || '').slice(0, 60),
     size,
     nodes: (flow.nodes || []).length,

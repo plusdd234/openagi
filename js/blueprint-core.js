@@ -16,6 +16,9 @@ const NODE_DEFS = {
   branch:   { title:'条件分支', dot:'logic', desc:'按布尔值走真 / 假执行线', inputs:['bool'], outputs:[], execIn:true, execOut:['true','false'] },
   // execOutFrom：执行线出口取自 node.data[branches]，每条一条执行线（动态出口）
   aiBranch: { title:'AI 分支', dot:'logic', desc:'让语言模型按需求从多个出口里选一条执行线；出口可动态增减', inputs:['text','image'], outputs:['text'], execIn:true, execOut:[], execOutFrom:'branches' },
+  /* 智能分支：数据输入引脚完全自定义（数量与类型都随便），出口同样可增减。
+     旧的 aiBranch 固定 text + image，保留定义以兼容老流程，但不再出现在节点库里。 */
+  smartBranch: { title:'智能分支', dot:'logic', desc:'输入引脚可任意定义（名称与类型），让语言模型据此挑一条执行线；出口可动态增减', inputs:[], outputs:['text'], execIn:true, execOut:[], execOutFrom:'branches' },
   varGet:   { title:'获取变量', dot:'var', desc:'读取变量当前值', inputs:[], outputs:[], execIn:false, execOut:[], pure:true },
   varSet:   { title:'设置变量', dot:'var', desc:'把输入值写入变量', inputs:[], outputs:[], execIn:true, execOut:['exec'] },
   imageGen: { title:'图像生成', dot:'gen', desc:'文生图或图生图', inputs:['prompt','image'], outputs:['image'], execIn:true, execOut:['exec'] },
@@ -160,6 +163,14 @@ const NODE_PARAMS = {
     { tip:'每个出口一条执行线，AI 只会走其中一条；名称与说明会一起送给模型判断。把某条标为「兜底」，模型选不出时走它（否则走第一条）。' }
   ],
 
+  smartBranch: [
+    { key:'instruction', label:'选择依据', ctl:'textarea', ph:'让 AI 据此挑一条出口（例如：按画面内容与描述判断该走哪条路）' },
+    { key:'timeout', label:'超时', ctl:'number', type:'int', min:10, max:600, step:10, unit:'秒', default:120 },
+    { key:'__inputs__', ctl:'inPins' },
+    { key:'__branches__', ctl:'branchPins' },
+    { tip:'左侧引脚可自定义名称与类型（整数/浮点/字符串/布尔/图像/模型），全部会随「选择依据」一起送给模型。每个出口一条执行线，AI 只会走其中一条；标了「兜底」的出口在模型选不出时生效。' }
+  ],
+
   // 取值控件挂在输出引脚上（side:'out'），布尔节点本身是数据源，没有输入引脚
   boolNode: [ { key:'bool', label:'取值', ctl:'bool', default:true, side:'out' } ],
 
@@ -197,7 +208,7 @@ const NODE_LIB = [
   { group:'分析任务', types:['aiTask'] },
   { group:'图像任务', types:['imageGen','imageCompress','imageSplit','tripoImg'] },
   { group:'3D 任务', types:['model3d','modelViews','tripoModel','tripoModelMulti'] },
-  { group:'逻辑', types:['condition','branch','aiBranch'] },
+  { group:'逻辑', types:['condition','branch','smartBranch'] },
   { group:'流程', types:['start','end'] },
   { group:'输出', types:['result'] },
 ];

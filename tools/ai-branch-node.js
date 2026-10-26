@@ -76,6 +76,7 @@ const check = (ok, name, extra) => {
       in: pins('in'), out: pins('out'), execIn: !!el.querySelector('.pin.exec.in'), execOut,
       names, presets, addBtn, fbBtns, paramRows,
       libHas: NODE_LIB.reduce((a, g) => a.concat(g.types), []).includes('aiBranch'),
+      libSmart: NODE_LIB.reduce((a, g) => a.concat(g.types), []).includes('smartBranch'),
       title: ((el.querySelector('.node-title') || {}).textContent || '').trim(),
       def: NODE_DEFS.aiBranch,
       branches: A.data.branches.map(b => b.name),
@@ -84,7 +85,7 @@ const check = (ok, name, extra) => {
   });
 
   console.log('=== 1. aiBranch 节点渲染 ===');
-  check(ui.libHas, '节点库可添加 aiBranch');
+  check(ui.libHas === false && ui.libSmart === true, '旧 aiBranch 已从节点库下线、由 smartBranch 取代（老流程仍可创建与运行）');
   check(ui.title === 'AI 分支', '节点标题正确', ui.title);
   check(ui.execIn, '带执行线入口');
   check(ui.execOut.length === 2, '两条动态执行线出口', JSON.stringify(ui.execOut));

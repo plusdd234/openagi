@@ -71,7 +71,7 @@ function normalizeDag(dag){
     });
 
     // 动态引脚列表：LLM 给了就整表替换（不能和种子的默认列表混在一起）
-    if(r.type === 'aiTask'){
+    if(r.type === 'aiTask' || r.type === 'smartBranch'){
       const norm = (list, typeList, fallbackName) => (Array.isArray(list) ? list : []).map((p, j) => {
         const o = p && typeof p === 'object' ? p : {};
         return {
@@ -81,7 +81,7 @@ function normalizeDag(dag){
         };
       });
       if(Array.isArray(data.inputs)) n.data.inputs = norm(data.inputs, TASK_IN_TYPES, '输入');
-      if(Array.isArray(data.outputs)) n.data.outputs = norm(data.outputs, TASK_OUT_TYPES, '结果');
+      if(r.type === 'aiTask' && Array.isArray(data.outputs)) n.data.outputs = norm(data.outputs, TASK_OUT_TYPES, '结果');
     }
     if(r.type === 'imageSplit' && Array.isArray(data.views)){
       // 条目 id 必须原样保留：连线是按 id 引用动态引脚的，换成新 id 会全部断开
@@ -94,7 +94,7 @@ function normalizeDag(dag){
         };
       });
     }
-    if(r.type === 'aiBranch' && Array.isArray(data.branches)){
+    if((r.type === 'aiBranch' || r.type === 'smartBranch') && Array.isArray(data.branches)){
       n.data.branches = data.branches.map((b, j) => {
         const o = b && typeof b === 'object' ? b : {};
         return {

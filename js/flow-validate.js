@@ -52,6 +52,7 @@ const REQUIRED_PARAMS = {
   aiTask: ['instruction'],
   condition: ['instruction'],
   aiBranch: ['instruction'],
+  smartBranch: ['instruction'],
   imageSplit: ['prompt'],
   tripoImg: ['prompt'],
   imageGen: ['prompt']
@@ -208,6 +209,10 @@ function validateFlow(flow){
       if(!(n.data.inputs || []).length && !(n.data.outputs || []).length) warn('W-DYNAMIC', n, '「分析任务」没有声明任何自定义输入 / 输出引脚');
     }
     if(n.type === 'aiBranch' && !(n.data.branches || []).length) warn('W-DYNAMIC', n, '「AI 分支」没有出口，无法继续执行流');
+    if(n.type === 'smartBranch'){
+      if(!(n.data.branches || []).length) warn('W-DYNAMIC', n, '「智能分支」没有出口，无法继续执行流');
+      if(!(n.data.inputs || []).length) warn('W-DYNAMIC', n, '「智能分支」没有输入引脚，模型只会按「选择依据」判断');
+    }
     if(n.type === 'imageSplit' && !(n.data.views || []).length) warn('W-DYNAMIC', n, '「图像拆分」没有视图，不会输出任何拆分结果');
   });
 

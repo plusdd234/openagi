@@ -68,6 +68,12 @@ function seedNodeData(type){
       data.timeout = 120;
       data.branches = [ seedBranch('分支 A'), seedBranch('分支 B') ];
       break;
+    case 'smartBranch':
+      data.instruction = '';
+      data.timeout = 120;
+      data.inputs = [ seedPin('文本', 'string'), seedPin('图像', 'image') ];
+      data.branches = [ seedBranch('分支 A'), seedBranch('分支 B') ];
+      break;
     case 'condition':
       data.instruction = '';
       break;
@@ -128,7 +134,10 @@ function pinDirOf(n, key, vars){
     if((d.execOut || []).indexOf('exec') >= 0) isOut = true;
   }
   if((d.execOut || []).indexOf(key) >= 0) isOut = true;      // branch 的 true / false
-  if(n.type === 'aiTask'){
+  // 动态执行出口（execOutFrom 指向 node.data 上的列表）：aiBranch / smartBranch 的每条出口
+  const fromKey = d.execOutFrom;
+  if(fromKey && ((n.data || {})[fromKey] || []).some(b => b.id === key)) isOut = true;
+  if(n.type === 'aiTask' || n.type === 'smartBranch'){
     const data = n.data || {};
     if((data.inputs || []).some(p => p.id === key)) isIn = true;
     if((data.outputs || []).some(p => p.id === key)) isOut = true;
@@ -139,7 +148,6 @@ function pinDirOf(n, key, vars){
     if(views.some(v => v.id === key)) isOut = true;
     if(/__has$/.test(key) && views.some(v => v.id === key.replace(/__has$/, ''))) isOut = true;
   }
-  if(n.type === 'aiBranch' && ((n.data || {}).branches || []).some(b => b.id === key)) isOut = true;
   if(n.type === 'start' && (n.params || []).some(p => p.id === key)) isOut = true;
   if(n.type === 'end' && (n.params || []).some(p => p.id === key)) isIn = true;
   if(n.type === 'varGet' && n.data && n.data.varId === key) isOut = true;
@@ -161,7 +169,7 @@ function pinTypeOf(n, key, vars){
   if((d.inputs || []).indexOf(key) >= 0 || (d.outputs || []).indexOf(key) >= 0)
     return PIN_META[key] ? PIN_META[key].type : 'string';
   const data = n.data || {};
-  if(n.type === 'aiTask'){
+  if(n.type === 'aiTask' || n.type === 'smartBranch'){
     const p = (data.inputs || []).concat(data.outputs || []).find(x => x.id === key);
     if(p) return p.type;
   }
@@ -174,7 +182,8 @@ function pinTypeOf(n, key, vars){
     if(views.some(v => v.id === key)) return 'image';
     if(/__has$/.test(key) && views.some(v => v.id === key.replace(/__has$/, ''))) return 'bool';
   }
-  if(n.type === 'aiBranch' && (data.branches || []).some(b => b.id === key)) return 'exec';
+  const fromKey = d.execOutFrom;
+  if(fromKey && (data[fromKey] || []).some(b => b.id === key)) return 'exec';   // aiBranch / smartBranch 出口
   if(n.type === 'start' || n.type === 'end'){
     const p = (n.params || []).find(x => x.id === key);
     if(p) return p.type;
@@ -207,7 +216,12 @@ const NODE_RULES = {
     required: ['instruction']
   },
   aiBranch: {
-    note: '动态执行出口：data.branches 每项 {id,name,hint,fallback}，每个 id 是一条执行线出口引脚；fallback:true 表示兜底出口。',
+    note: '动态执行出口：data.branches 每项 {id,name,hint,fallback}，每个 id 是一条执行线出口引脚；fallback:true 表示兜底出口。旧节点，新流程请用 smartBranch。',
+    required: ['instruction']
+  },
+  smartBranch: {
+    note: '数据输入引脚完全自定义：data.inputs 每项 {id,name,type}（type 限 int/float/string/bool/image/model），全部值会随选择依据送给模型；'
+      + '动态执行出口与 aiBranch 相同：data.branches 每项 {id,name,hint,fallback}。',
     required: ['instruction']
   },
   imageSplit: {
@@ -252,7 +266,7 @@ function nodeContract(){
     specs.forEach(s => {
       if(s.tip){ tips.push(s.tip); return; }
       if(s.ctl === 'paramList' || s.ctl === 'filePick' || s.ctl === 'taskPins'
-        || s.ctl === 'viewPins' || s.ctl === 'branchPins') return;   // 块控件由 note 说明
+        || s.ctl === 'viewPins' || s.ctl === 'branchPins' || s.ctl === 'inPins') return;   // 块控件由 note 说明
       const p = {
         key: s.dataKey || s.key,
         label: s.label || s.key,

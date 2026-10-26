@@ -650,6 +650,7 @@ function varOf(key){
 function taskPinsOf(n){
   if(!n || !n.data) return [];
   if(n.type === 'aiTask') return (n.data.inputs || []).concat(n.data.outputs || []);
+  if(n.type === 'smartBranch') return n.data.inputs || [];
   if(n.type === 'modelViews') return n.data.params || [];   // 参数引脚
   return [];
 }
@@ -1066,12 +1067,13 @@ function nodeEl(n){
 
   // 1) 参数与输入引脚合并：有同名引脚时，参数直接挂在那个引脚右侧
   const inputKeys = (d.inputs || []).slice();
+  if(n.type === 'smartBranch') (n.data.inputs || []).forEach(p => inputKeys.push(p.id));
   if(n.type === 'end') (n.params || []).forEach(p => inputKeys.push(p.id));
   if(isVarNode && v && n.type === 'varSet') inputKeys.push(v.id);
 
   // 有参数但缺同名引脚的，补一条输入引脚（值可视化于其右侧）
   specs.forEach(s => {
-    if(s.ctl === 'paramList' || s.ctl === 'taskPins' || s.ctl === 'viewPins' || s.ctl === 'branchPins' || s.ctl === 'filePick' || s.tip) return;
+    if(s.ctl === 'paramList' || s.ctl === 'taskPins' || s.ctl === 'viewPins' || s.ctl === 'branchPins' || s.ctl === 'inPins' || s.ctl === 'filePick' || s.tip) return;
     if(s.side === 'out') return;   // 数据源参数：挂在输出引脚上，不生成输入引脚
     if(s.store === 'param'){
       if(!inputKeys.includes(s.key)) inputKeys.push(s.key);
@@ -1094,11 +1096,32 @@ function nodeEl(n){
   inputKeys.forEach(k => {
     const spec = specByKey[k] || null;
     if(spec && spec.tip) return;
-    if(spec && (spec.ctl === 'paramList' || spec.ctl === 'taskPins' || spec.ctl === 'viewPins' || spec.ctl === 'branchPins')) return;
+    if(spec && (spec.ctl === 'paramList' || spec.ctl === 'taskPins' || spec.ctl === 'viewPins' || spec.ctl === 'branchPins' || spec.ctl === 'inPins')) return;
     if(n.type === 'start') return;
+    if(n.type === 'smartBranch'){
+      const dp = (n.data.inputs || []).find(x => x.id === k);
+      if(dp){ inCol.appendChild(makePort(k, 'in', { label: dp.name || '输入', type: dp.type })); return; }
+    }
     if(n.type === 'end'){
       const p = (n.params || []).find(x => x.id === k);
-      if(p){ inCol.appendChild(paramRow(n, p)); return; }
+      if(p){
+        /* 参数行必须是「真引脚 + 名称 / 类型 / 接收值」：
+           只渲染 paramRow 时没有 pin，portPos 找不到坐标，这条连线就永远画不出来。 */
+        const row = document.createElement('div');
+        row.className = 'port-row param-port';
+        const pin = document.createElement('span');
+        pin.className = 'pin in';
+        pin.dataset.dir = 'in';
+        pin.dataset.key = p.id;
+        pin.dataset.type = p.type;
+        pin.style.setProperty('--pin-c', PIN_COLORS[p.type] || '#5d6bb8');
+        const body = document.createElement('div');
+        body.className = 'param-port-body';
+        body.appendChild(paramRow(n, p));
+        row.append(pin, body);
+        inCol.appendChild(row);
+        return;
+      }
     }
     if(isVarNode && v && k === v.id){
       inCol.appendChild(makePort(k, 'in', { label:'值', type:v.type }));
@@ -1128,7 +1151,7 @@ function nodeEl(n){
   // 2) 含参数的节点让引脚列占满整行，取值控件才有位置（输入侧 / 输出侧都算）
   const hasParamRow = specs.some(s => !s.tip
     && s.ctl !== 'paramList' && s.ctl !== 'taskPins' && s.ctl !== 'filePick'
-    && s.ctl !== 'viewPins' && s.ctl !== 'branchPins');
+    && s.ctl !== 'viewPins' && s.ctl !== 'branchPins' && s.ctl !== 'inPins');
   if(hasParamRow) body.classList.add('wide-in');
   body.append(inCol);
   if((d.outputs || []).length || isVarNode || n.type === 'start' || n.type === 'aiTask'){
@@ -1151,6 +1174,9 @@ function nodeEl(n){
     } else if(s.ctl === 'taskPins'){
       fields.appendChild(taskPinSection(n, 'in'));
       fields.appendChild(taskPinSection(n, 'out'));
+    } else if(s.ctl === 'inPins'){
+      // 引脚本体已经渲染在左列（可拖线），这里只保留改名 / 改类型的行
+      fields.appendChild(taskPinSection(n, 'in', { noPin: n.type === 'smartBranch' }));
     } else if(s.ctl === 'viewPins'){
       fields.appendChild(viewPinSection(n));
     } else if(s.ctl === 'branchPins'){
@@ -1563,7 +1589,7 @@ function loadNodeModel(n, file){
   reader.readAsDataURL(file);
 }
 
-function taskPinSection(n, kind){
+function taskPinSection(n, kind, opts){
   const wrap = document.createElement('div');
   wrap.className = 'task-sec';
   const head = document.createElement('div');
@@ -1584,22 +1610,25 @@ function taskPinSection(n, kind){
   head.append(title, add);
   wrap.appendChild(head);
   const list = kind === 'in' ? n.data.inputs : n.data.outputs;
-  list.forEach(p => wrap.appendChild(taskPinRow(n, kind, p)));
+  list.forEach(p => wrap.appendChild(taskPinRow(n, kind, p, opts)));
   return wrap;
 }
 
-function taskPinRow(n, kind, p){
+function taskPinRow(n, kind, p, opts){
   const row = document.createElement('div');
   row.className = 'param-row task-pin';
-  // 自定义引脚必须有真实的 pin 元素，否则既不能拖线，连线也画不出来
+  // 自定义引脚必须有真实的 pin 元素，否则既不能拖线，连线也画不出来。
+  // opts.noPin：引脚已经渲染在左列时（智能分支），这里只做「改名 / 改类型 / 删除」的管理行，避免重复出两个引脚。
   const dir = kind === 'in' ? 'in' : 'out';
-  const pin = document.createElement('span');
-  pin.className = 'pin ' + dir;
-  pin.dataset.dir = dir;
-  pin.dataset.key = p.id;
-  pin.dataset.type = p.type;
-  pin.style.setProperty('--pin-c', PIN_COLORS[p.type] || '#5d6bb8');
-  row.appendChild(pin);
+  if(!(opts && opts.noPin)){
+    const pin = document.createElement('span');
+    pin.className = 'pin ' + dir;
+    pin.dataset.dir = dir;
+    pin.dataset.key = p.id;
+    pin.dataset.type = p.type;
+    pin.style.setProperty('--pin-c', PIN_COLORS[p.type] || '#5d6bb8');
+    row.appendChild(pin);
+  }
   const head = document.createElement('div');
   head.className = 'param-head';
   const name = document.createElement('input');

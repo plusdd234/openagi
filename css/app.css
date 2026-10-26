@@ -1359,3 +1359,8 @@
   .mem-src { font-size: 9px; color: var(--muted); margin-left: auto; flex: none; }
   .mem-hits { color: var(--accent); margin-left: 3px; }
   .mem-txt { font-size: 10px; color: #b6c1d1; line-height: 1.6; margin-top: 4px; word-break: break-word; }
+
+  /* 结束节点参数行：左侧要挂真实引脚，否则连线画不出来 */
+  .param-port { align-items: flex-start; }
+  .param-port > .pin { margin-top: 7px; }
+  .param-port-body { flex: 1; min-width: 0; }
