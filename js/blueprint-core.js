@@ -3,32 +3,9 @@
  * 由解耦脚本机械切分，内容与顺序保持原样
  */
 // ======================= 工作流蓝图 =======================
-const NODE_DEFS = {
-  start:    { title:'任务开始', dot:'start', desc:'定义工作流输入参数', inputs:[], outputs:[], execIn:false, execOut:['exec'] },
-  end:      { title:'任务结束', dot:'end', desc:'收集工作流输出参数', inputs:[], outputs:[], execIn:true, execOut:[] },
-  imageIn:  { title:'图像输入', dot:'image', desc:'载入一张图像；参数节点，由下游按需读取', inputs:[], outputs:['image'], execIn:false, execOut:[], pure:true },
-  modelIn:  { title:'3D 模型输入', dot:'model', desc:'导入 OBJ / GLB / STL 等模型；参数节点，由下游按需读取', inputs:[], outputs:['model'], execIn:false, execOut:[], pure:true },
-  text:     { title:'文本 / 提示词', dot:'text', desc:'固定文本、提示词或补充说明；参数节点，由下游按需读取', inputs:[], outputs:['text'], execIn:false, execOut:[], pure:true },
-  numNode:  { title:'数值', dot:'logic', desc:'输出整数 / 浮点，供数值参数引脚连线使用；参数节点，由下游按需读取', inputs:[], outputs:['int','float'], execIn:false, execOut:[], pure:true },
-  boolNode: { title:'布尔值', dot:'logic', desc:'手动输出真 / 假；参数节点，由下游按需读取', inputs:[], outputs:['bool'], execIn:false, execOut:[], pure:true },
-  aiTask:   { title:'分析任务', dot:'text', desc:'按指令分析文本 / 图像，自定义输入输出引脚与超时', inputs:[], outputs:[], execIn:true, execOut:['exec'] },
-  branch:   { title:'条件分支', dot:'logic', desc:'按布尔值走真 / 假执行线', inputs:['bool'], outputs:[], execIn:true, execOut:['true','false'] },
-  // execOutFrom：执行线出口取自 node.data[branches]，每条一条执行线（动态出口）
-  /* 智能分支：数据输入引脚完全自定义（数量与类型都随便），出口同样可增减。
-     旧的 aiBranch 已并入本节点（老流程由 migrateLegacyBranches 自动迁移）。 */
-  smartBranch: { title:'智能分支', dot:'logic', desc:'输入引脚可任意定义（名称与类型），让语言模型据此挑一条执行线；出口可动态增减', inputs:[], outputs:['text'], execIn:true, execOut:[], execOutFrom:'branches' },
-  varGet:   { title:'获取变量', dot:'var', desc:'读取变量当前值', inputs:[], outputs:[], execIn:false, execOut:[], pure:true },
-  varSet:   { title:'设置变量', dot:'var', desc:'把输入值写入变量', inputs:[], outputs:[], execIn:true, execOut:['exec'] },
-  imageGen: { title:'图像生成', dot:'gen', desc:'文生图或图生图', inputs:['prompt','image'], outputs:['image'], execIn:true, execOut:['exec'] },
-  tripoImg: { title:'Tripo 网页生图', dot:'gen', desc:'通过 Tripo 网页账号文生图 / 图生图，最多可传 3 张参考图', inputs:['prompt','image','image2','image3'], outputs:['image','text'], execIn:true, execOut:['exec'] },
-  imageCompress: { title:'压缩图像', dot:'image', desc:'缩放并压缩图像，降低分析 / 生成请求的数据量', inputs:['image'], outputs:['image'], execIn:true, execOut:['exec'] },
-  imageSplit: { title:'图像拆分', dot:'image', desc:'AI 按提示词把图中多个视图 / 对象分别拆分出来；每个视图输出一张图 + 一个「是否有」布尔，视图可动态增减', inputs:['image','prompt'], outputs:['text'], execIn:true, execOut:['exec'] },
-  model3d:  { title:'3D 生成', dot:'model', desc:'图生 3D 模型（Tripo API 或网页账号）', inputs:['image'], outputs:['model'], execIn:true, execOut:['exec'] },
-  tripoModel:{ title:'Tripo 网页生成模型', dot:'model', desc:'通过 Tripo 网页账号图生 3D 模型（单张参考图），可选智能网格 P2.0、拓扑 / 面数、数量、导出格式', inputs:['image'], outputs:['model','text'], execIn:true, execOut:['exec'] },
-  tripoModelMulti:{ title:'Tripo 网页多视图生成', dot:'model', desc:'通过 Tripo 网页账号多视图生 3D 模型（前 / 左 / 右 / 后 四张参考图），可选智能网格 P2.0、拓扑 / 面数、数量、导出格式', inputs:['front','left','right','back'], outputs:['model','text'], execIn:true, execOut:['exec'] },
-  modelViews:{ title:'3D 模型转四视图', dot:'model', desc:'把 3D 模型渲染为 2×2 四视图（前/后/左/右），可直接喂给生图 AI', inputs:['model'], outputs:['image','text'], execIn:true, execOut:['exec'] },
-  result:   { title:'结果输出', dot:'out', desc:'汇总文本、图像与模型结果', inputs:['text','image','model'], outputs:[], execIn:true, execOut:[] },
-};
+/* 节点表：由 js/node-defs.js 的 registerNode() 填充（架构改良 A） */
+const NODE_DEFS = {};
+
 /* ---------------------------------------------------------------
  * 节点参数声明表（统一参数形态的唯一来源）
  *
@@ -55,152 +32,9 @@ const PARAM_PARAMS = (list) => list.map(o => Object.assign({ store:'param' }, o)
 // 分析任务的默认超时（秒）。必须定义在 NODE_PARAMS 之前，否则声明表里引用不到
 const TASK_TIMEOUT_DEFAULT = 300;
 
-const NODE_PARAMS = {
-  start: [
-    { key:'__params__', ctl:'paramList' }
-  ],
-  end: [
-    { key:'__params__', ctl:'paramList' },
-    { tip:'运行结束时汇总各引脚收到的值' }
-  ],
+const NODE_PARAMS = {};
 
-  imageIn: [ { key:'__image__', ctl:'filePick' } ],
-  modelIn: [ { key:'__model__', ctl:'filePick' } ],
-
-  // 注意：text 节点的 data 键叫 text、输出引脚也叫 text，两者不能共用引脚键，
-  // 否则会重复出一条输入引脚。这里用 __content__ 作为独立引脚键。
-  text:     [ { key:'__content__', label:'内容', dataKey:'text', ctl:'textarea', ph:'文本内容' } ],
-
-  imageGen: [
-    { key:'__prompt__', label:'prompt', dataKey:'prompt', ctl:'textarea', ph:'提示词（未连线时使用）' }
-  ],
-
-  tripoImg: [
-    { key:'prompt', label:'prompt', ctl:'textarea', ph:'提示词（未连线时使用）' },
-    { key:'timeout', label:'超时', ctl:'number', type:'int', min:10, max:900, step:10, unit:'秒', default:240 },
-    { key:'mode', label:'模式', ctl:'select', default:'auto', options:[
-      ['auto','自动（有参考图走图生图）'], ['text','文生图'], ['image','图生图']
-    ] },
-    { key:'ratio', label:'比例', ctl:'select', default:'auto', options:[
-      ['auto','自动'], ['1:1','1:1'], ['16:9','16:9'], ['9:16','9:16'], ['4:3','4:3'], ['3:4','3:4']
-    ] },
-    { tip:'使用 Tripo 网页账号；运行时先自动切到文生图 / 图生图面板，参考图引脚可接图像。' },
-    { tip:'最多可接 3 张参考图：图像 / 参考图2 / 参考图3，按引脚顺序一起上传；只接一张时与原来一致。' }
-  ],
-
-  imageCompress: [
-    { key:'maxEdge', label:'最长边', ctl:'number', type:'int', min:64, max:4096, step:64, unit:'px', default:1024 },
-    { key:'quality', label:'质量',   ctl:'number', type:'int', min:10, max:100, step:5, unit:'%',  default:80 },
-    { tip:'等比缩小到最长边限制，并转成 JPEG 输出' }
-  ],
-
-  /* 图像拆分：提示词 + 输出形式 + 动态视图列表（viewPins 控件）。
-     每个视图生成两条输出引脚：id → 图像（该视图的拆分结果），id__has → 布尔（图中是否有该视图）。 */
-  imageSplit: [
-    { key:'prompt', label:'提示词', ctl:'textarea', ph:'拆分要求（例如：把图中角色的各个视图分别拆出来，背景忽略）' },
-    { key:'output', label:'输出形式', ctl:'select', default:'cutout', options:[
-      ['cutout','抠图（透明背景）'], ['crop','矩形裁剪'], ['mask','蒙版图']
-    ] },
-    { key:'feather', label:'边缘羽化', ctl:'number', type:'int', min:0, max:32, step:1, unit:'px', default:2 },
-    { key:'timeout', label:'超时', ctl:'number', type:'int', min:10, max:600, step:10, unit:'秒', default:120 },
-    { key:'__views__', ctl:'viewPins' },
-    { tip:'每个视图输出两张引脚：图像（拆分结果，找不到时为空）+ 布尔（图中是否有该视图）。点「+ 添加视图」或常用视图标签动态增减。' }
-  ],
-
-  model3d: [ { tip:'使用设置中的 Tripo 版本，输出 GLB 模型' } ],
-
-  tripoModel: [
-    { tip:'通过 Tripo 网页账号生成 3D 模型；参考图引脚接图像（未连线需页面里已上传）' },
-    { key:'mode', label:'模式', ctl:'select', default:'smart', options:[
-      ['smart','智能网格'], ['hd','高精度模型'], ['','页面默认']
-    ] },
-    { key:'version', label:'网格版本', ctl:'select', default:'P2.0', options:[
-      ['P2.0','P2.0'], ['P1.0','P1.0'], ['','页面默认']
-    ] },
-    { key:'topology', label:'拓扑', ctl:'select', default:'', options:[
-      ['','页面默认'], ['quad','四边面'], ['tri','三角面']
-    ] },
-    { key:'faceCount', label:'面数', ctl:'number', type:'int', min:0, max:25000, step:100, unit:'面（500–25000，0=默认）', default:0 },
-    { key:'count', label:'数量', ctl:'select', type:'int', default:1, options:[[1,'1'],[2,'2'],[4,'4']] },
-    { key:'format', label:'格式', ctl:'select', default:'', options:[
-      ['','页面默认'], ['glb','GLB'], ['obj','OBJ'], ['fbx','FBX'], ['stl','STL'], ['usdz','USDZ']
-    ] },
-    { key:'timeout', label:'超时', ctl:'number', type:'int', min:30, max:1800, step:30, unit:'秒', default:420 },
-    { tip:'生成走网页自动化，会消耗网页账号积分；存在风控风险。' }
-  ],
-  tripoModelMulti: [
-    { tip:'前 / 左 / 右 / 后 四个引脚各接一张参考图（至少接一个）；页面会自动切到多视图上传模式' },
-    { key:'mode', label:'模式', ctl:'select', default:'smart', options:[
-      ['smart','智能网格'], ['hd','高精度模型'], ['','页面默认']
-    ] },
-    { key:'version', label:'网格版本', ctl:'select', default:'P2.0', options:[
-      ['P2.0','P2.0'], ['P1.0','P1.0'], ['','页面默认']
-    ] },
-    { key:'topology', label:'拓扑', ctl:'select', default:'', options:[
-      ['','页面默认'], ['quad','四边面'], ['tri','三角面']
-    ] },
-    { key:'faceCount', label:'面数', ctl:'number', type:'int', min:0, max:25000, step:100, unit:'面（500–25000，0=默认）', default:0 },
-    { key:'count', label:'数量', ctl:'select', type:'int', default:1, options:[[1,'1'],[2,'2'],[4,'4']] },
-    { key:'format', label:'格式', ctl:'select', default:'', options:[
-      ['','页面默认'], ['glb','GLB'], ['obj','OBJ'], ['fbx','FBX'], ['stl','STL'], ['usdz','USDZ']
-    ] },
-    { key:'timeout', label:'超时', ctl:'number', type:'int', min:30, max:1800, step:30, unit:'秒', default:600 },
-    { tip:'生成走网页自动化，会消耗网页账号积分；存在风控风险。' }
-  ],
-
-  branch: [ { tip:'按布尔引脚的值决定走「真」或「假」执行线' } ],
-
-  /* 智能分支：选择依据 + 动态输入列表（inPins）+ 动态出口列表（branchPins）。
-     每个出口生成一条执行线出口引脚（key = 出口 id）；模型选中哪条，执行流就走哪条。 */
-  smartBranch: [
-    { key:'instruction', label:'选择依据', ctl:'textarea', ph:'让 AI 据此挑一条出口（例如：按画面内容与描述判断该走哪条路）' },
-    { key:'timeout', label:'超时', ctl:'number', type:'int', min:10, max:600, step:10, unit:'秒', default:120 },
-    { key:'__inputs__', ctl:'inPins' },
-    { key:'__branches__', ctl:'branchPins' },
-    { tip:'左侧引脚可自定义名称与类型（整数/浮点/字符串/布尔/图像/模型），全部会随「选择依据」一起送给模型。每个出口一条执行线，AI 只会走其中一条；标了「兜底」的出口在模型选不出时生效。' }
-  ],
-
-  // 取值控件挂在输出引脚上（side:'out'），布尔节点本身是数据源，没有输入引脚
-  boolNode: [ { key:'bool', label:'取值', ctl:'bool', default:true, side:'out' } ],
-
-  // 数值节点：一次同时提供「整数」与「浮点」两种输出，覆盖全部数值输入引脚
-  numNode: [
-    { key:'float', label:'数值', dataKey:'value', ctl:'number', step:'any', default:0, side:'out' },
-    { tip:'同一数值同时从两个引脚输出：整数引脚取整，浮点引脚保留小数' }
-  ],
-
-  aiTask: [
-    { key:'instruction', ctl:'textarea', ph:'任务指令（例如：总结输入文本并列出风险点）' },
-    { key:'timeout', label:'超时', ctl:'number', type:'int', min:0, max:3600, step:10, unit:'秒，0 表示不限时', default:TASK_TIMEOUT_DEFAULT },
-    { key:'__taskPins__', ctl:'taskPins' }
-  ],
-
-  modelViews: PARAM_PARAMS([
-    { key:'画布尺寸',     ctl:'select', default:2048, options:[[2048,'2048 (2K)'],[4096,'4096 (4K)']] },
-    { key:'间距',         ctl:'number', min:0,   max:256, step:8,   default:0 },
-    { key:'线宽',         ctl:'number', min:0.4, max:6,   step:0.1, default:1.4 },
-    { key:'线色',         ctl:'color',  default:'#2b2b2b' },
-    { key:'填充色',       ctl:'color',  default:'#ffffff' },
-    { key:'背景色',       ctl:'color',  default:'#ffffff' },
-    { key:'背景不透明度', ctl:'number', min:0,   max:1,   step:0.05, default:1 },
-    { key:'模式',         ctl:'select', default:'line', options:[['line','线框'],['solid','实体']] }
-  ]),
-
-  result: [ { tip:'连接文本、图像或模型，运行后在此汇总结果' } ],
-  varGet: [],
-  varSet: [ { tip:'运行到此处时，把「值」引脚的数据写入该变量' } ]
-};
-
-const NODE_LIB = [
-  // 「输入」组按数据类型排齐：文本 / 数值 / 布尔 / 图像 / 3D 模型，与 TYPE_META 一一对应
-  { group:'输入', types:['text','numNode','boolNode','imageIn','modelIn'] },
-  { group:'分析任务', types:['aiTask'] },
-  { group:'图像任务', types:['imageGen','imageCompress','imageSplit','tripoImg'] },
-  { group:'3D 任务', types:['model3d','modelViews','tripoModel','tripoModelMulti'] },
-  { group:'逻辑', types:['branch','smartBranch'] },
-  { group:'流程', types:['start','end'] },
-  { group:'输出', types:['result'] },
-];
+const NODE_LIB = [];
 const PIN_META = {
   instruction: { label:'指令', type:'string' },
   maxEdge:     { label:'最长边', type:'int' },

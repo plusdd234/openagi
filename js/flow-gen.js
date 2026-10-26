@@ -88,56 +88,27 @@ function normalizeDag(dag){
       n.data[k] = data[k];
     });
 
-    // 动态引脚列表：LLM 给了就整表替换（不能和种子的默认列表混在一起）
-    if(r.type === 'aiTask' || r.type === 'smartBranch'){
-      const norm = (list, typeList, fallbackName) => (Array.isArray(list) ? list : []).map((p, j) => {
-        const o = p && typeof p === 'object' ? p : {};
-        return {
-          id: (typeof o.id === 'string' && o.id) ? o.id : uid(),
-          name: o.name != null && String(o.name).trim() ? String(o.name).trim() : fallbackName + (j + 1),
-          type: clampPick(o.type, typeList, 'string')
-        };
+    /* 节点特有的规范化（动态引脚 / 变量引用…）由描述符提供，
+       新增节点不用再改这里。 */
+    const normHook = (typeof nodeNormalizer === 'function') ? nodeNormalizer(r.type) : null;
+    if(normHook){
+      normHook(n, data, {
+        uid, clampPick, TASK_IN_TYPES, TASK_OUT_TYPES,
+        normPins: (list, types, fallbackName) => (Array.isArray(list) ? list : []).map((p, j) => {
+          const o = (p && typeof p === 'object') ? p : {};
+          return {
+            id: (typeof o.id === 'string' && o.id) ? o.id : uid(),
+            name: o.name != null && String(o.name).trim() ? String(o.name).trim() : fallbackName + (j + 1),
+            type: clampPick(o.type, types, 'string')
+          };
+        }),
+        addVar: vid => {
+          if(vid && !vars.some(v => v.id === vid)){
+            vars.push({ id:vid, name:vid, type:'string', value:'', fileName:'' });
+            notes.push('变量 ' + vid + ' 已补建（模型引用了未声明的变量）');
+          }
+        }
       });
-      if(Array.isArray(data.inputs)) n.data.inputs = norm(data.inputs, TASK_IN_TYPES, '输入');
-      if(r.type === 'aiTask' && Array.isArray(data.outputs)) n.data.outputs = norm(data.outputs, TASK_OUT_TYPES, '结果');
-    }
-    if(r.type === 'imageSplit' && Array.isArray(data.views)){
-      // 条目 id 必须原样保留：连线是按 id 引用动态引脚的，换成新 id 会全部断开
-      n.data.views = data.views.map((v, j) => {
-        const o = v && typeof v === 'object' ? v : {};
-        return {
-          id: (typeof o.id === 'string' && o.id) ? o.id : uid(),
-          name: o.name != null && String(o.name).trim() ? String(o.name).trim() : '视图' + (j + 1),
-          hint: o.hint ? String(o.hint) : ''
-        };
-      });
-    }
-    if(r.type === 'smartBranch' && Array.isArray(data.branches)){
-      n.data.branches = data.branches.map((b, j) => {
-        const o = b && typeof b === 'object' ? b : {};
-        return {
-          id: (typeof o.id === 'string' && o.id) ? o.id : uid(),
-          name: o.name != null && String(o.name).trim() ? String(o.name).trim() : '出口' + (j + 1),
-          hint: o.hint ? String(o.hint) : '',
-          fallback: o.fallback === true
-        };
-      });
-    }
-    if(r.type === 'modelViews' && Array.isArray(data.params)){
-      (n.data.params || []).forEach(p => {
-        const hit = data.params.find(x => x && (x.name === p.name || x.id === p.id));
-        if(!hit) return;
-        if(hit.value !== undefined) p.value = coerceByType(p.type, hit.value);
-        if(typeof hit.id === 'string' && hit.id) p.id = hit.id;   // 保留引用 id，避免连线断开
-      });
-    }
-    if(r.type === 'varGet' || r.type === 'varSet'){
-      const vid = data.varId != null ? String(data.varId) : '';
-      if(vid && !vars.some(v => v.id === vid)){
-        vars.push({ id: vid, name: vid, type: 'string', value: '', fileName: '' });
-        notes.push('变量 ' + vid + ' 已补建（模型引用了未声明的变量）');
-      }
-      n.data.varId = vid;
     }
 
     // start / end 的参数表（data 之外的一等公民）

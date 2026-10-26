@@ -696,44 +696,10 @@ function varOf(key){
   if(bp && Array.isArray(bp.vars)) return bp.vars.find(v => v.id === key) || null;
   return null;
 }
-function taskPinsOf(n){
-  if(!n || !n.data) return [];
-  if(n.type === 'aiTask') return (n.data.inputs || []).concat(n.data.outputs || []);
-  if(n.type === 'smartBranch') return n.data.inputs || [];
-  if(n.type === 'modelViews') return n.data.params || [];   // 参数引脚
-  return [];
-}
-/* 图像拆分节点的动态视图引脚：条目 id → 图像引脚；id + '__has' → 布尔引脚 */
-function viewPinOf(n, key){
-  if(!n || n.type !== 'imageSplit' || !n.data) return null;
-  const views = n.data.views || [];
-  const v = views.find(x => x.id === key);
-  if(v) return { id:key, name:v.name, type:'image' };
-  if(/__has$/.test(key)){
-    const base = key.replace(/__has$/, '');
-    const v2 = views.find(x => x.id === base);
-    if(v2) return { id:key, name:'是否有' + v2.name, type:'bool' };
-  }
-  return null;
-}
-/* 动态执行线出口：声明里 execOutFrom 指向 node.data 上的某个列表（如 branches），
-   每条生成一条执行出口。pinType 必须认得它们，否则这类连线会被当成数据线，执行流就断了。 */
-function execPinsOf(n){
-  if(!n || !n.data) return [];
-  const key = (NODE_DEFS[n.type] || {}).execOutFrom;
-  if(!key) return [];
-  return (n.data[key] || []).map(b => ({ id:b.id, name:b.name, type:'exec' }));
-}
-function taskPinOf(n, key){
-  return viewPinOf(n, key) || execPinsOf(n).find(p => p.id === key)
-    || taskPinsOf(n).find(p => p.id === key) || null;
-}
+/* 引脚类型：统一交给 node-registry 的 schema（唯一真源），这里只补编辑器需要的兜底 */
 function pinType(n, key){
-  const p = paramOf(n, key) || taskPinOf(n, key);
-  if(p) return p.type;
-  const v = varOf(key);
-  if(v) return v.type;
-  return PIN_META[key] ? PIN_META[key].type : 'string';
+  const t = (typeof pinTypeOf === 'function') ? pinTypeOf(n, key, bp ? bp.vars : null) : null;
+  return t || 'string';
 }
 
 function renderLinks(){
@@ -967,7 +933,7 @@ function makeParamPort(spec, n, p, dir){
   const pin = document.createElement('span');
   pin.className = 'pin ' + dir;
   pin.dataset.dir = dir;
-  pin.dataset.key = (p && p.id) ? p.id : spec.key;
+  pin.dataset.key = (p && p.id) ? p.id : (spec.dataKey || spec.key);
   // 类型优先级：声明的 type → 参数对象自身类型（如四视图的 int/float 参数）→ 引脚名映射 → 字符串
   // 少了第二步，数值参数引脚会被降级成 string，数值节点就永远连不上
   pin.dataset.type = spec.type
@@ -1111,25 +1077,8 @@ function nodeEl(n){
   }
   const hasExec = !!d.execIn || !!(d.execOut && d.execOut.length) || !!execOutDyn.length;
 
-  /* ---------- 节点主体：统一由 NODE_PARAMS 声明驱动 ---------- */
+  /* ---------- 节点主体：引脚清单由 node-registry 的 schema 统一给出 ---------- */
   const specs = (NODE_PARAMS[n.type] || []).slice();
-
-  // 1) 参数与输入引脚合并：有同名引脚时，参数直接挂在那个引脚右侧
-  const inputKeys = (d.inputs || []).slice();
-  if(n.type === 'smartBranch') (n.data.inputs || []).forEach(p => inputKeys.push(p.id));
-  if(n.type === 'end') (n.params || []).forEach(p => inputKeys.push(p.id));
-  if(isVarNode && v && n.type === 'varSet') inputKeys.push(v.id);
-
-  // 有参数但缺同名引脚的，补一条输入引脚（值可视化于其右侧）
-  specs.forEach(s => {
-    if(s.ctl === 'paramList' || s.ctl === 'taskPins' || s.ctl === 'viewPins' || s.ctl === 'branchPins' || s.ctl === 'inPins' || s.ctl === 'filePick' || s.tip) return;
-    if(s.side === 'out') return;   // 数据源参数：挂在输出引脚上，不生成输入引脚
-    if(s.store === 'param'){
-      if(!inputKeys.includes(s.key)) inputKeys.push(s.key);
-    } else if(!inputKeys.includes(s.key)){
-      inputKeys.push(s.key);
-    }
-  });
 
   const body = document.createElement('div');
   body.className = 'node-body';
@@ -1138,63 +1087,29 @@ function nodeEl(n){
   const outCol = document.createElement('div');
   outCol.className = 'node-col out';
 
-  const specByKey = {};
-  specs.forEach(s => { specByKey[s.key] = s; });
+  const pinSets = pinsForRender(n, (bp && bp.vars) || []);
 
-  // 输入侧
-  inputKeys.forEach(k => {
-    const spec = specByKey[k] || null;
-    if(spec && spec.tip) return;
-    if(spec && (spec.ctl === 'paramList' || spec.ctl === 'taskPins' || spec.ctl === 'viewPins' || spec.ctl === 'branchPins' || spec.ctl === 'inPins')) return;
-    if(n.type === 'start') return;
-    if(n.type === 'smartBranch'){
-      const dp = (n.data.inputs || []).find(x => x.id === k);
-      if(dp){ inCol.appendChild(makePort(k, 'in', { label: dp.name || '输入', type: dp.type })); return; }
-    }
-    if(n.type === 'end'){
-      const p = (n.params || []).find(x => x.id === k);
-      if(p){
-        /* 参数行必须是「真引脚 + 名称 / 类型 / 接收值」：
-           只渲染 paramRow 时没有 pin，portPos 找不到坐标，这条连线就永远画不出来。 */
-        const row = document.createElement('div');
-        row.className = 'port-row param-port';
-        const pin = document.createElement('span');
-        pin.className = 'pin in';
-        pin.dataset.dir = 'in';
-        pin.dataset.key = p.id;
-        pin.dataset.type = p.type;
-        pin.style.setProperty('--pin-c', PIN_COLORS[p.type] || '#5d6bb8');
-        const body = document.createElement('div');
-        body.className = 'param-port-body';
-        body.appendChild(paramRow(n, p));
-        row.append(pin, body);
-        inCol.appendChild(row);
-        return;
-      }
-    }
-    if(isVarNode && v && k === v.id){
-      inCol.appendChild(makePort(k, 'in', { label:'值', type:v.type }));
+  pinSets.in.forEach(p => {
+    if(p.kind === 'endParam'){
+      const param = (n.params || []).find(x => x.id === p.key);
+      if(param) inCol.appendChild(endParamPort(n, param));
       return;
     }
-    if(k === '__image__' || k === '__model__'){
-      inCol.appendChild(makePort(k, 'in', { label:k === '__image__' ? '图像' : '模型',
-        type:k === '__image__' ? 'image' : 'model' }));
+    if(p.kind === 'param' && p.spec){
+      inCol.appendChild(makePort(p.key, 'in', paramPortMeta(p.spec, n, p.key)));
       return;
     }
-    inCol.appendChild(makePort(k, 'in', paramPortMeta(spec, n, k)));
+    inCol.appendChild(makePort(p.key, 'in', { label:p.label, type:p.type }));
   });
 
-  // 输出侧：声明里 side:'out' 的参数，取值控件跟着输出引脚一起渲染
-  (d.outputs || []).forEach(k => {
-    const s = specByKey[k];
-    outCol.appendChild(makePort(k, 'out', (s && s.side === 'out')
-      ? paramPortMeta(s, n, k) : undefined));
+  pinSets.out.forEach(p => {
+    if(p.kind === 'param' && p.spec){
+      outCol.appendChild(makePort(p.key, 'out', paramPortMeta(p.spec, n, p.key)));
+    } else {
+      outCol.appendChild(makePort(p.key, 'out', { label:p.label, type:p.type }));
+    }
   });
-  if(n.type === 'start') (n.params || []).forEach(p => outCol.appendChild(makePort(p.id, 'out', { label:p.name, type:p.type })));
-  if(isVarNode && v && n.type === 'varGet') outCol.appendChild(makePort(v.id, 'out', { label:v.name, type:v.type }));
-  if(n.type === 'aiTask'){
-    (n.data.outputs || []).forEach(p => outCol.appendChild(makePort(p.id, 'out', { label:p.name || '输出', type:p.type })));
-  }
+
   // 图像拆分的动态视图引脚由 viewPinSection 在字段区渲染（紧跟各自的视图控件），不在这里重复
 
   // 2) 含参数的节点让引脚列占满整行，取值控件才有位置（输入侧 / 输出侧都算）
@@ -1203,9 +1118,7 @@ function nodeEl(n){
     && s.ctl !== 'viewPins' && s.ctl !== 'branchPins' && s.ctl !== 'inPins');
   if(hasParamRow) body.classList.add('wide-in');
   body.append(inCol);
-  if((d.outputs || []).length || isVarNode || n.type === 'start' || n.type === 'aiTask'){
-    body.appendChild(outCol);
-  }
+  if(pinSets.out.length) body.appendChild(outCol);
 
   // 3) 纯块级内容（文件选择、参数列表、提示文字、运行结果）
   const fields = document.createElement('div');
@@ -1398,6 +1311,24 @@ function paramEditor(n, p){
     inp.addEventListener('input', () => { p.value = inp.value; scheduleFlowSave(); });
   }
   return inp;
+}
+
+/* 结束节点的参数行：真引脚 + 名称 / 类型 / 接收值。
+   只画 paramRow 时没有 pin，portPos 找不到坐标，这条连线就永远画不出来。 */
+function endParamPort(n, param){
+  const row = document.createElement('div');
+  row.className = 'port-row param-port';
+  const pin = document.createElement('span');
+  pin.className = 'pin in';
+  pin.dataset.dir = 'in';
+  pin.dataset.key = param.id;
+  pin.dataset.type = param.type;
+  pin.style.setProperty('--pin-c', PIN_COLORS[param.type] || '#5d6bb8');
+  const body = document.createElement('div');
+  body.className = 'param-port-body';
+  body.appendChild(paramRow(n, param));
+  row.append(pin, body);
+  return row;
 }
 
 function paramRow(n, p){

@@ -32,29 +32,7 @@ const VALID_MSG = {
   'W-NO-INPUT': '流程没有输入参数'
 };
 
-// 每类节点的必需连线（连上或就地填写都算满足）；校验器用 items 逐条检查
-const REQUIRED_PINS = {
-  aiTask: { pins: [], note: '自定义输入引脚' },
-  imageGen: { pins: ['prompt'], note: '提示词' },
-  tripoImg: { pins: ['prompt'], note: '提示词' },
-  imageSplit: { pins: ['image', 'prompt'], note: '图像与提示词' },
-  imageCompress: { pins: ['image'], note: '待压缩图像' },
-  model3d: { pins: ['image'], note: '参考图' },
-  tripoModel: { pins: ['image'], note: '参考图' },
-  modelViews: { pins: ['model'], note: '3D 模型' },
-  varSet: { pins: [], note: '待写入的值' },
-  end: { pins: [], note: '输出参数' }
-};
-// 就地参数被「连线或填写」任一满足即可
-const REQUIRED_PARAMS = {
-  aiTask: ['instruction'],
-  smartBranch: ['instruction'],
-  imageSplit: ['prompt'],
-  tripoImg: ['prompt'],
-  imageGen: ['prompt']
-};
-// 多视图建模：四个参考图引脚至少接一个
-const AT_LEAST_ONE = { tripoModelMulti: ['front', 'left', 'right', 'back'] };
+/* 节点特有的校验规则由 node-defs.js 的描述符提供（validate 钩子） */
 
 function nodeLabelOf(n){
   const d = NODE_DEFS[(n && n.type) || ''] || {};
@@ -151,7 +129,6 @@ function validateFlow(flow){
   if(starts.length > 1) starts.slice(1).forEach(s => warn('W-START', s, '有多个「任务开始」节点，会从每个入口分别跑一遍'));
   const hasOut = nodes.some(n => n.type === 'end' || n.type === 'result');
   if(!hasOut) warn('W-OUTPUT', null, '没有「任务结束」或「结果输出」节点，运行结果无法收集');
-  if(starts.length && !(starts[0].params || []).length) warn('W-NO-INPUT', starts[0], '「任务开始」没有输入参数，流程将没有可传入的数据');
 
   // ---- 5. 执行线接入 ----
   const execInSet = new Set();
@@ -178,37 +155,21 @@ function validateFlow(flow){
   const usedVars = new Set(nodes.filter(n => n.type === 'varGet' || n.type === 'varSet').map(n => n.data && n.data.varId));
   vars.forEach(v => { if(!usedVars.has(v.id)) warn('W-VAR-UNUSED', null, '变量「' + (v.name || v.id) + '」没有节点使用'); });
 
-  // ---- 7. 必填项 / 动态引脚 ----
+  // ---- 7. 节点特有的规则（必填项 / 动态引脚是否为空…）由描述符提供 ----
   const linkedIn = new Set();
   validLinks.forEach(l => linkedIn.add(l.to.node + ':' + l.to.key));
   nodes.forEach(n => {
-    const req = REQUIRED_PINS[n.type];
-    if(req){
-      const missing = (req.pins || []).filter(k => {
-        const type = (NODE_DEFS[n.type] || {}).inputs || [];
-        return type.indexOf(k) >= 0 && !linkedIn.has(n.id + ':' + k) && !inlineValueOf(n, k);
-      });
-      if(missing.length) warn('W-REQ', n, '「' + nodeLabelOf(n) + '」缺少必需的' + req.note + '：' + missing.join('、') + '（可连线或就地填写）');
+    const linkedOf = key => linkedIn.has(n.id + ':' + key);   // 必须在回调里取 n
+    const v = NODE_VALIDATORS[n.type];
+    if(!v) return;
+    let extra = [];
+    try { extra = v(n, { linked: linkedOf }) || []; }
+    catch(e){
+      // 校验钩子自己抛错不能静默吞掉，否则「规则写了但没生效」永远发现不了
+      console.warn('[validate] 「' + n.type + '」的校验钩子抛错：' + ((e && e.message) || e));
+      extra = [];
     }
-    (REQUIRED_PARAMS[n.type] || []).forEach(k => {
-      const v = n.data && n.data[k];
-      if((v === '' || v === undefined || v === null) && !linkedIn.has(n.id + ':' + k)){
-        warn('W-REQ', n, '「' + nodeLabelOf(n) + '」的「' + k + '」未填写且未连线，运行时会退化成默认行为');
-      }
-    });
-    const need = AT_LEAST_ONE[n.type];
-    if(need){
-      const has = need.some(k => linkedIn.has(n.id + ':' + k));
-      if(!has) warn('W-REQ', n, '「' + nodeLabelOf(n) + '」至少需要连接一张参考图（' + need.join(' / ') + '）');
-    }
-    if(n.type === 'aiTask'){
-      if(!(n.data.inputs || []).length && !(n.data.outputs || []).length) warn('W-DYNAMIC', n, '「分析任务」没有声明任何自定义输入 / 输出引脚');
-    }
-    if(n.type === 'smartBranch'){
-      if(!(n.data.branches || []).length) warn('W-DYNAMIC', n, '「智能分支」没有出口，无法继续执行流');
-      if(!(n.data.inputs || []).length) warn('W-DYNAMIC', n, '「智能分支」没有输入引脚，模型只会按「选择依据」判断');
-    }
-    if(n.type === 'imageSplit' && !(n.data.views || []).length) warn('W-DYNAMIC', n, '「图像拆分」没有视图，不会输出任何拆分结果');
+    extra.forEach(x => warn(x.code || 'W-REQ', n, x.message || ''));
   });
 
   return { ok: errors.length === 0, errors, warnings };
