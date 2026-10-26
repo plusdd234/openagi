@@ -16,7 +16,9 @@
     "test:content": "node tools/electron-content.js",
     "gw": "node server/gateway.js",
     "test:gateway": "node tools/gateway.js",
-    "test:gateway-client": "node tools/gateway-client.js"
+    "test:gateway-client": "node tools/gateway-client.js",
+    "chat": "node server/chat.js",
+    "test:chat": "node tools/chat.js"
   },
   "dependencies": {
     "playwright-core": "^1.64.1"
@@ -52,6 +54,10 @@
       {
         "from": "node_modules/playwright-core",
         "to": "bridge/node_modules/playwright-core"
+      },
+      {
+        "from": "server/chat.js",
+        "to": "bridge/chat.js"
       }
     ],
     "win": {

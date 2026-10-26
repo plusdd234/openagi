@@ -36,10 +36,12 @@ protocol.registerSchemesAsPrivileged([{
 let mainWin = null;
 let relayProc = null;
 let bridgeProc = null;
+let chatProc = null;
 let contentRoot = REPO_ROOT;       // 协议处理器读这个变量（热更新后就地改）
 let contentVersion = 'bundled';
 let relayPort = 8787;
 let tripoPort = 8790;
+let chatPort = 8792;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -118,6 +120,16 @@ function startServices(){
     RELAY_STORE_FILE: path.join(userData, 'openagi-store.json')
   }, dir);
 
+  // 交流社区（server/chat.js）：数据落 userData，和网关共用一个 data 目录
+  const chatScript = app.isPackaged
+    ? path.join(process.resourcesPath, 'bridge', 'chat.js')
+    : path.join(REPO_ROOT, 'server', 'chat.js');
+  chatProc = startService('chat', chatScript, {
+    CHAT_PORT: String(chatPort),
+    GATEWAY_DATA: userData,
+    CHAT_ADMIN_KEY: (readUpdateConfig().chatAdminKey || '')
+  }, dir);
+
   bridgeProc = startService('tripo', path.join(dir, 'tripo-web.js'), {
     PORT: String(tripoPort),
     TRIPO_PROFILE_DIR: path.join(userData, 'tripo-profile'),
@@ -127,11 +139,12 @@ function startServices(){
 }
 
 function stopServices(){
-  [relayProc, bridgeProc].forEach(p => {
+  [relayProc, bridgeProc, chatProc].forEach(p => {
     try { if(p) p.kill(); } catch(e){}
   });
   relayProc = null;
   bridgeProc = null;
+  chatProc = null;
 }
 
 /* ---------- app:// 协议 ---------- */
@@ -176,7 +189,8 @@ async function createWindow(){
 
   const qs = new URLSearchParams({
     relay: 'http://127.0.0.1:' + relayPort,
-    tripo: 'http://127.0.0.1:' + tripoPort
+    tripo: 'http://127.0.0.1:' + tripoPort,
+    chat: 'http://127.0.0.1:' + chatPort
   }).toString();
 
   win.once('ready-to-show', () => {
@@ -336,6 +350,7 @@ if(!gotLock){
     try {
       relayPort = await pickPort(8787);
       tripoPort = await pickPort(8790);
+      chatPort = await pickPort(8792);
       if(relayPort !== 8787) console.warn('[port] 8787 被占用，改用 ' + relayPort);
       if(tripoPort !== 8790) console.warn('[port] 8790 被占用，改用 ' + tripoPort);
     } catch(e){
@@ -343,7 +358,7 @@ if(!gotLock){
     }
 
     // 3) 服务 + 菜单 + 窗口
-    logLine('[port] relay=' + relayPort + ' tripo=' + tripoPort);
+    logLine('[port] relay=' + relayPort + ' tripo=' + tripoPort + ' chat=' + chatPort);
     startServices();
     buildMenu();
     mainWin = await createWindow();
