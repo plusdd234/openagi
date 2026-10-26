@@ -28,9 +28,11 @@ const { chromium } = require('playwright-core');
 
 const DEFAULT_URL = 'https://studio.tripo3d.com/';
 const ALT_URL = 'https://studio.tripo3d.ai/';
-const PROFILE_DIR = path.join(__dirname, '.tripo-profile');
-const OUT_DIR = path.join(__dirname, 'tripo_out');
-const TMP_DIR = path.join(__dirname, 'tripo_tmp');
+// 目录可用环境变量覆盖：装成桌面应用后 __dirname 在只读的 asar / resources 里，
+// 登录态与产物必须落到用户数据目录（Electron 主进程会传这三个变量）
+const PROFILE_DIR = process.env.TRIPO_PROFILE_DIR || path.join(__dirname, '.tripo-profile');
+const OUT_DIR = process.env.TRIPO_OUT_DIR || path.join(__dirname, 'tripo_out');
+const TMP_DIR = process.env.TRIPO_TMP_DIR || path.join(__dirname, 'tripo_tmp');
 
 // ---------- 参数 ----------
 const argv = process.argv.slice(2);
@@ -45,7 +47,7 @@ const TIMEOUT_SEC = Number(argValue('timeout', '180')) || 180;
 const COOLDOWN_SEC = Number(argValue('cooldown', '10'));
 const SELFTEST = argv.includes('--selftest');
 const SERVE = argv.includes('--serve');
-const PORT = Number(argValue('port', '8790')) || 8790;
+const PORT = Number(process.env.PORT || argValue('port', '8790')) || 8790;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log(...a);

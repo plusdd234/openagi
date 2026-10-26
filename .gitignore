@@ -37,3 +37,9 @@ ip/
 # ===== 工作流存储备份（含用户数据，勿提交） =====
 openagi-store.backup/
 openagi-store.json.bak.*
+
+# ===== Electron 打包产物 =====
+dist/
+dist-*/
+release/
+out/

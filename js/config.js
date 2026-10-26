@@ -202,7 +202,9 @@ async function apiFetch(url, opts, timeoutMs){
 const TRIPO_BASE = 'https://openapi.tripo3d.com/v3';
 const TRIPO_IMAGE_MODELS = ['seedream_v5','banana_pro','banana2','chat_image_2.5_sunburst','chat_image_2.5_flare','chat_image_2'];
 const isTripo = () => $('genEngine').value === 'tripo';
-const TRIPO_WEB_BASE = 'http://127.0.0.1:8790';
+// 桌面版会把桥的端口告诉前端（8787/8790 被占用时会顺延），用 ?tripo= 覆盖
+const TRIPO_PARAM = (location.search.match(/[?&]tripo=([^&]+)/) || [])[1];
+const TRIPO_WEB_BASE = TRIPO_PARAM ? decodeURIComponent(TRIPO_PARAM).replace(/\/$/, '') : 'http://127.0.0.1:8790';
 const isTripoWeb = () => $('genEngine').value === 'tripo-web';
 let tripoWebReady = false;
 
