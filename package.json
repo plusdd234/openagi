@@ -13,7 +13,10 @@
     "pack:local": "electron-builder --dir -c.electronDist=node_modules/electron/dist -c.win.signAndEditExecutable=false -c.directories.output=dist-local",
     "dist": "electron-builder --win nsis",
     "dist:local": "electron-builder --win nsis -c.electronDist=node_modules/electron/dist -c.win.signAndEditExecutable=false -c.directories.output=dist-local",
-    "test:content": "node tools/electron-content.js"
+    "test:content": "node tools/electron-content.js",
+    "gw": "node server/gateway.js",
+    "test:gateway": "node tools/gateway.js",
+    "test:gateway-client": "node tools/gateway-client.js"
   },
   "dependencies": {
     "playwright-core": "^1.64.1"

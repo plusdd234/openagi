@@ -405,6 +405,8 @@ let baseChatBusy = false;
 let baseRefImage = '';
 
 function llmReady(){
+  // 登录了云端账号也算就绪（模型与 Key 由网关托管）
+  if(typeof gwLogged === 'function' && gwLogged()) return true;
   return !!($('llmKey').value.trim() && $('llmBaseUrl').value.trim() && $('llmModel').value.trim());
 }
 function imageReady(){

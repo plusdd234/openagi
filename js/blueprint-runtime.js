@@ -557,9 +557,10 @@ function stopFlow(){
 
 // ---- 节点执行 ----
 async function llmChat(sys, userText, image){
-  const key = $('llmKey').value.trim();
-  const base = $('llmBaseUrl').value.trim().replace(/\/$/, '');
-  const model = $('llmModel').value.trim();
+  // 登录了就走网关（Key 在服务端），否则用本地填的 Key
+  const conn = (typeof llmConn === 'function') ? llmConn()
+    : { base: $('llmBaseUrl').value.trim().replace(/\/$/, ''), key: $('llmKey').value.trim(), model: $('llmModel').value.trim() };
+  const key = conn.key, base = conn.base, model = conn.model;
   if(!key || !base || !model) throw new Error('语言模型未配置');
   const content = [];
   if(userText) content.push({ type:'text', text: userText });
@@ -574,9 +575,10 @@ async function llmChat(sys, userText, image){
 
 // 流式对话：逐块回调，60 秒无新内容自动中断
 async function llmStreamRequest(sys, messages, onDelta, opts){
-  const key = $('llmKey').value.trim();
-  const base = $('llmBaseUrl').value.trim().replace(/\/$/, '');
-  const model = $('llmModel').value.trim();
+  // 同 llmChat：登录走网关，未登录走本地 Key
+  const conn = (typeof llmConn === 'function') ? llmConn()
+    : { base: $('llmBaseUrl').value.trim().replace(/\/$/, ''), key: $('llmKey').value.trim(), model: $('llmModel').value.trim() };
+  const key = conn.key, base = conn.base, model = conn.model;
   if(!key || !base || !model) throw new Error('语言模型未配置');
 
   const limitMs = opts && Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 0;

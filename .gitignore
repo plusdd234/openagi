@@ -43,3 +43,6 @@ dist/
 dist-*/
 release/
 out/
+
+# ===== 账号网关数据（含用户与签名密钥，切勿提交） =====
+server/data/

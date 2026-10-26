@@ -323,6 +323,7 @@ function switchTab(name){
 function openSettings(tab){
   if(tab) switchTab(tab);
   if(tab === 'image') setTimeout(() => refreshTripoWebStatus(true), 200);
+  if(typeof renderGatewayPane === 'function') renderGatewayPane();
   $('settingsBackdrop').classList.remove('hidden');
   $('btnCloseSettings').focus();
 }

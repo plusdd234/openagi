@@ -402,6 +402,7 @@
       <button class="tab" role="tab" aria-selected="false" data-tab="image">图像生成</button>
       <button class="tab" role="tab" aria-selected="false" data-tab="video">视频生成</button>
       <button class="tab" role="tab" aria-selected="false" data-tab="relay">本地中转</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="account">账号</button>
     </nav>
 
     <div class="settings-body">
@@ -573,6 +574,60 @@
         </div>
         <div class="note">灵算、Tripo 等服务商不开放浏览器跨域，开启中转后请求改由本机转发；API Key 仍只保存在本机浏览器，不会上传到第三方。</div>
       </div>
+
+      <div class="tabpane hidden" data-pane="account">
+        <div class="field">
+          <label>云端账号</label>
+          <div class="note" id="gwHint">登录后所有 AI 调用走网关（Key 由服务器托管，按账号限额）；不登录仍可用自己填的 Key。</div>
+        </div>
+
+        <div id="gwLoggedOut">
+          <div class="field">
+            <label for="gwServer">网关地址</label>
+            <input type="text" id="gwServer" class="url-input" placeholder="http://127.0.0.1:8791">
+          </div>
+          <div class="field">
+            <label for="gwEmail">邮箱</label>
+            <input type="text" id="gwEmail" autocomplete="username" placeholder="you@example.com">
+          </div>
+          <div class="field">
+            <label for="gwPassword">密码</label>
+            <input type="password" id="gwPassword" autocomplete="current-password" placeholder="至少 6 位">
+          </div>
+          <div class="field">
+            <label for="gwCode">邀请码（服务器开启时需要）</label>
+            <input type="text" id="gwCode" placeholder="可留空">
+          </div>
+          <div class="inline">
+            <button class="btn primary" id="gwLogin">登录</button>
+            <button class="btn" id="gwRegister">注册新账号</button>
+          </div>
+          <div class="note" id="gwMsg"></div>
+        </div>
+
+        <div id="gwLoggedIn" class="hidden">
+          <div class="field">
+            <label>当前账号</label>
+            <div class="note" id="gwUserLine"></div>
+          </div>
+          <div class="field">
+            <label>今日额度</label>
+            <div class="note" id="gwUsage"></div>
+          </div>
+          <div class="field">
+            <label>模型（倍率 = 每次消耗的额度）</label>
+            <div id="gwModels" class="gw-models"></div>
+            <div class="inline" style="margin-top:8px">
+              <button class="linkbtn" id="gwCustom">配置自定义模型</button>
+              <button class="linkbtn" id="gwUseCloud">使用云端模型</button>
+            </div>
+          </div>
+          <div class="inline">
+            <button class="btn" id="gwRefresh">刷新额度</button>
+            <button class="btn ghost" id="gwLogout">退出登录</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <footer class="settings-foot">
@@ -592,6 +647,7 @@
 <script src="js/config.js"></script>
 <script src="js/blob-store.js"></script>
 <script src="js/api.js"></script>
+<script src="js/gateway-client.js"></script>
 <script src="js/workbench.js"></script>
 <script src="js/blueprint-core.js"></script>
 <script src="js/node-registry.js"></script>
