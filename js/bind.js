@@ -90,6 +90,11 @@ $('btnRunClear').addEventListener('click', () => {
   runHistoryClear().then(() => renderRunHistory()).then(() => bpToast('运行历史已清空'));
 });
 
+// 记忆：版本快照 + 经验
+$('tabMem').addEventListener('click', () => setBpSideTab('mem'));
+$('btnVerSave').addEventListener('click', memSaveVersionNow);
+$('btnMemClear').addEventListener('click', memClearLessons);
+
 $('varMenu').addEventListener('pointerdown', e => e.stopPropagation());
 $('varMenu').querySelectorAll('button[data-mode]').forEach(b => {
   b.addEventListener('click', e => {

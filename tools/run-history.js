@@ -137,7 +137,7 @@ const check = (name, ok, info) => {
   check('统计：评分分布', r4.st.up === 1 && r4.st.down === 1, r4.st.up + '/' + r4.st.down);
   check('统计：最近一条错误', /节点炸了/.test(r4.st.lastError), r4.st.lastError);
   check('统计：按流程筛选', r4.stF1.total === 2 && r4.stF1.successRate === 50, JSON.stringify(r4.stF1));
-  check('库内三个 store 都已建好', r4.stores.join(',') === 'bench,evolve,runs', r4.stores.join(','));
+  check('库内五个 store 都已建好', r4.stores.join(',') === 'bench,evolve,memory,runs,versions', r4.stores.join(','));
 
   console.log('\n=== 5. 真实运行 → 遥测钩子 ===');
   const r5 = await page.evaluate(async () => {

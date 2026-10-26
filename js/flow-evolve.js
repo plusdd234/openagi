@@ -87,7 +87,11 @@ async function mutateFlowVariants(flow, opts){
   const targets = collectTextTargets(flow);
   if(!targets.length) throw new Error('这个流程没有可优化的文本参数（提示词 / 指令）');
   const count = Math.max(1, Math.min(5, Math.trunc(Number(o.count) || 3)));
-  const sys = buildMutateSystemPrompt(count);
+  // 经验反哺：只带与该流程节点类型相关的条目（拿不到就静默跳过）
+  let hint = '';
+  try { if(typeof flowMemoryHint === 'function') hint = await flowMemoryHint(flow); } catch(e){}
+  const sys = buildMutateSystemPrompt(count)
+    + (hint ? '\n\n## 历史经验（这台机器上采纳过的写法，优先参考）\n' + hint : '');
   const user = buildMutateUserPrompt(targets, count, o.goal, flow && flow.name);
   const raw = await ask(sys, user);
   const parsed = extractJson(raw);

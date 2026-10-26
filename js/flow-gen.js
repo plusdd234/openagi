@@ -180,7 +180,11 @@ async function generateFlowDag(nl, opts){
   const text = String(nl == null ? '' : nl).trim();
   if(!text) throw new Error('请先描述需求');
   const retries = o.retries == null ? 2 : Math.max(0, Math.trunc(Number(o.retries) || 0));
-  const sys = buildGenSystemPrompt();
+  // 经验反哺：把这台机器上采纳过的写法拼进系统提示词（拿不到就静默跳过）
+  let hint = '';
+  try { if(typeof flowMemoryHint === 'function') hint = await flowMemoryHint(null); } catch(e){}
+  const sys = buildGenSystemPrompt()
+    + (hint ? '\n\n## 历史经验（本机采纳过的写法，可参考，不必照抄）\n' + hint : '');
   let feedback = '';
   let lastErrors = [];
   let lastError = '';

@@ -1340,3 +1340,22 @@
   .vex-res-row.ok span:nth-child(2) { color: var(--ok); }
   .vex-res-row.bad span:nth-child(2) { color: var(--bad); }
   .vex-res-row.win { background: #141a24; border-radius: 6px; }
+
+  /* ---- P2：版本快照 + 经验（记忆页） ---- */
+  .mem-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .ver-list, .mem-list { flex: 1; min-height: 92px; overflow-y: auto; padding: 0 9px 8px; }
+  .ver-row, .mem-row {
+    border: 1px solid var(--border-soft); border-radius: 8px; padding: 6px 8px; margin-bottom: 6px;
+    background: #0f1218;
+  }
+  .ver-l1, .mem-l1 { display: flex; align-items: center; gap: 6px; }
+  .ver-time { font-size: 10px; color: var(--muted); font-family: var(--mono); flex: none; }
+  .ver-reason { font-size: 10px; color: #c3cbd8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mem-type { font-size: 10.5px; color: var(--text); flex: none; }
+  .mem-key {
+    font-size: 9.5px; color: #8ea2c0; background: #161c27; border: 1px solid #232c3a;
+    border-radius: 5px; padding: 0 5px; flex: none;
+  }
+  .mem-src { font-size: 9px; color: var(--muted); margin-left: auto; flex: none; }
+  .mem-hits { color: var(--accent); margin-left: 3px; }
+  .mem-txt { font-size: 10px; color: #b6c1d1; line-height: 1.6; margin-top: 4px; word-break: break-word; }

@@ -9,15 +9,19 @@
  *   - 统计聚合：成功率 / 平均耗时 / 评分分布 / 最近错误
  *   - 同一库内新增 bench（基准集）与 evolve（变体比较）两个 store，走一次升级
  *
+ * P2 增补：versions（版本快照）与 memory（经验条目）两个 store，库版本升到 3。
+ *   这两个 store 的读写各自封在 flow-versions.js / flow-memory.js 里，
+ *   这里只负责把库和表建出来（RUN_STORES 是唯一建表清单）。
+ *
  * 存储用独立的 IndexedDB 库 openagi-runs：不改 blob-store.js 里已经验证过的
  * 库版本与升级逻辑（那个文件有 34 条断言在守着，动它风险不值当）。
  * localStorage 完全不碰 —— 历史是时序数据，不该和 5MB 配额抢位置。
  */
 
 const RUN_DB = 'openagi-runs';
-const RUN_DB_VERSION = 2;
+const RUN_DB_VERSION = 3;
 const RUN_STORE = 'runs';
-const RUN_STORES = ['runs', 'bench', 'evolve'];
+const RUN_STORES = ['runs', 'bench', 'evolve', 'versions', 'memory'];
 const RUN_KEEP = 200;          // 只保留最近 200 条，超出自动淘汰最旧的
 
 let _runDb = null;

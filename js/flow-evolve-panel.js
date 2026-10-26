@@ -279,10 +279,18 @@ function vexRenderResults(){
   host.classList.remove('hidden');
 }
 
-function vexAdopt(){
+async function vexAdopt(){
   if(!vexWinner){ vexStatus('没有可采用的变体', 'bad'); return; }
   const v = vexVariants.find(x => x.id === vexWinner.variantId);
   if(!v || !bp){ vexStatus('找不到胜出的变体', 'bad'); return; }
+  // 安全门：先存快照（采用后可以回到采用前），失败也照常采用，但要告知
+  const snap = JSON.parse(JSON.stringify(snapshotBp()));
+  let snapOk = false;
+  try {
+    const r = await flowVersionSave(snap, { reason: '采用变体前' });
+    snapOk = !!r.ok;
+  } catch(e){ snapOk = false; }
+  const lessons = (typeof flowMemoryFromVariant === 'function') ? flowMemoryFromVariant(snap, v) : [];
   let applied = 0;
   v.patches.forEach(p => {
     const n = bp.nodes.find(x => x.id === p.nodeId);
@@ -292,6 +300,17 @@ function vexAdopt(){
   });
   renderNodes();
   scheduleFlowSave();
+  let memText = '';
+  if(lessons.length && typeof flowMemoryAdd === 'function'){
+    try {
+      const mem = await flowMemoryAdd(lessons, {
+        flowId: snap.id, flowName: snap.name,
+        reason: '采用变体「' + v.name + '」'
+      });
+      if(mem.added) memText = '，' + mem.added + ' 条经验已记录';
+    } catch(e){}
+  }
   closeVex();
-  bpToast('已采用「' + v.name + '」：改了 ' + applied + ' 处参数');
+  bpToast('已采用「' + v.name + '」：改了 ' + applied + ' 处参数' + memText
+    + (snapOk ? '' : '（快照保存失败，本次无法回滚）'));
 }

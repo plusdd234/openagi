@@ -97,6 +97,7 @@
         <button class="bp-side-tab active" id="tabLib" role="tab" aria-selected="true" data-pane="lib">节点库</button>
         <button class="bp-side-tab" id="tabVars" role="tab" aria-selected="false" data-pane="vars">变量<span class="bp-tab-count hidden" id="varCount">0</span></button>
         <button class="bp-side-tab" id="tabRuns" role="tab" aria-selected="false" data-pane="runs">历史</button>
+        <button class="bp-side-tab" id="tabMem" role="tab" aria-selected="false" data-pane="mem">记忆</button>
       </div>
       <div class="bp-side-pane" id="paneLib">
         <div class="bp-side-head"><span>拖到画布添加节点</span></div>
@@ -124,6 +125,18 @@
         </div>
         <div class="run-stats hidden" id="runStats"></div>
         <div class="run-list" id="runHistoryList"></div>
+      </div>
+      <div class="bp-side-pane hidden" id="paneMem">
+        <div class="bp-side-head mem-head">
+          <span>版本快照</span>
+          <span class="run-tools"><button type="button" id="btnVerSave" title="把当前流程整份存一份，随时可以恢复">存快照</button></span>
+        </div>
+        <div class="ver-list" id="verList"></div>
+        <div class="bp-side-head mem-head">
+          <span>经验</span>
+          <span class="run-tools"><button type="button" id="btnMemClear">清空</button></span>
+        </div>
+        <div class="mem-list" id="memList"></div>
       </div>
     </aside>
     <div class="bp-canvas" id="bpCanvas">
@@ -587,11 +600,14 @@
 <script src="js/flow-evolve.js"></script>
 <script src="js/run-history.js"></script>
 <script src="js/bench.js"></script>
+<script src="js/flow-versions.js"></script>
+<script src="js/flow-memory.js"></script>
 <script src="js/desktop.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/blueprint-runtime.js"></script>
 <script src="js/flow-gen-panel.js"></script>
 <script src="js/flow-evolve-panel.js"></script>
+<script src="js/memory-panel.js"></script>
 <script src="js/bind.js"></script>
 </body>
 </html>

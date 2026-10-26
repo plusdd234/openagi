@@ -71,36 +71,34 @@ $('btnBpLogToggle').addEventListener('click', () => {
 $('btnBpLogClear').addEventListener('click', bpLogClear);
 
 // ---- 变量面板 ----
-let bpSideTab = ['vars', 'runs'].indexOf(localStorage.getItem('hf_bp_side_tab')) >= 0 ? localStorage.getItem('hf_bp_side_tab') : 'lib';
+const BP_SIDE_TABS = [
+  { key: 'lib',  tab: 'tabLib',  pane: 'paneLib' },
+  { key: 'vars', tab: 'tabVars', pane: 'paneVars' },
+  { key: 'runs', tab: 'tabRuns', pane: 'paneRuns' },
+  { key: 'mem',  tab: 'tabMem',  pane: 'paneMem' }
+];
+let bpSideTab = BP_SIDE_TABS.some(t => t.key === localStorage.getItem('hf_bp_side_tab'))
+  ? localStorage.getItem('hf_bp_side_tab') : 'lib';
 let bpVarAddOpen = false;
 let varDrag = null;
 let varMenuTarget = null;
 
 function setBpSideTab(name){
-  bpSideTab = (name === 'vars' || name === 'runs') ? name : 'lib';
+  bpSideTab = BP_SIDE_TABS.some(t => t.key === name) ? name : 'lib';
   localStorage.setItem('hf_bp_side_tab', bpSideTab);
   applySideTab();
 }
 
 function applySideTab(){
-  const showVars = bpSideTab === 'vars';
-  const showRuns = bpSideTab === 'runs';
-  const showLib = !showVars && !showRuns;
-  $('tabLib').classList.toggle('active', showLib);
-  $('tabLib').setAttribute('aria-selected', String(showLib));
-  $('tabVars').classList.toggle('active', showVars);
-  $('tabVars').setAttribute('aria-selected', String(showVars));
-  const tabRuns = $('tabRuns');
-  if(tabRuns){
-    tabRuns.classList.toggle('active', showRuns);
-    tabRuns.setAttribute('aria-selected', String(showRuns));
-  }
-  $('paneLib').classList.toggle('hidden', !showLib);
-  $('paneVars').classList.toggle('hidden', !showVars);
-  const paneRuns = $('paneRuns');
-  if(paneRuns) paneRuns.classList.toggle('hidden', !showRuns);
-  if(showVars) renderVars();
-  if(showRuns && typeof renderRunHistory === 'function') renderRunHistory();
+  BP_SIDE_TABS.forEach(t => {
+    const on = bpSideTab === t.key;
+    const tab = $(t.tab), pane = $(t.pane);
+    if(tab){ tab.classList.toggle('active', on); tab.setAttribute('aria-selected', String(on)); }
+    if(pane) pane.classList.toggle('hidden', !on);
+  });
+  if(bpSideTab === 'vars') renderVars();
+  if(bpSideTab === 'runs' && typeof renderRunHistory === 'function') renderRunHistory();
+  if(bpSideTab === 'mem' && typeof renderMemPane === 'function') renderMemPane();
 }
 
 function varPreviewEl(v){
