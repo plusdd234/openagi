@@ -67,6 +67,21 @@ $('genInput').addEventListener('keydown', e => {
   if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); genStartRound($('genInput').value); }
 });
 
+// 变体：提示词 A/B 试跑
+$('btnVex').addEventListener('click', openVex);
+$('vexClose').addEventListener('click', closeVex);
+$('vexCancel').addEventListener('click', vexStop);
+$('vexGen').addEventListener('click', vexGenerate);
+$('vexRunAll').addEventListener('click', vexRunAll);
+$('vexAdopt').addEventListener('click', vexAdopt);
+$('vexBackdrop').addEventListener('pointerdown', e => { if(e.target === $('vexBackdrop')) closeVex(); });
+$('vexGoal').addEventListener('keydown', e => {
+  if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); vexGenerate(); }
+});
+
+// 基准：一键回归
+$('btnBenchCapture').addEventListener('click', benchCaptureNow);
+
 // 运行历史
 $('tabRuns').addEventListener('click', () => setBpSideTab('runs'));
 $('btnRunRefresh').addEventListener('click', () => renderRunHistory());

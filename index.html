@@ -77,6 +77,10 @@
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z"/><path d="M18 15l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9L18 15Z"/></svg>
         AI 搭建
       </button>
+      <button class="btn sm" id="btnVex" title="基于当前流程生成提示词变体，逐个试跑后采用最优">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/><path d="M6.5 9v2.5a4 4 0 0 0 4 4h4"/></svg>
+        变体
+      </button>
       <button class="btn sm" id="btnBpComment" title="框选节点后点这里（或按 C）把选区包进注释面板">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5Z"/></svg>
         注释
@@ -105,12 +109,20 @@
       </div>
       <div class="bp-side-pane hidden" id="paneRuns">
         <div class="bp-side-head run-head">
-          <span>运行历史</span>
+          <span>回归与历史</span>
           <span class="run-tools">
             <button type="button" id="btnRunRefresh">刷新</button>
             <button type="button" id="btnRunClear">清空</button>
           </span>
         </div>
+        <div class="bench-sec">
+          <div class="bench-head">
+            <span>基准（当前流程）</span>
+            <button type="button" id="btnBenchCapture" title="用当前流程 + 最近一次成功运行生成回归基准">设为基准</button>
+          </div>
+          <div class="bench-list" id="benchList"></div>
+        </div>
+        <div class="run-stats hidden" id="runStats"></div>
         <div class="run-list" id="runHistoryList"></div>
       </div>
     </aside>
@@ -184,6 +196,36 @@
         <button class="btn sm ghost hidden" id="genCancel" type="button">取消</button>
         <button class="btn sm primary hidden" id="genConfirm" type="button">确认创建</button>
         <button class="btn sm primary" id="genRun" type="button">生成</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="vexBackdrop">
+  <div class="settings gen-modal" role="dialog" aria-modal="true" aria-labelledby="vexTitle">
+    <div class="settings-head">
+      <div>
+        <div class="settings-title" id="vexTitle">流程变体 · A/B 试跑</div>
+        <div class="settings-sub">只改提示词 / 指令，结构不变；试跑不会改动你正在编辑的流程</div>
+      </div>
+      <button class="icon-btn" id="vexClose" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="settings-body">
+      <div class="field">
+        <label for="vexGoal">优化目标（可选）</label>
+        <textarea id="vexGoal" class="gen-input" rows="2" placeholder="例如：让修复提示词更中性、减少颜色与款式描述，同时保留结构信息"></textarea>
+      </div>
+      <div class="gen-status hidden" id="vexStatus"></div>
+      <div class="vex-list" id="vexList"></div>
+      <div class="vex-results hidden" id="vexResults"></div>
+    </div>
+    <div class="settings-foot">
+      <span class="gen-hint" id="vexHint">变体只改提示词 / 指令，不动结构；试跑不会保存到你正在编辑的流程</span>
+      <div class="gen-btns">
+        <button class="btn sm ghost hidden" id="vexCancel" type="button">停止</button>
+        <button class="btn sm hidden" id="vexRunAll" type="button">依次试跑</button>
+        <button class="btn sm primary hidden" id="vexAdopt" type="button">采用最佳</button>
+        <button class="btn sm primary" id="vexGen" type="button">生成变体</button>
       </div>
     </div>
   </div>
@@ -542,11 +584,14 @@
 <script src="js/flow-contract.js"></script>
 <script src="js/flow-validate.js"></script>
 <script src="js/flow-gen.js"></script>
+<script src="js/flow-evolve.js"></script>
 <script src="js/run-history.js"></script>
+<script src="js/bench.js"></script>
 <script src="js/desktop.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/blueprint-runtime.js"></script>
 <script src="js/flow-gen-panel.js"></script>
+<script src="js/flow-evolve-panel.js"></script>
 <script src="js/bind.js"></script>
 </body>
 </html>

@@ -1269,3 +1269,74 @@
   .run-sub { font-size: 10px; color: var(--muted); margin-top: 3px; }
   .run-error { font-size: 10px; color: var(--bad); margin-top: 4px; line-height: 1.6; word-break: break-word; }
   .run-outs { font-size: 10px; color: #b9c1cf; margin-top: 5px; line-height: 1.7; border-top: 1px dashed #232a36; padding-top: 4px; }
+
+  /* ---- P1：统计条 / 评分 / 基准 / 变体 ---- */
+  .run-stats {
+    display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 9px 8px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .rs-item {
+    font-size: 10px; color: var(--muted); background: #14181f;
+    border: 1px solid var(--border-soft); border-radius: 999px; padding: 0 7px; line-height: 1.8;
+  }
+  .rs-item.ok { color: var(--ok); border-color: #24503a; }
+  .rs-item.warn { color: var(--warn); border-color: #4a3a1e; }
+  .rs-item.bad { color: var(--bad); border-color: #4a2626; }
+  .run-rate { display: flex; gap: 6px; margin-top: 6px; }
+  .run-rate-btn {
+    background: none; border: 1px solid var(--border); color: var(--muted); font-family: inherit;
+    font-size: 10px; border-radius: 6px; padding: 0 7px; line-height: 1.9; cursor: pointer;
+  }
+  .run-rate-btn:hover { color: var(--text); border-color: #3a4356; }
+  .run-rate-btn.on { color: var(--accent); border-color: #3d4380; background: #171c2e; }
+  .bench-sec { border-bottom: 1px solid var(--border-soft); padding: 2px 9px 8px; }
+  .bench-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+  .bench-head > span { font-size: 10px; color: var(--muted); letter-spacing: .03em; }
+  .bench-head button {
+    background: none; border: 1px solid var(--border); color: var(--muted); font-family: inherit;
+    font-size: 10px; border-radius: 6px; padding: 1px 7px; cursor: pointer;
+  }
+  .bench-head button:hover { color: var(--text); border-color: #3a4356; }
+  .bench-list { max-height: 220px; overflow-y: auto; }
+  .bench-row {
+    border: 1px solid var(--border-soft); border-radius: 8px; padding: 6px 8px; margin-bottom: 6px;
+    background: #0f1218;
+  }
+  .bench-row.ok { border-color: #22432f; }
+  .bench-row.bad { border-color: #462526; }
+  .bench-l1 { display: flex; align-items: center; gap: 6px; }
+  .bench-name { font-size: 11px; color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bench-chip {
+    font-size: 9.5px; border-radius: 999px; padding: 0 6px; line-height: 1.8; flex: none;
+    border: 1px solid var(--border); color: var(--muted);
+  }
+  .bench-chip.ok { color: var(--ok); border-color: #24503a; }
+  .bench-chip.bad { color: var(--bad); border-color: #4a2626; }
+  .bench-tools { display: flex; gap: 6px; margin-top: 5px; }
+  .bench-tools button {
+    background: none; border: 1px solid var(--border); color: var(--muted); font-family: inherit;
+    font-size: 9.5px; border-radius: 6px; padding: 0 7px; line-height: 1.9; cursor: pointer;
+  }
+  .bench-tools button:hover { color: var(--text); border-color: #3a4356; }
+  .vex-list { margin-top: 10px; }
+  .vex-item {
+    display: flex; gap: 8px; align-items: flex-start; padding: 8px 9px; margin-bottom: 7px;
+    border: 1px solid var(--border-soft); border-radius: 9px; background: #0f1218; cursor: pointer;
+  }
+  .vex-item:hover { border-color: #2c3444; }
+  .vex-item input[type=checkbox] { margin-top: 2px; accent-color: var(--accent); flex: none; }
+  .vex-body { min-width: 0; }
+  .vex-name { font-size: 11.5px; color: var(--text); font-weight: 500; }
+  .vex-reason { font-size: 10.5px; color: var(--muted); margin-top: 2px; line-height: 1.6; }
+  .vex-patch { font-size: 10px; color: #9fb0c8; margin-top: 4px; line-height: 1.6; word-break: break-word; }
+  .vex-val { color: #cbd5e3; }
+  .vex-results { margin-top: 10px; border-top: 1px solid var(--border-soft); padding-top: 8px; }
+  .vex-res-head, .vex-res-row {
+    display: grid; grid-template-columns: 1fr 42px 52px 44px 36px; gap: 6px;
+    font-size: 10.5px; padding: 4px 2px; align-items: center;
+  }
+  .vex-res-head { color: var(--muted); border-bottom: 1px solid var(--border-soft); }
+  .vex-res-row { color: var(--text); border-bottom: 1px dashed #1d2330; }
+  .vex-res-row.ok span:nth-child(2) { color: var(--ok); }
+  .vex-res-row.bad span:nth-child(2) { color: var(--bad); }
+  .vex-res-row.win { background: #141a24; border-radius: 6px; }

@@ -92,8 +92,55 @@ const check = (name, ok, info) => {
   check('清空成功', r3.cleared === true && r3.after === 0, String(r3.after));
   check('状态接口可用', r3.state.count === 0 && r3.state.broken === false, JSON.stringify(r3.state));
 
-  console.log('\n=== 4. 真实运行 → 遥测钩子 ===');
+  console.log('\n=== 4. 评分与统计 ===');
   const r4 = await page.evaluate(async () => {
+    await runHistoryClear();
+    const base = Date.now() - 3000;
+    await recordRun({ at: base, flowId: 'f1', flowName: '成功', ok: true, ms: 1000, nodes: 3, activated: 3, failed: 0, outs: [] });
+    await recordRun({ at: base + 1000, flowId: 'f1', flowName: '失败', ok: false, ms: 500, nodes: 3, activated: 1, failed: 1, error: '节点炸了', outs: [] });
+    await recordRun({ at: base + 2000, flowId: 'f2', flowName: '停止', ok: false, stopped: true, ms: 300, nodes: 2, activated: 1, failed: 0, outs: [] });
+    let list = await runHistoryList(0);
+    const okRec = list.find(r => r.flowName === '成功');
+    const failRec = list.find(r => r.flowName === '失败');
+    const up = await runHistoryRate(okRec.id, 1);
+    const down = await runHistoryRate(failRec.id, -1);
+    const mid1 = await runHistoryGet(failRec.id);
+    const cancel = await runHistoryRate(failRec.id, 0);
+    const mid2 = await runHistoryGet(failRec.id);
+    const again = await runHistoryRate(failRec.id, -1);
+    const bad = await runHistoryRate('nope', 1);
+    list = await runHistoryList(0);
+    const st = await runHistoryStats('');
+    const stF1 = await runHistoryStats('f1');
+    const stores = await new Promise(res => {
+      const q = indexedDB.open('openagi-runs');
+      q.onsuccess = () => { res(Array.from(q.result.objectStoreNames).sort()); };
+      q.onerror = () => res([]);
+    });
+    return {
+      up, down, cancel, again, bad,
+      mid1: mid1 ? mid1.rating : null,
+      mid2: mid2 ? mid2.rating : null,
+      ratings: list.map(r => r.flowName + ':' + r.rating).join(','),
+      st, stF1, stores
+    };
+  });
+  check('赞写入成功', r4.up === true && r4.mid1 === -1);
+  check('踩写入成功', r4.down === true);
+  check('再点一次取消评分', r4.cancel === true && r4.mid2 === 0, String(r4.mid2));
+  check('可以重新评分', r4.again === true);
+  check('不存在的记录评分返回 false', r4.bad === false);
+  check('评分落库并保留', /成功:1/.test(r4.ratings) && /失败:-1/.test(r4.ratings), r4.ratings);
+  check('统计：总数与成功率', r4.st.total === 3 && r4.st.ok === 1 && r4.st.successRate === 33, JSON.stringify(r4.st));
+  check('统计：失败与停止分开计', r4.st.failed === 1 && r4.st.stopped === 1, JSON.stringify(r4.st));
+  check('统计：平均耗时', r4.st.avgMs === 600, String(r4.st.avgMs));
+  check('统计：评分分布', r4.st.up === 1 && r4.st.down === 1, r4.st.up + '/' + r4.st.down);
+  check('统计：最近一条错误', /节点炸了/.test(r4.st.lastError), r4.st.lastError);
+  check('统计：按流程筛选', r4.stF1.total === 2 && r4.stF1.successRate === 50, JSON.stringify(r4.stF1));
+  check('库内三个 store 都已建好', r4.stores.join(',') === 'bench,evolve,runs', r4.stores.join(','));
+
+  console.log('\n=== 5. 真实运行 → 遥测钩子 ===');
+  const r5 = await page.evaluate(async () => {
     await runHistoryClear();
     const s = newNode('start', 0, 0);
     s.params = [{ id: 'pin1', name: '文本', type: 'string', value: '你好' }];
@@ -129,16 +176,16 @@ const check = (name, ok, info) => {
       err: rec ? rec.error : ''
     };
   });
-  check('运行后自动留下一条记录', r4.count === 1, String(r4.count));
-  check('记录标记为成功', r4.ok === true, String(r4.ok));
-  check('记录关联到对的工作流', r4.flowId === 'hist_flow' && r4.flowName === '历史集成流程', r4.flowId + '/' + r4.flowName);
-  check('节点数与激活数正确', r4.nodes === 2 && r4.activated === 2, r4.nodes + '/' + r4.activated);
-  check('失败数为 0', r4.failed === 0, String(r4.failed));
-  check('耗时被记录', r4.ms >= 0 && r4.ms < 30000, String(r4.ms));
-  check('输出概要带上了端节点参数', r4.outs.length === 1 && r4.outs[0].name === '摘要' && r4.outs[0].preview === '你好', JSON.stringify(r4.outs));
-  check('没有误报错误', r4.err === '', r4.err);
+  check('运行后自动留下一条记录', r5.count === 1, String(r5.count));
+  check('记录标记为成功', r5.ok === true, String(r5.ok));
+  check('记录关联到对的工作流', r5.flowId === 'hist_flow' && r5.flowName === '历史集成流程', r5.flowId + '/' + r5.flowName);
+  check('节点数与激活数正确', r5.nodes === 2 && r5.activated === 2, r5.nodes + '/' + r5.activated);
+  check('失败数为 0', r5.failed === 0, String(r5.failed));
+  check('耗时被记录', r5.ms >= 0 && r5.ms < 30000, String(r5.ms));
+  check('输出概要带上了端节点参数', r5.outs.length === 1 && r5.outs[0].name === '摘要' && r5.outs[0].preview === '你好', JSON.stringify(r5.outs));
+  check('没有误报错误', r5.err === '', r5.err);
 
-  console.log('\n=== 5. 页面零错误 ===');
+  console.log('\n=== 6. 页面零错误 ===');
   check('无页面异常', errors.length === 0, errors.join(' | '));
 
   console.log('\n=== 结果：' + pass + ' 通过 / ' + fail + ' 失败 ===');

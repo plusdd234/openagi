@@ -568,6 +568,9 @@ function snapshotBp(){
 }
 function saveFlowNow(){
   if(!bp) return;
+  // 变体试跑用的临时流程（带 __noSave）：绝不写回 FLOWS，
+  // 否则 runFlow 收尾的自动保存会把用户正在编辑的流程替换成试跑内容
+  if(bp.__noSave) return;
   bp.updated = Date.now();
   const snap = snapshotBp();
   const i = FLOWS.findIndex(f => f.id === bp.id);
