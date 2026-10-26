@@ -360,7 +360,8 @@ if(HB > 0) setInterval(() => {
 
 loadMsgs();
 server.requestTimeout = 0;
-server.listen(PORT, '0.0.0.0', () => {
+const HOST = process.env.CHAT_HOST || arg('host', '0.0.0.0');
+server.listen(PORT, HOST, () => {
   console.log('交流社区服务已启动：http://127.0.0.1:' + PORT);
   console.log('  历史消息：' + MSGS.length + ' 条 · 数据：' + STORE_FILE);
   console.log('  管理删除：' + (ADMIN_KEY ? '已启用（POST /chat/delete）' : '未配置 CHAT_ADMIN_KEY'));

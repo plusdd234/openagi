@@ -1,0 +1,30 @@
+# Caddy 反向代理：一个域名按路径分发到两个服务，自动申请并续期 HTTPS 证书
+# 复制到 /etc/caddy/Caddyfile 后：systemctl reload caddy
+api.example.com {
+    encode zstd gzip
+
+    # —— 账号网关（8791） ——
+    handle /auth/* {
+        reverse_proxy 127.0.0.1:8791
+    }
+    handle /v1/* {
+        reverse_proxy 127.0.0.1:8791
+    }
+    handle /healthz {
+        reverse_proxy 127.0.0.1:8791
+    }
+
+    # —— 交流社区（8792），SSE 需要关缓冲 ——
+    handle /chat/* {
+        reverse_proxy 127.0.0.1:8792 {
+            flush_interval -1
+        }
+    }
+
+    handle {
+        respond "Not Found" 404
+    }
+
+    # 基础防护：单 IP 每分钟最多 120 个请求
+    # （Caddy 2.7+ 可用 rate_limit 插件；未装插件时这一段注释掉）
+}

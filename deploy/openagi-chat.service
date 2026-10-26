@@ -1,0 +1,20 @@
+# 交流社区常驻服务
+[Unit]
+Description=Open AGI Chat (community room)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/openagi
+Environment=GATEWAY_DATA=/opt/openagi/server/data
+Environment=CHAT_HOST=127.0.0.1
+# 管理删除消息用的密钥（openssl rand -hex 24 生成），客户端暂不需要它
+Environment=CHAT_ADMIN_KEY=changeme-openssl-rand-hex-24
+ExecStart=/usr/bin/node server/chat.js --port=8792
+Restart=always
+RestartSec=3
+User=www-data
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

@@ -265,6 +265,20 @@ function gwBind(){
     gwMsg('已退出登录');
     if(typeof bpToast === 'function') bpToast('已退出云端账号');
   });
+  const chatServer = $('gwChatServer');
+  if(chatServer){
+    if(!chatServer.value){
+      let saved = '';
+      try { saved = localStorage.getItem('hf_chat_base') || ''; } catch(e){}
+      chatServer.value = saved || 'http://127.0.0.1:8792';
+    }
+    chatServer.addEventListener('change', () => {
+      const v = String(chatServer.value || '').trim().replace(/\/$/, '');
+      try { localStorage.setItem('hf_chat_base', v); } catch(e){}
+      try { if(typeof chatReconnect === 'function') chatReconnect(); } catch(e){}
+      if(typeof bpToast === 'function') bpToast('社区服务地址已更新');
+    });
+  }
   const custom = $('gwCustom'), useCloud = $('gwUseCloud');
   if(custom) custom.addEventListener('click', () => {
     setLlmMode('local');

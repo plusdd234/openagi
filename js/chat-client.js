@@ -250,6 +250,14 @@ function chatToggle(force){
   }
 }
 
+function chatReconnect(){
+  if(chatES){ try { chatES.close(); } catch(e){} chatES = null; }
+  chatPollStop = true;
+  chatPolling = false;
+  chatFail = 0;
+  chatConnect();
+}
+
 function chatBind(){
   const btn = $('chatBtn');
   if(!btn) return;

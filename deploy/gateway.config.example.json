@@ -1,0 +1,15 @@
+{
+  "upstreamBase": "https://api.example.com/v1",
+  "upstreamKey": "",
+  "defaultModel": "deepseek-v4.1-flash",
+  "dailyCredits": 100,
+  "dailyLimit": 500,
+  "registerCode": "invite-me",
+  "minIntervalMs": 400,
+  "maxConcurrent": 4,
+  "models": [
+    { "id": "deepseek-v4.1-flash", "label": "DeepSeek-V4.1-Flash", "multiplier": 0.11, "tags": ["夜间折扣"] },
+    { "id": "glm-5.3", "label": "GLM-5.3", "multiplier": 0.69, "tags": ["订阅优先"] },
+    { "id": "hy3", "label": "HY3", "multiplier": 0.0, "tags": ["限时免费"] }
+  ]
+}

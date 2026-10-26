@@ -485,7 +485,8 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.requestTimeout = 0;
-server.listen(PORT, '0.0.0.0', () => {
+const HOST = process.env.GATEWAY_HOST || arg('host', '0.0.0.0');
+server.listen(PORT, HOST, () => {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   console.log('账号网关已启动：http://127.0.0.1:' + PORT);
   console.log('  数据目录：' + DATA_DIR);

@@ -1,0 +1,24 @@
+# 账号网关常驻服务（复制到 /etc/systemd/system/ 后：systemctl daemon-reload && systemctl enable --now openagi-gateway）
+[Unit]
+Description=Open AGI Gateway (accounts / quota / model proxy)
+After=network.target
+
+[Service]
+Type=simple
+# 代码目录（git clone 到这里）
+WorkingDirectory=/opt/openagi
+# 上游模型 Key 只放这里（环境变量），不要写进 git 里的 config.json
+Environment=GATEWAY_UPSTREAM_BASE=https://api.example.com/v1
+Environment=GATEWAY_UPSTREAM_KEY=sk-xxxxxxxx
+Environment=GATEWAY_DATA=/opt/openagi/server/data
+# 只监听本机，外网一律走 Caddy（443）
+Environment=GATEWAY_HOST=127.0.0.1
+ExecStart=/usr/bin/node server/gateway.js --port=8791
+Restart=always
+RestartSec=3
+User=www-data
+# 硬限制：网关不该吃太多内存
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
