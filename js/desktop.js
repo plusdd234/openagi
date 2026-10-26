@@ -33,15 +33,43 @@ function deskStateOf(id){
 function saveDeskPos(){
   try { localStorage.setItem('hf_desk_pos', JSON.stringify(deskPos)); } catch(e){}
 }
-function deskClamp(x, y, el){
+/* ---------- 桌面格子：图标永远吸附到格位，不再自由落点 ----------
+ * 格子尺寸 = 图标实际尺寸 + 间距；拖动时实时吸附，落到被占格位时与原图标互换位置。 */
+const DESK_CELL = { w: 104, h: 104 };
+
+function deskGridBounds(el){
   const wall = $('deskWall');
-  if(!wall) return { x, y };
   const w = el ? el.offsetWidth : 92;
-  const h = el ? el.offsetHeight : 98;
-  const maxX = Math.max(0, wall.clientWidth - w - 8);
-  const maxY = Math.max(0, wall.clientHeight - h - 8);
-  return { x: Math.round(Math.min(Math.max(0, x), maxX)), y: Math.round(Math.min(Math.max(0, y), maxY)) };
+  const h = el ? el.offsetHeight : 92;
+  return {
+    maxCol: wall ? Math.max(0, Math.floor((wall.clientWidth - w) / DESK_CELL.w)) : 6,
+    maxRow: wall ? Math.max(0, Math.floor((wall.clientHeight - h) / DESK_CELL.h)) : 4
+  };
 }
+function deskCellOf(x, y){
+  return { col: Math.round(x / DESK_CELL.w), row: Math.round(y / DESK_CELL.h) };
+}
+function deskPosOfCell(cell){
+  return { x: cell.col * DESK_CELL.w, y: cell.row * DESK_CELL.h };
+}
+function deskClampCell(col, row, el){
+  const g = deskGridBounds(el);
+  return { col: Math.min(Math.max(0, col), g.maxCol), row: Math.min(Math.max(0, row), g.maxRow) };
+}
+function deskCellKey(cell){ return cell.col + ',' + cell.row; }
+/* 从 start 开始按行扫描，找到第一个未被占用的格位 */
+function deskNextFreeCell(start, el, taken){
+  const g = deskGridBounds(el);
+  let idx = Math.min(start.row, g.maxRow) * (g.maxCol + 1) + Math.min(start.col, g.maxCol);
+  for(let t = 0; t <= g.maxCol * (g.maxRow + 1) + 1; t++){
+    const cell = { col: idx % (g.maxCol + 1), row: Math.floor(idx / (g.maxCol + 1)) };
+    if(cell.row > g.maxRow) break;
+    if(!taken.has(deskCellKey(cell))) return cell;
+    idx++;
+  }
+  return { col: 0, row: 0 };
+}
+
 function selectDeskApp(id){
   document.querySelectorAll('.desk-app').forEach(el => el.classList.toggle('sel', el.dataset.app === id));
 }
@@ -53,6 +81,7 @@ function renderDeskIcons(){
   const wrap = $('deskIcons');
   if(!wrap) return;
   wrap.innerHTML = '';
+  const taken = new Set();
   DESK_APPS.forEach((app, i) => {
     const el = document.createElement('button');
     el.type = 'button';
@@ -67,7 +96,11 @@ function renderDeskIcons(){
       </span>
       <span class="desk-app-label">${app.name}</span>`;
     wrap.appendChild(el);
-    const p = deskClamp(saved ? saved.x : 20, saved ? saved.y : 20 + i * 96, el);
+    const cell = deskNextFreeCell(
+      deskCellOf(saved ? saved.x : (i % 4) * DESK_CELL.w + DESK_CELL.w / 2,
+                 saved ? saved.y : Math.floor(i / 4) * DESK_CELL.h + DESK_CELL.h / 2), el, taken);
+    taken.add(deskCellKey(cell));
+    const p = deskPosOfCell(cell);
     el.style.left = p.x + 'px';
     el.style.top = p.y + 'px';
     pinDeskDrag(el, app);
@@ -85,13 +118,14 @@ function refreshDeskStates(){
 }
 
 function pinDeskDrag(el, app){
-  let sx = 0, sy = 0, ox = 0, oy = 0, moved = false, active = false;
+  let sx = 0, sy = 0, ox = 0, oy = 0, moved = false, active = false, fromCell = null;
   el.addEventListener('pointerdown', e => {
     if(e.button) return;
     active = true; moved = false;
     sx = e.clientX; sy = e.clientY;
     const cs = getComputedStyle(el);
     ox = parseFloat(cs.left) || 0; oy = parseFloat(cs.top) || 0;
+    fromCell = deskCellOf(ox, oy);
     selectDeskApp(app.id);
     try { el.setPointerCapture(e.pointerId); } catch(err){}
   });
@@ -104,7 +138,9 @@ function pinDeskDrag(el, app){
       el.classList.add('dragging');
     }
     e.preventDefault();
-    const p = deskClamp(ox + dx, oy + dy, el);
+    // 实时吸附到格位
+    const cell = deskClampCell(deskCellOf(ox + dx, oy + dy).col, deskCellOf(ox + dx, oy + dy).row, el);
+    const p = deskPosOfCell(cell);
     el.style.left = p.x + 'px';
     el.style.top = p.y + 'px';
   });
@@ -112,10 +148,23 @@ function pinDeskDrag(el, app){
     if(!active) return;
     active = false;
     el.classList.remove('dragging');
-    if(moved){
-      deskPos[app.id] = { x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0 };
-      saveDeskPos();
-    }
+    if(!moved) return;
+    // 落点格位：被别的图标占着就互换，否则空着就放
+    const target = deskClampCell(deskCellOf(parseFloat(el.style.left) || 0, parseFloat(el.style.top) || 0).col,
+                                 deskCellOf(parseFloat(el.style.left) || 0, parseFloat(el.style.top) || 0).row, el);
+    const tkey = deskCellKey(target);
+    document.querySelectorAll('.desk-app[data-app]').forEach(other => {
+      if(other === el) return;
+      const oc = deskCellOf(parseFloat(other.style.left) || 0, parseFloat(other.style.top) || 0);
+      if(deskCellKey(oc) !== tkey) return;
+      const oid = other.dataset.app;
+      const back = deskPosOfCell(fromCell || oc);
+      other.style.left = back.x + 'px';
+      other.style.top = back.y + 'px';
+      deskPos[oid] = back;
+    });
+    deskPos[app.id] = deskPosOfCell(target);
+    saveDeskPos();
   };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);

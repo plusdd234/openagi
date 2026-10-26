@@ -1432,3 +1432,7 @@
   .chat-hint { font-size: 10px; color: var(--muted); padding: 0 10px 6px; min-height: 12px; }
   .chat-hint.error { color: var(--bad); }
   .chat-hint.warn { color: var(--warn); }
+
+  /* ---- 桌面图标格位吸附 ---- */
+  .desk-app { transition: left .16s ease, top .16s ease; }
+  .desk-app.dragging { transition: none; }
