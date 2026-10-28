@@ -15,7 +15,7 @@ async function tripoWebFetch(pathname, opts, timeoutMs){
     return data || {};
   }catch(e){
     if(e && e.name === 'AbortError') throw new Error('本地助手无响应（' + Math.round(ms / 1000) + ' 秒超时）');
-    if(e instanceof TypeError) throw new Error('无法连接 Tripo 助手：请先双击 start-tripo-bridge.bat');
+    if(e instanceof TypeError) throw new Error('无法连接 Tripo 助手：请先启动项目（桌面端双击 start.bat），再点「打开登录页」');
     throw e;
   }finally{
     clearTimeout(timer);
@@ -106,24 +106,43 @@ function updateStatusChips(){
   const base = $('llmBaseUrl').value.trim();
   const llm = $('llmModel').value.trim();
   const llmOk = !!(key && base && llm);
-  setChip('stLLM', llmOk, llm || '未配置',
-    llmOk ? `语言模型：${llm} · ${activePreset || base}` : '未配置：需要 API Key、接口地址与模型');
+  /* 语言 chip 必须区分本地/云端：两种来源出问题时排查方向完全不同
+   * （本地看 Ollama / 引擎，云端看 Key / 网络）。只给一个模型名等于什么都没说。 */
+  const llmLocal = (typeof llmMode === 'function') && llmMode() === 'local';
+  setChip('stLLM', llmOk, (llmLocal ? '本地 · ' : '云端 · ') + (llm || '未配置'),
+    llmOk
+      ? `语言模型：${llm} · ${llmLocal ? '本地推理（Ollama）' : (activePreset || base)}`
+      : '未配置：需要 API Key、接口地址与模型');
 
   const tripo = isTripo();
   const tripoWeb = isTripoWeb();
   const tKey = $('tripoKey').value.trim();
   const tKeyOk = !!tKey && !tripoKeyLooksWrong(tKey);
   const rawImg = $('imgModel').value.trim();
+  /* 图像 chip 按真实来源分三种说法：
+   *   本地生成 → 显示引擎状态（引擎没跑而出图必然失败，这是最常见的坑）
+   *   Tripo 网页 / 云端 → 沿用原逻辑
+   * 之前这里显示的是 llm 模型名（qwen3-vl 之类），看起来像「图像也是它生成的」，
+   * 实际上本地生图走的是 ComfyUI 的 checkpoint，两者毫无关系。 */
   if(tripoWeb){
     setChip('stIMG', tripoWebReady, 'Tripo 网页账号',
-      tripoWebReady ? '图像模型：Tripo 网页账号 · 已连接生图页' : '未连接：先运行 start-tripo-bridge.bat，再打开登录页');
+      tripoWebReady ? '图像：Tripo 网页账号 · 已连接生图页' : '未连接：先启动项目（start.bat），再打开登录页');
+  } else if((typeof imgMode === 'function') && imgMode() === 'local'){
+    const c = (typeof mcComfy !== 'undefined' && mcComfy && mcComfy.checked) ? mcComfy : null;
+    const running = !!(c && c.running);
+    const ckpt = (typeof comfyCkptChoice === 'function') ? comfyCkptChoice() : '';
+    setChip('stIMG', running, running ? '本地生成' : '引擎未启动',
+      running
+        ? `图像：本地生成 · ComfyUI 运行中${ckpt ? ' · ' + ckpt : ''}`
+        : '图像已切到本地生成，但 ComfyUI 没在跑——打开「本地生图」启动引擎，否则出图会失败');
+    if(!running) refreshStatusEngine();
   } else {
     const imgModel = rawImg || (tripo ? '' : llm);
     const imgBase = $('imgBaseUrl').value.trim() || base;
     const imgKey = tripo ? (tKeyOk ? tKey : '') : ($('imgKey').value.trim() || key);
     const imgOk = !!(imgKey && imgModel && (tripo || imgBase));
     const imgSource = tripo ? 'Tripo' : (activeImgPreset === IMG_FOLLOW ? '复用分析接口' : activeImgPreset);
-    setChip('stIMG', imgOk, imgModel || '未配置',
+    setChip('stIMG', imgOk, '云端 · ' + (imgModel || '未配置'),
       imgOk ? `图像模型：${imgModel} · ${imgSource}` : '未配置：需要接口 Key 与图像模型');
   }
 
@@ -131,6 +150,53 @@ function updateStatusChips(){
   const threeOk = tripo && tKeyOk;
   setChip('st3D', threeOk, tripo ? (threeOk ? tier : (tKey ? 'Key 无效' : '缺 Key')) : '未启用',
     threeOk ? `3D 模型：Tripo ${tier}` : '未配置：切换到 Tripo，并填入 platform.tripo3d.ai 生成的 API Key（不是账号密码）');
+
+  refreshAssetChip();
+}
+
+/* 资产 chip：图库 + 模型库的总占用。
+ * 异步取（读磁盘统计），所以从 updateStatusChips 里拆出来，
+ * 只在拿得到数据时更新——取不到就保持上次的值，别闪成「—」。 */
+let _assetChipBusy = false;
+let _assetChipAt = 0;
+async function refreshAssetChip(force){
+  const now = Date.now();
+  if(!force && (_assetChipBusy || now - _assetChipAt < 30000)) return;   // 30 秒内不重复扫盘
+  const d = window.openagiDesktop;
+  const el = $('stASSET');
+  if(!el) return;
+  if(!d || typeof d.assetStat !== 'function'){
+    setChip('stASSET', false, '桌面版', '资产要落到本机磁盘上，网页版没有这个能力');
+    return;
+  }
+  _assetChipBusy = true;
+  try{
+    const s = await d.assetStat();
+    _assetChipAt = Date.now();
+    const total = (s && s.totalBytes) || 0;
+    const n = (s && s.count) || 0;
+    const trash = (s && s.trashBytes) || 0;
+    if(typeof libFmt === 'function'){
+      setChip('stASSET', true, libFmt(total),
+        `图库 + 模型库共 ${libFmt(total)}（${n} 个资产）` +
+        (trash ? `\n回收站还占 ${libFmt(trash)}，可在设置 → 资产库清空` : '') +
+        '\n点开管理（图库 / 模型库）');
+    }
+  }catch(e){ /* 统计失败就保持原样，别让顶部状态栏闪红 */ }
+  finally{ _assetChipBusy = false; }
+}
+
+/* 引擎状态是异步探测的：探测完把图像 chip 重画一次。
+ * 只在「本地生成」模式下才值得探测，别给云端用户白扫一遍。 */
+let _engineProbeAt = 0;
+function refreshStatusEngine(){
+  const now = Date.now();
+  if(now - _engineProbeAt < 60000) return;   // 一分钟内探测过就不再扫
+  _engineProbeAt = now;
+  if(typeof mcComfyDetect !== 'function') return;
+  mcComfyDetect().then(() => {
+    if((typeof imgMode === 'function') && imgMode() === 'local') updateStatusChips();
+  }).catch(() => {});
 }
 
 // 按引擎切换可见配置
@@ -179,8 +245,7 @@ window.addEventListener('paste', e => {
   for(const it of items){
     if(it.type.startsWith('image/')){
       const file = it.getAsFile();
-      if(!$('baseView').classList.contains('hidden') && baseTab === 'i2i') readBaseRef(file);
-      else readImage(file);
+      readImage(file);
       return;
     }
   }
@@ -239,7 +304,7 @@ function friendlyErr(e){
   const m = (e && e.message) || String(e);
   if(/Failed to fetch|NetworkError|Load failed|Network request failed/i.test(m)){
     if(relayEnabled()){
-      return '无法连接本地中转：请双击项目文件夹里的 start-relay.bat 启动，或运行 node relay.js，并确认地址为 ' + relayBase();
+      return '无法连接本地中转：请双击项目里的 start.bat 启动（桌面模式下已托管本地中转），或运行 node plugins\relay\relay.js，并确认地址为 ' + relayBase();
     }
     if(location.protocol === 'file:'){
       return '网络或跨域失败：当前以 file:// 直接打开，多数接口会拒绝。请改用本地 HTTP 服务打开，或换用支持浏览器直连的服务商';
@@ -249,6 +314,17 @@ function friendlyErr(e){
   // 中转层报上来的上游故障：给出下一步动作
   if(/ECONNRESET|socket hang up|上游连接被重置/i.test(m)){
     return m + '｜本机中转已自动重试仍未成功：可稍后重试，或检查本机代理 / 网络，或把该节点的「超时」调大后重跑。';
+  }
+  /* 本地模型显存不足：Ollama 原样抛出的是
+   * "llama-server startup failed before projector CPU offload retry:
+   *  llama-server reported out-of-memory during startup: CUDA error: out of memory"，
+   * 用户看到这一串只会以为程序坏了，然后反复重试。
+   * 实测（4 GB 显存跑 8B 视觉模型）这是必然触发，且**不会**自动降级到 CPU——
+   * 所以在文案里必须给出「换小一档」这个具体动作。 */
+  if(/out of memory|out-of-memory|CUDA error|failed to allocate|insufficient memory/i.test(m)){
+    return '显存不足，模型没能加载起来（本地引擎不会自动降级到 CPU）。' +
+      '换小一档的模型（识图建议 Qwen3-VL 2B / 4B），或先关掉占显存的程序再试。' +
+      '原始报错：' + m.slice(0, 150);
   }
   if(/上游响应超时/.test(m)){
     return m + '｜可调大该节点的「超时」参数，或减少单次请求的图片体积。';

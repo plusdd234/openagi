@@ -164,7 +164,7 @@ const COUNT_KEYS = `(() => new Promise(res => {
     });
     FLOWS.length = 0;
     FLOWS.push(mk('cur', '当前编辑'), mk('old', '旧工作流'));
-    openFlow('cur');                                 // 当前编辑的流程必须保住
+    openFlow('cur'); flushViewSwap();                                 // 当前编辑的流程必须保住
     const ok = persistFlows();
     const cur = FLOWS.find(f => f.id === 'cur');
     const old = FLOWS.find(f => f.id === 'old');
@@ -192,7 +192,7 @@ const COUNT_KEYS = `(() => new Promise(res => {
       id: 'solo', name: '唯一', updated: Date.now(), vars: [], links: [],
       nodes: [{ id: 'ns', type: 'imageIn', x: 0, y: 0, data: { image: huge } }]
     });
-    openFlow('solo');
+    openFlow('solo'); flushViewSwap();
     const ok = persistFlows();
     const f = FLOWS[0];
     return {
@@ -217,7 +217,7 @@ const COUNT_KEYS = `(() => new Promise(res => {
     for (let k = 0; k < 400; k++) nodes.push({ id: 'n' + k, type: 'imageIn', x: (k % 30) * 10, y: k * 2, data: { text: 'x'.repeat(1600) } });
     FLOWS.length = 0;
     FLOWS.push({ id: 'fat', name: '巨型', updated: Date.now(), vars: [], links: [], nodes });
-    openFlow('fat');
+    openFlow('fat'); flushViewSwap();
     const ok = persistFlows();
     return { ok, toast: ($('bpToast').textContent || '') };
   });
@@ -252,16 +252,16 @@ const COUNT_KEYS = `(() => new Promise(res => {
     persistFlows();
     renderFlowsWindow();
     const meter = $('wfStorage');
-    const card = Array.from(document.querySelectorAll('.wf-card')).find(c => (c.textContent || '').indexOf('容量') >= 0);
+    const item = Array.from(document.querySelectorAll('.wf-side-item')).find(c => (c.textContent || '').indexOf('容量') >= 0);
     return {
       label: (meter ? meter.textContent : ''),
       hidden: meter ? meter.classList.contains('hidden') : true,
-      badge: card ? (card.querySelector('.wf-size') || {}).textContent : ''
+      badge: item ? ((item.querySelector('.wf-side-sub') || {}).textContent || '') : ''
     };
   }, BIG);
   check('存储条给出了用量', /内联素材/.test(r11.label) && /MB|KB/.test(r11.label), 'label=' + r11.label);
-  check('有流程时存储条可见', r11.hidden === false);
-  check('卡片上标出了该工作流的占用', /KB|MB/.test(r11.badge || ''), 'badge=' + r11.badge);
+  check('存储条始终可见', r11.hidden === false);
+  check('列表项上标出了该工作流的占用', /KB|MB/.test(r11.badge || ''), 'badge=' + r11.badge);
 
   console.log('\n=== 12. 打开时数据还没进内存，用之前能还原 ===');
   const r12 = await page.evaluate(big => new Promise(res => {
@@ -273,7 +273,7 @@ const COUNT_KEYS = `(() => new Promise(res => {
     }]));
     FLOWS = JSON.parse(localStorage.getItem('hf_flows'));
     blobReload();
-    openFlow('f4');
+    openFlow('f4'); flushViewSwap();
     const before = bp.nodes[0].data.image;
     // 走真实路径：运行前会先把存根还原（这个流程没有「任务开始」节点，运行本身不会产生任何请求）
     runFlow().then(() => {

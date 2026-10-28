@@ -154,7 +154,7 @@ const check = (name, ok, info) => {
       ],
       vars: [], updated: Date.now(), lastRun: null
     });
-    openFlow('hist_flow');
+    openFlow('hist_flow'); flushViewSwap();
     await runFlow();                      // 真实执行（start → end，不涉及 LLM）
     let list = [];
     for (let i = 0; i < 25; i++) {

@@ -91,7 +91,7 @@ window.__installStub = (script) => {
       { id: uid(), from: { node: a.id, key: a.data.outputs[0].id }, to: { node: r.id, key: 'text' } }
     ];
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     window.__ids = { a: a.id, r: r.id };
   });
 
@@ -214,36 +214,54 @@ window.__installStub = (script) => {
   check(!/enable_thinking/.test(run4[0]), '未勾选：请求体不带 enable_thinking');
   check(/enable_thinking"\s*:\s*true/.test(run4[1]), '勾选后：请求体带 enable_thinking', (run4[1] || '').slice(-60));
 
-  /* ---------- 6. 基线对话 ---------- */
+  /* ---------- 6. 桌面对话（第二页）：状态分阶段 + 气泡折叠思考 ----------
+     原来的「基线工具 → 对话」面板已整块移除，覆盖点跟着搬到现在的对话入口：
+     底部输入条发送后翻到的第二页。 */
   const chat = await page.evaluate(async () => {
+    // 造一个指向桩地址的可选模型，让 connFor 的校验能通过（不发真实请求）
+    const sel = document.getElementById('deskAiModel');
+    if (!Array.from(sel.options).some(o => o.value === 'local:stub-think')) {
+      const op = document.createElement('option');
+      op.value = 'local:stub-think';
+      op.textContent = 'stub-think';
+      sel.appendChild(op);
+    }
+    sel.value = 'local:stub-think';
+    document.getElementById('llmModel').value = 'stub-think';
+
     window.__installStub(() => [
       { json: { choices: [{ delta: { reasoning_content: '用户问的是可用性，' } }] } },
       { json: { choices: [{ delta: { reasoning_content: '先确认配置。' } }] } },
       { json: { choices: [{ delta: { content: '可用。' } }] } }
     ]);
-    $('chatInput').value = '接口能用吗';
-    // 桩流没有延迟，整个过程可能几毫秒就结束：用 MutationObserver 抓每一次文案变化
+    // 桩流几毫秒就跑完：用 MutationObserver 抓状态点的每一次文案变化
+    const dot = document.getElementById('deskAiDot');
     const seen = [];
     const push = () => {
-      const t = ($('chatStatus').textContent || '').trim();
+      const t = (dot.title || '').trim();
       if (t && seen[seen.length - 1] !== t) seen.push(t);
     };
     const obs = new MutationObserver(push);
-    obs.observe($('chatStatus'), { subtree: true, childList: true, characterData: true });
-    await baseChatSend();
+    obs.observe(dot, { attributes: true, attributeFilter: ['title', 'class'] });
+    document.getElementById('deskAiText').value = '接口能用吗';
+    await window.deskChat.send();
     obs.disconnect();
-    const last = baseMsgs[baseMsgs.length - 1];
-    const det = document.querySelector('.msg-think');
+    const all = window.deskChat.msgs();
+    const last = all[all.length - 1] || {};
+    const det = document.querySelector('.dchat-think');
     return {
       seen: [...new Set(seen)],
-      content: last.content, reasoning: last.reasoning || '',
+      content: last.content || '', reasoning: last.reasoning || '',
       label: det ? det.querySelector('summary').textContent : '',
       thinkText: det ? det.querySelector('div').textContent : ''
     };
   });
-  console.log('\n=== 6. 基线对话 ===');
-  check(chat.seen.some(s => /思考中/.test(s)), '对话状态显示「思考中」', JSON.stringify(chat.seen));
-  check(chat.seen.some(s => /生成中/.test(s)), '对话状态随后显示「生成中」');
+  console.log('\n=== 6. 桌面对话：状态分阶段 + 气泡折叠思考 ===');
+  check(chat.seen.some(s => /^思考中 \d+ 字$/.test(s)), '状态点先显示「思考中 N 字」', JSON.stringify(chat.seen.slice(0, 4)));
+  check(chat.seen.some(s => /^生成中 \d+ 字$/.test(s)), '随后切到「生成中 N 字」', JSON.stringify(chat.seen.slice(-2)));
+  // 只比较「思考中 N 字 / 生成中 N 字」两种阶段文案（前面还有一条「生成中…」占位，不算）
+  const phases = chat.seen.filter(s => /^(思考中|生成中) \d+ 字$/.test(s));
+  check(phases.findIndex(s => /^思考中/.test(s)) < phases.findIndex(s => /^生成中/.test(s)), '顺序正确：先思考后生成', JSON.stringify(phases));
   check(chat.content === '可用。', '正文正确', chat.content);
   check(/用户问的是可用性/.test(chat.reasoning), '思考内容存到消息上', chat.reasoning);
   check(/^思考过程 · \d+ 字$/.test(chat.label), '气泡里折叠展示思考过程', chat.label);

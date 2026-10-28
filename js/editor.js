@@ -34,7 +34,7 @@ function edRgba(hex, a){
   const h = String(hex || '').replace('#', '');
   const v = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
   const n = parseInt(v.slice(0, 6), 16);
-  if(isNaN(n)) return 'rgba(124,140,255,' + a + ')';
+  if(isNaN(n)) return 'rgba(232,138,0,' + a + ')';
   return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
 }
 function edCanvasEl(){ return $('bpCanvas'); }
@@ -48,10 +48,19 @@ function edRectOfPoints(a, b){
 function edOverlap(a, b){
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
-/* 节点在世界坐标里的矩形。尺寸取 DOM 实测（内容会撑高），坐标取模型值。 */
+/* 节点在世界坐标里的矩形。尺寸取 DOM 实测（内容会撑高），坐标取模型值。
+   offsetWidth/offsetHeight 是强制布局的读取：框选每个事件要对全部节点各取一次，
+   49 个节点就是 49 次。节点尺寸只在 renderNodes() 重建时才会变，所以缓存起来。 */
+const edNodeSize = new Map();
+function edNodeSizeReset(){ edNodeSize.clear(); }
 function edNodeRect(n){
-  const el = $('n-' + n.id);
-  return { x: n.x, y: n.y, w: el ? el.offsetWidth : 224, h: el ? el.offsetHeight : 80 };
+  let s = edNodeSize.get(n.id);
+  if(!s){
+    const el = $('n-' + n.id);
+    s = { w: el ? el.offsetWidth : 224, h: el ? el.offsetHeight : 80 };
+    edNodeSize.set(n.id, s);
+  }
+  return { x: n.x, y: n.y, w: s.w, h: s.h };
 }
 function edApplyNodePos(n){
   const el = $('n-' + n.id);
@@ -151,14 +160,34 @@ function edClearSelection(){
 
 /* ---------------- 视图变换 ---------------- */
 function edSyncZoom(){
-  const c = edCanvasEl();
-  if(c){
+  /* 底纹走独立层 #bpGrid：
+     旧写法每帧给画布写 background-position —— 那是「改一层几百万像素的渐变」，
+     必须在主线程重绘；节点的平移却是合成器做的，两者不同步，看起来就是背景在闪、在拖后腿。
+     现在平移只写 transform（合成器），格子按 100% 取模折算，永远不会露出边。 */
+  const g = $('bpGrid'), cv = edCanvasEl();
+  if(g){
     const s = 20 * bpZoom, S = 100 * bpZoom;
-    c.style.backgroundSize = `${s}px ${s}px, ${s}px ${s}px, ${S}px ${S}px, ${S}px ${S}px`;
-    c.style.backgroundPosition = `${bpPan.x}px ${bpPan.y}px, ${bpPan.x}px ${bpPan.y}px, ${bpPan.x}px ${bpPan.y}px, ${bpPan.x}px ${bpPan.y}px`;
+    /* 缩放 LOD：缩得越小，点阵越像噪点，留着只是白白多画两层背景。
+       <50% 只留 100px 细网格，<30% 干脆只留底色（节点本身也只剩标题条粗细）。
+       切档只在跨阈值那一次重绘，平移期间不参与。 */
+    const lod = bpZoom < .3 ? 2 : (bpZoom < .5 ? 1 : 0);
+    if(cv && cv.dataset.gridLod !== String(lod)) cv.dataset.gridLod = String(lod);
+    const size = lod === 0 ? `${s}px ${s}px, ${S}px ${S}px, ${S}px ${S}px` : `${S}px ${S}px`;
+    if(g.dataset.bsize !== size){ g.style.backgroundSize = size; g.dataset.bsize = size; }
+    if(S > 0){
+      const ox = Math.round((((bpPan.x % S) + S) % S) * 100) / 100;
+      const oy = Math.round((((bpPan.y % S) + S) % S) * 100) / 100;
+      if(g.dataset.bx !== String(ox) || g.dataset.by !== String(oy)){
+        g.style.transform = `translate3d(${ox}px, ${oy}px, 0)`;
+        g.dataset.bx = String(ox); g.dataset.by = String(oy);
+      }
+    }
   }
+  /* 只在真的变了才写：给 textContent 赋同样的字符串，也会换掉文本节点，
+     于是每帧一次布局重算（平移时实测 40 步 40 次布局，全出在这行上）。 */
   const chip = $('btnZoomReset');
-  if(chip) chip.textContent = Math.round(bpZoom * 100) + '%';
+  const pct = Math.round(bpZoom * 100) + '%';
+  if(chip && chip.textContent !== pct) chip.textContent = pct;
 }
 function edZoomAt(factor, clientX, clientY){
   const c = edCanvasEl();
@@ -198,9 +227,9 @@ function frameEl(f){
   el.style.width = f.w + 'px';
   el.style.height = f.h + 'px';
   el.style.setProperty('--frame-c', c);
-  el.style.setProperty('--frame-line', edRgba(c, .45));
-  el.style.setProperty('--frame-fill', edRgba(c, .06));
-  el.style.setProperty('--frame-head', edRgba(c, .16));
+  el.style.setProperty('--frame-line', edRgba(c, .55));
+  el.style.setProperty('--frame-fill', edRgba(c, .10));
+  el.style.setProperty('--frame-head', edRgba(c, .20));
 
   const head = document.createElement('div');
   head.className = 'frame-head';
@@ -327,6 +356,19 @@ function edMarqueeHit(rect){
   if(r.w < 2 && r.h < 2) return [];
   return bp.nodes.filter(n => edOverlap(edNodeRect(n), r)).map(n => n.id);
 }
+/* 框选的一帧：更新矩形 + 重算命中。命中集合没变就不动选中态——
+   拖框时绝大多数帧命中的还是那批节点，没必要每帧给 49 个元素 toggle 一次 class。 */
+function edApplyMarquee(){
+  const m = Editor.marquee;
+  if(!m) return;
+  edUpdateMarqueeDom();
+  const ids = edMarqueeHit();
+  const sig = ids.join(',');
+  if(sig === m.sig) return;
+  m.sig = sig;
+  edSelect(ids, { additive: true, base: m.base });
+}
+
 function edEndMarquee(){
   const m = Editor.marquee;
   if(!m){ edUpdateMarqueeDom(); return; }
@@ -336,6 +378,72 @@ function edEndMarquee(){
   edUpdateMarqueeDom();
   edSelect(ids, { additive: true, base: m.base });
   if(ids.length) edSyncSelectionInfo();
+}
+
+/* 指针事件 -> 一帧一次。
+   位置是「绝对值」（clientX/Y 直接算出结果），一帧里来十几个事件时，只留最后一个，
+   结果完全一样，却省掉十几遍 transform 写入与连线重算——高刷鼠标（500/1000Hz）
+   一帧能来 8–16 个 pointermove，这曾经是平移掉帧的主因。
+   UE 的 SGraphPanel 也是按 tick 采样输入：消息到了只更新模型坐标，下一次绘制才用。
+   注意：这里只合并「写」，不合并「量」——量早就不存在了（坐标走缓存）。 */
+let edFrameRaf = 0;
+let edFramePan = null;        // {x, y} 待应用的平移
+let edFrameItems = null;      // 待应用的节点位移（含最新坐标）
+let edFrameMarquee = false;   // 框选矩形待更新
+
+function edScheduleFrame(){
+  if(edFrameRaf) return;
+  edFrameRaf = requestAnimationFrame(edApplyFrame);
+}
+
+function edApplyFrame(){
+  edFrameRaf = 0;
+  const pan = edFramePan, items = edFrameItems, mq = edFrameMarquee;
+  edFramePan = null;
+  edFrameItems = null;
+  edFrameMarquee = false;
+  if(pan){
+    bpPan.x = pan.x; bpPan.y = pan.y;
+    applyBpTransform();
+  }
+  if(items){
+    for(const it of items){
+      const el = $('n-' + it.n.id);
+      if(!el) continue;
+      el.style.transform = `translate3d(${it.n.x - it.ox}px, ${it.n.y - it.oy}px, 0)`;
+    }
+    renderLinks(new Set(items.map(it => it.n.id)));
+  }
+  if(mq) edApplyMarquee();
+}
+
+/* 事件里只登记最新位置；拖拽/平移结束前把这一帧补上，别把最后一次鼠标位置丢了 */
+function edQueuePan(x, y){ edFramePan = { x, y }; edScheduleFrame(); }
+function edQueueMarquee(){ edFrameMarquee = true; edScheduleFrame(); }
+function edQueueNodes(items){ edFrameItems = items; edScheduleFrame(); }
+
+function edPushFrame(items, moved, full){
+  if(full){ renderLinks(null); return; }
+  if(items && items.length){ edQueueNodes(items); return; }
+  renderLinks(moved && moved.length ? new Set(moved) : null);
+}
+
+/* 收尾时把待办的一帧同步做掉（原来只补连线，现在补整帧） */
+function edFlushLinks(){
+  if(edFrameRaf){ cancelAnimationFrame(edFrameRaf); edApplyFrame(); }
+}
+
+/* 松手落地：把 transform 折回 left/top，让模型值成为唯一真源。
+   先清 transform 再写 left/top，同一个任务内完成，中间不会有一帧跳回去。 */
+function edCommitNodePos(items){
+  if(!items) return;
+  for(const it of items){
+    const el = $('n-' + it.n.id);
+    if(!el) continue;
+    el.style.transform = '';
+    el.style.left = it.n.x + 'px';
+    el.style.top = it.n.y + 'px';
+  }
 }
 
 /* ---------------- 手势：节点拖动 ---------------- */
@@ -360,9 +468,8 @@ function edMoveNodeDrag(e){
   d.items.forEach(it => {
     it.n.x = Math.round(it.ox + dx);
     it.n.y = Math.round(it.oy + dy);
-    edApplyNodePos(it.n);
   });
-  renderLinks();
+  edPushFrame(d.items, d.items.map(it => it.n.id), false);
 }
 
 /* ---------------- 手势：面板拖动 / 缩放 ---------------- */
@@ -403,9 +510,8 @@ function edMoveFrameDrag(e){
   d.items.forEach(it => {
     it.n.x = Math.round(it.ox + dx);
     it.n.y = Math.round(it.oy + dy);
-    edApplyNodePos(it.n);
   });
-  renderLinks();
+  edPushFrame(d.items, d.items.map(it => it.n.id), false);
 }
 function edBeginFrameResize(e, f){
   Editor.frameSel = f.id;
@@ -585,18 +691,14 @@ function edOnPointerMove(e){
   if(!Editor.gesture) return;
   if(Editor.gesture === 'pan'){
     const d = Editor.drag;
-    bpPan.x = d.ox + (e.clientX - d.sx);
-    bpPan.y = d.oy + (e.clientY - d.sy);
-    applyBpTransform();
+    edQueuePan(d.ox + (e.clientX - d.sx), d.oy + (e.clientY - d.sy));
     return;
   }
   if(Editor.gesture === 'marquee'){
     const m = Editor.marquee;
     if(!m) return;
     m.x1 = e.clientX; m.y1 = e.clientY;
-    edUpdateMarqueeDom();
-    const ids = edMarqueeHit();
-    edSelect(ids, { additive: true, base: m.base });
+    edQueueMarquee();
     return;
   }
   if(Editor.gesture === 'node'){ edMoveNodeDrag(e); return; }
@@ -613,6 +715,8 @@ function edOnPointerUp(){
   edClearFrameMembers();
   edSetPanning(false);
   if(g === 'marquee'){ edEndMarquee(); return; }
+  edFlushLinks();                                     // 补上最后一帧，否则连线会停在一格之前
+  if(d && d.items && (g === 'node' || g === 'frame')) edCommitNodePos(d.items);
   if((g === 'node' || g === 'frame' || g === 'frameResize') && d && d.moved) scheduleFlowSave();
 }
 
@@ -713,7 +817,7 @@ Editor.selectionCount = function(){ return Editor.selection.size; };
     c.addEventListener('auxclick', e => { if(e.button === 1) e.preventDefault(); });
     c.addEventListener('contextmenu', e => { if(e.button === 1) e.preventDefault(); });
   }
-  window.addEventListener('pointermove', edOnPointerMove);
+  window.addEventListener('pointermove', edOnPointerMove, { passive: true });
   window.addEventListener('pointerup', edOnPointerUp);
   window.addEventListener('pointercancel', edOnPointerUp);
   window.addEventListener('keydown', edOnKeyDown);
@@ -729,3 +833,35 @@ window.FRAME_COLORS = FRAME_COLORS;
 window.edSyncZoom = edSyncZoom;
 window.renderFrames = renderFrames;
 window.edCommentSelection = edCommentSelection;
+
+/* ---------------- 帧耗时浮层（?perf=1 才开） ----------------
+   拖拽掉帧很难靠肉眼看出来是哪一段：是平移、框选，还是节点拖动。
+   带上 ?perf=1 会常驻一个角标，显示最近 1 秒的平均/最长帧和卡顿帧数，
+   长帧（>34ms）发生时还会把当前手势名打出来。生产环境默认不加载。 */
+(function edPerfHud(){
+  if(!/[?&]perf=1/.test(location.search)) return;
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:9999;font:11.5px/1.5 ui-monospace,monospace;' +
+    'background:rgba(20,24,32,.86);color:#e8ecf4;padding:6px 9px;border-radius:8px;pointer-events:none;white-space:pre';
+  el.textContent = 'perf…';
+  document.body.appendChild(el);
+  let last = 0, frames = [], winStart = 0, long = 0, worst = 0;
+  const loop = t => {
+    if(last){
+      const d = t - last;
+      frames.push(d);
+      if(d > 34){ long++; if(d > worst) worst = d; }
+    }
+    last = t;
+    if(!winStart) winStart = t;
+    if(t - winStart >= 1000){
+      const avg = frames.reduce((a, b) => a + b, 0) / Math.max(1, frames.length);
+      const mx = frames.length ? Math.max.apply(null, frames) : 0;
+      el.textContent = `frame ${avg.toFixed(1)}ms  max ${mx.toFixed(0)}ms  fps ${Math.round(1000 / Math.max(avg, .01))}` +
+        `\n卡顿 ${long} 次  最长 ${worst.toFixed(0)}ms  手势 ${Editor.gesture || 'idle'}`;
+      frames = []; winStart = t; long = 0; worst = 0;
+    }
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+})();

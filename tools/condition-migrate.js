@@ -94,7 +94,7 @@ const LEGACY = {
   console.log('\n=== 2. 老流程打开即迁移 ===');
   const r2 = await page.evaluate(legacy => {
     FLOWS.unshift(JSON.parse(JSON.stringify(legacy)));
-    openFlow('legacy_condition_flow');
+    openFlow('legacy_condition_flow'); flushViewSwap();
     const n = bp.nodes.find(x => x.id === 'C_c');
     const inLinks = bp.links.filter(l => l.to.node === 'C_c');
     const outLinks = bp.links.filter(l => l.from.node === 'C_c');

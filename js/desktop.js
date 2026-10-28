@@ -8,26 +8,54 @@ const DESK_GLYPH = {
   t2i: '<rect x="3.5" y="4.5" width="17" height="14" rx="2.5"/><circle cx="8.6" cy="9.6" r="1.4"/><path d="m4.5 16.5 4.6-4 3.4 2.7 3-2.2 4 3.5"/>',
   i2i: '<rect x="3.5" y="7.5" width="10.5" height="10.5" rx="2"/><path d="M8.5 4.5h7.5a2 2 0 0 1 2 2v7.5"/><path d="m8 14 2.2-2.2 1.6 1.6 1.4-1.4"/>',
   flow: '<rect x="3.5" y="4.5" width="6" height="5" rx="1.4"/><rect x="14.5" y="14.5" width="6" height="5" rx="1.4"/><path d="M9.5 7h3.5a3 3 0 0 1 3 3v4.5"/><path d="M6.5 9.5v3a2 2 0 0 0 2 2h1.5"/>',
-  gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2.6M12 17.9v2.6M3.5 12h2.6M17.9 12h2.6M6 6l1.9 1.9M16.1 16.1 18 18M18 6l-1.9 1.9M7.9 16.1 6 18"/>'
+  model: '<rect x="5" y="8.5" width="14" height="14" rx="2.5"/><rect x="8.5" y="12" width="7" height="7" rx="1.5"/><path d="M12 5v3.5M12 18.5V22M5 12H1.5M22.5 12H19M5 19H1.5M22.5 19H19"/>',
+  /* 本地生图用「节点连线图」做图标：ComfyUI 的心智就是拖节点连成一张图，
+   * 比再造一个抽象齿轮更容易让人知道点进去是什么。 */
+  comfy: '<rect x="2.5" y="4" width="7" height="5.2" rx="1.5"/><rect x="14.5" y="4" width="7" height="5.2" rx="1.5"/><rect x="8.5" y="15" width="7" height="5.2" rx="1.5"/><path d="M9.5 6.6h5"/><path d="M6 9.2v3.6a2.2 2.2 0 0 0 2.2 2.2h.3"/><path d="M18 9.2v3.6a2.2 2.2 0 0 1-2.2 2.2h-.3"/>',
+  /* 图库用「两列画框」：和图像节点、文生图那几个单图图标区分开，
+   * 一眼能看出这是「很多张图」而不是「一张图」。 */
+  gallery: '<rect x="3" y="4.4" width="7.6" height="7.6" rx="1.6"/><rect x="13.4" y="4.4" width="7.6" height="7.6" rx="1.6"/><rect x="3" y="14.9" width="7.6" height="5.6" rx="1.6"/><rect x="13.4" y="14.9" width="7.6" height="5.6" rx="1.6"/>',
+  /* 模型库用线框立方体：3D 资产的通用符号。 */
+  modelLib: '<path d="M12 2.9 20 7.2v9.6L12 21.1 4 16.8V7.2l8-4.3Z"/><path d="M4 7.2l8 4.3 8-4.3"/><path d="M12 11.5v9.6"/>'
 };
 function deskSvg(kind){
   return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (DESK_GLYPH[kind] || DESK_GLYPH.flow) + '</svg>';
 }
 
 const DESK_APPS = [
-  { id:'chat',     name:'对话',   glyph:'chat', grad:'linear-gradient(150deg,#5b8cff,#7a5cff)' },
-  { id:'t2i',      name:'文生图', glyph:'t2i',  grad:'linear-gradient(150deg,#22c58b,#0f9aa8)' },
-  { id:'i2i',      name:'图生图', glyph:'i2i',  grad:'linear-gradient(150deg,#f2994a,#e05a52)' },
-  { id:'flows',    name:'工作流', glyph:'flow', grad:'linear-gradient(150deg,#7c5cff,#4f7cff)' },
-  { id:'settings', name:'设置',   glyph:'gear', grad:'linear-gradient(150deg,#6b7689,#3c4457)' }
+  /* AI 对话：和其他 App 一样双击图标翻到 App 页，不再是独立的「第二页」。
+   * 原来它有一套自己的翻页规则（.desk-wall.chat-open + .desk-page-2），
+   * 返回按钮、动效、页头全和别的 App 对不上——用户提出的就是这个不一致。
+   * 统一成 App 之后：翻页动效、<< 返回按钮、标题栏全都跟其他 App 同一套。 */
+  { id:'chat', name:'AI 对话', glyph:'chat', type:'system', open: () => { if(typeof window.deskChat !== 'undefined' && typeof window.deskChat.open === 'function') window.deskChat.open(); } },
+  /* 模型商店用 Ollama 的羊驼头做图标：这张图是「本地模型」这件事的通用符号，
+   * 比再画一个抽象图标更容易一眼认出来。png 放在 vendor 里随内容包一起分发。 */
+  { id:'store', name:'模型商店', icon:'<img class="desk-app-img" src="vendor/ollama-llama.png" alt="" draggable="false">', type:'system', open: () => { if(typeof openModelStore === 'function') openModelStore(); } },
+  /* ComfyUI 单独成 app：它自带安装/启动/端口/网页界面，塞在模型控制台的小方块里
+   * 用户既不知道点哪里也看不清状态。装生图模型前先把这个引擎跑起来是最自然的顺序，
+   * 所以摆在模型商店旁边。 */
+  { id:'comfy', name:'本地生图', glyph:'comfy', type:'system', open: () => { if(typeof openComfyApp === 'function') openComfyApp(); } },
+  /* 图库 / 模型库：资产的去处。挨着两个引擎图标，形成「造东西的」和「存东西的」两排。 */
+  { id:'gallery', name:'图库', glyph:'gallery', type:'system', open: () => { if(typeof openLibrary === 'function') openLibrary('image'); } },
+  { id:'modelLib', name:'模型库', glyph:'modelLib', type:'system', open: () => { if(typeof openLibrary === 'function') openLibrary('model'); } },
+  /* 「对话 / 文生图 / 图生图」三个单步工具 App 与「基线工具」界面已整块移除：
+   * 对话有底部 AI 输入条（翻页即对话页）、生图有工作流节点与本地 ComfyUI，
+   * 再留一套单步面板是重复入口。 */
+  /* 「工作流」App 已移除：左侧固定列表就是全部工作流，再摆一个桌面 App 是重复入口 */
+  { id:'models', name:'模型',  glyph:'model', type:'system', open: () => {
+    const m = DESK_APP_META.models;
+    deskMountApp($('modelsWin'), m.title, m.sub);
+    if(typeof renderModelsConsole === 'function') renderModelsConsole();
+  } }
 ];
+function deskAppById(id){ return DESK_APPS.find(a => a.id === id); }
 
 let deskPos = {};
 try { deskPos = JSON.parse(localStorage.getItem('hf_desk_pos') || '{}') || {}; } catch(e){ deskPos = {}; }
 
 function deskStateOf(id){
-  if(id === 'chat') return llmReady();
-  if(id === 't2i' || id === 'i2i') return imageReady();
+  // 本地生图：引擎在跑才算就绪（橙点 = 引擎没启动，和「对话未配置」是同一套语义）
+  if(id === 'comfy') return (typeof cfState === 'object' && cfState) ? !!cfState.running : null;
   return null;
 }
 function saveDeskPos(){
@@ -36,9 +64,17 @@ function saveDeskPos(){
 /* ---------- 桌面格子：图标永远吸附到格位，不再自由落点 ----------
  * 格子尺寸 = 图标实际尺寸 + 间距；拖动时实时吸附，落到被占格位时与原图标互换位置。 */
 const DESK_CELL = { w: 104, h: 104 };
+const DESK_ROW = 5;   // 首屏默认一行几个图标
+
+/* 图标画布：拖拽与格子都以「图标容器」为边界。
+ * 图标是相对 #deskIcons 绝对定位的，只有用它算边界才不会出现
+ * 「松手后被吸到灰底外面 / 被画布裁掉」这类错位。 */
+function deskCanvasEl(){
+  return $('deskIcons') || $('deskCanvas') || $('deskWall');
+}
 
 function deskGridBounds(el){
-  const wall = $('deskWall');
+  const wall = deskCanvasEl();
   const w = el ? el.offsetWidth : 92;
   const h = el ? el.offsetHeight : 92;
   return {
@@ -57,15 +93,18 @@ function deskClampCell(col, row, el){
   return { col: Math.min(Math.max(0, col), g.maxCol), row: Math.min(Math.max(0, row), g.maxRow) };
 }
 function deskCellKey(cell){ return cell.col + ',' + cell.row; }
-/* 从 start 开始按行扫描，找到第一个未被占用的格位 */
+/* 从 start 开始扫描，找到第一个未被占用的格位。
+ * 必须环形扫描：老写法 idx++ 到行尾就 row++ 并 break，永远回不到本行行首，
+ * 于是格子紧张时（比如画布只有 2 行 7 列）后面几个图标会全部叠到 (0,0)。 */
 function deskNextFreeCell(start, el, taken){
   const g = deskGridBounds(el);
-  let idx = Math.min(start.row, g.maxRow) * (g.maxCol + 1) + Math.min(start.col, g.maxCol);
-  for(let t = 0; t <= g.maxCol * (g.maxRow + 1) + 1; t++){
-    const cell = { col: idx % (g.maxCol + 1), row: Math.floor(idx / (g.maxCol + 1)) };
-    if(cell.row > g.maxRow) break;
+  const cols = g.maxCol + 1;
+  const total = cols * (g.maxRow + 1);
+  let idx = Math.min(start.row, g.maxRow) * cols + Math.min(start.col, g.maxCol);
+  for(let t = 0; t < total; t++){
+    const cell = { col: idx % cols, row: Math.floor(idx / cols) };
     if(!taken.has(deskCellKey(cell))) return cell;
-    idx++;
+    idx = (idx + 1) % total;
   }
   return { col: 0, row: 0 };
 }
@@ -90,15 +129,17 @@ function renderDeskIcons(){
     el.title = app.name;
     const saved = deskPos[app.id];
     el.innerHTML = `
-      <span class="desk-app-icon" style="background:${app.grad}">
-        ${deskSvg(app.glyph)}
+      <span class="desk-app-icon">
+        ${app.icon || deskSvg(app.glyph)}
         ${deskStateOf(app.id) === null ? '' : '<span class="desk-app-state"></span>'}
       </span>
       <span class="desk-app-label">${app.name}</span>`;
     wrap.appendChild(el);
+    // 默认从画布左上角开始排（老的 +半格 偏移会让首屏图标整体缩进一格）
+    // 一行放 DESK_ROW 个：现在是 5 个 App，正好排满一行，不会剩下孤零零一个。
     const cell = deskNextFreeCell(
-      deskCellOf(saved ? saved.x : (i % 4) * DESK_CELL.w + DESK_CELL.w / 2,
-                 saved ? saved.y : Math.floor(i / 4) * DESK_CELL.h + DESK_CELL.h / 2), el, taken);
+      deskCellOf(saved ? saved.x : (i % DESK_ROW) * DESK_CELL.w,
+                 saved ? saved.y : Math.floor(i / DESK_ROW) * DESK_CELL.h), el, taken);
     taken.add(deskCellKey(cell));
     const p = deskPosOfCell(cell);
     el.style.left = p.x + 'px';
@@ -113,7 +154,9 @@ function refreshDeskStates(){
     const ok = deskStateOf(el.dataset.app);
     if(ok === null) return;
     const dot = el.querySelector('.desk-app-state');
-    if(dot) dot.style.background = ok ? '#3dd68c' : '#ffb454';
+    // 统一用平面金黄（--gold）：就绪用实色，未就绪压到 45% 透明。
+    // 不再用绿/棕两色——参考图里所有小点都是同一支黄。
+    if(dot) dot.style.background = ok ? '' : 'rgba(240,180,41,.45)';
   });
 }
 
@@ -138,20 +181,24 @@ function pinDeskDrag(el, app){
       el.classList.add('dragging');
     }
     e.preventDefault();
-    // 实时吸附到格位
-    const cell = deskClampCell(deskCellOf(ox + dx, oy + dy).col, deskCellOf(ox + dx, oy + dy).row, el);
-    const p = deskPosOfCell(cell);
-    el.style.left = p.x + 'px';
-    el.style.top = p.y + 'px';
+    // 跟手移动：图标实时跟随指针（像抓住一样），不提前吸附格子
+    const wall = deskCanvasEl();
+    const maxX = wall ? Math.max(0, wall.clientWidth - el.offsetWidth) : Infinity;
+    const maxY = wall ? Math.max(0, wall.clientHeight - el.offsetHeight) : Infinity;
+    el.style.left = Math.min(Math.max(0, ox + dx), maxX) + 'px';
+    el.style.top = Math.min(Math.max(0, oy + dy), maxY) + 'px';
   });
   const end = () => {
     if(!active) return;
     active = false;
     el.classList.remove('dragging');
     if(!moved) return;
-    // 落点格位：被别的图标占着就互换，否则空着就放
+    // 落点格位：松开后吸附到最近的格子；被别的图标占着就互换，否则空着就放
     const target = deskClampCell(deskCellOf(parseFloat(el.style.left) || 0, parseFloat(el.style.top) || 0).col,
                                  deskCellOf(parseFloat(el.style.left) || 0, parseFloat(el.style.top) || 0).row, el);
+    const p = deskPosOfCell(target);
+    el.style.left = p.x + 'px';
+    el.style.top = p.y + 'px';
     const tkey = deskCellKey(target);
     document.querySelectorAll('.desk-app[data-app]').forEach(other => {
       if(other === el) return;
@@ -175,6 +222,8 @@ function pinDeskDrag(el, app){
   el.addEventListener('keydown', e => { if(e.key === 'Enter') openDeskApp(app.id); });
 }
 
+/* Dock（底部应用条）已从 index.html 移除：桌面图标本身就是全部入口。
+ * 函数保留是为了「找不到容器就什么都不做」，不至于让 renderHome 里的调用炸掉。 */
 function renderDeskDock(){
   const dock = $('deskDock');
   if(!dock) return;
@@ -185,15 +234,14 @@ function renderDeskDock(){
     b.className = 'dock-app';
     b.title = app.name;
     b.setAttribute('aria-label', app.name);
-    b.style.background = app.grad;
     b.innerHTML = deskSvg(app.glyph);
     b.addEventListener('click', () => openDeskApp(app.id));
     dock.appendChild(b);
   };
   const sep = () => { const s = document.createElement('span'); s.className = 'dock-sep'; dock.appendChild(s); };
-  DESK_APPS.filter(a => a.id === 'chat' || a.id === 't2i' || a.id === 'i2i').forEach(addApp);
+  DESK_APPS.filter(a => a.type === 'tool').forEach(addApp);
   sep();
-  DESK_APPS.filter(a => a.id === 'flows' || a.id === 'settings').forEach(addApp);
+  DESK_APPS.filter(a => a.type === 'system').forEach(addApp);
   sep();
   const clock = document.createElement('span');
   clock.className = 'dock-clock';
@@ -210,244 +258,225 @@ function deskClockText(){
 let deskClockTimer = 0;
 function startDeskClock(){
   if(deskClockTimer) return;
+  // 钟表挂在 Dock 上，Dock 没了就别再空转定时器
+  if(!$('deskClock')) return;
   deskClockTimer = setInterval(() => {
     const c = $('deskClock');
     if(c) c.textContent = deskClockText();
   }, 15000);
 }
 
-function openDeskApp(id){
-  if(id === 'flows'){ $('flowsWin').classList.remove('hidden'); return; }
-  if(id === 'settings'){ openSettings(); return; }
-  if(id === 'chat' || id === 't2i' || id === 'i2i') openBase(id);
+/* 打开 App：**先翻页，再加载**。
+ * 各模块的 open() 一进去就同步建卡 / 扫描 / 探测（模型商店 19 张卡、图库全量重扫、
+ * 控制台把所有引擎探一遍），以前是跟翻页同一帧开跑，主线程被占住，翻页就掉帧。
+ * 现在翻页只做「搬节点 + 切 class」，重活等动画播完再上；第一次打开期间盖一层骨架，
+ * 免得窗口空着。第二次打开有上次的内容顶着，不再盖。 */
+const DESK_FLIP_MS = 520;      // 与 .desk-page 的 transform 过渡时长一致
+let deskAppLoadTimer = 0, deskAppLoadRaf = 0;
+/* 加载批次号：翻页期间用户可能又翻到别的 App（或直接关掉），
+ * 旧的那批 setTimeout 一到点就会把页面抢回去——所以每次作废都推进批次，
+ * 回调里对不上号就直接放弃。 */
+let deskAppSeq = 0;
+
+function deskCancelAppLoad(){
+  cancelAnimationFrame(deskAppLoadRaf);
+  clearTimeout(deskAppLoadTimer);
+  deskAppLoadRaf = deskAppLoadTimer = 0;
+  deskAppSeq++;
 }
 
-function closeFlowsWin(){
-  $('flowsWin').classList.add('hidden');
+/* 骨架层：只切 hidden / opacity，不碰布局，撤的时候两帧内就干净
+ * （旧版是给窗口挂一张 ::after 扫光，动的 background-position 要主线程重绘，
+ *   模块一开始干活就冻在半路——用户看到的就是「波浪条卡在中间」） */
+let deskSkelTimer = 0;
+function deskSkelShow(){
+  const sk = $('deskAppSkel');
+  if(!sk) return;
+  clearTimeout(deskSkelTimer);
+  sk.classList.remove('is-out');
+  if(sk.hidden){
+    sk.hidden = false;
+    void sk.offsetWidth;   // 先落屏再改透明度，过渡才有起点
+  }
 }
+function deskSkelHide(){
+  const sk = $('deskAppSkel');
+  if(!sk || sk.hidden) return;
+  clearTimeout(deskSkelTimer);
+  sk.classList.add('is-out');
+  deskSkelTimer = setTimeout(() => {
+    sk.hidden = true;
+    sk.classList.remove('is-out');
+  }, 210);
+}
+
+function openDeskApp(id){
+  const app = deskAppById(id);
+  if(!app || typeof app.open !== 'function') return;
+  const meta = DESK_APP_META[id];
+  const win = meta && meta.win ? $(meta.win) : null;
+  // 没有 App 页（或窗口不在）时退回原来的直接打开
+  if(!win || !deskMountApp(win, meta.title, meta.sub)){
+    deskCancelAppLoad();
+    app.open();
+    return;
+  }
+  // 第一次打开才盖骨架；第二次窗口里已经有上次的内容顶着，不该再被遮
+  const first = win.dataset.loaded !== '1';
+  win.classList.toggle('app-loading', first);
+  if(first) deskSkelShow();
+  const seq = deskAppSeq;                 // deskMountApp 里已经作废过上一批，这里取新号
+  // 等这一帧画完（翻页已经开跑）再排定时器：动画期间主线程尽量空着
+  deskAppLoadRaf = requestAnimationFrame(() => {
+    deskAppLoadTimer = setTimeout(() => {
+      if(seq !== deskAppSeq || deskAppWin !== win) return;   // 期间翻了别的 App，这批活作废
+      let ret;
+      try { ret = app.open(); } catch(e){ console.warn('[app] 打开失败', e); }
+      win.dataset.loaded = '1';
+      deskSkelWatch(win, ret);
+    }, DESK_FLIP_MS);
+  });
+}
+
+/* 什么时候撤骨架？**模块真的画出东西**才算数。
+ * 只看「同步那段跑完了」会漏：模块可能先 await 网络，窗口里一个节点都没有，
+ * 骨架一撤就剩一块白板（用户看到的就是「载入中突然没了、界面还空着」）。
+ * 所以盯三件事：DOM 有变化（模块开始渲染）／open() 的 promise 落定／兜底 3 秒。 */
+function deskSkelWatch(win, ret){
+  let settled = false;
+  if(ret && typeof ret.then === 'function'){
+    ret.then(() => { settled = true; }, () => { settled = true; });
+  }
+  const t0 = performance.now();
+  const finish = () => {
+    win.classList.remove('app-loading');
+    deskSkelHide();
+  };
+  let mo = null;
+  if(window.MutationObserver){
+    mo = new MutationObserver(() => {
+      // 等这一批 DOM 写完、画上屏再撤
+      requestAnimationFrame(() => { if(mo) mo.disconnect(); finish(); });
+    });
+    mo.observe(win, { childList: true, subtree: true, characterData: true });
+  }
+  const tick = () => {
+    if(win !== deskAppWin){ if(mo) mo.disconnect(); return; }   // 已经翻走了，别再管
+    if(settled || win.scrollHeight > 160){ if(mo) mo.disconnect(); finish(); return; }
+    if(performance.now() - t0 > 3000){ if(mo) mo.disconnect(); finish(); return; }
+    setTimeout(tick, 120);
+  };
+  setTimeout(tick, 120);
+}
+
+function closeModelsWin(){
+  deskCloseWin($('modelsWin'));
+}
+
+/* ---------- App 页：双击图标整页翻过去，不再是浮在桌面上的弹窗 ----------
+ * 各 App 的内部实现仍是原来的 .os-win（模块里按 id 取元素、按 closest('.os-win')
+ * 找容器，都不依赖它在 DOM 的哪一层），这里只负责把窗口节点搬进 #deskAppHost
+ * 并在关闭时原样放回，所以打开逻辑与内容代码一行都不用改。 */
+const DESK_APP_META = {
+  chat:     { title: 'AI 对话', sub: '问点什么，或让它画一张', win: 'chatWin'  },
+  store:    { title: '模型商店', sub: '安装 / 删除本地模型', win: 'storeWin'  },
+  comfy:    { title: '本地生图', sub: 'ComfyUI 引擎',        win: 'comfyWin'  },
+  gallery:  { title: '图库',     sub: '生成结果与素材',      win: 'libWin'    },
+  modelLib: { title: '模型库',   sub: '本机模型文件',        win: 'libWin'    },
+  models:   { title: '模型',     sub: '引擎与 Provider',     win: 'modelsWin' }
+};
+let deskAppWin = null;                    // 当前挂在 App 页里的窗口
+const deskAppHome = new WeakMap();        // 窗口节点 → 原来的父节点 / 下一个兄弟
+
+/* 把窗口搬进 App 页并翻过去。meta 不传就按窗口 id 反查 DESK_APP_META。 */
+function deskMountApp(win, title, sub){
+  if(!win) return false;
+  const host = $('deskAppHost');
+  if(!host){ win.classList.remove('hidden'); return false; }   // 壳里没有 App 页时退回弹窗
+  deskCancelAppLoad();        // 换页了：上一批延迟加载作废（模块也会直接调本函数，不只 openDeskApp）
+  deskCancelRestore();        // 上一次「返回」还没搬完节点的话，别再插一脚
+  deskSkelHide();             // 上一页残留的骨架先撤（openDeskApp 紧接着会按需重开）
+  if(deskAppWin && deskAppWin !== win) deskAppRestore(deskAppWin);
+  if(!deskAppHome.has(win)) deskAppHome.set(win, { parent: win.parentElement, next: win.nextSibling });
+  // 已经在 App 页里就别再 appendChild：同一个节点重新插入会多一次布局与重绘
+  if(win.parentElement !== host) host.appendChild(win);
+  win.classList.remove('hidden');
+  deskAppWin = win;
+  /* 窗口归属变了，广播一次：对话 App 的输入条要跟着窗口搬（桌面底部 ↔ 对话窗口底部）。
+     绑在窗口生命周期上而不是绑在「用户点了哪个按钮」上——
+     返回按钮（#deskAppBack）走的是 deskAppLeave()，它不经过对话模块自己的 close，
+     靠事件才能保证输入条一定会被搬回桌面，不会跟着窗口一起被隐藏。 */
+  try{ window.dispatchEvent(new CustomEvent('openagi:app-mounted', { detail: { win: win.id || '' } })); }catch(e){}
+  const wall = $('deskWall');
+  if(wall){
+    /* 翻页状态只留一个（app-open），免得两页同时翻过来。
+       对话以前有自己那套 chat-open，现在它也是普通 App，走同一条路。 */
+    wall.classList.remove('chat-open');
+    wall.classList.add('app-open');
+  }
+  const t = $('deskAppTitle');
+  if(t) t.textContent = title || '应用';
+  const s = $('deskAppSub');
+  if(s){ s.textContent = sub || ''; s.hidden = !sub; }
+  return true;
+}
+
+/* 隐藏窗口并放回搬迁前的位置（父节点没了就退回桌面层，绝不把节点丢掉） */
+function deskAppRestore(win){
+  if(!win) return;
+  const home = deskAppHome.get(win);
+  deskAppHome.delete(win);
+  win.classList.remove('app-loading');   // 加载还没跑就被关掉时，别把骨架留在节点上
+  win.classList.add('hidden');
+  try{ window.dispatchEvent(new CustomEvent('openagi:app-restored', { detail: { win: win.id || '' } })); }catch(e){}
+  if(home && home.parent && home.parent.isConnected){
+    home.parent.insertBefore(win, (home.next && home.next.parentNode === home.parent) ? home.next : null);
+  }else{
+    const wall = $('deskWall');
+    if(wall) wall.appendChild(win);
+  }
+}
+
+/* 返回桌面：把当前 App 放回原位、撤掉翻页状态。
+ * 卸载也分两拍：这一帧只改 class（翻页立刻开跑），节点搬运那一拍挪到下一帧，
+ * 免得「切 class + 重排整面墙」挤在同一帧里，起手就顿一下。 */
+let deskRestoreRaf = 0;
+function deskCancelRestore(){
+  if(deskRestoreRaf) cancelAnimationFrame(deskRestoreRaf);
+  deskRestoreRaf = 0;
+}
+function deskAppLeave(){
+  if(!deskAppWin) return false;
+  const win = deskAppWin;
+  deskAppWin = null;
+  deskCancelAppLoad();          // 还没开跑的加载就别跑了
+  deskSkelHide();               // 骨架一起淡掉，别跟着翻回去
+  const wall = $('deskWall');
+  if(wall) wall.classList.remove('app-open');
+  deskCancelRestore();
+  deskRestoreRaf = requestAnimationFrame(() => {
+    deskRestoreRaf = 0;
+    deskAppRestore(win);
+  });
+  return true;
+}
+
+/* 统一关闭入口：正显示在 App 页里的走翻页返回，其余（如图片编辑器弹窗）只隐藏 */
+function deskCloseWin(win){
+  if(!win) return;
+  if(win === deskAppWin) deskAppLeave();
+  else win.classList.add('hidden');
+}
+
+(function bindDeskAppPage(){
+  const back = $('deskAppBack');
+  if(back) back.addEventListener('click', () => deskAppLeave());
+})();
 
 $('deskWall').addEventListener('pointerdown', e => {
-  if(e.target === $('deskWall') || e.target === $('deskIcons')) clearDeskSel();
+  // 空白处（外围白底 / 灰底画布 / 图标容器）点击都取消选中
+  if(e.target === $('deskWall') || e.target === $('deskIcons') || e.target === $('deskCanvas')) clearDeskSel();
 });
-
-function openBase(id){
-  baseSetTab(id);
-  showView('base');
-}
-
-function baseSetTab(name){
-  baseTab = ['chat','t2i','i2i'].includes(name) ? name : 'chat';
-  localStorage.setItem('hf_base_tab', baseTab);
-  document.querySelectorAll('.base-tab').forEach(t => {
-    const on = t.dataset.base === baseTab;
-    t.classList.toggle('active', on);
-    t.setAttribute('aria-selected', String(on));
-  });
-  document.querySelectorAll('.base-pane').forEach(p => {
-    p.classList.toggle('hidden', p.dataset.pane !== baseTab);
-  });
-  refreshBaseState();
-}
-
-function refreshBaseState(){
-  const imgOk = imageReady();
-  $('t2iMeta').textContent = imgOk ? '就绪' : '待配置';
-  $('i2iEngine').textContent = isTripo() ? 'Tripo V3' : 'OpenAI 兼容';
-  $('i2iMeta').textContent = baseRefImage ? '已载入' : '未载入';
-}
-
-function setBaseStatus(id, msg, cls){
-  const el = $(id);
-  if(!el) return;
-  el.textContent = msg || '';
-  el.className = 'base-status ' + (cls || '');
-}
-
-function renderBaseChat(){
-  const log = $('chatLog');
-  log.innerHTML = '';
-  if(!baseMsgs.length){
-    log.innerHTML = '<div class="chat-empty">输入一句话，验证语言模型是否可用。支持多轮上下文。</div>';
-    return;
-  }
-  baseMsgs.forEach(m => {
-    const row = document.createElement('div');
-    row.className = 'msg ' + m.role + (m.error ? ' msg-error' : '');
-    const role = document.createElement('div');
-    role.className = 'msg-role';
-    role.textContent = m.role === 'user' ? '你' : 'AI';
-    const body = document.createElement('div');
-    body.className = 'msg-body';
-    // 思考过程单独折叠，默认收起：正文优先，需要排查时再展开
-    if(m.reasoning){
-      const det = document.createElement('details');
-      det.className = 'msg-think';
-      const sum = document.createElement('summary');
-      sum.textContent = '思考过程 · ' + m.reasoning.length + ' 字';
-      const pre = document.createElement('div');
-      pre.textContent = m.reasoning;
-      det.append(sum, pre);
-      body.appendChild(det);
-    }
-    const text = document.createElement('div');
-    text.textContent = m.content;
-    body.appendChild(text);
-    row.append(role, body);
-    log.appendChild(row);
-  });
-  log.scrollTop = log.scrollHeight;
-}
-
-async function baseChatSend(){
-  if(baseChatBusy) return;
-  const input = $('chatInput');
-  const text = input.value.trim();
-  if(!text) return;
-  if(!llmReady()){
-    setBaseStatus('chatStatus', '语言模型未配置：填写 API Key、接口地址与模型后再试', 'error');
-    openSettings('llm');
-    return;
-  }
-  input.value = '';
-  baseMsgs.push({ role:'user', content:text });
-  renderBaseChat();
-  baseChatBusy = true;
-  const btn = $('btnChatSend');
-  btn.disabled = true;
-  btn.textContent = '发送中…';
-  setBaseStatus('chatStatus', '请求中…');
-  try{
-    const messages = baseMsgs.filter(m => !m.error).map(m => ({ role: m.role, content: m.content }));
-    const replyMsg = { role:'assistant', content:'' };
-    baseMsgs.push(replyMsg);
-    renderBaseChat();
-    const reply = await llmChatMessagesStream($('chatSystem').value.trim(), messages, (acc, piece, info) => {
-      replyMsg.content = acc;
-      if(info && info.reasoning) replyMsg.reasoning = info.reasoning;
-      setBaseStatus('chatStatus', streamPhaseText(acc, info));
-      renderBaseChat();
-    });
-    if(!reply) throw new Error('模型没有返回内容');
-    replyMsg.content = reply;
-    renderBaseChat();
-    setBaseStatus('chatStatus', '已返回 · ' + ($('llmModel').value.trim() || '模型'), 'ok');
-  } catch(e){
-    const empty = baseMsgs.findIndex(m => m.role === 'assistant' && !m.content && !m.error);
-    if(empty >= 0) baseMsgs.splice(empty, 1);
-    baseMsgs.push({ role:'assistant', content:friendlyErr(e), error:true });
-    renderBaseChat();
-    setBaseStatus('chatStatus', friendlyErr(e), 'error');
-  } finally {
-    baseChatBusy = false;
-    btn.disabled = false;
-    btn.textContent = '发送';
-  }
-}
-
-function baseImageGuard(statusId){
-  if(imageReady()) return true;
-  if(isTripoWeb()){
-    setBaseStatus(statusId, 'Tripo 网页账号未连接：运行 start-tripo-bridge.bat，并在设置中打开登录页', 'error');
-    openSettings('image');
-    return false;
-  }
-  setBaseStatus(statusId, '图像模型未配置：在设置 → 图像生成中选择引擎并填写 Key 与模型', 'error');
-  openSettings('image');
-  return false;
-}
-
-function showBaseImage(boxId, url, openBtnId){
-  const box = $(boxId);
-  box.innerHTML = '';
-  const img = document.createElement('img');
-  img.src = url;
-  img.alt = '生成结果';
-  img.addEventListener('click', () => window.open(url, '_blank'));
-  box.appendChild(img);
-  if(openBtnId){
-    const b = $(openBtnId);
-    b.classList.remove('hidden');
-    b.onclick = () => window.open(url, '_blank');
-  }
-}
-
-async function baseT2I(){
-  const prompt = $('t2iPrompt').value.trim();
-  if(!prompt){ setBaseStatus('t2iStatus', '请先填写提示词', 'error'); return; }
-  if(!baseImageGuard('t2iStatus')) return;
-  const btn = $('btnT2I');
-  btn.disabled = true;
-  btn.textContent = '生成中…';
-  setBaseStatus('t2iStatus', isTripoWeb() ? '通过 Tripo 网页账号生成，请留意浏览器窗口…' : (isTripo() ? '提交 Tripo 文生图任务并等待结果…' : '请求图像接口…'));
-  try{
-    const url = await wfImage(prompt);
-    showBaseImage('t2iResult', url, 'btnT2IOpen');
-    setBaseStatus('t2iStatus', '生成完成 · ' + (isTripoWeb() ? 'Tripo 网页账号' : (isTripo() ? 'Tripo' : ($('imgModel').value.trim() || $('llmModel').value.trim()))), 'ok');
-  } catch(e){
-    setBaseStatus('t2iStatus', friendlyErr(e), 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '生成图片';
-  }
-}
-
-function readBaseRef(file){
-  if(!file) return;
-  const r = new FileReader();
-  r.onload = () => {
-    baseRefImage = r.result;
-    $('i2iPreview').innerHTML = `<img src="${r.result}" alt="参考图">`;
-    $('i2iDrop').classList.add('has-image');
-    $('i2iMeta').textContent = '已载入';
-  };
-  r.readAsDataURL(file);
-}
-
-async function baseI2I(){
-  const prompt = $('i2iPrompt').value.trim();
-  if(!baseRefImage){ setBaseStatus('i2iStatus', '请先载入参考图', 'error'); return; }
-  if(!prompt){ setBaseStatus('i2iStatus', '请先填写提示词', 'error'); return; }
-  if(!baseImageGuard('i2iStatus')) return;
-  const btn = $('btnI2I');
-  btn.disabled = true;
-  btn.textContent = '生成中…';
-  setBaseStatus('i2iStatus', isTripo() ? '上传参考图并提交 Tripo 图生图任务…' : '请求图像接口…');
-  try{
-    const url = await wfImage(prompt, baseRefImage);
-    showBaseImage('i2iResult', url);
-    setBaseStatus('i2iStatus', '生成完成 · ' + (isTripo() ? 'Tripo' : ($('imgModel').value.trim() || $('llmModel').value.trim())), 'ok');
-  } catch(e){
-    setBaseStatus('i2iStatus', friendlyErr(e), 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '生成变体';
-  }
-}
-
-$('btnBaseBack').addEventListener('click', () => showView('home'));
-$('btnBaseSettings').addEventListener('click', () => openSettings(baseTab === 'chat' ? 'llm' : 'image'));
-document.querySelectorAll('.base-tab').forEach(t => t.addEventListener('click', () => baseSetTab(t.dataset.base)));
-$('btnChatSend').addEventListener('click', baseChatSend);
-$('chatInput').addEventListener('keydown', e => {
-  if(e.key === 'Enter' && (e.ctrlKey || e.metaKey)){ e.preventDefault(); baseChatSend(); }
-});
-$('btnChatClear').addEventListener('click', () => {
-  if(baseChatBusy) return;
-  baseMsgs = [];
-  renderBaseChat();
-  setBaseStatus('chatStatus', '');
-});
-$('btnT2I').addEventListener('click', baseT2I);
-$('btnI2I').addEventListener('click', baseI2I);
-$('i2iDrop').addEventListener('click', () => $('i2iFile').click());
-$('btnI2IPick').addEventListener('click', () => $('i2iFile').click());
-$('i2iFile').addEventListener('change', e => {
-  if(e.target.files[0]) readBaseRef(e.target.files[0]);
-  e.target.value = '';
-});
-['dragover','dragenter'].forEach(ev => $('i2iDrop').addEventListener(ev, e => { e.preventDefault(); $('i2iDrop').classList.add('drag'); }));
-['dragleave','drop'].forEach(ev => $('i2iDrop').addEventListener(ev, e => { e.preventDefault(); $('i2iDrop').classList.remove('drag'); }));
-$('i2iDrop').addEventListener('drop', e => { if(e.dataTransfer.files[0]) readBaseRef(e.dataTransfer.files[0]); });
 
 function taskPin(name, type){
   return { id: uid(), name, type };
@@ -621,6 +650,7 @@ function createFlow(){
 function openFlow(id){
   const found = FLOWS.find(f => f.id === id);
   if(!found) return;
+  wfActiveId = id;
   bp = JSON.parse(JSON.stringify(found));
   bp.links = bp.links || [];
   bp.vars = Array.isArray(bp.vars) ? bp.vars : [];
@@ -642,9 +672,24 @@ function openFlow(id){
   bpVarAddOpen = false;
   hideVarMenu();
   showView('bp');
-  initNodeLib();   // 节点库要按当前流程刷新：已存在的骨架节点不再列出
-  renderNodes();
-  requestAnimationFrame(fitView);
+  /* 转场期间主线程要空着：先把画布清空（清 innerHTML 很便宜），
+     节点、连线、节点库都等翻完再建。否则 49 个节点 + 78 条连线同步建 DOM + 量尺寸，
+     会把这 340ms 整段吃掉，动画变成「直接跳到终点」。 */
+  viewCancelSwap();               // 连点两个流程时，前一轮没跑的渲染任务作废
+  $('bpNodes').innerHTML = '';
+  $('bpFrames').innerHTML = '';
+  $('bpLinks').innerHTML = '';
+  $('bpEmpty').classList.add('hidden');
+  viewAfterSwap(() => {
+    initNodeLib();   // 节点库要按当前流程刷新：已存在的骨架节点不再列出
+    const cv = $('bpCanvas');
+    if(cv) cv.classList.add('nodes-in');
+    renderNodes();
+    // 同步 fit：省掉「先按旧缩放闪一帧、下一帧再归位」的跳动；
+    // 测试里 flushViewSwap() 之后也要求节点已经摆好，不然紧接着的拖线会落空
+    fitView();
+    if(cv) setTimeout(() => cv.classList.remove('nodes-in'), 320);
+  });
 }
 
 function snapshotBp(){
@@ -720,14 +765,30 @@ function screenToWorld(cx, cy){
   const r = $('bpCanvas').getBoundingClientRect();
   return { x: (cx - r.left - bpPan.x) / bpZoom, y: (cy - r.top - bpPan.y) / bpZoom };
 }
+/* 引脚位置缓存：量一次，记下「量的时候节点在哪」，之后全靠加法。
+   为什么必须缓存：`getBoundingClientRect()` 会强制同步布局，而拖拽时我们每帧都在写
+   `transform`/`d`，一写一读就是一次完整重排（78 条线 = 156 次读）。UE 的 SGraphPanel
+   从来不这么干——引脚屏幕坐标是节点位置 + 缓存的本地偏移，纯算术，因此拖动时一次布局都不用。
+   世界坐标与 bpPan/bpZoom 无关（公式里约掉了），所以缩放平移都不会让缓存失效；
+   只有「节点自身尺寸/结构变了」才失效，那是 renderNodes() 的事。 */
+const pinWorld = new Map();      // 'nodeId|dir|key' -> { x, y, nx, ny }
+function pinWorldReset(){ pinWorld.clear(); }
+
 function portPos(nodeId, dir, key){
+  const n = nodeById(nodeId);
+  if(!n) return null;
+  const k = nodeId + '|' + dir + '|' + key;
+  const c = pinWorld.get(k);
+  if(c) return { x: c.x + (n.x - c.nx), y: c.y + (n.y - c.ny) };   // 热路径：0 次 DOM 读
   const el = $('n-' + nodeId);
-  if(!el) return null;
-  const pin = el.querySelector(`.pin[data-dir="${dir}"][data-key="${key}"]`);
+  const pin = el && el.querySelector(`.pin[data-dir="${dir}"][data-key="${key}"]`);
   if(!pin) return null;
   const r = pin.getBoundingClientRect();
-  const c = $('bpCanvas').getBoundingClientRect();
-  return { x: (r.left + r.width / 2 - c.left - bpPan.x) / bpZoom, y: (r.top + r.height / 2 - c.top - bpPan.y) / bpZoom };
+  const cv = $('bpCanvas').getBoundingClientRect();
+  const x = (r.left + r.width / 2 - cv.left - bpPan.x) / bpZoom;
+  const y = (r.top + r.height / 2 - cv.top - bpPan.y) / bpZoom;
+  pinWorld.set(k, { x, y, nx: n.x, ny: n.y });
+  return { x, y };
 }
 function linkD(a, b){
   const dx = Math.max(42, Math.abs(b.x - a.x) * .5);
@@ -751,26 +812,79 @@ function pinType(n, key){
   return t || 'string';
 }
 
-function renderLinks(){
+/* 连线渲染：**增量更新**。
+ * 旧版每次把全部 path 删掉重建（78 条 = 78 次 createElement + 78 个闭包），
+ * 而且「量一条 → 建一条 → 插一条」交替进行，每插一次 DOM 就废掉一次布局缓存，
+ * 78 条连线就是 78 次强制重排——拖节点时每帧都这么走，必卡。
+ * 现在：元素按 link.id 复用；先批量量完（量的时候不写 DOM，只触发一次布局），再统一写属性。 */
+const bpLinkEls = new Map();      // link.id → <path>
+
+function pinElOf(nodeId, dir, key){
+  const el = $('n-' + nodeId);
+  return el ? el.querySelector(`.pin[data-dir="${dir}"][data-key="${key}"]`) : null;
+}
+
+/* movedNodes 传节点 id 的 Set 时只更新「两端沾到这些节点」的连线（拖拽时的热路径） */
+function renderLinks(movedNodes){
   if(!bp) return;
   const svg = $('bpLinks');
-  svg.querySelectorAll('.bp-link:not(.temp)').forEach(el => el.remove());
-  bp.links.forEach(l => {
+  if(!svg) return;
+  const only = (movedNodes instanceof Set && movedNodes.size) ? movedNodes : null;
+  const keep = new Set();
+  const jobs = [];
+
+  // 引脚坐标走缓存（冷启动才量，热路径纯算术）：拖拽时这里一次布局都不触发
+  for(const l of bp.links){
+    keep.add(l.id);
+    const el = bpLinkEls.get(l.id);
+    if(only && el && el.isConnected && !only.has(l.from.node) && !only.has(l.to.node)) continue;
     const a = portPos(l.from.node, 'out', l.from.key);
     const b = portPos(l.to.node, 'in', l.to.key);
-    if(!a || !b) return;
-    const p = document.createElementNS(SVG_NS, 'path');
-    const pt = pinType(nodeById(l.from.node), l.from.key);
-    p.setAttribute('class', 'bp-link t-' + pt + (l.id === bpRunLinkId ? ' active' : ''));
-    p.setAttribute('d', linkD(a, b));
-    p.addEventListener('click', () => {
-      bp.links = bp.links.filter(x => x.id !== l.id);
-      renderNodes();
-      scheduleFlowSave();
-    });
-    svg.appendChild(p);
-  });
+    if(!a || !b){
+      if(el){ el.remove(); bpLinkEls.delete(l.id); }
+      continue;
+    }
+    jobs.push({ l, el, a, b });
+  }
+
+  let frag = null;
+  for(const j of jobs){
+    const a = j.a, b = j.b;
+    let el = j.el;
+    if(!el || !el.isConnected){
+      el = document.createElementNS(SVG_NS, 'path');
+      el.dataset.link = j.l.id;          // 点击删除走事件委托，不再逐条绑监听
+      bpLinkEls.set(j.l.id, el);
+      (frag || (frag = document.createDocumentFragment())).appendChild(el);
+    }
+    const pt = pinType(nodeById(j.l.from.node), j.l.from.key);
+    const cls = 'bp-link t-' + pt + (j.l.id === bpRunLinkId ? ' active' : '');
+    if(el.getAttribute('class') !== cls) el.setAttribute('class', cls);
+    el.setAttribute('d', linkD(a, b));
+  }
+  if(frag) svg.appendChild(frag);
+
+  // 已经不在 bp.links 里的连线，元素一并清掉
+  bpLinkEls.forEach((el, id) => { if(!keep.has(id)){ el.remove(); bpLinkEls.delete(id); } });
 }
+
+/* 点连线删除：一条委托监听，替掉原来「每条 path 一个闭包」 */
+(function bindLinkClick(){
+  const svg = $('bpLinks');
+  if(!svg || svg.dataset.bound === '1') return;
+  svg.dataset.bound = '1';
+  svg.addEventListener('click', e => {
+    const el = e.target.closest ? e.target.closest('.bp-link') : null;
+    if(!el || el.classList.contains('temp')) return;
+    const id = el.dataset.link;
+    if(!id) return;
+    bp.links = bp.links.filter(x => x.id !== id);
+    bpLinkEls.delete(id);
+    el.remove();
+    renderNodes();
+    scheduleFlowSave();
+  });
+})();
 
 /* ---------------------------------------------------------------
  * 统一参数控件：所有节点的参数都走这里，保证形态一致
@@ -989,7 +1103,7 @@ function makeParamPort(spec, n, p, dir){
     || (p && p.type)
     || (PIN_META[spec.key] ? PIN_META[spec.key].type : null)
     || 'string';
-  pin.style.setProperty('--pin-c', PIN_COLORS[pin.dataset.type] || '#5d6bb8');
+  pin.style.setProperty('--pin-c', PIN_COLORS[pin.dataset.type] || '#6a7488');
 
   const label = document.createElement('span');
   label.className = 'port-label';
@@ -1028,7 +1142,7 @@ function makePort(key, dir, meta){
   pin.dataset.dir = dir;
   pin.dataset.key = key;
   pin.dataset.type = meta.type;
-  pin.style.setProperty('--pin-c', PIN_COLORS[meta.type] || '#5d6bb8');
+  pin.style.setProperty('--pin-c', PIN_COLORS[meta.type] || '#6a7488');
   const label = document.createElement('span');
   label.textContent = meta.label;
   label.className = 'port-label';
@@ -1067,7 +1181,7 @@ function nodeEl(n){
   head.className = 'node-head';
   const dot = document.createElement('span');
   dot.className = 'node-dot ' + d.dot;
-  if(isVarNode && v) dot.style.background = PIN_COLORS[v.type] || '#7c8cff';
+  if(isVarNode && v) dot.style.background = PIN_COLORS[v.type] || '#e88a00';
   const title = document.createElement('span');
   title.className = 'node-title';
   title.textContent = isVarNode
@@ -1183,9 +1297,10 @@ function nodeEl(n){
         fields.appendChild(tipEl('点击右上角 + 添加' + (n.type === 'start' ? '输入' : '输出') + '参数'));
       }
     } else if(s.ctl === 'taskPins'){
+      // 输入 / 输出引脚都由管理行自己画 pin（行内探出到节点边缘），
+      // 这样引脚和它对应的「设置行」严格对齐；列里不再重复画，避免同一个引脚出现两次。
       fields.appendChild(taskPinSection(n, 'in'));
-      // 输出引脚已经渲染在右列，管理行不再重复画一个 pin（否则同一个输出会有两个引脚）
-      fields.appendChild(taskPinSection(n, 'out', { noPin: true }));
+      fields.appendChild(taskPinSection(n, 'out'));
     } else if(s.ctl === 'inPins'){
       // 引脚本体已经渲染在左列（可拖线），这里只保留改名 / 改类型的行
       fields.appendChild(taskPinSection(n, 'in', { noPin: n.type === 'smartBranch' }));
@@ -1372,7 +1487,7 @@ function endParamPort(n, param){
   pin.dataset.dir = 'in';
   pin.dataset.key = param.id;
   pin.dataset.type = param.type;
-  pin.style.setProperty('--pin-c', PIN_COLORS[param.type] || '#5d6bb8');
+  pin.style.setProperty('--pin-c', PIN_COLORS[param.type] || '#6a7488');
   const body = document.createElement('div');
   body.className = 'param-port-body';
   body.appendChild(paramRow(n, param));
@@ -1656,7 +1771,7 @@ function taskPinRow(n, kind, p, opts){
     pin.dataset.dir = dir;
     pin.dataset.key = p.id;
     pin.dataset.type = p.type;
-    pin.style.setProperty('--pin-c', PIN_COLORS[p.type] || '#5d6bb8');
+    pin.style.setProperty('--pin-c', PIN_COLORS[p.type] || '#6a7488');
     row.appendChild(pin);
   }
   const head = document.createElement('div');
@@ -1953,6 +2068,8 @@ function renderNodes(){
   if(!bp) return;
   const host = $('bpNodes');
   host.innerHTML = '';
+  pinWorldReset();      // 节点是重建的，引脚的本地偏移全部作废
+  if(typeof edNodeSizeReset === 'function') edNodeSizeReset();   // 节点尺寸缓存同理
   bp.nodes.forEach(n => {
     const el = nodeEl(n);
     if(n.id === bpRunNodeId) el.classList.add('running');

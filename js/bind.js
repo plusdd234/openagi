@@ -14,7 +14,6 @@ const _dropped = FLOWS.reduce((sum, f) => sum + migrateExecLinks(f), 0);
 if(_dropped){ persistFlows(); console.info('[blueprint] 已清理 ' + _dropped + ' 条失效执行线（输入节点不再提供执行输出）'); }
 
 // ---- 交互绑定 ----
-$('btnNewFlow').addEventListener('click', createFlow);
 // 工作流导出 / 导入（手动备份，防丢失）
 $('btnExportFlows').addEventListener('click', exportFlows);
 $('btnImportFlows').addEventListener('click', () => $('fileImportFlows').click());
@@ -26,10 +25,21 @@ $('fileImportFlows').addEventListener('change', e => {
   reader.onerror = () => { bpToast('读取文件失败'); e.target.value = ''; };
   reader.readAsText(file);
 });
-$('btnFlowsWinClose').addEventListener('click', closeFlowsWin);
+$('btnModelsWinClose').addEventListener('click', closeModelsWin);
+$('btnStoreWinClose').addEventListener('click', () => deskCloseWin($('storeWin')));
+$('btnComfyWinClose').addEventListener('click', () => deskCloseWin($('comfyWin')));
+$('btnLibWinClose').addEventListener('click', () => deskCloseWin($('libWin')));
+$('btnImgEditClose').addEventListener('click', () => $('imgEditWin').classList.add('hidden'));
+$('btnDeskNewFlow').addEventListener('click', createFlow);
 document.addEventListener('keydown', e => {
   if(e.key !== 'Escape') return;
-  if(!$('flowsWin').classList.contains('hidden') && $('settingsBackdrop').classList.contains('hidden')) closeFlowsWin();
+  if($('settingsBackdrop').classList.contains('hidden')){
+    if(!$('imgEditWin').classList.contains('hidden')) $('imgEditWin').classList.add('hidden');
+    else if(!$('libWin').classList.contains('hidden')) deskCloseWin($('libWin'));
+    else if(!$('comfyWin').classList.contains('hidden')) deskCloseWin($('comfyWin'));
+    else if(!$('storeWin').classList.contains('hidden')) deskCloseWin($('storeWin'));
+    else if(!$('modelsWin').classList.contains('hidden')) closeModelsWin();
+  }
 });
 $('brandHome').addEventListener('click', () => {
   if(bp){ clearTimeout(bpSaveTimer); saveFlowNow(); bp = null; }
@@ -225,6 +235,5 @@ initPresets();
 renderPresetLinks('llmPresetLinks');
 initImgPresets();
 syncEngineUI();
-baseSetTab(baseTab);
 renderHome();
 showView('home');

@@ -73,7 +73,7 @@ const check = (ok, name, extra) => {
       { id: uid(), from: { node: sp.id, key: 'text' }, to: { node: rs.id, key: 'text' } }
     ];
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     const el = document.getElementById('n-' + sp.id);
     const pins = d => Array.from(el.querySelectorAll('.pin.' + d)).map(p => ({ key: p.dataset.key, type: p.dataset.type }));
     const labels = Array.from(el.querySelectorAll('.view-bool-label')).map(t => (t.textContent || '').trim());

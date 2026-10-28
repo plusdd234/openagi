@@ -31,7 +31,7 @@ function check(ok, name, detail){
     flow.nodes = [s, t];
     flow.links = [{ id: uid(), from: { node: s.id, key: 'exec' }, to: { node: t.id, key: 'exec' } }];
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     return null;
   }, LONG2);
   await page.waitForTimeout(700);

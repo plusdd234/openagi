@@ -102,7 +102,7 @@ const LEGACY = {
   console.log('\n=== 2. 老流程打开即迁移 ===');
   const r2 = await page.evaluate(legacy => {
     FLOWS.unshift(JSON.parse(JSON.stringify(legacy)));
-    openFlow('legacy_branch_flow');
+    openFlow('legacy_branch_flow'); flushViewSwap();
     const n = bp.nodes.find(x => x.id === 'L_b');
     const linksTo = bp.links.filter(l => l.to.node === 'L_b');
     const dataTo = linksTo.filter(l => l.to.key !== 'exec');

@@ -99,7 +99,7 @@ const check = (ok, name, extra) => {
     const vs = newNode('varSet', 0, 0);
     vs.data.varId = 'v1';
     const flow = { id:'var_' + Date.now(), name:'变量流程', nodes:[vg, vs], links:[], vars:[{ id:'v1', name:'素材', type:'image', value:'' }], updated:Date.now(), lastRun:null };
-    FLOWS.unshift(flow); openFlow(flow.id);
+    FLOWS.unshift(flow); openFlow(flow.id); flushViewSwap();
     const liveGet = bp.nodes.find(x => x.type === 'varGet');
     const liveSet = bp.nodes.find(x => x.type === 'varSet');
     return {
@@ -166,7 +166,7 @@ const check = (ok, name, extra) => {
       ]
     };
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     const v = validateFlow(snapshotBp());
     await runFlow();
     const live = bp.nodes.find(x => x.type === 'echoNote');

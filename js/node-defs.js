@@ -91,7 +91,11 @@ registerNode({
     outputs:[seedPin('结果','string')]
   }, params:null }),
   pins: n => ({ in:(n.data.inputs||[]).map(p => ({ key:p.id, label:p.name, type:p.type })), out:(n.data.outputs||[]).map(p => ({ key:p.id, label:p.name, type:p.type })) }),
-  render:{ in:false },   // 输入引脚由「输入引脚」管理区渲染，输出走右列
+  /* 输入 / 输出引脚都不走左右列，全部由「输入引脚」「输出引脚」管理区渲染。
+   * 输出曾经走右列，结果引脚飘在节点右上方（instruction 旁边），离它对应的
+   * 「输出引脚」设置行隔了大半个节点，看起来像另一组无关的引脚。
+   * 改成行内后，每个输出引脚就长在自己那一行的右边缘，和设置位置垂直对齐。 */
+  render:{ in:false, out:false },
   run: async ({ n, input, paramIn, setStatus, log, startedAt }) => {
     const instruction = String((await paramIn('instruction')) || '').trim();
     const ins = n.data.inputs || [];

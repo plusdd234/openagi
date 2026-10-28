@@ -71,14 +71,39 @@ function blobTx(mode, fn){
   }).catch(() => false);
 }
 
-function blobPut(id, val){
-  BLOB_CACHE.set(id, val);          // 先落缓存：本会话内解析一定可用
-  BLOB_UNSAVED.add(id);
+/* 桌面端把大块数据写到磁盘资产库：图库能看到、能导出、不受 IndexedDB 配额限制。
+ * 网页版没有这条通道，继续走 IndexedDB——两条路都要通，不能因为换了后端就丢图。 */
+function deskAssets(){
+  const d = (typeof window !== 'undefined') ? window.openagiDesktop : null;
+  return (d && typeof d.assetPut === 'function' && typeof d.assetList === 'function') ? d : null;
+}
+function blobKindOf(val){
+  if(/^data:image\//.test(val)) return 'image';
+  if(/^data:(model\/|application\/(octet-stream|x-))/i.test(val)) return 'model';
+  return 'blob';
+}
+
+function blobPutIdb(id, val){
   return blobTx('readwrite', s => s.put(val, id)).then(ok => {
     if(ok) BLOB_UNSAVED.delete(id);
     else { _broken = true; blobRepairSoon(); }
     return ok;
   });
+}
+
+function blobPut(id, val){
+  BLOB_CACHE.set(id, val);          // 先落缓存：本会话内解析一定可用
+  BLOB_UNSAVED.add(id);
+  const d = deskAssets();
+  if(!d) return blobPutIdb(id, val);
+  /* 磁盘优先。写盘失败（无权限 / 资产库损坏）时回退 IndexedDB，
+   * 宁可两处都存一份，也不能因为换了存储后端把图弄丢。 */
+  return d.assetPut({ id, kind: blobKindOf(val), data: val, source: 'workflow' })
+    .then(r => {
+      if(r && r.ok){ BLOB_UNSAVED.delete(id); return true; }
+      return blobPutIdb(id, val);
+    })
+    .catch(() => blobPutIdb(id, val));
 }
 
 function blobDel(id){
@@ -87,24 +112,48 @@ function blobDel(id){
   return blobTx('readwrite', s => s.delete(id));
 }
 
-function blobLoadAll(){
+function blobLoadAllIdb(){
   return blobOpen().then(db => {
     if(!db) return 0;
     return new Promise(res => {
       let t;
-      try { t = db.transaction(BLOB_STORE_NAME, 'readonly'); } catch(e){ res(0); return; }
+      try{ t = db.transaction(BLOB_STORE_NAME, 'readonly'); }catch(e){ res(0); return; }
       let req;
-      try { req = t.objectStore(BLOB_STORE_NAME).openCursor(); } catch(e){ res(0); return; }
+      try{ req = t.objectStore(BLOB_STORE_NAME).openCursor(); }catch(e){ res(0); return; }
       let n = 0;
       req.onsuccess = () => {
         const c = req.result;
         if(!c){ res(n); return; }
         if(typeof c.value === 'string'){ BLOB_CACHE.set(String(c.key), c.value); n++; }
-        try { c.continue(); } catch(e){ res(n); }
+        try{ c.continue(); }catch(e){ res(n); }
       };
       req.onerror = () => res(n);
     });
   }).catch(() => 0);
+}
+
+/* 从磁盘资产库读回「流程真的引用到」的那些 id。
+ * 不能全量读：图库里可能躺着几百张图，逐个读成 dataURL 会吃掉几百 MB 内存，
+ * 而启动时真正需要的只有当前流程用到的几张。 */
+function blobLoadFromDisk(){
+  const d = deskAssets();
+  if(!d) return Promise.resolve(0);
+  const want = new Set();
+  try{ if(typeof FLOWS !== 'undefined' && FLOWS) blobCollectIds(FLOWS, want, new WeakSet()); }catch(e){}
+  try{ if(typeof bp !== 'undefined' && bp) blobCollectIds(bp, want, new WeakSet()); }catch(e){}
+  if(!want.size) return Promise.resolve(0);
+  let n = 0;
+  return Promise.all(Array.from(want).map(id => {
+    if(BLOB_CACHE.has(id)) return null;
+    return d.assetRead(id).then(r => {
+      if(r && r.ok && r.dataURL){ BLOB_CACHE.set(id, r.dataURL); n++; }
+      return null;
+    }).catch(() => null);
+  })).then(() => n);
+}
+
+function blobLoadAll(){
+  return blobLoadFromDisk().then(() => blobLoadAllIdb());
 }
 
 /* 全量载入一次；之后解析存根就是同步的 */

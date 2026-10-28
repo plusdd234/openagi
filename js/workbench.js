@@ -319,6 +319,8 @@ function switchTab(name){
     t.setAttribute('aria-selected', on ? 'true' : 'false');
   });
   document.querySelectorAll('.tabpane').forEach(p => p.classList.toggle('hidden', p.dataset.pane !== name));
+  // 资产占用随导入/删除随时变，切到这一页时重算一次，静态写死必然过期
+  if(name === 'assets' && typeof renderAssetsPane === 'function') renderAssetsPane();
 }
 function openSettings(tab){
   if(tab) switchTab(tab);
@@ -350,7 +352,7 @@ async function testRelay(){
       ? '请求发不出去'
       : String(e.message || '未知错误');
     $('relayStatus').textContent = `中转未连接（${why}）· 目标 ${target}。`
-      + '请双击 start-relay.bat 启动，或运行 node relay.js'
+      + '请双击 start.bat 启动（桌面模式下已托管本地中转），或运行 node plugins\relay\relay.js'
       + (issue ? '；另外：' + issue : '')
       + '。若开了系统代理，请确认代理放行 127.0.0.1。';
   }
@@ -363,7 +365,7 @@ $('btnRelayDefault') && $('btnRelayDefault').addEventListener('click', () => {
 $('btnTestRelay').addEventListener('click', testRelay);
 $('relayOn').addEventListener('change', () => {
   $('relayStatus').textContent = relayEnabled()
-    ? `已启用中转。先运行 node relay.js，再点击测试中转（${relayBase()}）。`
+    ? `已启用中转。先运行 node plugins\relay\relay.js，再点击测试中转（${relayBase()}）。`
     : '已关闭中转，恢复浏览器直连。';
 });
 $('btnSettings').addEventListener('click', () => openSettings());

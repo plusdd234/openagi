@@ -1,10 +1,10 @@
 {
   "name": "openagi",
-  "productName": "Open AGI",
+  "productName": "The seed",
   "version": "0.1.0",
-  "private": true,
-  "description": "Open AGI · 图像修复与 3D 生成工作台",
-  "author": "Open AGI",
+  "private": false,
+  "description": "The seed · 开源的 AI 工作流工作台（可视化节点 + 多引擎生图 + 3D 生成）",
+  "author": "The seed",
   "main": "electron/main.js",
   "scripts": {
     "dev": "electron .",
@@ -29,7 +29,7 @@
   },
   "build": {
     "appId": "com.openagi.desktop",
-    "productName": "Open AGI",
+    "productName": "The seed",
     "asar": true,
     "directories": {
       "output": "dist"
@@ -44,12 +44,8 @@
     ],
     "extraResources": [
       {
-        "from": "relay.js",
-        "to": "bridge/relay.js"
-      },
-      {
-        "from": "tripo-web.js",
-        "to": "bridge/tripo-web.js"
+        "from": "plugins",
+        "to": "bridge/plugins"
       },
       {
         "from": "node_modules/playwright-core",
@@ -75,9 +71,25 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Open AGI",
+      "shortcutName": "The seed",
       "deleteAppDataOnUninstall": false
     },
     "electronDist": "node_modules/electron/dist"
-  }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plusdd234/openagi.git"
+  },
+  "homepage": "https://github.com/plusdd234/openagi#readme",
+  "keywords": [
+    "ai",
+    "workflow",
+    "node-editor",
+    "image-generation",
+    "3d",
+    "comfyui",
+    "ollama",
+    "electron"
+  ]
 }

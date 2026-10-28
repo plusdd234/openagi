@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Open AGI · 图像修复与 3D 生成</title>
+<title>The seed</title>
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -16,10 +16,7 @@
         <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>
       </svg>
     </div>
-    <div>
-      <div class="brand-name">OPEN AGI</div>
-      <div class="brand-sub">图像修复 · 3D 生成</div>
-    </div>
+    <div class="brand-name">The seed</div>
   </div>
   <div class="appbar-right">
     <button class="status-chip off" id="stLLM" data-tab="llm" title="语言模型未配置">
@@ -31,6 +28,9 @@
     <button class="status-chip off" id="st3D" data-tab="image" title="3D 未启用">
       <span class="cfg-dot"></span><span class="sc-label">3D</span><span class="sc-value">未启用</span>
     </button>
+    <button class="status-chip off" id="stASSET" data-tab="assets" title="资产：图库与模型库">
+      <span class="cfg-dot"></span><span class="sc-label">资产</span><span class="sc-value">—</span>
+    </button>
     <button class="icon-btn" id="btnSettings" aria-label="设置" title="模型与接口设置">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
@@ -38,25 +38,201 @@
 </header>
 
 <section class="home desk" id="homeView">
+  <aside class="desk-side">
+    <div class="desk-side-head">
+      <span class="desk-side-title">工作流</span>
+      <span class="desk-side-count" id="deskSideCount">0</span>
+    </div>
+    <!-- 新建按钮放顶部：列表是主要操作区，入口不该被挤在下面 -->
+    <button class="desk-side-new" id="btnDeskNewFlow">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5.5v13M5.5 12h13"/></svg>
+      <span>新建工作流</span>
+    </button>
+    <div class="desk-side-list" id="deskSideList"></div>
+    <!-- 底部：本地存储（内存）占用 + 备份入口 -->
+    <div class="desk-side-foot">
+      <div class="wf-storage" id="wfStorage"></div>
+      <div class="desk-side-io">
+        <button type="button" class="desk-side-io-btn" id="btnExportFlows" title="把所有工作流导出为 JSON 文件（手动备份，可跨浏览器/跨机器使用）">导出</button>
+        <button type="button" class="desk-side-io-btn" id="btnImportFlows" title="从 JSON 文件导入工作流（同 id 取较新版本，不覆盖更新的）">导入</button>
+        <input type="file" id="fileImportFlows" accept="application/json,.json" hidden>
+      </div>
+    </div>
+  </aside>
   <div class="desk-wall" id="deskWall">
-    <div class="desk-icons" id="deskIcons"></div>
-    <div class="desk-tip">拖动图标可调整位置 · 双击打开应用</div>
-    <div class="desk-dock" id="deskDock"></div>
-    <div class="os-win hidden" id="flowsWin">
+    <!-- 桌面是「第一页」，AI 对话是「第二页」：发送后整页 3D 翻过去，桌面 App 全部离场 -->
+    <div class="desk-pages" id="deskPages">
+      <div class="desk-page desk-page-1" id="deskPage1">
+    <!-- App 层（图标画布）：四周留边距、垫一层灰底，和外围白底拉开层次 -->
+    <div class="desk-canvas" id="deskCanvas">
+      <div class="desk-icons" id="deskIcons"></div>
+    </div>
+    <!-- 底部 Dock（应用条）已移除：桌面图标本身就是全部入口 -->
+    <!-- 桌面 AI 对话：红框区的输入条。发送后整页翻到对话页 -->
+    <div class="desk-ai-wrap" id="deskAiWrap">
+      <div class="desk-ai" id="deskAi">
+        <div class="dai-head">
+          <div class="dai-atts" id="deskAiAtts"></div>
+          <textarea class="dai-text" id="deskAiText" rows="1" placeholder="问点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+        </div>
+        <div class="dai-bar">
+          <button type="button" class="dai-btn" id="deskAiAdd" title="添加图片附件">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M12 5.5v13M5.5 12h13"/></svg>
+          </button>
+          <!-- 原生 select 只当值容器（列表仍由它持有，测试与其他模块照旧读 .value / .options），
+               露在外面的是自绘的 .dai-pick 按钮，弹层 .dai-menu 由 desk-chat.js 挂到 body。 -->
+          <select class="dai-native" id="deskAiCtx" aria-hidden="true" tabindex="-1"></select>
+          <button type="button" class="dai-pick" id="deskAiCtxBtn" title="选择对话上下文" aria-haspopup="listbox" aria-expanded="false">
+            <svg class="dai-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5h7M4 12h11M4 17.5h5"/><path d="m15 15.5 2.4 2.4L21 14"/></svg>
+            <span class="dai-pick-label" id="deskAiCtxLabel">无上下文</span>
+            <svg class="dai-pick-chev" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <!-- 生图路由：自动 / 总是生图 / 仅对话。
+               默认「自动」——由 AI 判断这句话是要图还是要答案；按钮只是兜底开关，
+               免得有人临时想专心聊两句却被误扣一次生图额度。 -->
+          <button type="button" class="dai-mode" id="deskAiImage" data-mode="auto" title="生图：自动判断（点一下切到「总是生图」）" aria-label="生图模式">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3.2" y="5.6" width="12.4" height="12.4" rx="2.6"/>
+              <path d="m3.6 15.6 3.2-3.1a1.7 1.7 0 0 1 2.4 0l2.3 2.2"/>
+              <circle cx="11.2" cy="9.5" r="1.05"/>
+              <path d="M18.2 3.1l.85 2 2 .85-2 .85-.85 2-.85-2-2-.85 2-.85z"/>
+            </svg>
+            <span class="dai-mode-txt" id="deskAiModeTxt">自动</span>
+          </button>
+          <span class="dai-flex"></span>
+          <span class="dai-dot" id="deskAiDot" title="就绪"></span>
+          <select class="dai-native" id="deskAiModel" aria-hidden="true" tabindex="-1"></select>
+          <button type="button" class="dai-pick dai-pick-model" id="deskAiBtn" title="选择模型" aria-haspopup="listbox" aria-expanded="false">
+            <span class="dai-pick-tag" id="deskAiTag" hidden>自定义</span>
+            <span class="dai-pick-label" id="deskAiLabel">未选择模型</span>
+            <svg class="dai-pick-chev" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" class="dai-btn" id="deskAiMic" title="语音输入（当前环境不支持时会有提示）">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
+          </button>
+          <button type="button" class="dai-send" id="deskAiSend" title="发送（Enter）">Send</button>
+        </div>
+      </div>
+      <input type="file" id="deskAiFile" accept="image/*" hidden>
+    </div>
+      </div>
+      <!-- 第二页已移除：AI 对话现在是桌面上的一个普通 App（和其他 App 走同一套
+           .desk-page-3 + .dapp-head + .dapp-back 翻页），不再有独立的对话页。 -->
+      <!-- 第三页：App。所有 App 都翻到这一页里显示，不再浮成弹窗。
+           内容由 deskMountApp() 把对应的 .os-win 节点搬进 #deskAppHost；
+           灰底圆角画布留在窗口后面，和第一页的图标画布是同一块「底板」。 -->
+      <div class="desk-page desk-page-3" id="deskPageApps" aria-label="应用页">
+        <div class="dapp-head">
+          <!-- 返回按钮在左（和界面名称换了位置）：三枚 chevron 拼成 <<<，
+               悬停时依次向左游动，一眼能认出「退回去」 -->
+          <button type="button" class="dapp-back" id="deskAppBack" aria-label="回到桌面" title="回到桌面（Esc）">
+            <svg class="dapp-back-ico" viewBox="0 0 28 24" fill="none" stroke="currentColor"
+                 stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path class="dab-ch dab-1" d="M9.2 6.9 4.6 12l4.6 5.1"/>
+              <path class="dab-ch dab-2" d="M15.4 6.9 10.8 12l4.6 5.1"/>
+              <path class="dab-ch dab-3" d="M21.6 6.9 17 12l4.6 5.1"/>
+            </svg>
+          </button>
+          <span class="dapp-div" aria-hidden="true"></span>
+          <div class="dapp-titles">
+            <span class="dapp-title" id="deskAppTitle">应用</span>
+            <span class="dapp-sub" id="deskAppSub" hidden></span>
+          </div>
+        </div>
+        <div class="dapp-canvas" id="deskAppCanvas">
+          <div class="dapp-host" id="deskAppHost"></div>
+          <!-- 骨架：翻页先跑、内容后到，这层用合成器动画（transform/opacity）顶住，
+               不用 background-position 那类要主线程重绘的写法，否则模块一开工就冻住 -->
+          <div class="dapp-skel" id="deskAppSkel" aria-hidden="true" hidden>
+            <div class="sk-bar"><i></i></div>
+            <div class="sk-body">
+              <div class="sk-row sk-w60"></div>
+              <div class="sk-row sk-w85"></div>
+              <div class="sk-card"></div>
+              <div class="sk-card"></div>
+              <div class="sk-row sk-w70"></div>
+              <div class="sk-row sk-w45"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="os-win imgedit hidden" id="imgEditWin">
       <div class="os-win-bar">
         <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title">工作流</div>
-        <button class="os-win-close" id="btnFlowsWinClose" aria-label="关闭窗口" title="关闭">×</button>
+        <div class="os-win-title" id="imgEditTitle">图片编辑器</div>
+        <button class="os-win-close" id="btnImgEditClose" aria-label="关闭窗口" title="关闭">×</button>
       </div>
       <div class="os-win-body">
-        <div class="os-win-actions">
-          <button class="btn primary sm" id="btnNewFlow">新建工作流</button>
-          <button class="btn sm" id="btnExportFlows" title="把所有工作流导出为 JSON 文件（手动备份，可跨浏览器/跨机器使用）">导出备份</button>
-          <button class="btn sm" id="btnImportFlows" title="从 JSON 文件导入工作流（同 id 取较新版本，不覆盖更新的）">导入</button>
-          <input type="file" id="fileImportFlows" accept="application/json,.json" hidden>
+        <div class="ie-wrap">
+          <div class="ie-stage"><canvas id="ieCanvas"></canvas></div>
+          <div class="ie-side" id="ieSide"></div>
         </div>
-        <div class="wf-storage hidden" id="wfStorage"></div>
-        <div class="wf-grid" id="wfGrid"></div>
+      </div>
+    </div>
+    <div class="os-win lib hidden" id="libWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title" id="libWinTitle">图库</div>
+        <button class="os-win-close" id="btnLibWinClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body">
+        <div class="lib-body" id="libBody"></div>
+      </div>
+    </div>
+    <div class="os-win comfy hidden" id="comfyWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title">本地生图 · ComfyUI</div>
+        <button class="os-win-close" id="btnComfyWinClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body">
+        <div class="cf-app" id="cfApp"></div>
+      </div>
+    </div>
+    <div class="os-win store hidden" id="storeWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title">模型商店</div>
+        <button class="os-win-close" id="btnStoreWinClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body">
+        <div class="mc-store" id="mcStore"></div>
+      </div>
+    </div>
+    <div class="os-win hidden" id="modelsWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title">模型控制台</div>
+        <button class="os-win-close" id="btnModelsWinClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body">
+        <div class="mc-hard" id="mcHard"></div>
+        <div class="mc-eng" id="mcEng"></div>
+        <div class="mc-eng" id="mcComfy"></div>
+        <div class="mc-kinds" id="mcKinds"></div>
+      </div>
+    </div>
+    <!-- AI 对话 App：和其他 App 一样是 .os-win，搬进 #deskAppHost 后由 .dapp-head 顶替标题栏。
+         原来它是独立的第二页（.desk-page-2），翻页动效和返回按钮都跟别的 App 不一致，
+         这次统一成 App。 -->
+    <div class="os-win chat hidden" id="chatWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title">AI 对话</div>
+        <button class="os-win-close" id="btnChatWinClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body">
+        <!-- 模型 / 上下文 / 生图来源：原来是第二页页头的一排角标。
+             现在页头让位给 .dapp-head（统一返回按钮），这三个角标挪到对话区顶部，
+             视觉上仍是一眼可扫的信息条。 -->
+        <div class="dchat-meta">
+          <span class="dchat-model" id="deskChatModel"></span>
+          <span class="dchat-ctx" id="deskChatCtx" title="当前对话上下文"></span>
+          <span class="dchat-imgsrc" id="deskChatImg" title="当前生图来源（点一下去设置）"></span>
+        </div>
+        <div class="dchat-log" id="deskChatLog"></div>
+        <div class="dchat-foot" id="deskChatFoot"></div>
       </div>
     </div>
   </div>
@@ -140,6 +316,8 @@
       </div>
     </aside>
     <div class="bp-canvas" id="bpCanvas">
+      <!-- 底纹单独一层：平移只用 transform（合成器），不再每帧改 background-position 触发重绘 -->
+      <div class="bp-grid" id="bpGrid" aria-hidden="true"></div>
       <div class="bp-world" id="bpWorld">
         <div class="bp-frames" id="bpFrames"></div>
         <svg class="bp-links" id="bpLinks"></svg>
@@ -302,107 +480,40 @@
   </section>
 </main>
 
-<section class="base hidden" id="baseView">
-  <div class="base-wrap">
-    <div class="base-head">
-      <button class="icon-btn" id="btnBaseBack" aria-label="返回工作流" title="返回工作流">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-      </button>
-      <div class="base-title">
-        <h1>基线工具</h1>
-        <p>单步调用语言与图像模型，确认配置和接口可以跑通。</p>
-      </div>
-      <button class="btn sm" id="btnBaseSettings">接口设置</button>
-    </div>
-
-    <nav class="base-tabs" role="tablist" aria-label="基线工具">
-      <button class="base-tab active" data-base="chat" role="tab" aria-selected="true">对话</button>
-      <button class="base-tab" data-base="t2i" role="tab" aria-selected="false">文生图</button>
-      <button class="base-tab" data-base="i2i" role="tab" aria-selected="false">图生图</button>
-    </nav>
-
-    <div class="base-pane" data-pane="chat">
-      <div class="base-cols">
-        <section class="panel">
-          <div class="panel-head"><h2>对话</h2><button class="linkbtn" id="btnChatClear">清空</button></div>
-          <div class="chat-log" id="chatLog">
-            <div class="chat-empty">输入一句话，验证语言模型是否可用。支持多轮上下文。</div>
-          </div>
-          <div class="chat-compose">
-            <textarea id="chatInput" class="base-area" rows="2" placeholder="输入消息，Ctrl+Enter 发送"></textarea>
-            <button class="btn primary" id="btnChatSend">发送</button>
-          </div>
-          <div class="base-status" id="chatStatus"></div>
-        </section>
-        <aside class="panel base-side">
-          <div class="panel-head"><h2>系统提示词</h2></div>
-          <textarea id="chatSystem" class="base-area small" placeholder="可选。例如：你是一个简洁的助手。"></textarea>
-          <p class="note">留空时使用默认系统提示词。对话记录只保留在当前页面。</p>
-        </aside>
-      </div>
-    </div>
-
-    <div class="base-pane hidden" data-pane="t2i">
-      <div class="base-cols">
-        <section class="panel">
-          <div class="panel-head"><h2>提示词</h2><span class="meta" id="t2iMeta">待配置</span></div>
-          <textarea id="t2iPrompt" class="base-area tall" placeholder="描述你要生成的画面，例如：一座雨夜中的霓虹城市街道，电影感构图。"></textarea>
-          <div class="actions">
-            <button class="btn primary" id="btnT2I">生成图片</button>
-          </div>
-          <div class="base-status" id="t2iStatus"></div>
-        </section>
-        <section class="panel">
-          <div class="panel-head"><h2>结果</h2><button class="linkbtn hidden" id="btnT2IOpen">新窗口打开</button></div>
-          <div class="base-result" id="t2iResult"><div class="placeholder">生成结果将显示在这里</div></div>
-        </section>
-      </div>
-    </div>
-
-    <div class="base-pane hidden" data-pane="i2i">
-      <div class="base-cols">
-        <section class="panel">
-          <div class="panel-head"><h2>参考图</h2><span class="meta" id="i2iMeta">未载入</span></div>
-          <div class="base-drop" id="i2iDrop">
-            <div id="i2iPreview"><div class="ph"><b>拖入或选择图片</b>支持点击上传、拖拽、Ctrl+V 粘贴</div></div>
-          </div>
-          <input type="file" id="i2iFile" accept="image/*" class="hidden">
-          <div class="actions">
-            <button class="btn" id="btnI2IPick">选择图片</button>
-          </div>
-        </section>
-        <section class="panel">
-          <div class="panel-head"><h2>图生图</h2><span class="meta" id="i2iEngine"></span></div>
-          <textarea id="i2iPrompt" class="base-area tall" placeholder="描述希望如何调整这张图，例如：保持构图，把杂乱的边缘收敛成合理的结构。"></textarea>
-          <div class="actions">
-            <button class="btn primary" id="btnI2I">生成变体</button>
-          </div>
-          <div class="base-status" id="i2iStatus"></div>
-          <div class="base-result inline-result" id="i2iResult"><div class="placeholder">生成结果将显示在这里</div></div>
-        </section>
-      </div>
-    </div>
-  </div>
-</section>
-
 <div class="modal-backdrop hidden" id="settingsBackdrop">
-  <section class="settings" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <section class="settings xp" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
     <header class="settings-head">
-      <div>
-        <div class="settings-title" id="settingsTitle">设置</div>
-        <div class="settings-sub">密钥仅保存在本机浏览器，修改即时生效</div>
-      </div>
+      <span class="settings-title" id="settingsTitle">设置</span>
       <button class="icon-btn" id="btnCloseSettings" aria-label="关闭设置">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
     </header>
 
     <nav class="tabs" role="tablist" aria-label="设置分类">
-      <button class="tab active" role="tab" aria-selected="true" data-tab="llm">大语言模型</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="image">图像生成</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="video">视频生成</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="relay">本地中转</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="account">账号</button>
+      <button class="tab active" role="tab" aria-selected="true" data-tab="llm">
+        <span class="xp-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v10H9l-5 4V5Z"/></svg></span>
+        <span class="xp-tab-label">语言模型</span>
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="image">
+        <span class="xp-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="14" rx="2.5"/><circle cx="8.6" cy="9.6" r="1.4"/><path d="m4.5 16.5 4.6-4 3.4 2.7 3-2.2 4 3.5"/></svg></span>
+        <span class="xp-tab-label">图像生成</span>
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="video">
+        <span class="xp-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 12 6-3.5v7L15 12Z"/></svg></span>
+        <span class="xp-tab-label">视频生成</span>
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="relay">
+        <span class="xp-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h11l-3-3M20 16H9l3 3"/></svg></span>
+        <span class="xp-tab-label">本地中转</span>
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="account">
+        <span class="xp-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></span>
+        <span class="xp-tab-label">账号</span>
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="assets">
+        <span class="xp-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.4" width="7.6" height="7.6" rx="1.6"/><rect x="13.4" y="4.4" width="7.6" height="7.6" rx="1.6"/><rect x="3" y="14.9" width="7.6" height="5.6" rx="1.6"/><rect x="13.4" y="14.9" width="7.6" height="5.6" rx="1.6"/></svg></span>
+        <span class="xp-tab-label">资产库</span>
+      </button>
     </nav>
 
     <div class="settings-body">
@@ -484,7 +595,7 @@
               <button class="btn sm" id="btnTripoWebLogin">打开登录页</button>
               <button class="btn sm" id="btnTripoWebCheck">检测状态</button>
             </div>
-            <div class="note" id="tripoWebNote">先运行 start-tripo-bridge.bat，再点「打开登录页」；在浏览器里手动登录并进入生图页。工具不保存账号密码。生成走网页自动化，存在风控风险。</div>
+            <div class="note" id="tripoWebNote">先启动项目（桌面端双击 start.bat，Tripo 桥已由主进程托管），再点「打开登录页」；在浏览器里手动登录并进入生图页。工具不保存账号密码。生成走网页自动化，存在风控风险。</div>
           </div>
         </div>
 
@@ -534,7 +645,7 @@
               </div>
               <div class="field" style="width:116px;">
                 <label for="imgSize">尺寸</label>
-                <input type="text" id="imgSize" value="1024x1024">
+                <input type="text" id="imgSize" value="1024x1024" title="在线模型按这里填的来；本地生图会按模型自动收紧（SD1.5 最长边 768 —— 再大它会画出重复的小主体，看着和提示词无关）">
               </div>
             </div>
             <div class="field">
@@ -570,7 +681,7 @@
             <button class="btn sm" id="btnTestRelay">测试中转</button>
             <button class="btn sm" id="btnRelayDefault" title="把中转地址清空，回到默认的 127.0.0.1:8787">恢复默认</button>
           </div>
-          <div class="note" id="relayStatus">双击项目文件夹里的 <code class="relay-code">start-relay.bat</code> 一键启动，再点测试中转。也可手动运行 <code class="relay-code">node relay.js</code>。</div>
+          <div class="note" id="relayStatus">双击项目里的 <code class="relay-code">start.bat</code> 一键启动（桌面模式下本地中转已由主进程托管），再点测试中转。也可手动运行 <code class="relay-code">node plugins\relay\relay.js</code>。</div>
         </div>
         <div class="note">灵算、Tripo 等服务商不开放浏览器跨域，开启中转后请求改由本机转发；API Key 仍只保存在本机浏览器，不会上传到第三方。</div>
       </div>
@@ -633,6 +744,9 @@
           </div>
         </div>
       </div>
+
+      <!-- 资产库：内容全部由 renderAssetsPane() 渲染（占用随导入/删除随时变，静态写死必然过期） -->
+      <div class="tabpane hidden" data-pane="assets" id="paneAssets"></div>
     </div>
 
     <footer class="settings-foot">
@@ -643,25 +757,8 @@
 </div>
 
 <!-- 3D：three.js r149 与加载器（本地 vendor，UMD 全局，file:// 可用） -->
-<button class="chat-fab" id="chatBtn" title="交流社区" aria-label="交流社区">
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-7a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8Z"/></svg>
-  <span class="chat-unread hidden" id="chatUnread">0</span>
-</button>
+<!-- 交流社区入口（悬浮按钮 + 面板）已移除；js/chat-client.js 保留但找不到入口时会自行退出 -->
 
-<section class="chat-panel hidden" id="chatPanel" aria-label="交流社区">
-  <div class="chat-head">
-    <span class="chat-title">交流社区</span>
-    <span class="chat-online" id="chatOnline">—</span>
-    <input class="chat-name" id="chatName" maxlength="16" placeholder="昵称" aria-label="昵称">
-    <button class="chat-x" id="chatClose" aria-label="关闭">×</button>
-  </div>
-  <div class="chat-list" id="chatList"></div>
-  <div class="chat-foot">
-    <textarea id="chatInput" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）" aria-label="消息"></textarea>
-    <button class="btn primary sm" id="chatSend">发送</button>
-  </div>
-  <div class="chat-hint" id="chatHint"></div>
-</section>
 
 <script src="vendor/three.min.js"></script>
 <script src="vendor/GLTFLoader.js"></script>
@@ -672,6 +769,15 @@
 <script src="js/config.js"></script>
 <script src="js/blob-store.js"></script>
 <script src="js/api.js"></script>
+<script src="js/model-catalog.js"></script>
+<script src="js/provider.js"></script>
+<script src="js/hardware.js"></script>
+<script src="js/engines-auto.js"></script>
+<script src="js/models-console.js"></script>
+<script src="js/model-store.js"></script>
+<script src="js/comfy-app.js"></script>
+<script src="js/library.js"></script>
+<script src="js/image-editor.js"></script>
 <script src="js/gateway-client.js"></script>
 <script src="js/chat-client.js"></script>
 <script src="js/workbench.js"></script>
@@ -687,6 +793,8 @@
 <script src="js/flow-versions.js"></script>
 <script src="js/flow-memory.js"></script>
 <script src="js/desktop.js"></script>
+<script src="js/desk-image.js"></script>
+<script src="js/desk-chat.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/blueprint-runtime.js"></script>
 <script src="js/flow-gen-panel.js"></script>

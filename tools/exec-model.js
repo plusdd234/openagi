@@ -25,7 +25,7 @@ const IMG = path.join(__dirname, '..', 'samples', 'ui_linked.png');
     const flow = { id: 'pin_' + Date.now(), name: '执行引脚盘点', nodes: [], links: [], vars: [], updated: Date.now() };
     Object.keys(NODE_DEFS).forEach((t, i) => flow.nodes.push(newNode(t, (i % 5) * 240, Math.floor(i / 5) * 260)));
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     return Array.from(document.querySelectorAll('.node')).map(el => {
       const n = bp.nodes.find(x => x.id === el.dataset.id);
       const d = NODE_DEFS[n.type];
@@ -69,7 +69,7 @@ const IMG = path.join(__dirname, '..', 'samples', 'ui_linked.png');
       ]
     };
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     await runFlow();
     const icN = bp.nodes.find(n => n.type === 'imageCompress');
     return {
@@ -101,7 +101,7 @@ const IMG = path.join(__dirname, '..', 'samples', 'ui_linked.png');
       links: [{ id: uid(), from: { node: ii.id, key: 'image' }, to: { node: ic.id, key: 'image' } }]
     };
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     await runFlow();
     return {
       statuses: bp.nodes.map(n => ({ type: n.type, status: n.status })),
@@ -143,7 +143,7 @@ const IMG = path.join(__dirname, '..', 'samples', 'ui_linked.png');
       links: [], vars: [], updated: Date.now()
     };
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     const dels = Array.from(document.querySelectorAll('.node')).map(el => {
       const n = bp.nodes.find(x => x.id === el.dataset.id);
       return { type: n.type, hasDel: !!el.querySelector('.node-del') };
@@ -187,7 +187,7 @@ const IMG = path.join(__dirname, '..', 'samples', 'ui_linked.png');
       links: [], vars: [], updated: Date.now()
     };
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     const dels = Array.from(document.querySelectorAll('.node')).map(el => {
       const n = bp.nodes.find(x => x.id === el.dataset.id);
       return { type: n.type, hasDel: !!el.querySelector('.node-del') };

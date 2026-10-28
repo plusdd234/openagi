@@ -105,6 +105,9 @@ function parseFlowList(str){
                 if(FLOWS.length !== before && typeof renderFlowsWindow === 'function'){
                   try { renderFlowsWindow(); } catch(e){}
                 }
+                /* 桌面对话的「上下文」下拉是按 FLOWS 生成的，
+                   hydrate 是异步的 → 流程到位后要让它重画一次，否则下拉里永远是空的 */
+                try { if(window.deskChat && typeof window.deskChat.refresh === 'function') window.deskChat.refresh(); } catch(e){}
               }
             }
             return;
@@ -159,7 +162,29 @@ function relayUrlIssue(){
   if(!v) return '';
   return isHttpUrl(v) ? '' : '中转地址「' + v + '」不是合法的 http 地址，已改用默认 ' + RELAY_DEFAULT;
 }
+/* 本机引擎地址要透明地搬到 8794 的桥上。
+ *
+ * 实测（真页面、file:// 打开）：
+ *   fetch('http://127.0.0.1:11434/api/tags')            → Failed to fetch
+ *   fetch('http://127.0.0.1:11434/v1/chat/completions') → Failed to fetch
+ * 控制台写得很清楚：origin 'null' 被 CORS 拒（Ollama 默认只放行 127.0.0.1 / localhost 来源）。
+ * 也就是说 —— 设置里填 Ollama 的直连地址，本地对话和「中文提示词翻译」**一定会失败**，
+ * 而用户看到的只是「语言模型没配好」，去设置里重填一遍仍然没用。
+ *
+ * 桥（8794）存在的唯一理由就是替浏览器绕开这件事，所以这里把地址搬过去。
+ * 用户在设置里照旧填 http://127.0.0.1:11434/v1，一个字都不用改。 */
+function bridgedEngineUrl(url){
+  const s = String(url || '');
+  const m = s.match(/^http:\/\/(?:127\.0\.0\.1|localhost):(11434|8188)\b/i);
+  if(!m) return '';
+  const base = (typeof rtBase === 'function') ? rtBase() : 'http://127.0.0.1:8794';
+  const prefix = m[1] === '11434' ? '/ollama' : '/comfy';
+  return s.replace(/^http:\/\/(?:127\.0\.0\.1|localhost):\d+/i, base + prefix);
+}
+
 function apiRequest(url, opts){
+  const bridged = bridgedEngineUrl(url);
+  if(bridged) url = bridged;
   // 本地助手（127.0.0.1 / localhost）不经过中转，避免被代理转发
   if(!relayEnabled() || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(url)) return { url, init: opts || {} };
   const headers = Object.assign({}, (opts && opts.headers) || {}, { 'X-Relay-Target': url });
@@ -206,6 +231,10 @@ const isTripo = () => $('genEngine').value === 'tripo';
 const TRIPO_PARAM = (location.search.match(/[?&]tripo=([^&]+)/) || [])[1];
 const TRIPO_WEB_BASE = TRIPO_PARAM ? decodeURIComponent(TRIPO_PARAM).replace(/\/$/, '') : 'http://127.0.0.1:8790';
 const isTripoWeb = () => $('genEngine').value === 'tripo-web';
+/* 生图走本机 ComfyUI。判定只在 provider.js 的 imgMode() 里，这里只是薄封装——
+ * 状态栏文案和实际执行的引擎必须来自同一个来源，否则会出现
+ * 「显示 Tripo、其实在跑 ComfyUI」这种自相矛盾的提示。 */
+const isLocalImg = () => typeof imgMode === 'function' && imgMode() === 'local';
 let tripoWebReady = false;
 
 // ---- 接口来源预设（点击标签自动切换 Base URL）----

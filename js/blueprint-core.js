@@ -59,8 +59,8 @@ const PIN_META = {
   false:  { label:'假', type:'exec' },
 };
 const PIN_COLORS = {
-  string:'#6fdc9f', int:'#f2c14e', float:'#ef8354',
-  bool:'#e05252', image:'#5b9dff', model:'#c77dff', exec:'#e8eaf0'
+  string:'#1f9d63', int:'#b07d00', float:'#d2691e',
+  bool:'#c0392b', image:'#2b7cd3', model:'#8e44ad', exec:'#6b7280'
 };
 const TYPE_META = {
   int:    { label:'整数' },
@@ -217,14 +217,114 @@ function persistFlows(){
   }
 }
 
-function showView(name){
-  $('homeView').classList.toggle('hidden', name !== 'home');
-  $('toolView').classList.toggle('hidden', name !== 'tool');
-  $('blueprintView').classList.toggle('hidden', name !== 'bp');
-  $('baseView').classList.toggle('hidden', name !== 'base');
-  if(name === 'home') renderHome();
-  if(name === 'base') refreshBaseState();
+/* ---- 视图转场：工作台 ↔ 工作流编辑器 ----
+ * .hidden 是 display:none，没法直接过渡，所以：进来的那一页先上桌并挂 .view-in
+ * （CSS 动画从「位移 + 透明」推到原位），出去的那一页挂 .view-out 淡出，动画跑完才真正隐藏。
+ * 转场只做位移不做缩放：画布里的连线/端口坐标是 getBoundingClientRect 两两相减算的，
+ * 祖先带 scale 会把差值一起放缩，那 300ms 里连线会歪；位移在相减里会互相抵消，安全。 */
+const VIEW_SWAP_MS = 360;
+let viewNow = '';        // 当前视图：home | tool | bp
+let viewTimer = 0;
+let viewBooted = false;  // 启动动画只放一次
+
+function viewElOf(name){
+  return name === 'bp' ? $('blueprintView')
+    : name === 'tool' ? $('toolView')
+    : name === 'home' ? $('homeView') : null;
 }
+function viewReduceMotion(){
+  try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  catch(e){ return false; }
+}
+
+function showView(name){
+  const next = viewElOf(name);
+  if(!next) return;
+  // 同一视图：只刷新内容，不重播动画（点 logo / 返回按钮经常落在这条路上）
+  if(viewNow === name && !next.classList.contains('hidden')){
+    if(name === 'home') renderHome();
+    return;
+  }
+  const prev = viewNow && viewNow !== name ? viewElOf(viewNow) : null;
+  const animate = !viewReduceMotion();
+
+  clearTimeout(viewTimer);
+  ['homeView', 'toolView', 'blueprintView'].forEach(id => {
+    const v = $(id);
+    if(v) v.classList.remove('view-in', 'view-out');
+  });
+
+  // 出去的页面动画期间必须还在场，跑完才隐藏
+  next.classList.remove('hidden');
+  if(prev) prev.classList.remove('hidden');
+  void next.offsetWidth;                       // 强制回流，动画才会从起始态重新播
+
+  if(animate){
+    document.body.classList.add('view-swapping');   // 两页叠一起才谈得上交叉
+    next.classList.add('view-in');
+    if(prev) prev.classList.add('view-out');
+  }
+  viewNow = name;
+
+  if(name === 'home'){
+    renderHome();
+    if(!viewBooted) deskBootIn();
+  }
+
+  const settle = () => {
+    viewPendingSettle = null;
+    ['homeView', 'toolView', 'blueprintView'].forEach(id => {
+      const v = $(id);
+      if(v && v !== next) v.classList.add('hidden');
+    });
+    next.classList.remove('view-in');
+    if(prev) prev.classList.remove('view-out');
+    document.body.classList.remove('view-swapping');
+  };
+  if(animate){
+    viewPendingSettle = settle;
+    viewTimer = setTimeout(settle, VIEW_SWAP_MS);
+  }else settle();
+}
+
+/* 启动动画：画布立起来 → 图标逐个落位 → 输入条升起（延迟按 nth-child 排在 CSS 里） */
+function deskBootIn(){
+  viewBooted = true;
+  const wall = $('deskWall');
+  if(!wall) return;
+  wall.classList.add('desk-boot');
+  setTimeout(() => wall.classList.remove('desk-boot'), 1200);
+}
+
+/* 把重活排到转场之后：翻页是合成器上的 transform/opacity，
+ * 主线程一旦被同步渲染占住（49 个节点 + 78 条连线的建 DOM 与量尺寸）动画就会被整段吃掉，
+ * 看起来像「直接跳到终点」。当前没有在转场就直接跑，不额外拖慢。
+ * 测试与脚本要同步拿结果时调 flushViewSwap() 立刻执行。 */
+let viewDeferred = [];
+let viewPendingSettle = null;
+
+function viewAfterSwap(fn){
+  if(!document.body.classList.contains('view-swapping')){ fn(); return; }
+  viewDeferred.push(fn);
+  requestAnimationFrame(() => setTimeout(flushViewSwap, VIEW_SWAP_MS + 20));
+}
+
+/* 立刻收尾：跳完转场动画 + 跑掉排队中的渲染。
+ * 脚本/测试要在 openFlow 之后同步拿 DOM（拖线要拿引脚坐标）就调它，
+ * 否则画布还在 translateX 过程中，量出来的坐标会偏。 */
+function flushViewSwap(){
+  if(viewPendingSettle){
+    clearTimeout(viewTimer);
+    const s = viewPendingSettle;
+    viewPendingSettle = null;
+    s();
+  }
+  if(!viewDeferred.length) return;
+  const list = viewDeferred;
+  viewDeferred = [];
+  list.forEach(fn => { try { fn(); } catch(e){ console.warn('[view] 滞后任务失败', e); } });
+}
+function viewCancelSwap(){ viewDeferred = []; }
 
 function renderHome(){
   renderDeskIcons();
@@ -289,88 +389,149 @@ function importFlowsText(text){
   return true;
 }
 
+/* 工作流列表的渲染入口。
+ * 桌面上的「工作流」App 已移除（左侧列表就是全部），这里直接渲染左侧列表 + 底部占用条。
+ * 函数名保留 renderFlowsWindow：blob-store / config 等处仍在调用它。 */
 function renderFlowsWindow(){
-  const grid = $('wfGrid');
-  if(!grid) return;
-  grid.innerHTML = '';
+  closeWfMenu();
+  renderDeskFlows();
+  renderStorageMeter();
+}
 
-  const tool = document.createElement('div');
-  tool.className = 'wf-card';
-  tool.tabIndex = 0;
-  tool.innerHTML = `
-    <div>
-      <div class="wf-name">图像修复工作台</div>
-      <div class="wf-desc">粘贴原图 → 诊断幻觉 → 拟写提示词 → 单步生图。适合手动逐轮修复。</div>
-    </div>
-    <div class="wf-meta"><span class="wf-badge">内置</span><span>单步工具</span></div>`;
-  tool.addEventListener('click', () => showView('tool'));
-  tool.addEventListener('keydown', e => { if(e.key === 'Enter') showView('tool'); });
-  grid.appendChild(tool);
+// ---- 桌面左侧固定工作流区 ----
+let wfActiveId = '';
+let wfMenuEl = null;
 
-  FLOWS.forEach(f => {
-    const card = document.createElement('div');
-    card.className = 'wf-card';
-    card.tabIndex = 0;
+const WF_SIDE_GLYPH = {
+  doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="2.5"/><path d="M8.5 9.5h7M8.5 13h5"/></svg>'
+};
 
-    const top = document.createElement('div');
-    const name = document.createElement('div');
-    name.className = 'wf-name';
-    name.textContent = f.name || '未命名工作流';
-    const desc = document.createElement('div');
-    desc.className = 'wf-desc';
-    const types = [...new Set((f.nodes || []).map(n => (NODE_DEFS[n.type] || {}).title).filter(Boolean))].slice(0, 3);
-    desc.textContent = types.length ? types.join(' → ') : '空白蓝图';
-    top.append(name, desc);
+function wfAgoText(ts){
+  if(!ts) return '未保存';
+  const d = Date.now() - ts;
+  if(d < 60000) return '刚刚';
+  if(d < 3600000) return Math.floor(d / 60000) + ' 分钟前';
+  if(d < 86400000) return Math.floor(d / 3600000) + ' 小时前';
+  if(d < 86400000 * 30) return Math.floor(d / 86400000) + ' 天前';
+  return new Date(ts).toLocaleDateString('zh-CN');
+}
 
-    const meta = document.createElement('div');
-    meta.className = 'wf-meta';
-    const count = document.createElement('span');
-    count.textContent = (f.nodes || []).length + ' 节点 · ' + (f.links || []).length + ' 连线';
-    meta.appendChild(count);
+function closeWfMenu(){
+  if(!wfMenuEl) return;
+  wfMenuEl.remove();
+  wfMenuEl = null;
+  document.removeEventListener('pointerdown', wfMenuOutside, true);
+  document.removeEventListener('keydown', wfMenuEsc, true);
+}
+function wfMenuOutside(e){
+  if(wfMenuEl && !wfMenuEl.contains(e.target)) closeWfMenu();
+}
+function wfMenuEsc(e){
+  if(e.key === 'Escape'){ e.stopPropagation(); closeWfMenu(); }
+}
 
-    // 占用大的工作流标出来：localStorage 只有 5MB，谁在吃空间要能一眼看到
-    const size = flowInlineBytes(f);
-    if(size > 0){
-      const sz = document.createElement('span');
-      sz.className = 'wf-size' + (size > 1024 * 1024 ? ' hot' : '');
-      sz.textContent = fmtBytes(size);
-      sz.title = '内联素材（图片 / 模型）占用，超过 1MB 会标红';
-      meta.appendChild(sz);
-    }
-    if(f._stripped){
-      const flag = document.createElement('span');
-      flag.className = 'wf-size hot';
-      flag.textContent = '素材已清理';
-      flag.title = '保存时空间不足，这个工作流里的图片/模型已被清空，需要重新上传';
-      meta.appendChild(flag);
-    }
+function openWfMenu(anchor, f){
+  closeWfMenu();
+  const menu = document.createElement('div');
+  menu.className = 'wf-menu';
 
-    const del = document.createElement('button');
-    del.className = 'wf-del';
-    del.title = '删除';
-    del.textContent = '×';
-    del.addEventListener('click', e => {
-      e.stopPropagation();
-      if(confirm('删除工作流「' + (f.name || '未命名') + '」？')){
-        FLOWS = FLOWS.filter(x => x.id !== f.id);
-        persistFlows();
-        renderHome();
-      }
-    });
-
-    card.append(top, meta, del);
-    card.addEventListener('click', () => openFlow(f.id));
-    card.addEventListener('keydown', e => { if(e.key === 'Enter') openFlow(f.id); });
-    grid.appendChild(card);
+  const rename = document.createElement('button');
+  rename.textContent = '重命名';
+  rename.addEventListener('click', () => {
+    closeWfMenu();
+    const next = prompt('重命名工作流', f.name || '未命名工作流');
+    if(next === null) return;
+    const name = next.trim();
+    if(!name || name === f.name) return;
+    f.name = name;
+    f.updated = Date.now();
+    persistFlows();
+    renderHome();
   });
 
-  const add = document.createElement('button');
-  add.className = 'wf-card new';
-  add.innerHTML = '<span class="wf-plus">+</span><span>新建工作流</span>';
-  add.addEventListener('click', createFlow);
-  grid.appendChild(add);
+  const del = document.createElement('button');
+  del.className = 'danger';
+  del.textContent = '删除';
+  del.addEventListener('click', () => {
+    closeWfMenu();
+    if(!confirm('删除工作流「' + (f.name || '未命名') + '」？')) return;
+    FLOWS = FLOWS.filter(x => x.id !== f.id);
+    if(wfActiveId === f.id) wfActiveId = '';
+    persistFlows();
+    renderHome();
+  });
 
-  renderStorageMeter();
+  menu.append(rename, del);
+  document.body.appendChild(menu);
+
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(r.right - 122, innerWidth - 126)) + 'px';
+  menu.style.top = Math.min(r.bottom + 4, innerHeight - 80) + 'px';
+  wfMenuEl = menu;
+  setTimeout(() => {
+    if(!wfMenuEl) return;
+    document.addEventListener('pointerdown', wfMenuOutside, true);
+    document.addEventListener('keydown', wfMenuEsc, true);
+  }, 0);
+}
+
+function wfSideItemEl(f){
+  const item = document.createElement('div');
+  item.className = 'wf-side-item' + (f.id === wfActiveId ? ' active' : '');
+  item.tabIndex = 0;
+  item.setAttribute('role', 'button');
+  item.innerHTML = WF_SIDE_GLYPH.doc + '<span class="wf-side-item-main">' +
+    '<span class="wf-side-name"></span><span class="wf-side-sub"></span></span>' +
+    '<span class="wf-side-more" role="button" aria-label="更多操作" title="更多操作">⋯</span>';
+  item.querySelector('.wf-side-name').textContent = f.name || '未命名工作流';
+  // 副标题：节点数 + 素材占用 + 更新时间
+  // 占用必须显示出来：localStorage 只有 5MB，谁在吃空间要能一眼看到
+  const size = flowInlineBytes(f);
+  const parts = [(f.nodes || []).length + ' 节点'];
+  if(size > 0) parts.push(fmtBytes(size));
+  parts.push(wfAgoText(f.updated));
+  item.querySelector('.wf-side-sub').textContent = parts.join(' · ');
+  if(size > 1024 * 1024) item.querySelector('.wf-side-sub').classList.add('hot');
+  if(f._stripped){
+    item.querySelector('.wf-side-sub').textContent += ' · 素材已清理';
+    item.title = '保存时空间不足，这个工作流里的图片/模型已被清空，需要重新上传';
+  }
+
+  const more = item.querySelector('.wf-side-more');
+  more.addEventListener('click', e => {
+    e.stopPropagation();
+    openWfMenu(more, f);
+  });
+
+  item.addEventListener('click', () => {
+    wfActiveId = f.id;
+    openFlow(f.id);
+  });
+  item.addEventListener('keydown', e => {
+    if(e.key === 'Enter' || e.key === ' '){
+      e.preventDefault();
+      wfActiveId = f.id;
+      openFlow(f.id);
+    }
+  });
+  return item;
+}
+
+function renderDeskFlows(){
+  const list = $('deskSideList');
+  if(!list) return;
+  const count = $('deskSideCount');
+  if(count) count.textContent = FLOWS.length;
+  list.innerHTML = '';
+
+  if(!FLOWS.length){
+    const empty = document.createElement('div');
+    empty.className = 'wf-side-empty';
+    empty.textContent = '还没有工作流，点上方「新建工作流」开始搭建蓝图。';
+    list.appendChild(empty);
+    return;
+  }
+  FLOWS.forEach(f => list.appendChild(wfSideItemEl(f)));
 }
 
 // 本地存储用量：localStorage 约 5MB，快满时提前给出预警，别等到保存失败
@@ -394,16 +555,13 @@ function renderStorageMeter(){
   host.title = pct >= 80
     ? '本地存储接近上限：大块图片/模型已自动外置，若仍保存失败请先导出备份再删除旧工作流'
     : '图片与模型已自动存到 IndexedDB，这里只统计未外置的残留部分';
-  host.classList.toggle('hidden', FLOWS.length === 0);
+  // 常驻显示：占用信息放在列表底部，没工作流时也要能看到容量余量
+  host.classList.remove('hidden');
 }
 
-// ======================= 基线工具 =======================
-const BASE_SYS = '你是 Open AGI 的基线对话助手。回答准确、简洁；需要时给出可执行的下一步，不要编造不确定的信息。';
-let baseTab = localStorage.getItem('hf_base_tab') || 'chat';
-let baseMsgs = [];
-let baseChatBusy = false;
-let baseRefImage = '';
-
+// ======================= 就绪判定 =======================
+// 「基线工具」（对话 / 文生图 / 图生图三个单步面板）已整块移除，
+// 这里只留 llmReady / imageReady 给状态胶囊与工作流节点做前置校验。
 function llmReady(){
   // 登录了云端账号也算就绪（模型与 Key 由网关托管）
   if(typeof gwLogged === 'function' && gwLogged()) return true;

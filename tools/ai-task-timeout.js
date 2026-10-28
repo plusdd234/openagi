@@ -98,7 +98,7 @@ const check = (ok, name, extra) => {
       { id: uid(), from: { node: s.id, key: 'exec' }, to: { node: t.id, key: 'exec' } },
     ];
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     // 安全网：桩若没响应 abort，10 秒后强行结束，避免测试整体挂死
     await Promise.race([runFlow(), new Promise(r => setTimeout(r, 10000))]);
     const node = bp.nodes.find(n => n.type === 'aiTask');

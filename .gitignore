@@ -5,14 +5,23 @@ yarn-debug.log*
 yarn-error.log*
 
 # ===== 运行产物 / 临时文件 =====
+# 注意：早期脚本在仓库根跑，产物也落在根目录，规则要同时覆盖两处
 tripo_out/
 tripo_tmp/
+plugins/tripo/tripo_out/
+plugins/tripo/tripo_tmp/
 samples/
 *.log
 
+# ===== 资产库（用户的图片 / 3D 文件，属于数据不属于代码） =====
+assets/
+
 # ===== 浏览器自动化 profile（可能含登录态/凭证，切勿提交） =====
+# 注意：根目录也可能出现（早期脚本在仓库根跑 Edge），两处都要挡
 .tripo-profile/
-.tripo-profile-*
+.tripo-profile-*/
+plugins/tripo/.tripo-profile/
+plugins/tripo/.tripo-profile-*/
 
 # ===== 工具内部数据 =====
 .workbuddy/
@@ -25,20 +34,40 @@ desktop.ini
 .idea/
 
 # ===== 密钥与本地运行时状态（含 API Key 与工作流数据，勿提交） =====
+# openagi-store.json 是**根目录**的真实配置文件（含 hf_llmKey 明文密钥），
+# 规则必须同时覆盖根目录与 plugins/relay/ 两处，只写后者会漏。
 openagi-store.json
+openagi-store.json.bak.*
+openagi-store.backup/
+plugins/relay/openagi-store.json
+plugins/relay/openagi-store.json.bak.*
+plugins/relay/openagi-store.backup/
 *.local.json
 .env
 .env.local
 
-# ===== 专利申请材料（临时保护） =====
-# 仓库转私有后如需纳入版本管理，删除下面两行再 `git add -f ip/`
+# ===== 专利申请材料 =====
+# 2026-10-29 决定放弃专利路线，材料包保留在本地作技术存档，不入公开仓库。
+# 若将来想恢复专利路线，需先确认第 24 条宽限期条件（自行公开不在其列）。
 ip/
 
+# ===== 临时脚本与产物（一次性排查用，不入库） =====
+tmp-*.js
+tmp-shots/
+*.genie
+gh_repo.json
+tools/*.out.txt
+tools/.*.js
+# vendor 下是第三方模型卡与二进制，不是本项目源码
+vendor/
+
 # ===== 工作流存储备份（含用户数据，勿提交） =====
-openagi-store.backup/
-openagi-store.json.bak.*
+plugins/relay/openagi-store.backup/
+plugins/relay/openagi-store.json.bak.*
 
 # ===== Electron 打包产物 =====
+# 必须用 dist-* 通配：electron-builder 还会产出 dist-setup / dist-run 等变体目录，
+# 只写 dist/ 匹配不到它们（实测 671MB，会把 playwright-core 整包塞进公开仓库）。
 dist/
 dist-*/
 release/

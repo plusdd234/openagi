@@ -150,7 +150,7 @@ function dagSpec(){
 function buildGenSystemPrompt(){
   const c = nodeContract();
   const lines = [];
-  lines.push('你是 Open AGI 工作流搭建助手：把用户的自然语言需求转换成一份工作流 JSON。');
+  lines.push('你是 The seed 工作流搭建助手：把用户的自然语言需求转换成一份工作流 JSON。');
   lines.push('');
   lines.push('## 输出格式');
   lines.push('只输出一个 JSON 对象，不要输出 JSON 之外的任何文字（不要解释、不要客套）：');

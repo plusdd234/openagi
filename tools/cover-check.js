@@ -34,7 +34,7 @@ const OBJ = process.argv[2] || 'C:/Users/30297/Desktop/自研贴图系统/AIGC�
       flow.nodes.push(newNode(t, col * 230, rowN * 250));
     });
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     const rows = Array.from(document.querySelectorAll('.node')).map(el => {
       const n = bp.nodes.find(x => x.id === el.dataset.id);
       const pin = d => Array.from(el.querySelectorAll('.pin.' + d))
@@ -103,7 +103,7 @@ const OBJ = process.argv[2] || 'C:/Users/30297/Desktop/自研贴图系统/AIGC�
       ]
     };
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
 
     const round = async v => {
       nv.data.value = v;

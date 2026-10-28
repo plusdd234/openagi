@@ -221,7 +221,7 @@ function renderVars(){
 
     const dot = document.createElement('span');
     dot.className = 'var-dot';
-    dot.style.background = PIN_COLORS[v.type] || '#7c8cff';
+    dot.style.background = PIN_COLORS[v.type] || '#e88a00';
 
     const name = document.createElement('input');
     name.className = 'var-name';
@@ -576,8 +576,11 @@ async function llmChat(sys, userText, image){
 // 流式对话：逐块回调，60 秒无新内容自动中断
 async function llmStreamRequest(sys, messages, onDelta, opts){
   // 同 llmChat：登录走网关，未登录走本地 Key
-  const conn = (typeof llmConn === 'function') ? llmConn()
-    : { base: $('llmBaseUrl').value.trim().replace(/\/$/, ''), key: $('llmKey').value.trim(), model: $('llmModel').value.trim() };
+  /* opts.conn 可覆盖本次连接（桌面聊天面板按用户在下拉里选的模型/来源走），
+     不传 opts 时行为完全不变，避免影响设置页与工作流节点的既有链路。 */
+  const conn = (opts && opts.conn) ? opts.conn
+    : ((typeof llmConn === 'function') ? llmConn()
+    : { base: $('llmBaseUrl').value.trim().replace(/\/$/, ''), key: $('llmKey').value.trim(), model: $('llmModel').value.trim() });
   const key = conn.key, base = conn.base, model = conn.model;
   if(!key || !base || !model) throw new Error('语言模型未配置');
 
@@ -805,8 +808,11 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
     clearTimeout(hard);
   }
 }
-async function llmChatMessagesStream(sys, messages, onDelta){
-  return llmStreamRequest(sys || BASE_SYS, messages, onDelta);
+/* 没传系统提示词时的兜底人设。原来这份定义在「基线工具」里，基线工具整块移除后
+ * 跟着搬到唯一的消费方（llmChatMessagesStream）旁边，行为不变。 */
+const BASE_SYS = '你是 The seed 的对话助手。回答准确、简洁；需要时给出可执行的下一步，不要编造不确定的信息。';
+async function llmChatMessagesStream(sys, messages, onDelta, opts){
+  return llmStreamRequest(sys || BASE_SYS, messages, onDelta, opts);
 }
 
 function coerceTaskValue(v, type){
@@ -915,7 +921,7 @@ async function wfTripoWebImage(prompt, images, opts){
       if(ext && ext.aborted) throw stopError();
       throw new Error('Tripo 网页生成超时（' + (timeoutSec + 40) + ' 秒）');
     }
-    if(e instanceof TypeError) throw new Error('无法连接 Tripo 助手：请先运行 start-relay.bat（或 start-tripo-bridge.bat）');
+    if(e instanceof TypeError) throw new Error('无法连接 Tripo 助手：请先启动项目（桌面端双击 start.bat），再点「打开登录页」');
     throw e;
   }finally{
     clearTimeout(timer);
@@ -961,16 +967,38 @@ async function wfTripoWebModel(image, opts){
       if(ext && ext.aborted) throw stopError();
       throw new Error('Tripo 网页生成超时（' + (timeoutSec + 60) + ' 秒）');
     }
-    if(e instanceof TypeError) throw new Error('无法连接 Tripo 助手：请先运行 start-tripo-bridge.bat');
+    if(e instanceof TypeError) throw new Error('无法连接 Tripo 助手：请先启动项目（桌面端双击 start.bat），再点「打开登录页」');
     throw e;
   }finally{
     clearTimeout(timer);
   }
 }
 
-async function wfImage(prompt, image){
+/* opts 可选（对话面板用）：只覆盖中断信号与超时，
+ * 不传时与工作流节点的行为完全一致——节点那条链路不需要知道对话的存在。 */
+async function wfImage(prompt, image, opts){
+  const o = opts || {};
+  const sig = o.signal || runSignal();
+  /* 生图来源优先：本地（ComfyUI）选中时就走本机，不再看 Tripo / 云端配置。
+   * 放在最前面是因为它是**用户显式选择**；Tripo 的判断是「配没配」，不该盖过选择。 */
+  if(typeof imgMode === 'function' && imgMode() === 'local'){
+    const p = providerFor('image', 'comfy-image');
+    if(!p) throw new Error('本地生图提供方缺失（provider.js 未加载 complete？）');
+    const r = await p.generate({ prompt, image }, {
+      signal: sig,
+      timeoutSec: Math.max(30, Number(o.timeoutSec) || 300),
+      // 图生图的重绘强度：不传就由 provider 按「想改多少」自动定档
+      denoise: o.denoise
+    });
+    const src = r.dataUrl || r.url;
+    if(!src) throw new Error('ComfyUI 没有返回图片');
+    return src;
+  }
   if(isTripoWeb()){
-    const r = await wfTripoWebImage(prompt, image, { timeoutSec: 240, signal: runSignal() });
+    const r = await wfTripoWebImage(prompt, image, {
+      timeoutSec: Math.max(30, Number(o.timeoutSec) || 240),
+      signal: sig
+    });
     return r.url;
   }
   if(isTripo()){

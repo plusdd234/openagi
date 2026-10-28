@@ -76,7 +76,7 @@ const check = (ok, name, extra) => {
     const n = newNode('smartBranch', 40, 0);
     const flow = { id: 'sb_' + Date.now(), name: 'smartBranch 体检', nodes: [n], links: [], vars: [], updated: Date.now(), lastRun: null };
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     const el = document.getElementById('n-' + n.id);
     const pins = d => Array.from(el.querySelectorAll('.pin.' + d)).map(p => ({ key: p.dataset.key, type: p.dataset.type }));
     window.__sb = { n, el };
@@ -214,7 +214,7 @@ const check = (ok, name, extra) => {
       ]
     };
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     // openFlow 深拷贝，读状态要取 bp 里的活节点
     const live = bp.nodes.find(x => x.id === n.id);
     const liveA = bp.nodes.find(x => x.id === rA.id);
@@ -276,7 +276,7 @@ const check = (ok, name, extra) => {
       };
       if (mut) mut(n);
       FLOWS.unshift(flow);
-      openFlow(flow.id);
+      openFlow(flow.id); flushViewSwap();
       return bp.nodes.find(x => x.id === n.id);
     };
     // 无出口

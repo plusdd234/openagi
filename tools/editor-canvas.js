@@ -49,7 +49,7 @@ const check = (ok, name, extra) => {
     const c = newNode('text', 60, 320);  c.data.text = 'C';
     const flow = { id: 'ed_' + Date.now(), name: '手势验证', nodes: [a, b, c], links: [], vars: [], frames: [], updated: Date.now() };
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     return { a: a.id, b: b.id, c: c.id };
   });
   await page.waitForTimeout(300);

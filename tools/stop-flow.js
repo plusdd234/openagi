@@ -79,7 +79,7 @@ const check = (ok, name, extra) => {
       { id: uid(), from: { node: a.id, key: a.data.outputs[0].id }, to: { node: r.id, key: 'text' } }
     ];
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     window.__ids = { a: a.id, r: r.id };
     return {
       stopHidden: $('btnBpStop').classList.contains('hidden'),

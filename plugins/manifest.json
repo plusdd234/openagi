@@ -1,0 +1,53 @@
+{
+  "//": [
+    "Open AGI 插件注册表 —— 外接服务的唯一事实来源。",
+    "每个外接服务在 plugins/<id>/ 下占一个目录；entry 为相对该目录的服务入口。",
+    "electron/main.js 遍历本表声明式 fork：新增插件只需在此登记，无需改主进程。",
+    "port 为默认起始端口（主进程按占用顺延，并通过 PORT 环境变量注入实际端口）。",
+    "args 为启动附加参数；env 为启动环境变量。",
+    "userDataEnv 的值表示：主进程把 path.join(userData, 值) 注入对应环境变量",
+    "（登录态/产物/工作流存储必须落用户数据目录，不能写进只读的安装目录）。"
+  ],
+  "plugins": {
+    "relay": {
+      "name": "本地中转（LLM 代理）",
+      "description": "绕过服务商 CORS 限制的通用 HTTP 转发，附带工作流存储持久化与备份。",
+      "entry": "relay.js",
+      "port": 8787,
+      "args": [],
+      "env": {
+        "HOST": "127.0.0.1"
+      },
+      "userDataEnv": {
+        "RELAY_STORE_FILE": "openagi-store.json",
+        "RELAY_BACKUP_DIR": "openagi-store.backup"
+      }
+    },
+    "tripo": {
+      "name": "Tripo 网页桥",
+      "description": "有头浏览器 + 人工登录的 Tripo 生图 / 图片转 3D 网页自动化桥。",
+      "entry": "tripo-web.js",
+      "port": 8790,
+      "args": ["--serve"],
+      "env": {
+        "HOST": "127.0.0.1"
+      },
+      "userDataEnv": {
+        "TRIPO_PROFILE_DIR": "tripo-profile",
+        "TRIPO_OUT_DIR": "tripo_out",
+        "TRIPO_TMP_DIR": "tripo_tmp"
+      }
+    },
+    "runtime": {
+      "name": "本地引擎桥（Ollama / ComfyUI）",
+      "description": "把浏览器无法直连的本地模型引擎统一转发到允许 CORS 的端口。",
+      "entry": "runtime.js",
+      "port": 8794,
+      "args": [],
+      "env": {
+        "HOST": "127.0.0.1"
+      },
+      "userDataEnv": {}
+    }
+  }
+}

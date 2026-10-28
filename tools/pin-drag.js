@@ -22,7 +22,7 @@ const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?
     const ic = newNode('imageCompress', 60, 420);
     const flow = { id: 'drag_' + Date.now(), name: '拖线验证', nodes: [nv, at, mv, ic], links: [], vars: [], updated: Date.now() };
     FLOWS.unshift(flow);
-    openFlow(flow.id);
+    openFlow(flow.id); flushViewSwap();
     const id = nid => nid;
     window.__ids = {
       nv: nv.id, at: at.id, mv: mv.id, ic: ic.id,

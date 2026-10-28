@@ -51,7 +51,7 @@
     } catch (e) { /* 用默认端口 */ }
 
     var r2 = await fetch(base, { headers: { 'X-Relay-Target': src } });
-    if (!r2.ok) throw new Error('模型下载失败（HTTP ' + r2.status + '）。跨域地址请启动本地中转 start-relay.bat');
+    if (!r2.ok) throw new Error('模型下载失败（HTTP ' + r2.status + '）。跨域地址请启动项目（桌面端双击 start.bat）');
     return new Uint8Array(await r2.arrayBuffer());
   }
 
@@ -445,10 +445,72 @@
     return true;
   }
 
+  /* ---------------- 缩略图 ----------------
+   * 资产库的 3D 磁贴需要一张「一眼能认出这是什么模型」的图。
+   * 没缩略图时卡片上只有 "GLB" 三个字母，跟 UE 那种网格缩略图完全不是一回事。
+   *
+   * 两个必须处理的细节：
+   *   ① OBJ 没有材质信息，OBJLoader 出来是纯白，打光也看不出体积——统一补中性灰；
+   *   ② 渲染完必须 dispose + forceContextLoss。不做的话导入十几个模型会攒十几个
+   *      WebGL 上下文（浏览器上限通常 16 个），超过之后整个页面直接白屏。 */
+  async function renderThumb(src, opts) {
+    opts = opts || {};
+    if (!ready()) throw new Error('three.js 未就绪');
+    var size = Math.max(64, Math.min(512, Number(opts.size) || 256));
+    var model = await load(src);
+
+    var canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(1);
+    renderer.setSize(size, size, false);
+    renderer.setClearColor(0x000000, 0);
+
+    var scene = new THREE.Scene();
+    // 环境光 + 主光 + 补光：只有环境光的话模型看起来像一张贴纸，没有立体感
+    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    var key = new THREE.DirectionalLight(0xffffff, 1.5);
+    key.position.set(1, 1.5, 1.1);
+    scene.add(key);
+    var fill = new THREE.DirectionalLight(0xffffff, 0.45);
+    fill.position.set(-1.1, -0.5, -0.9);
+    scene.add(fill);
+
+    model.root.traverse(function (o) {
+      if (!o.isMesh) return;
+      var mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach(function (m) {
+        if (!m) return;
+        // 纯白 + 没有贴图 = 大概率是 OBJ 的默认材质，换成中性灰才看得出结构
+        if (m.color && m.color.getHex && m.color.getHex() === 0xffffff && !m.map) {
+          m.color.setHex(0xc3c9d4);
+          if ('roughness' in m) m.roughness = Math.max(0.45, m.roughness);
+        }
+      });
+    });
+    scene.add(model.root);
+
+    var r = Math.max(model.radius, 1e-4);
+    var cam = new THREE.PerspectiveCamera(35, 1, r / 500, r * 40);
+    var d = r * 3.1;
+    // 轴测角度：比正视更容易看出体积，也是 UE 默认缩略图的角度
+    cam.position.set(model.center.x + d * 0.66, model.center.y + d * 0.58, model.center.z + d * 0.8);
+    cam.lookAt(model.center);
+
+    renderer.render(scene, cam);
+    var out = canvas.toDataURL('image/png');
+
+    try { renderer.dispose(); } catch (e) {}
+    try { renderer.forceContextLoss && renderer.forceContextLoss(); } catch (e) {}
+    return { dataURL: out, width: size, height: size };
+  }
+
   global.Model3D = {
     ready: ready,
     load: load,
     quadViews: quadViews,
+    renderThumb: renderThumb,
     openPreview: openPreview,
     closePreview: closePreview,
     QUAD_NAMES: QUAD_NAMES

@@ -127,7 +127,7 @@ const check = (name, ok, info) => {
       ],
       vars: [], updated: Date.now(), lastRun: null
     });
-    openFlow('bench_ok');
+    openFlow('bench_ok'); flushViewSwap();
     const bench = benchCapture(snapshotBp(), {});
     const res = await benchRunNow(bench);
     const saved = await benchGet(bench.id);
@@ -154,7 +154,7 @@ const check = (name, ok, info) => {
       vars: [{ id: 'v1', name: '变量', type: 'string', value: '' }],
       updated: Date.now(), lastRun: null
     });
-    openFlow('bench_bad');
+    openFlow('bench_bad'); flushViewSwap();
     const bench = benchCapture(snapshotBp(), {});
     const res = await benchRunNow(bench);
     return { pass: res.check.pass, reasons: res.check.reasons };
