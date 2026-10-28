@@ -525,7 +525,13 @@ $('llmModelFilter').addEventListener('input', () => renderModelTabs('llm'));
 $('imgModelFilter').addEventListener('input', () => renderModelTabs('img'));
 $('llmModel').addEventListener('input', () => { syncModelActive('llm'); updateModelLabels(); });
 $('imgModel').addEventListener('input', () => { syncModelActive('img'); updateModelLabels(); });
-
+$('imgModel').addEventListener('change', () => {
+  syncModelActive('img'); updateModelLabels();
+  /* 生图模型名改了，对话那边的下拉与标签要跟着变。
+   * 挂 change 而不是 input：input 每敲一个字符就派发一次，
+   * 而对话那边要去问引擎拿清单（一次网络往返），敲「seedream」会打 8 次。 */
+  try{ window.dispatchEvent(new CustomEvent('hf-img-source-changed')); }catch(e){}
+});
 // 配置存 localStorage（输入即自动保存）
 function setInputValue(el, val){
   if(val == null) return;
@@ -610,6 +616,9 @@ $('tripoKey').addEventListener('input', () => { scheduleSave(); updateStatusChip
 $('genEngine').addEventListener('change', () => {
   syncEngineUI();
   scheduleSave();
+  /* 生图引擎换了（openai / tripo / tripo-web），对话那边的生图模型下拉与
+   * 「生图 · xxx」标签都要跟着换 —— 不通知的话，界面上两处显示的模型会对不上。 */
+  try{ window.dispatchEvent(new CustomEvent('hf-img-source-changed')); }catch(e){}
 });
 $('tripoVersion').addEventListener('change', () => updateStatusChips());
 $('btnTripoCheck').addEventListener('click', () => checkTripoKey());

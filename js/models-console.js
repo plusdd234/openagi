@@ -995,11 +995,17 @@ function mcRenderProviders(){
     btn.addEventListener('click', () => {
       const [kind, scope] = btn.dataset.mcScope.split('/');
       mcSetScope(kind, scope);
-      // 生图切到本地时顺手把面板里的 ComfyUI 状态刷新一遍：用户切过来就是想看它能不能用
+      /* 生图切到本地时顺手把面板里的 ComfyUI 状态刷新一遍：用户切过来就是想看它能不能用 */
       if(kind === 'image' && scope === 'local'){
         try{ rtRefresh().then(() => { mcPaintEng(); mcPaintComfy(); mcRenderProviders(); }); }catch(e){}
       }
       mcRenderProviders();
+      /* 通知对话那边：生图来源/模型变了，页头的「生图 · xxx」标签和输入条上的
+       * 生图模型下拉都要跟着换。不通知的话，用户在这个面板切了本地，
+       * 对话里还显示着「在线 · seedream」，两边对不上。 */
+      if(kind === 'image'){
+        try{ window.dispatchEvent(new CustomEvent('hf-img-source-changed')); }catch(e){}
+      }
     });
   });
 }

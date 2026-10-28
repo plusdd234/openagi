@@ -99,6 +99,20 @@
             </svg>
             <span class="dai-mode-txt" id="deskAiModeTxt">自动</span>
           </button>
+          <!-- 生图模型：选「用哪个模型出图」。
+               与语言模型下拉同一范式（原生 select 当值容器 + 自绘按钮 + body 弹层）。
+               选中后写进**真正生效**的那处配置：本地写 mc_comfy_ckpt，
+               在线/Tripo 写 hf_imgModel —— 不另存一份，避免「显示 A、实际用 B」。 -->
+          <select class="dai-native" id="deskAiImgModel" aria-hidden="true" tabindex="-1"></select>
+          <button type="button" class="dai-pick dai-pick-img" id="deskAiImgBtn" title="选择生图模型" aria-haspopup="listbox" aria-expanded="false">
+            <svg class="dai-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3.2" y="5.6" width="12.4" height="12.4" rx="2.6"/>
+              <path d="m3.6 15.6 3.2-3.1a1.7 1.7 0 0 1 2.4 0l2.3 2.2"/>
+              <circle cx="11.2" cy="9.5" r="1.05"/>
+            </svg>
+            <span class="dai-pick-label" id="deskAiImgLabel">生图模型</span>
+            <svg class="dai-pick-chev" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <span class="dai-flex"></span>
           <span class="dai-dot" id="deskAiDot" title="就绪"></span>
           <select class="dai-native" id="deskAiModel" aria-hidden="true" tabindex="-1"></select>

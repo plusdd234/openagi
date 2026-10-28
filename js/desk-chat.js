@@ -96,6 +96,140 @@
     return out;
   }
 
+  /* ---------- 生图模型清单 ----------
+   *
+   * 和语言模型分开列，因为**它们写进的地方不一样**：
+   *   语言模型 → localStorage 的 hf_desk_model（只影响这一条输入框）
+   *   生图模型 → 真正生效的配置（本地写 mc_comfy_ckpt，在线写 hf_imgModel）
+   *
+   * 为什么在线这一侧要写 hf_imgModel 而不是自己存一份：
+   * 生图链路只认设置页那几个字段（wfImage 直接读 $('imgModel').value），
+   * 这里另存一份就会出现「下拉显示的是 A、实际出图用的是 B」——最难查的那种不一致。
+   *
+   * 只有两类来源：
+   *   本地 ComfyUI → 桥上问 /comfy/object_info/CheckpointLoaderSimple 拿 ckpt 清单
+   *   在线接口     → IMG_MODEL_CACHE（设置页「读取生图模型」时已经存过）
+   *
+   * ⚠ **这里没有 Tripo**（2026-10-29 用户明确要求）：
+   * Tripo 在本项目里是**独立的网页操作节点**（tripoImg / tripoModel / tripoModelMulti），
+   * 不是「对话生图时挑一个模型」这件事的一部分。
+   * 而且 Tripo 的模型选择有自己的位置：
+   *   - 网页版（tripo-web）：模型在 Tripo 网页里选，wfTripoWebImage 根本不读 imgModel；
+   *   - API 版：设置页有专门的 renderTripoImageModels()（js/api.js）负责。
+   * 把 Tripo 塞进这个下拉会造成两个问题：
+   *   ① 选了也不生效（网页版那条路压根不看 imgModel）；
+   *   ② 与设置页的 Tripo 模型 UI 各存一份，两边必然对不上。
+   */
+  /* 引擎当前是不是 Tripo（API 版 tripo / 网页版 tripo-web）。
+   *
+   * 两种都算「Tripo 走网页操作节点」：模型选择在 Tripo 页面里选（网页版）
+   * 或设置页的 Tripo 模型区选（API 版），都不是这个下拉该管的事。 */
+  function tripoEngineActive(){
+    try{
+      const v = $('genEngine').value;
+      return v === 'tripo' || v === 'tripo-web';
+    }catch(e){ return false; }
+  }
+
+  async function imgModelOptions(){
+    const out = [];
+
+    /* ---- 本地 ComfyUI：ckpt 清单 ---- */
+    try{
+      if(typeof rtRefresh === 'function') await rtRefresh();
+      const p = providerFor('image', 'comfy-image');
+      if(p && p.status && p.status()){
+        const list = await p.listModels();          // provider 已封装 /comfy/object_info
+        /* provider 统一返回 { id, owned_by }（和云端清单同构），
+         * 但老 provider 可能直接给字符串数组——两种都认。 */
+        (list || []).forEach(m => {
+          const id = (m && typeof m === 'object') ? (m.id || '') : String(m || '');
+          if(id) out.push({ value: 'comfy:' + id, label: id, group: '本地 ComfyUI' });
+        });
+      }
+    }catch(e){ /* 引擎没起就没有本地模型，不算错误 */ }
+
+    /* ---- 在线接口：设置页读过的生图模型清单 ---- */
+    try{
+      const base = ($('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim()).replace(/\/$/, '');
+      const cache = (typeof IMG_MODEL_CACHE !== 'undefined' && IMG_MODEL_CACHE) ? IMG_MODEL_CACHE : { base:'', list:[] };
+      const ids = new Set();
+      if(cache.base === base) (cache.list || []).forEach(m => ids.add(m.id));
+      const cur = ($('imgModel').value || '').trim();
+      if(cur) ids.add(cur);
+      ids.forEach(id => out.push({ value: 'online:' + id, label: id, group: '在线接口' }));
+    }catch(e){}
+
+    return out;
+  }
+
+  /* 下拉当前选中项的存储值。
+   *
+   * 存在哪取决于**当前生图来源**：
+   *   本地 → mc_comfy_ckpt（provider.js 读的键）
+   *   在线 → hf_imgModel（设置页的生图模型字段）
+   *
+   * ⚠ 不处理 Tripo：Tripo 是独立的网页操作节点，模型选择有它自己的位置
+   *   （网页版在 Tripo 页面里选，API 版在设置页的 renderTripoImageModels 里选）。
+   *   引擎停在 Tripo 时这个下拉不参与，返回空让它显示占位文字。 */
+  function currentImgModelValue(){
+    try{
+      const mode = (typeof imgMode === 'function') ? imgMode() : 'online';
+      if(mode === 'local'){
+        const ck = (typeof comfyCkptChoice === 'function') ? comfyCkptChoice() : '';
+        if(ck) return 'comfy:' + ck;
+      }
+      /* 引擎停在 Tripo 上时，imgModel 由设置页的 Tripo 模型 UI 管，
+         这个下拉不参与（避免两处各存一份、必然对不上）。 */
+      if(tripoEngineActive()) return '';
+      const m = ($('imgModel').value || '').trim();
+      if(m) return 'online:' + m;
+    }catch(e){}
+    return '';
+  }
+
+  /* 选中某个生图模型 → 写进真正生效的那处配置。
+   *
+   * 写完必须让设置页与页头标签同步：设置页的输入框直接被改了（用户看得见），
+   * 页头的「生图 · xxx」也要跟着变（否则用户不知道实际会用哪个）。 */
+  function applyImgModel(value){
+    const v = String(value || '');
+    const i = v.indexOf(':');
+    if(i < 0) return false;
+    const src = v.slice(0, i);
+    const name = v.slice(i + 1);
+    if(!name) return false;
+    try{
+      if(src === 'comfy'){
+        if(typeof setComfyCkpt !== 'function') return false;
+        setComfyCkpt(name);
+        /* 本地生图走 imgMode()=='local' 这条路，与 genEngine 无关。 */
+        if(typeof setImgMode === 'function') setImgMode('local');
+      }else{
+        /* 在线写 hf_imgModel。引擎必须切到 openai —— 否则「引擎还停在 Tripo」
+         * 时会把请求发给 Tripo，而不是用户刚选的在线接口。
+         * genEngine 是生图引擎的总开关（openai / tripo / tripo-web）。 */
+        const field = $('imgModel');
+        if(!field) return false;
+        field.value = name;
+        const eng = $('genEngine');
+        if(eng && eng.value !== 'openai'){
+          eng.value = 'openai';
+          eng.dispatchEvent(new Event('change', { bubbles: true }));  // 触发 syncEngineUI + scheduleSave
+        }
+        if(typeof setImgMode === 'function') setImgMode('online');
+        try{ localStorage.setItem('hf_imgModel', name); }catch(e){}
+        /* 设置页的模型高亮与标签要跟着走 */
+        try{
+          if(typeof syncModelActive === 'function') syncModelActive('img');
+          if(typeof updateModelLabels === 'function') updateModelLabels();
+        }catch(e){}
+      }
+    }catch(e){ return false; }
+    renderImgLabel();
+    return true;
+  }
+
   async function renderModelSelect(){
     const sel = el('deskAiModel');
     if(!sel) return;
@@ -137,6 +271,76 @@
     }
     renderChatModelLabel();
     syncPicker('model');
+  }
+
+  /* 生图模型下拉：把清单填进 select，保留当前选中项。
+   *
+   * 保留不了当前项的情况有两种，都得处理：
+   *   ① 当前来源是本地，但引擎没起 → 清单里没有本地 ckpt，
+   *      此时**不能**把选中项改掉（用户选的模型仍然有效，
+   *      只是引擎没跑而已）；所以先把当前值塞回去，引擎起来后再刷。
+   *   ② 用户从没选过 → 取第一个可用的。 */
+  async function renderImgModelSelect(){
+    const sel = el('deskAiImgModel');
+    if(!sel) return;
+    const list = await imgModelOptions();
+    const cur = currentImgModelValue();
+    sel.innerHTML = '';
+
+    /* 引擎停在 Tripo 上：这个下拉不参与（Tripo 是独立的网页操作节点，
+       模型选择在 Tripo 页面 / 设置页的 Tripo 模型区）。
+       给一条说明而不是留空 —— 空下拉会让人以为功能坏了。 */
+    const tripoMode = tripoEngineActive();
+    if(tripoMode){
+      const o = document.createElement('option');
+      o.value = '';
+      o.textContent = 'Tripo（网页节点）';
+      sel.appendChild(o);
+      sel.disabled = true;
+      syncPicker('imgmodel');
+      const btn = el('deskAiImgBtn');
+      if(btn) btn.title = '当前引擎是 Tripo：它是独立的网页操作节点，模型在 Tripo 页面里选';
+      return;
+    }
+
+    if(!list.length){
+      const o = document.createElement('option');
+      o.value = cur || '';
+      o.textContent = '没有可用生图模型';
+      sel.appendChild(o);
+      sel.disabled = true;
+    }else{
+      sel.disabled = false;
+      const groups = new Map();
+      list.forEach(o => {
+        if(!groups.has(o.group)) groups.set(o.group, []);
+        groups.get(o.group).push(o);
+      });
+      groups.forEach((items, name) => {
+        const g = document.createElement('optgroup');
+        g.label = name;
+        items.forEach(o => {
+          const op = document.createElement('option');
+          op.value = o.value;
+          op.textContent = o.label;
+          g.appendChild(op);
+        });
+        sel.appendChild(g);
+      });
+      /* 当前值不在清单里也保留它（引擎没起 / 清单没读），只是加一个提示项。
+       * 强行跳到第一个可用项 = 用户选的模型被悄悄换掉，是最难查的一类问题。 */
+      if(cur && !list.some(o => o.value === cur)){
+        const g = document.createElement('optgroup');
+        g.label = '当前选择';
+        const op = document.createElement('option');
+        op.value = cur;
+        op.textContent = cur.slice(cur.indexOf(':') + 1) + '（当前）';
+        g.appendChild(op);
+        sel.appendChild(g);
+      }
+      sel.value = cur || (list.length ? list[0].value : '');
+    }
+    syncPicker('imgmodel');
   }
 
   function renderChatModelLabel(){
@@ -217,7 +421,12 @@
     b.addEventListener('click', () => {
       if(p.sel.value !== opt.value){
         p.sel.value = opt.value;
-        try{ localStorage.setItem(p.cfg.storeKey, opt.value); }catch(e){}
+        /* storeKey 是可选的：语言模型 / 上下文存 localStorage，
+         * 而生图模型存的是**合成前缀值**（comfy: / online: / tripo:），
+         * 真正生效的位置由 applyImgModel 决定 —— 另存一份必然对不上。 */
+        if(p.cfg.storeKey){
+          try{ localStorage.setItem(p.cfg.storeKey, opt.value); }catch(e){}
+        }
         p.sel.dispatchEvent(new Event('change', { bubbles: true }));
       }
       closeMenus();
@@ -1243,6 +1452,8 @@
     /* 先按缓存画（打开面板不能等），再校准一次：缓存里那半分钟前的「未就绪」
        不该一直挂在这个 chip 上。校准只在不 ready 时才真的发请求。 */
     imgSourceAsync().then(s => { if(opened || box.isConnected) paintImgLabel(s); }).catch(() => {});
+    /* 来源/模型变了，输入条上的生图模型下拉要跟着换（签名相同就不动，避免反复问引擎）。 */
+    syncImgModelPicker();
   }
 
   function paintImgLabel(s){
@@ -1253,6 +1464,27 @@
     box.title = s.ready
       ? ('当前出图来源：' + s.label + (s.shared ? '（图像侧未单独配置，沿用了语言模型的接口）' : '') + '（点一下去设置）')
       : (s.hint || '生图模型未就绪');
+  }
+
+  /* 来源或模型变了 → 输入条上的生图模型下拉要跟着换。
+   *
+   * 为什么用签名缓存而不是每次都刷：刷下拉要去问引擎拿 ckpt 清单（一次网络往返），
+   * 而 renderImgLabel 在出图流程里被调得很勤（每张图、每次校准都调），
+   * 每次都去问一遍会把引擎打爆。
+   *
+   * 签名 = 来源模式 + 当前模型名 + 清单本身没变时不动。
+   * 引擎起了（清单从空变成有）也算一次变化——这时本地 ckpt 才冒出来。 */
+  let imgModelSig = '';
+  function syncImgModelPicker(){
+    const sig = [
+      (function(){ try{ return imgMode(); }catch(e){ return 'online'; } })(),
+      (function(){ try{ return $('imgModel').value.trim(); }catch(e){ return ''; } })(),
+      (function(){ try{ return comfyCkptChoice(); }catch(e){ return ''; } })()
+    ].join('|');
+    if(sig === imgModelSig) return false;
+    imgModelSig = sig;
+    renderImgModelSelect();
+    return true;
   }
 
   /* 生图模式按钮：自动 → 总是生图 → 仅对话 */
@@ -1606,6 +1838,13 @@
       storeKey: MODEL_KEY, title: '对话模型', placeholder: '未选择模型', config: true, align: 'right',
       empty: '还没有可用模型 —— 点下面的「配置自定义模型」接一个'
     });
+    /* 生图模型下拉：没有 storeKey（值由 applyImgModel 写进真正生效的配置），
+       对齐到左侧（它挨着生图模式按钮，不贴右边缘）。 */
+    initPicker('imgmodel', {
+      sel: 'deskAiImgModel', btn: 'deskAiImgBtn', label: 'deskAiImgLabel',
+      title: '生图模型', placeholder: '未选生图模型',
+      empty: '没有可用的生图模型 —— 先在设置里配置生图接口，或启动本地 ComfyUI'
+    });
     renderContextSelect();
     renderAtts();
     renderLog();
@@ -1676,6 +1915,31 @@
       try{ localStorage.setItem(CTX_KEY, csel.value); }catch(e){}
       renderCtxLabel();
       syncPicker('ctx');
+    });
+
+    /* 生图模型：选中后写进真正生效的那处配置（本地 ckpt / 在线 imgModel）。
+     * 写完要重刷页头标签，否则「生图 · xxx」还停在旧模型上。 */
+    const isel = el('deskAiImgModel');
+    if(isel) isel.addEventListener('change', () => {
+      if(!applyImgModel(isel.value)) return;
+      syncPicker('imgmodel');
+      /* 来源可能跟着变了（选了本地 ckpt → 切本地；选了在线模型 → 切在线），
+       * 页头标签要按新来源重画一遍。 */
+      renderImgLabel();
+    });
+
+    /* 设置页切了生图来源（本地 / 在线）→ 页头标签与生图模型下拉跟着换。
+     * 事件由 js/models-console.js 的 mcSetScope 之后派发。 */
+    window.addEventListener('hf-img-source-changed', () => {
+      imgModelSig = '';        // 强制重刷（签名没变但来源确实换了）
+      renderImgLabel();
+    });
+
+    /* 引擎状态变了 → 本地 ckpt 清单可能变了（引擎起来了，ckpt 才冒出来）。
+     * 强制重刷一次下拉，否则用户启动引擎后还得手动点一下才能看到本地模型。 */
+    window.addEventListener('engines-status', () => {
+      imgModelSig = '';
+      renderImgModelSelect();
     });
 
     /* 返回按钮：对话现在是普通 App，返回走 App 页统一的 << 按钮（deskAppLeave）。
@@ -1763,6 +2027,9 @@
     });
 
     renderModelSelect();
+    /* 生图模型下拉首次渲染：清单要问引擎（一次往返），慢一点没关系，
+     * 但必须渲染 —— 否则按钮上永远写着「未选生图模型」。 */
+    renderImgModelSelect();
     setDot('', '就绪');
   }
 
@@ -1774,7 +2041,13 @@
     send: send,
     open: openPanel,
     close: closePanel,
-    refresh: function(){ renderContextSelect(); renderModelSelect(); renderCtxLabel(); renderImgLabel(); },
+    refresh: function(){
+      renderContextSelect(); renderModelSelect(); renderCtxLabel(); renderImgLabel();
+      /* 生图模型下拉也要刷：设置页改了生图接口 / 读了新清单后，
+       * 对话这边得能看到新模型（配置 hydrate 是异步的，不刷就永远停在旧清单）。 */
+      imgModelSig = '';
+      renderImgModelSelect();
+    },
     msgs: function(){ return msgs; },
     atts: function(){ return atts; },
     ctxText: contextText,

@@ -2955,6 +2955,10 @@
   .dai-pick-tag[data-src="local"] { background: #eef2ec; color: #4a6b45; }
   .dai-pick-model { max-width: 246px; }
   .dai-pick-model .dai-pick-label { max-width: 176px; font-weight: 500; }
+  /* 生图模型下拉：挨着生图模式按钮，宽度比语言模型窄（模型名普遍更长） */
+  .dai-pick-img { max-width: 186px; }
+  .dai-pick-img .dai-pick-label { max-width: 128px; }
+  .dai-pick-img.is-empty .dai-pick-label { color: #98a0ae; }
   /* 窄窗口：工具栏放不下时先丢角标和图标，只留名字（不允许挤到换行或溢出） */
   @media (max-width: 820px) {
     .dai-pick-tag { display: none; }
@@ -2962,6 +2966,8 @@
     .dai-pick { max-width: 132px; padding: 0 6px 0 9px; }
     .dai-pick-model { max-width: 158px; }
     .dai-pick-model .dai-pick-label { max-width: 120px; }
+    .dai-pick-img { max-width: 120px; }
+    .dai-pick-img .dai-pick-label { max-width: 96px; }
     /* 生图模式只留图标：三个字的位置比一个「自动」重要得多 */
     .dai-mode { padding: 0 7px; }
     .dai-mode-txt { display: none; }
