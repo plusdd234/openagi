@@ -1,0 +1,302 @@
+/* ============================================================
+ * app.css 拆分 · 11-chat
+ * 对话 App（窗口 / 工具栏 / 气泡 / 输入条）
+ *
+ * ⚠ 这份文件是按**原始行号连续切片**出来的，各文件之间靠 index.html 的
+ *   <link> 顺序维持层叠关系。加新样式请放进对应 App 的文件，不要在这里
+ *   随手追加——也不要在 08-theme 之前的文件里写「最终样式」，那会被覆盖。
+ * ============================================================ */
+
+  /* =========================================================
+     视图转场：工作台（.home.desk）↔ 工作流编辑器（.bp）
+     —— 只做位移 + 淡入淡出，**不做缩放**。
+     画布里的连线 / 端口坐标是拿 getBoundingClientRect 两两相减算的，
+     祖先元素一旦带 scale，差值会被整体放缩，转场那 300ms 里连线会歪；
+     而纯位移在两个矩形相减时会互相抵消，绝对安全。
+     ========================================================= */
+  /* 两个视图（.home.desk / .bp）平时都在文档流里，同时显示时后者会被排到屏幕外，
+     所以只在切换的那 300ms 里把它们都绝对定位到 appbar 下面，真正叠在一起做交叉。
+     DOM 里 .bp 在后，定位后自然压在 .home 上面（进入时新页盖旧页；返回时旧页在上淡出）。 */
+  body.view-swapping #homeView,
+  body.view-swapping #blueprintView,
+  body.view-swapping #toolView {
+    position: absolute; left: 0; right: 0; top: 52px;
+    height: calc(100vh - 52px);
+  }
+  .view-in { animation: viewInR .34s cubic-bezier(.32,.72,.24,1) both; }
+  .view-out { animation: viewOutL .3s cubic-bezier(.32,.72,.24,1) both; pointer-events: none; }
+  /* 工作流页从右边推进来，工作台从左边退出去——方向固定，用户靠方向就能判断「进去了 / 出来了」 */
+  #blueprintView.view-in { animation-name: viewInR; }
+  #blueprintView.view-out { animation-name: viewOutR; }
+  #homeView.view-in { animation-name: viewInL; }
+  #homeView.view-out { animation-name: viewOutL; }
+
+  /* 进入的一页在 60% 处就完全不透明：再往后它已经盖住旧页，不会出现「两页都半透明」的灰白一片 */
+  @keyframes viewInR {
+    0%   { opacity: 0; transform: translateX(42px); }
+    60%  { opacity: 1; }
+    100% { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes viewOutR {
+    0%   { opacity: 1; transform: translateX(0); }
+    100% { opacity: 0; transform: translateX(42px); }
+  }
+  @keyframes viewInL {
+    0%   { opacity: 0; transform: translateX(-30px); }
+    60%  { opacity: 1; }
+    100% { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes viewOutL {
+    0%   { opacity: 1; transform: translateX(0); }
+    100% { opacity: 0; transform: translateX(-30px); }
+  }
+  /* 节点与连线是转场结束才建的（见 openFlow），建完淡入一下，别让它硬蹦出来。
+     只动 opacity：坐标全靠 getBoundingClientRect，任何 transform 都会把它算歪。 */
+  .bp-canvas.nodes-in #bpNodes,
+  .bp-canvas.nodes-in #bpLinks,
+  .bp-canvas.nodes-in #bpFrames { animation: bpLayerIn .24s ease both; }
+  @keyframes bpLayerIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* 编辑器里的小件跟着错开一点，避免整页像一张图一起平移 */  #blueprintView.view-in .bp-bar { animation: bpBarIn .36s cubic-bezier(.32,.72,.24,1) both; }
+  #blueprintView.view-in .bp-side { animation: bpSideIn .38s cubic-bezier(.32,.72,.24,1) both; }
+  @keyframes bpBarIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes bpSideIn {
+    from { opacity: 0; transform: translateX(-10px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  /* ---- 启动：画布先立起来，图标逐个落位，输入条最后升起 ---- */
+  .desk-wall.desk-boot .desk-canvas { animation: deskCanvasIn .46s cubic-bezier(.22,.68,.24,1) both; }
+  .desk-wall.desk-boot .desk-app { animation: deskAppIn .44s cubic-bezier(.22,.68,.24,1) both; }
+  .desk-wall.desk-boot .desk-app:nth-child(1) { animation-delay: .10s; }
+  .desk-wall.desk-boot .desk-app:nth-child(2) { animation-delay: .14s; }
+  .desk-wall.desk-boot .desk-app:nth-child(3) { animation-delay: .18s; }
+  .desk-wall.desk-boot .desk-app:nth-child(4) { animation-delay: .22s; }
+  .desk-wall.desk-boot .desk-app:nth-child(5) { animation-delay: .26s; }
+  .desk-wall.desk-boot .desk-app:nth-child(6) { animation-delay: .30s; }
+  .desk-wall.desk-boot .desk-app:nth-child(7) { animation-delay: .34s; }
+  .desk-wall.desk-boot .desk-app:nth-child(8) { animation-delay: .38s; }
+  /* 输入条靠 translateX(-50%) 居中，关键帧里必须带上它，否则动画那一下会横跳半条宽 */
+  .desk-wall.desk-boot .desk-page-1 > .desk-ai-wrap { animation: deskBarIn .5s .3s cubic-bezier(.22,.68,.24,1) both; }
+  @keyframes deskCanvasIn {
+    from { opacity: 0; transform: scale(.985); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes deskAppIn {
+    from { opacity: 0; transform: translateY(10px) scale(.94); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes deskBarIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+    to   { opacity: 1; transform: translateX(-50%); }
+  }
+  /* ================= 蓝图编辑器：照工作台那套「白底 + 灰画布 + 浮起卡片」重做 =================
+     工作台上是「白页面里放一块灰圆角画布，内容浮在上面」。
+     蓝图这边原先是通铺：工具栏、侧栏、画布全在同一平面，控件之间没有前后关系。
+     这里把它拆成三块有层级的卡：工具栏（贴顶）、侧栏（白卡）、画布（灰卡浮起来），
+     控件按「主要 / 次要 / 辅助」拉开权重。 */
+
+  .bp { background: #f2f4f8; }
+
+  /* ---- 工具栏：一层白，一条发丝线，比按钮本身更安静 ---- */
+  .bp-bar {
+    height: 54px; padding: 0 18px; gap: 10px;
+    background: rgba(255,255,255,.94); border-bottom: 1px solid #e6e9ef;
+    box-shadow: 0 1px 0 rgba(255,255,255,.9), 0 6px 18px -18px rgba(20,30,50,.35);
+    backdrop-filter: blur(10px);
+  }
+  .bp-bar .icon-btn {
+    width: 30px; height: 30px; border-radius: 9px; color: #5b6472;
+    background: #fff; border: 1px solid #e4e7ed;
+    transition: color .15s, border-color .15s, background .15s, box-shadow .15s;
+  }
+  .bp-bar .icon-btn:hover {
+    color: #a45f00; border-color: #f2cd88; background: #fffaf0;
+    box-shadow: 0 4px 12px -9px rgba(164,95,0,.6);
+  }
+  .bp-bar .bp-name {
+    font-size: 13.5px; font-weight: 650; letter-spacing: .01em; color: #1f2328;
+    padding: 5px 8px; border-radius: 8px; border: 1px solid transparent; background: transparent;
+    transition: background .15s, border-color .15s, box-shadow .15s;
+  }
+  .bp-bar .bp-name:hover { background: #f6f7f9; border-color: #e8ebf0; }
+  .bp-bar .bp-name:focus { background: #fff; border-color: #f0b429; box-shadow: 0 0 0 3px rgba(240,180,41,.16); }
+
+  /* 操作区收成一块「控件板」：按钮在里面变成小片，靠间距和底色分组 */
+  .bp-actions {
+    display: flex; align-items: center; gap: 4px;
+    padding: 3px; border-radius: 11px;
+    background: #f5f6f9; border: 1px solid #eaecf1;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.8);
+  }
+  .bp-actions .btn {
+    height: 26px; border: 1px solid transparent; background: transparent;
+    color: #454c58; box-shadow: none;
+    transition: background .15s, border-color .15s, color .15s, box-shadow .15s;
+  }
+  /* 次要动作：悬停才浮起白底，平时跟底板融在一起 */
+  .bp-actions .btn:not(.primary):not(.danger):hover {
+    background: #fff; border-color: #e2e6ec; color: #1f2328;
+    box-shadow: 0 2px 6px -4px rgba(20,30,50,.35);
+  }
+  .bp-actions .btn.primary {
+    color: #3d2600; font-weight: 650;
+    background: linear-gradient(180deg, #f7c34a, #f0b429);
+    border: 1px solid #e0a51f;
+    box-shadow: 0 1px 0 rgba(255,255,255,.55) inset, 0 6px 14px -10px rgba(190,124,0,.85);
+  }
+  .bp-actions .btn.primary:hover { filter: brightness(1.04); }
+  .bp-actions .btn.primary:active { transform: translateY(.5px); }
+  .bp-actions .btn.danger {
+    color: #fff; background: #d9483c; border-color: #c53d32;
+  }
+  /* 「添加节点」是入口而不是动作：虚线框，和右侧按钮区分开 */
+  .bp-bar .bp-add {
+    height: 28px; border-radius: 8px; border: 1px dashed #cfd5de; background: #fff;
+    color: #4c5665; font-size: 11.5px;
+    transition: border-color .15s, color .15s, background .15s;
+  }
+  .bp-bar .bp-add:hover { border-color: #f0b429; color: #a45f00; background: #fffdf7; }
+  .bp-state { border-radius: 999px; font-size: 10.5px; padding: 3px 9px; }
+
+  /* ---- 主体：两块浮起来的卡 ---- */
+  .bp-main { gap: 12px; padding: 12px 16px 16px; }
+
+  .bp-side {
+    border-radius: 14px; border: 1px solid #e6e9ef; background: #fff;
+    box-shadow: 0 1px 2px rgba(20,30,50,.04), 0 18px 34px -30px rgba(20,30,50,.45);
+    overflow: hidden;
+  }
+  /* 侧栏标签：分段控件，选中项浮一层白 */
+  .bp-side-tabs {
+    gap: 3px; padding: 7px 8px; border-bottom: 1px solid #eef0f4; background: #f7f8fa;
+  }
+  .bp-side-tab {
+    flex: 0 0 auto; border: 1px solid transparent; border-radius: 8px; padding: 5px 8px;
+    font-size: 11px; color: #6a7488; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 4px;
+    transition: color .15s, background .15s, box-shadow .15s, border-color .15s;
+  }
+  .bp-side-tab:hover { color: #1f2328; background: #eef0f4; }
+  .bp-side-tab.active {
+    color: #1f2328; font-weight: 600; background: #fff; border-color: #e6e9ef;
+    box-shadow: 0 1px 2px rgba(20,30,50,.06), 0 4px 10px -8px rgba(20,30,50,.4);
+  }
+  .bp-side-head {
+    padding: 10px 12px 6px; letter-spacing: .06em; font-size: 9.5px; font-weight: 700;
+    text-transform: none; color: #9aa2ae;
+  }
+  .bp-side-pane { background: #fff; }
+
+  .lib-group { font-size: 9.5px; letter-spacing: .06em; padding: 12px 12px 5px; }
+  .lib-item {
+    border-radius: 9px; border: 1px solid #eaedf2;
+    transition: border-color .16s, box-shadow .16s, background .16s, transform .16s;
+  }
+  .lib-item:hover {
+    background: #fff; border-color: #f0d49a; transform: translateX(1px);
+    box-shadow: 0 6px 16px -12px rgba(164,95,0,.55);
+  }
+  .lib-item:hover::before { background: #f0b429; }
+
+  /* 画布：灰底、圆角、内投影，和工作台那块同一种「底板」 */
+  .bp-canvas {
+    border-radius: 16px; border: 1px solid #e3e7ee;
+    background-color: #eef1f5; background-image: none;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.9),
+      inset 0 22px 44px -34px rgba(20,30,50,.30),
+      0 1px 2px rgba(20,30,50,.04);
+    overflow: hidden;
+  }
+  /* 底纹层：比画布四面各多半格，平移时用 modulo 折算到 [0, 100%] 内，
+     永远不会有缝；只改 transform，主线程不参与，也不会和节点的合成层错帧。 */
+  .bp-grid {
+    /* 四边各多 224px 就够：粗网格一格最大 100×2.2=220px，取模后的位移不会露出边。
+       多给的每一像素都要跟一张纹理，别浪费（画布 1176×764 时，这一块单开就是 3.5 倍面积）。 */
+    position: absolute; inset: -224px;
+    z-index: 0; pointer-events: none;
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(30,40,60,.065) 1px, transparent 1.6px),
+      linear-gradient(to right, rgba(30,40,60,.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(30,40,60,.045) 1px, transparent 1px);
+    background-size: 20px 20px, 100px 100px, 100px 100px;
+    will-change: transform;
+    transform: translate3d(0, 0, 0);
+    backface-visibility: hidden;
+  }
+  /* 缩得越小点阵越像噪点：<50% 去掉 20px 点阵，<30% 只留底色。
+     切档只在跨阈值那一次重绘（换 background-image），平移期间不参与。 */
+  .bp-canvas[data-grid-lod="1"] .bp-grid {
+    background-image:
+      linear-gradient(to right, rgba(30,40,60,.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(30,40,60,.045) 1px, transparent 1px);
+  }
+  .bp-canvas[data-grid-lod="2"] .bp-grid { background-image: none; }
+  .bp-empty {
+    border-radius: 12px; border: 1px dashed #c9d0da; background: rgba(255,255,255,.72);
+    color: #8a93a1; font-size: 12px; padding: 10px 16px;
+    box-shadow: 0 10px 24px -22px rgba(20,30,50,.5);
+  }
+
+  /* 状态栏：从通铺细条改成浮在画布右下角的胶囊 */
+  .bp-statusbar {
+    left: auto; right: 14px; bottom: 14px; height: 30px; gap: 10px;
+    padding: 0 8px; border: 1px solid #e3e7ee; border-radius: 10px;
+    background: rgba(255,255,255,.92); color: #6a7488;
+    box-shadow: 0 1px 2px rgba(20,30,50,.05), 0 12px 26px -22px rgba(20,30,50,.55);
+    backdrop-filter: blur(8px);
+  }
+  .bp-statusbar .sb-hint { max-width: 520px; font-size: 10px; }
+  .bp-statusbar .sb-hint b { color: #3d4552; }
+  .bp-statusbar kbd {
+    border: 1px solid #e2e6ec; border-bottom-width: 2px; background: #f7f8fa;
+    color: #5b6472; border-radius: 4px;
+  }
+  .sb-zoom {
+    border-radius: 8px; border-color: #e3e7ee; background: #f7f8fa;
+  }
+  .sb-zoom button { transition: background .15s, color .15s; }
+  .sb-zoom button:hover { background: #fff; color: #1f2328; }
+
+  /* 节点常驻独立合成层——这条是拿显存换流畅，别急着删。
+     起因：`#bpWorld` 是个大层，节点一移动就得重画整层，首次拖拽有一帧 100–150ms。
+     实测过「只在拖拽期给被拖节点加 will-change」：图层在 pointerdown 才建，
+     真正抬升发生在第一次移动那一帧，大节点（带文本域/缩略图，340px 高）光栅化要 100ms，
+     卡顿原样回来。所以只能常驻：49 张 224×H 的纹理，2x 下约 40MB，换拖动全程 17ms。 */
+  #bpNodes .node { will-change: transform; }
+
+  /* 节点：卡片感更强，层次靠「描边 + 投影 + 头顶色条」，尺寸一律不动（连线几何依赖它） */
+  .node {
+    border-radius: 12px; border-color: #e2e6ed;
+    box-shadow:
+      0 1px 2px rgba(20,30,50,.05),
+      0 12px 26px -20px rgba(20,30,50,.42),
+      inset 0 1px 0 rgba(255,255,255,.9);
+    transition: box-shadow .18s ease, border-color .18s ease;
+  }
+  .node:hover {
+    border-color: #d6dce5;
+    box-shadow:
+      0 1px 2px rgba(20,30,50,.06),
+      0 18px 34px -22px rgba(20,30,50,.5),
+      inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .node.sel { border-color: #f0b429; box-shadow: 0 0 0 2px rgba(240,180,41,.28), 0 18px 34px -20px rgba(164,95,0,.5); }
+  .node.running { border-color: #f0b429; box-shadow: 0 0 0 2px rgba(240,180,41,.22), 0 0 26px -10px rgba(240,180,41,.65); }
+  .node-head {
+    border-bottom: 1px solid #eef0f4;
+    background-image: linear-gradient(180deg, #fdfdfe, #f5f7f9);
+  }
+  .node-title { font-size: 10.5px; letter-spacing: .012em; }
+
+  /* 进场：整层淡入（只动 opacity，不去碰 transform，否则连线会跟错位） */
+  .bp-canvas.nodes-in #bpNodes, .bp-canvas.nodes-in #bpLinks { animation: bpLayerIn .26s ease both; }
+  @keyframes bpLayerIn { from { opacity: 0; } to { opacity: 1; } }
+

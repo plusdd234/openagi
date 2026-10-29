@@ -4,7 +4,26 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>The seed</title>
-<link rel="stylesheet" href="css/app.css">
+<!-- 样式按 App 分成 12 份（原 css/app.css 4177 行，一个 App 一屏就能翻到）。
+     ⚠ **顺序不能调**：这 12 份是从原文件按连续行号切出来的，08-theme 是给
+     01–07 打补丁的浅色覆盖，09/10 又给 08 再打一层。调换顺序 = 样式表互相打架。 -->
+<link rel="stylesheet" href="css/01-base.css">
+<link rel="stylesheet" href="css/02-console.css">
+<link rel="stylesheet" href="css/03-store.css">
+<link rel="stylesheet" href="css/04-flows.css">
+<link rel="stylesheet" href="css/05-canvas.css">
+<link rel="stylesheet" href="css/06-nodes.css">
+<link rel="stylesheet" href="css/07-bp-panels.css">
+<link rel="stylesheet" href="css/08-theme.css">
+<link rel="stylesheet" href="css/09-workbench.css">
+<link rel="stylesheet" href="css/10-deskui.css">
+<link rel="stylesheet" href="css/11-chat.css">
+<link rel="stylesheet" href="css/12-media.css">
+<!-- 多视图的样式单独一份：它同时给桌面 App 和 multiview.html（独立工具页）用，
+     塞进 10-deskui 那边就引不到了 -->
+<link rel="stylesheet" href="css/multiview.css">
+<!-- 设置面板的样式：新壳 .settings2 + 总览状态卡。旧 .settings.xp 那 133 行已随拆分删除 -->
+<link rel="stylesheet" href="css/settings.css">
 </head>
 <body>
 
@@ -19,15 +38,11 @@
     <div class="brand-name">The seed</div>
   </div>
   <div class="appbar-right">
-    <button class="status-chip off" id="stLLM" data-tab="llm" title="语言模型未配置">
-      <span class="cfg-dot"></span><span class="sc-label">语言</span><span class="sc-value">未配置</span>
-    </button>
-    <button class="status-chip off" id="stIMG" data-tab="image" title="图像模型未配置">
-      <span class="cfg-dot"></span><span class="sc-label">图像</span><span class="sc-value">未配置</span>
-    </button>
-    <button class="status-chip off" id="st3D" data-tab="image" title="3D 未启用">
-      <span class="cfg-dot"></span><span class="sc-label">3D</span><span class="sc-value">未启用</span>
-    </button>
+    <!-- 语言 / 图像 / 3D 三个胶囊已撤掉：输入条上已经有模型选择器，同一件事显示两遍
+         （而且顶部那个只是只读回显，点了也改不了）。这里只留「资产」这一个
+         「对话条上看不到」的信息，和设置入口。
+         ⚠ js/api.js 的 updateStatusChips 仍然算这三个状态（有副作用：本地引擎没跑时
+         会去刷引擎状态），只是 setChip 找不到元素就静默跳过。 -->
     <button class="status-chip off" id="stASSET" data-tab="assets" title="资产：图库与模型库">
       <span class="cfg-dot"></span><span class="sc-label">资产</span><span class="sc-value">—</span>
     </button>
@@ -78,6 +93,16 @@
         <div class="dai-bar">
           <button type="button" class="dai-btn" id="deskAiAdd" title="添加图片附件">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M12 5.5v13M5.5 12h13"/></svg>
+          </button>
+          <!-- 联网搜索：给这一轮加一段「刚搜到的网页摘要」。
+               默认关 —— 每句话都去搜一次既慢、又容易被站方限流；要不要事实由用户自己决定。 -->
+          <button type="button" class="dai-btn dai-web" id="deskAiWeb" aria-pressed="false"
+                  title="联网搜索：关（点一下打开，回答前先检索网页）">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.4"/>
+              <path d="M3.6 12h16.8"/>
+              <path d="M12 3.6c2.2 2.3 3.3 5.2 3.3 8.4s-1.1 6.1-3.3 8.4c-2.2-2.3-3.3-5.2-3.3-8.4S9.8 5.9 12 3.6z"/>
+            </svg>
           </button>
           <!-- 原生 select 只当值容器（列表仍由它持有，测试与其他模块照旧读 .value / .options），
                露在外面的是自绘的 .dai-pick 按钮，弹层 .dai-menu 由 desk-chat.js 挂到 body。 -->
@@ -247,6 +272,235 @@
         </div>
         <div class="dchat-log" id="deskChatLog"></div>
         <div class="dchat-foot" id="deskChatFoot"></div>
+      </div>
+    </div>
+    <!-- 播放器 App：播「已经攒到本地」的东西。
+         文件不进浏览器存储（一集就几个 G），而是落在 userData/media，
+         由主进程的 openagi-media:// 协议流式读——这样进度条能拖，内存也不涨。 -->
+    <div class="os-win player hidden" id="playerWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title">播放器</div>
+        <button class="os-win-close" id="btnPlayerWinClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body">
+        <div class="pl-wrap">
+          <div class="pl-stage">
+            <div class="pl-screen" id="plScreen">
+              <video id="plVideo" playsinline preload="metadata"></video>
+              <div class="pl-empty" id="plEmpty">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2.6"/><path d="m10 9.4 5 2.6-5 2.6V9.4Z"/></svg>
+                <div class="pl-empty-t">还没有可播的东西</div>
+                <div class="pl-empty-s">用右边「导入文件夹」加一整部，或「＋ 直链」下一集进来</div>
+              </div>
+            </div>
+            <div class="pl-ctrl" id="plCtrl">
+              <button class="pl-btn" id="plPrev" title="上一集（PgUp）" aria-label="上一集">
+                <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M7 5h2.2v14H7zM19 5.6v12.8L9.6 12z"/></svg>
+              </button>
+              <button class="pl-btn pl-btn-main" id="plPlay" title="播放 / 暂停（空格）" aria-label="播放">
+                <svg class="pl-ico-play" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M8 5.4 19 12 8 18.6z"/></svg>
+                <svg class="pl-ico-pause hidden" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M7.5 5h3.2v14H7.5zM13.3 5h3.2v14h-3.2z"/></svg>
+              </button>
+              <button class="pl-btn" id="plNext" title="下一集（PgDn）" aria-label="下一集">
+                <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M14.8 5H17v14h-2.2zM5 5.6 14.4 12 5 18.4z"/></svg>
+              </button>
+              <span class="pl-time" id="plTime">0:00 / 0:00</span>
+              <input type="range" class="pl-seek" id="plSeek" min="0" max="1000" value="0" step="1" aria-label="播放进度">
+              <button class="pl-btn" id="plMute" title="静音（M）" aria-label="静音">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9.5h3L11 6v12L7 14.5H4z"/><path class="pl-ico-wave" d="M14.5 9.2a4 4 0 0 1 0 5.6M17.2 6.8a7.4 7.4 0 0 1 0 10.4"/><path class="pl-ico-mute hidden" d="m15 10 4 4m0-4-4 4"/></svg>
+              </button>
+              <input type="range" class="pl-vol" id="plVol" min="0" max="100" value="100" step="1" aria-label="音量">
+              <button class="pl-btn pl-rate" id="plRate" title="播放速度">1×</button>
+              <button class="pl-btn" id="plFull" title="全屏（F）" aria-label="全屏">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+              </button>
+            </div>
+          </div>
+          <aside class="pl-side">
+            <div class="pl-side-head">
+              <div class="pl-folders" id="plFolders" role="tablist" aria-label="分组"></div>
+              <span class="pl-count" id="plCount"></span>
+            </div>
+            <div class="pl-list" id="plList" aria-label="播放列表"></div>
+            <div class="pl-dl hidden" id="plDl">
+              <input type="url" id="plDlUrl" class="pl-in" placeholder="粘贴视频直链（http/https，自己有权下载的）" aria-label="下载地址">
+              <input type="text" id="plDlName" class="pl-in" placeholder="保存名（可留空，自动取链接末尾）" aria-label="保存名">
+              <div class="pl-dl-row">
+                <button class="btn sm primary" id="plDlGo">下载到本地</button>
+                <button class="btn sm" id="plDlCancel">关闭</button>
+                <span class="pl-dl-hint">只下你有权保存的内容</span>
+              </div>
+            </div>
+            <div class="pl-prog hidden" id="plProg">
+              <div class="pl-prog-bar"><i id="plProgBar"></i></div>
+              <span class="pl-prog-txt" id="plProgTxt"></span>
+              <button class="pl-prog-x" id="plProgX" title="取消下载">取消</button>
+            </div>
+            <div class="pl-foot">
+              <button class="btn sm" id="plImport" title="从磁盘选文件（可多选）">导入文件</button>
+              <button class="btn sm" id="plImportDir" title="选一个文件夹，按子文件夹分组成剧集">导入文件夹</button>
+              <button class="btn sm" id="plDlOpen" title="粘贴直链下载">＋ 直链</button>
+              <button class="btn sm" id="plDir" title="在资源管理器里打开媒体库目录">目录</button>
+            </div>
+          </aside>
+        </div>
+        <!-- 浏览器里打开（没有 Electron 媒体库）时的降级入口：只能临时播内存里的文件 -->
+        <input type="file" id="plFile" class="hidden" multiple accept="video/*,audio/*">
+      </div>
+    </div>
+
+    <!-- 名片：「我是谁」这件事在桌面上有个正经去处。
+         内容全部由 js/dev-card.js 的 CD 常量渲染，改文案只改那一处。 -->
+    <div class="os-win card hidden" id="cardWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title">名片</div>
+        <button class="os-win-close" id="btnCardWinClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body">
+        <div class="cd-wrap">
+          <div class="cd-main">
+            <div class="cd-hero">
+              <div class="cd-ava">
+                <img id="cdAva" src="img/avatar.jpg" alt="虚幻茅场 的头像" draggable="false">
+                <span class="cd-ava-fb" aria-hidden="true">虚</span>
+              </div>
+              <div class="cd-id">
+                <div class="cd-name-row">
+                  <h1 class="cd-name" id="cdName">虚幻茅场</h1>
+                  <span class="cd-lv" id="cdLv">LV5</span>
+                </div>
+                <div class="cd-tag" id="cdTag"></div>
+                <div class="cd-uid">
+                  <span class="cd-uid-v" id="cdUid">UID 641892012</span>
+                  <button type="button" class="cd-copy" id="cdCopyUid" data-copy="641892012" title="复制 UID">复制</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="cd-stats" id="cdStats"></div>
+
+            <section class="cd-sec">
+              <h2 class="cd-h2">关于我</h2>
+              <div class="cd-about" id="cdAbout"></div>
+            </section>
+
+            <section class="cd-sec">
+              <h2 class="cd-h2">在做的四条线</h2>
+              <div class="cd-tracks" id="cdTracks"></div>
+            </section>
+
+            <section class="cd-sec">
+              <h2 class="cd-h2">合集与代表作<span class="cd-h2-note">右侧为该集播放量</span></h2>
+              <div class="cd-works" id="cdWorks"></div>
+            </section>
+          </div>
+
+          <aside class="cd-side">
+            <div class="cd-pay">
+              <div class="cd-pay-h" id="cdPayTitle">请我喝杯咖啡</div>
+              <div class="cd-qr" id="cdQrBox">
+                <img id="cdQr" src="img/pay-qr.png" alt="微信赞赏码" draggable="false">
+                <div class="cd-qr-fb" id="cdQrFb">把赞赏码放到 img/pay-qr.png</div>
+              </div>
+              <div class="cd-pay-s" id="cdPayS">微信扫码赞赏 · 感谢每一份充电</div>
+            </div>
+
+            <!-- 技术交流群：和赞赏码是同一类动作（扫码 / 找号码），所以并排放在一起 -->
+            <div class="cd-group">
+              <div class="cd-group-h" id="cdGroupName">虚幻引擎蓝图笔记3群</div>
+              <div class="cd-qr cd-qr-sm">
+                <img id="cdGroupQr" src="img/qq-group.png" alt="技术交流群 QQ 二维码" draggable="false">
+                <div class="cd-qr-fb" id="cdGroupFb">把 QQ 群二维码放到 img/qq-group.png</div>
+              </div>
+              <div class="cd-group-foot">
+                <span class="cd-group-id" id="cdGroupId">群号 1108459704</span>
+                <button type="button" class="cd-copy" id="cdCopyGroup" data-copy="1108459704" title="复制群号">复制</button>
+              </div>
+            </div>
+
+            <div class="cd-links" id="cdLinks"></div>
+
+            <div class="cd-foot" id="cdFoot"></div>
+          </aside>
+        </div>
+      </div>
+    </div>
+
+    <!-- 多视图 App。⚠ 里面的 id 跟 multiview.html（独立工具页）逐一对齐：
+         两边共用 css/multiview.css 和 js/multiview.js，加控件必须两处一起加，
+         tools/multiview.js 有一条断言在比对两边的 mv* id 集合。 -->
+    <div class="os-win mv hidden" id="mvWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title">多视图</div>
+        <button class="os-win-close" id="btnMvWinClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body">
+        <div class="mv-wrap">
+
+          <aside class="mv-side">
+            <div class="mv-side-head">
+              <span class="mv-side-t">模型</span>
+              <button type="button" class="mv-mini" id="mvOpenFile" title="打开本机的 glb / gltf / obj">＋ 文件</button>
+            </div>
+            <div class="mv-list" id="mvList"></div>
+            <div class="mv-side-foot">
+              <button type="button" class="mv-mini wide" id="mvOpenLib">打开模型库</button>
+            </div>
+            <input type="file" id="mvFile" class="hidden" accept=".glb,.gltf,.obj">
+          </aside>
+
+          <section class="mv-main">
+            <div class="mv-ctl">
+              <div class="mv-row">
+                <span class="mv-lab">视图</span>
+                <div class="mv-chips" id="mvPresets"></div>
+                <div class="mv-chips" id="mvViews"></div>
+              </div>
+              <div class="mv-row">
+                <span class="mv-lab">模式</span>
+                <div class="mv-seg" id="mvModes"></div>
+                <label class="mv-check" title="在当前模式的面之上叠加线框；OBJ 走四边面"><input type="checkbox" id="mvWire"><span>线框</span></label>
+                <span class="mv-lab">相机</span>
+                <div class="mv-seg" id="mvCams"></div>
+                <span class="mv-lab">单格</span>
+                <div class="mv-seg" id="mvSizes"></div>
+              </div>
+            </div>
+
+            <details class="mv-more" id="mvMore">
+              <summary>精细</summary>
+              <div class="mv-more-body">
+                <div class="mv-field"><span>列数</span><div class="mv-seg" id="mvCols"></div></div>
+                <div class="mv-field"><span>间距</span><input type="range" id="mvGap" min="0" max="48" step="2"><b id="mvGapV">0</b></div>
+                <div class="mv-field"><span>留白</span><input type="range" id="mvMargin" min="100" max="160" step="2"><b id="mvMarginV">108</b></div>
+                <div class="mv-field"><span>线宽</span><input type="range" id="mvLineW" min="4" max="60" step="2"><b id="mvLineWV">14</b></div>
+                <label class="mv-field"><input type="checkbox" id="mvLabels"><span>视图标签</span></label>
+              </div>
+            </details>
+
+            <div class="mv-stage" id="mvStage">
+              <div class="mv-empty" id="mvEmpty">
+                <div class="mv-empty-t">左边选一个模型，或拖一个 glb / obj 进来</div>
+                <div class="mv-empty-s">OBJ 的四边形面按原始拓扑画线框，不会出现三角化的对角线。</div>
+              </div>
+              <img id="mvOut" alt="多视图结果" draggable="false" class="hidden">
+              <div class="mv-pick hidden" id="mvPick"></div>
+            </div>
+
+            <div class="mv-bar">
+              <span class="mv-info" id="mvInfo"></span>
+              <button type="button" class="btn sm" id="mvPreview">3D 预览</button>
+              <button type="button" class="btn sm" id="mvSaveLib">存入图库</button>
+              <button type="button" class="btn sm" id="mvDlCell" disabled>下载这格</button>
+              <button type="button" class="btn sm" id="mvDlAll" disabled>下载整图</button>
+              <button type="button" class="btn sm primary" id="mvRender">重新渲染</button>
+            </div>
+          </section>
+
+        </div>
       </div>
     </div>
   </div>
@@ -495,280 +749,460 @@
 </main>
 
 <div class="modal-backdrop hidden" id="settingsBackdrop">
-  <section class="settings xp" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-    <header class="settings-head">
-      <span class="settings-title" id="settingsTitle">设置</span>
-      <button class="icon-btn" id="btnCloseSettings" aria-label="关闭设置">
+  <section class="settings2" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <header class="set-head">
+      <div class="set-head-main">
+        <span class="settings-title" id="settingsTitle">设置</span>
+        <span class="set-head-sub" id="settingsSub">模型 · 接口 · 本地服务 · 数据</span>
+      </div>
+      <button class="set-x" id="btnCloseSettings" aria-label="关闭设置">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
     </header>
 
-    <nav class="tabs" role="tablist" aria-label="设置分类">
-      <button class="tab active" role="tab" aria-selected="true" data-tab="llm">
-        <span class="xp-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v10H9l-5 4V5Z"/></svg></span>
-        <span class="xp-tab-label">语言模型</span>
-      </button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="image">
-        <span class="xp-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="14" rx="2.5"/><circle cx="8.6" cy="9.6" r="1.4"/><path d="m4.5 16.5 4.6-4 3.4 2.7 3-2.2 4 3.5"/></svg></span>
-        <span class="xp-tab-label">图像生成</span>
-      </button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="video">
-        <span class="xp-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 12 6-3.5v7L15 12Z"/></svg></span>
-        <span class="xp-tab-label">视频生成</span>
-      </button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="relay">
-        <span class="xp-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h11l-3-3M20 16H9l3 3"/></svg></span>
-        <span class="xp-tab-label">本地中转</span>
-      </button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="account">
-        <span class="xp-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></span>
-        <span class="xp-tab-label">账号</span>
-      </button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="assets">
-        <span class="xp-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.4" width="7.6" height="7.6" rx="1.6"/><rect x="13.4" y="4.4" width="7.6" height="7.6" rx="1.6"/><rect x="3" y="14.9" width="7.6" height="5.6" rx="1.6"/><rect x="13.4" y="14.9" width="7.6" height="5.6" rx="1.6"/></svg></span>
-        <span class="xp-tab-label">资产库</span>
-      </button>
-    </nav>
+    <div class="set-body">
+      <!-- ⚠ 这些 .tab 的 data-tab 是 switchTab() 的唯一依据，js 里还有
+           openSettings('image' / 'llm') 的直接调用，改 key 会静默跳到空页。
+           导航右侧的小圆点由 settings-home.js 统一刷新（已配置 / 未配置）。 -->
+      <nav class="set-nav" role="tablist" aria-label="设置分类">
+        <button class="tab active" role="tab" aria-selected="true" data-tab="overview">
+          <svg class="set-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7.4" height="7.4" rx="1.6"/><rect x="13.6" y="3" width="7.4" height="7.4" rx="1.6"/><rect x="3" y="13.6" width="7.4" height="7.4" rx="1.6"/><rect x="13.6" y="13.6" width="7.4" height="7.4" rx="1.6"/></svg>
+          <span class="set-nav-name">总览</span>
+        </button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="llm">
+          <svg class="set-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>
+          <span class="set-nav-name">语言模型</span>
+          <span class="set-dot off" data-dot="llm"></span>
+        </button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="image">
+          <svg class="set-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="14" rx="2.5"/><circle cx="8.6" cy="9.6" r="1.4"/><path d="m4.5 16.5 4.6-4 3.4 2.7 3-2.2 4 3.5"/></svg>
+          <span class="set-nav-name">图像生成</span>
+          <span class="set-dot off" data-dot="image"></span>
+        </button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="search">
+          <svg class="set-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M3.6 12h16.8"/><path d="M12 3.6a12 12 0 0 1 0 16.8a12 12 0 0 1 0-16.8Z"/></svg>
+          <span class="set-nav-name">联网搜索</span>
+          <span class="set-dot off" data-dot="search"></span>
+        </button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="relay">
+          <svg class="set-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h11l-3-3M20 16H9l3 3"/></svg>
+          <span class="set-nav-name">本地中转</span>
+          <span class="set-dot off" data-dot="relay"></span>
+        </button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="account">
+          <svg class="set-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>
+          <span class="set-nav-name">账号</span>
+          <span class="set-dot off" data-dot="account"></span>
+        </button>
 
-    <div class="settings-body">
-      <div class="tabpane" data-pane="llm">
-        <div class="field">
-          <label for="llmKey">API Key</label>
-          <div class="api-key-wrap">
-            <input type="password" id="llmKey" placeholder="sk-..." autocomplete="off">
-            <button class="toggle-pw" data-target="llmKey">显示</button>
-          </div>
+        <div class="set-nav-sep">本地</div>
+
+        <button class="tab" role="tab" aria-selected="false" data-tab="assets">
+          <svg class="set-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3.2"/><path d="M4 6v12c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2V6"/><path d="M4 12c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2"/></svg>
+          <span class="set-nav-name">存储与数据</span>
+          <span class="set-dot off" data-dot="assets"></span>
+        </button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="about">
+          <svg class="set-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.6"/><path d="M12 10.6v6"/><circle cx="12" cy="7.9" r=".9" fill="currentColor" stroke="none"/></svg>
+          <span class="set-nav-name">关于</span>
+        </button>
+      </nav>
+
+      <div class="set-panes">
+
+        <!-- ==================== 总览 ==================== -->
+        <div class="tabpane" data-pane="overview">
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">当前状态</div>
+              <div class="set-sec-s">点任意一张卡片直达对应设置。灰点＝还没配，绿点＝可用，橙点＝配了但没验证，红点＝有错。</div>
+            </div>
+            <div class="set-home-grid" id="setHomeGrid"></div>
+          </section>
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">数据在哪</div>
+              <div class="set-sec-s">所有 Key 与配置只存在本机，不上传服务器。目录本身在「存储与数据」里。</div>
+            </div>
+            <div class="note" id="setHomePaths">读取中…</div>
+          </section>
         </div>
 
-        <div class="field">
-          <label>接口来源</label>
-          <div class="inline">
-            <select id="presetSelect" class="preset-select"></select>
-            <button class="btn sm" id="btnLoadModels">读取模型</button>
-          </div>
-          <input type="text" id="llmBaseUrl" class="url-input" placeholder="https://api.lingsuan.si/v1" aria-label="分析 Base URL">
-          <div class="note" id="modelStatus">选择来源并填入 Key 后读取模型</div>
-          <div class="preset-links" id="llmPresetLinks"></div>
-        </div>
-
-        <details class="msel">
-          <summary>
-            <span class="msel-title">分析模型</span>
-            <span class="msel-value empty" id="llmModelLabel">未选择</span>
-          </summary>
-          <div class="msel-body">
-            <div class="picker-head">
-              <input type="text" id="llmModelFilter" class="picker-filter" placeholder="筛选模型…">
+        <!-- ==================== 语言模型 ==================== -->
+        <div class="tabpane hidden" data-pane="llm">
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">接入 <span class="set-sec-tag">OpenAI 兼容</span></div>
+              <div class="set-sec-s">Key、接口地址与模型名都在对话输入条的「配置自定义模型」里改——那边配一次，这里和对话同时生效。这一页只显示当前接的是哪个站，并从它的清单里挑模型。</div>
             </div>
-            <input type="text" id="llmModel" class="model-input" placeholder="选择或手动输入模型名">
-            <div id="llmModelTabs" class="model-tabs"><div class="hint">读取后显示分组模型</div></div>
-          </div>
-        </details>
+            <!-- ⚠ 下面这几个仍然是 config.js 的读写真源（CFG 列表按 id 取、saveAll 按 id 写）。
+                 只是不再在设置页露面：对话输入条的配置弹层写的就是这几个 input，
+                 所以「设置页删掉」不等于「配置项消失」，保存链路完全不变。
+                 真要删它们，得先改 config.js 的 CFG / saveAll / hydrate 三处。 -->
+            <input type="hidden" id="llmKey">
+            <input type="hidden" id="llmBaseUrl" aria-hidden="true">
+            <select id="presetSelect" class="hidden" aria-hidden="true" tabindex="-1"></select>
+            <div class="preset-links hidden" id="llmPresetLinks"></div>
 
-        <label class="check" for="llmThink">
-          <input type="checkbox" id="llmThink">
-          <span>请求思考过程（thinking）</span>
-        </label>
-        <div class="note">勾选后请求体带 enable_thinking，让 Qwen3 这类默认不吐思考的模型也输出推理过程；模型本来就会返回思考内容时不勾也照样显示。思考过程会实时显示在节点状态与运行日志里 —— 能看到它在涨，就说明模型一直在工作，不是连接断了。</div>
-
-        <div class="test-row">
-          <button class="linkbtn" id="testLLM">测试分析接口</button>
-        </div>
-        <div id="testLLMResult" class="test-list"></div>
-        <div class="note">部分服务商（如灵算）不开放浏览器跨域，读取模型会被拦截；可改用 OpenRouter / DeepSeek / 硅基流动，或通过本地代理转发。</div>
-      </div>
-
-      <div class="tabpane hidden" data-pane="image">
-        <div class="field">
-          <label for="genEngine">生成引擎</label>
-          <select id="genEngine">
-            <option value="openai">OpenAI 兼容（中转站 / 官方接口）</option>
-            <option value="tripo">Tripo 3D（生图 / 建模）</option>
-            <option value="tripo-web">Tripo 网页账号（本地助手）</option>
-          </select>
-          <div id="tripoBox" class="hidden">
-            <input type="password" id="tripoKey" class="model-input" style="margin-top:6px;" placeholder="Tripo API Key（非账号密码）" autocomplete="off" aria-label="Tripo API Key">
-            <div class="inline" style="margin-top:6px;">
-              <select id="tripoVersion" class="preset-select" aria-label="3D 模型版本">
-                <option value="v3.1-20260211">H3.1 · 高精度</option>
-                <option value="v3.0-20250812">H3.0 · 稳定</option>
-                <option value="v2.5-20250123">H2.5 · 均衡</option>
-              </select>
-              <button class="btn sm" id="btnTripoCheck">检测 Key</button>
-              <a class="btn sm" href="https://platform.tripo3d.ai/api-keys" target="_blank" rel="noopener">获取 Key</a>
+            <div class="set-kv">
+              <span class="set-kv-k">当前接口</span>
+              <span class="set-kv-v" id="setLlmHost">还没配置</span>
+              <button type="button" class="btn sm" id="setLlmCfg">去配置</button>
             </div>
-            <div class="note" id="tripoNote">生图走 Tripo 图像编辑，3D 走 Tripo 建模。Tripo 不开放浏览器跨域，需在设置 → 本地中转 中启用中转。</div>
-          </div>
-          <div id="tripoWebBox" class="hidden">
-            <select id="tripoWebUrl" class="preset-select" style="margin-top:6px;" aria-label="Tripo Studio 地址">
-              <option value="https://studio.tripo3d.com/">国内站 · studio.tripo3d.com</option>
-              <option value="https://studio.tripo3d.ai/">国际站 · studio.tripo3d.ai</option>
-            </select>
-            <div class="inline" style="margin-top:6px;">
-              <span id="tripoWebState" class="meta">未连接</span>
-              <button class="btn sm" id="btnTripoWebLogin">打开登录页</button>
-              <button class="btn sm" id="btnTripoWebCheck">检测状态</button>
+            <div class="set-kv">
+              <span class="set-kv-k">模型清单</span>
+              <span class="set-kv-v" id="modelStatus">还没读取</span>
+              <button type="button" class="btn sm" id="btnLoadModels">读取模型</button>
             </div>
-            <div class="note" id="tripoWebNote">先启动项目（桌面端双击 start.bat，Tripo 桥已由主进程托管），再点「打开登录页」；在浏览器里手动登录并进入生图页。工具不保存账号密码。生成走网页自动化，存在风控风险。</div>
-          </div>
-        </div>
+          </section>
 
-        <div id="openaiMain">
-          <div class="field">
-            <label for="imgKey">图像 API Key</label>
-            <div class="api-key-wrap">
-              <input type="password" id="imgKey" placeholder="留空则复用分析侧 Key" autocomplete="off">
-              <button class="toggle-pw" data-target="imgKey">显示</button>
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">模型</div>
+              <div class="set-sec-s">运行对话、工作流里所有「AI 分析」节点都走这个模型。</div>
             </div>
-          </div>
-
-          <div class="field">
-            <label>接口来源</label>
-            <div class="inline">
-              <select id="imgPresetSelect" class="preset-select"></select>
-              <button class="btn sm" id="btnLoadImgModels">读取模型</button>
-            </div>
-            <input type="text" id="imgBaseUrl" class="url-input" placeholder="留空 = 使用分析 Base URL" aria-label="生图 Base URL">
-            <div class="note" id="imgModelStatus">选择生图中转站（nano banana 等，按张计价），或留空复用分析侧配置</div>
-            <div class="note">图生图走 /images/edits；若站点只支持 JSON 编辑（如 Kunavo），可把端点改为 /images/generations 或参考站点文档。</div>
-            <div class="preset-links" id="imgPresetLinks"></div>
-          </div>
-        </div>
-
-        <details class="msel" id="imgModelBox">
-          <summary>
-            <span class="msel-title">生图模型</span>
-            <span class="msel-value empty" id="imgModelLabel">未选择</span>
-          </summary>
-          <div class="msel-body">
-            <div class="picker-head">
-              <input type="text" id="imgModelFilter" class="picker-filter" placeholder="筛选模型…">
-            </div>
-            <input type="text" id="imgModel" class="model-input" placeholder="留空则沿用分析模型">
-            <div id="imgModelTabs" class="model-tabs"><div class="hint">读取后显示分组模型</div></div>
-          </div>
-        </details>
-
-        <details class="adv">
-          <summary>OpenAI 兼容参数</summary>
-          <div id="openaiAdv">
-            <div class="inline">
-              <div class="field" style="flex:1;">
-                <label for="imgEndpoint">生图端点</label>
-                <input type="text" id="imgEndpoint" value="/images/edits">
+            <details class="msel">
+              <summary>
+                <span class="msel-title">分析模型</span>
+                <span class="msel-value empty" id="llmModelLabel">未选择</span>
+              </summary>
+              <div class="msel-body">
+                <div class="picker-head">
+                  <input type="text" id="llmModelFilter" class="picker-filter" placeholder="筛选模型…">
+                </div>
+                <input type="text" id="llmModel" class="model-input" placeholder="选择或手动输入模型名">
+                <div id="llmModelTabs" class="model-tabs"><div class="hint">读取后显示分组模型</div></div>
               </div>
-              <div class="field" style="width:116px;">
-                <label for="imgSize">尺寸</label>
-                <input type="text" id="imgSize" value="1024x1024" title="在线模型按这里填的来；本地生图会按模型自动收紧（SD1.5 最长边 768 —— 再大它会画出重复的小主体，看着和提示词无关）">
+            </details>
+          </section>
+
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">推理与测试</div>
+            </div>
+            <label class="check" for="llmThink">
+              <input type="checkbox" id="llmThink">
+              <span>请求思考过程（thinking）</span>
+            </label>
+            <div class="note">勾选后请求体带 enable_thinking，让 Qwen3 这类默认不吐思考的模型也输出推理过程；模型本来就会返回思考内容时不勾也照样显示。思考过程会实时显示在节点状态与运行日志里 —— 能看到它在涨，就说明模型一直在工作，不是连接断了。</div>
+            <div class="test-row">
+              <button class="linkbtn" id="testLLM">测试分析接口</button>
+            </div>
+            <div id="testLLMResult" class="test-list"></div>
+            <div class="note">部分服务商（如灵算）不开放浏览器跨域，读取模型会被拦截；可改用 OpenRouter / DeepSeek / 硅基流动，或通过本地中转转发。</div>
+          </section>
+        </div>
+
+        <!-- ==================== 图像生成 ==================== -->
+        <div class="tabpane hidden" data-pane="image">
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">生成引擎</div>
+              <div class="set-sec-s">对话内生图与工作流里「图像生成」节点都按这里选的引擎走。本地 ComfyUI 在模型控制台里管。</div>
+            </div>
+            <div class="field">
+              <label for="genEngine">引擎</label>
+              <select id="genEngine">
+                <option value="openai">OpenAI 兼容（中转站 / 官方接口）</option>
+                <option value="tripo">Tripo 3D（生图 / 建模）</option>
+                <option value="tripo-web">Tripo 网页账号（本地助手）</option>
+              </select>
+              <div id="tripoBox" class="hidden">
+                <input type="password" id="tripoKey" class="model-input" style="margin-top:6px;" placeholder="Tripo API Key（非账号密码）" autocomplete="off" aria-label="Tripo API Key">
+                <div class="inline" style="margin-top:6px;">
+                  <select id="tripoVersion" class="preset-select" aria-label="3D 模型版本">
+                    <option value="v3.1-20260211">H3.1 · 高精度</option>
+                    <option value="v3.0-20250812">H3.0 · 稳定</option>
+                    <option value="v2.5-20250123">H2.5 · 均衡</option>
+                  </select>
+                  <button class="btn sm" id="btnTripoCheck">检测 Key</button>
+                  <a class="btn sm" href="https://platform.tripo3d.ai/api-keys" target="_blank" rel="noopener">获取 Key</a>
+                </div>
+                <div class="note" id="tripoNote">生图走 Tripo 图像编辑，3D 走 Tripo 建模。Tripo 不开放浏览器跨域，需在设置 → 本地中转 中启用中转。</div>
+              </div>
+              <div id="tripoWebBox" class="hidden">
+                <select id="tripoWebUrl" class="preset-select" style="margin-top:6px;" aria-label="Tripo Studio 地址">
+                  <option value="https://studio.tripo3d.com/">国内站 · studio.tripo3d.com</option>
+                  <option value="https://studio.tripo3d.ai/">国际站 · studio.tripo3d.ai</option>
+                </select>
+                <div class="inline" style="margin-top:6px;">
+                  <span id="tripoWebState" class="meta">未连接</span>
+                  <button class="btn sm" id="btnTripoWebLogin">打开登录页</button>
+                  <button class="btn sm" id="btnTripoWebCheck">检测状态</button>
+                </div>
+                <div class="note" id="tripoWebNote">先启动项目（桌面端双击 start.bat，Tripo 桥已由主进程托管），再点「打开登录页」；在浏览器里手动登录并进入生图页。工具不保存账号密码。生成走网页自动化，存在风控风险。</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="set-sec" id="openaiMain">
+            <div class="set-sec-head">
+              <div class="set-sec-t">接口 <span class="set-sec-tag">OpenAI 兼容</span></div>
+              <div class="set-sec-s">生图的 Key / 地址 / 端点同样在对话输入条里改：选「生图模型」→ 菜单底部「＋ 配置自定义云端生图」。不填就沿用上面语言模型那一份。</div>
+            </div>
+            <!-- 同语言模型页：这几个是 config.js 的真源，只是不在设置页露面 -->
+            <input type="hidden" id="imgKey">
+            <input type="hidden" id="imgBaseUrl" aria-hidden="true">
+            <select id="imgPresetSelect" class="hidden" aria-hidden="true" tabindex="-1"></select>
+            <div class="preset-links hidden" id="imgPresetLinks"></div>
+
+            <div class="set-kv">
+              <span class="set-kv-k">当前接口</span>
+              <span class="set-kv-v" id="setImgHost">复用分析侧配置</span>
+              <button type="button" class="btn sm" id="setImgCfg">去配置</button>
+            </div>
+            <div class="set-kv">
+              <span class="set-kv-k">模型清单</span>
+              <span class="set-kv-v" id="imgModelStatus">还没读取</span>
+              <button type="button" class="btn sm" id="btnLoadImgModels">读取模型</button>
+            </div>
+          </section>
+
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">生图模型</div>
+              <div class="set-sec-s">对话输入条上的「生图模型」下拉读的就是这里；也可以在那里选，两边同步。</div>
+            </div>
+            <details class="msel" id="imgModelBox">
+              <summary>
+                <span class="msel-title">模型</span>
+                <span class="msel-value empty" id="imgModelLabel">未选择</span>
+              </summary>
+              <div class="msel-body">
+                <div class="picker-head">
+                  <input type="text" id="imgModelFilter" class="picker-filter" placeholder="筛选模型…">
+                </div>
+                <input type="text" id="imgModel" class="model-input" placeholder="留空则沿用分析模型">
+                <div id="imgModelTabs" class="model-tabs"><div class="hint">读取后显示分组模型</div></div>
+              </div>
+            </details>
+          </section>
+
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">高级参数</div>
+              <div class="set-sec-s">端点、尺寸、响应字段——中转站之间就这三处会不一样。不明白就留默认。</div>
+            </div>
+            <details class="adv" open>
+              <summary>OpenAI 兼容参数</summary>
+              <div id="openaiAdv">
+                <div class="inline">
+                  <div class="field" style="flex:1;">
+                    <label for="imgEndpoint">生图端点</label>
+                    <input type="text" id="imgEndpoint" value="/images/edits">
+                  </div>
+                  <div class="field" style="width:116px;flex:0 0 116px;">
+                    <label for="imgSize">尺寸</label>
+                    <input type="text" id="imgSize" value="1024x1024" title="在线模型按这里填的来；本地生图会按模型自动收紧（SD1.5 最长边 768 —— 再大它会画出重复的小主体，看着和提示词无关）">
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="respPath">响应图片字段路径</label>
+                  <input type="text" id="respPath" value="data[0].url">
+                </div>
+                <label class="check"><input type="checkbox" id="sendImage" checked> 生图时附加原图</label>
+                <div class="note">图生图走 /images/edits；若站点只支持 JSON 编辑（如 Kunavo），可把端点改为 /images/generations 或参考站点文档。</div>
+              </div>
+              <div id="tripoAdv" class="hidden note">Tripo 输出固定 2K 图片；3D 版本在上方选择，任务异步执行并自动轮询。</div>
+            </details>
+            <div class="test-row" style="margin-top:10px;">
+              <button class="linkbtn" id="testIMG">测试生图接口</button>
+            </div>
+            <div id="testIMGResult" class="test-list"></div>
+          </section>
+        </div>
+
+        <!-- ==================== 联网搜索 ==================== -->
+        <div class="tabpane hidden" data-pane="search">
+          <section class="set-sec" id="wsBox">
+            <div class="set-sec-head">
+              <div class="set-sec-t">搜索来源</div>
+              <div class="set-sec-s">这里只是数据源配置。真正联网要回对话输入条点地球按钮——那个开关关着时一次都不会搜。</div>
+            </div>
+            <div class="field">
+              <label for="wsProvider">来源</label>
+              <select id="wsProvider" class="preset-select">
+                <option value="bing">Bing · 免 Key（国内可达，默认）</option>
+                <option value="searxng">SearXNG · 自建实例（长期推荐）</option>
+                <option value="tavily">Tavily · 需 Key（结果最稳）</option>
+                <option value="ddg">DuckDuckGo · 免 Key（多数国内网络连不上）</option>
+              </select>
+            </div>
+            <div class="field" id="wsBaseBox">
+              <label for="wsBase">SearXNG 地址</label>
+              <input type="text" id="wsBase" class="url-input" placeholder="https://searx.example.com" aria-label="SearXNG 地址">
+            </div>
+            <div class="field" id="wsKeyBox">
+              <label for="wsKey">Tavily API Key</label>
+              <div class="api-key-wrap">
+                <input type="password" id="wsKey" placeholder="tvly-..." autocomplete="off">
+                <button class="toggle-pw" data-target="wsKey">显示</button>
+              </div>
+            </div>
+            <div class="inline">
+              <div class="field" style="width:128px;flex:0 0 128px;margin-bottom:0;">
+                <label for="wsCount">结果条数</label>
+                <input type="text" id="wsCount" value="4" aria-label="搜索结果条数">
+              </div>
+              <button class="btn sm" id="btnTestSearch" style="margin-top:16px;">测试搜索</button>
+            </div>
+            <div class="note" id="wsStatus">填好后点「测试搜索」；真正联网要回对话输入条点地球按钮。</div>
+          </section>
+
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">它是怎么工作的</div>
+            </div>
+            <div class="note">搜到的摘要会经本地中转 8787 转发（浏览器直连第三方网页必被跨域拦），请先在「本地中转」里启用并启动。免 Key 的 DuckDuckGo 抓的是网页版结果，可能被反爬页或网络挡掉；长期用建议自建 SearXNG（需开 format=json）或填 Tavily Key。</div>
+            <div class="note">检索结果只进本轮对话的 system 提示，不进历史记录；回答里带 [序号] 的引用可以点到原文。</div>
+          </section>
+        </div>
+
+        <!-- ==================== 本地中转 ==================== -->
+        <div class="tabpane hidden" data-pane="relay">
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">中转服务</div>
+              <div class="set-sec-s">灵算、Tripo 这类不开放跨域的服务商，请求改由本机 8787 转发。Key 仍只在本机，不会经过第三方。</div>
+            </div>
+            <div class="field">
+              <label for="relayUrl">中转服务地址</label>
+              <input type="text" id="relayUrl" class="url-input" style="margin-top:0;" placeholder="http://127.0.0.1:8787">
+              <div class="relay-row" style="margin-top:10px;">
+                <label class="relay-check"><input type="checkbox" id="relayOn" checked> 启用本地中转</label>
+                <button class="btn sm" id="btnTestRelay">测试中转</button>
+                <button class="btn sm" id="btnRelayDefault" title="把中转地址清空，回到默认的 127.0.0.1:8787">恢复默认</button>
+              </div>
+              <div class="note" id="relayStatus">双击项目里的 <code class="relay-code">start.bat</code> 一键启动（桌面模式下本地中转已由主进程托管），再点测试中转。也可手动运行 <code class="relay-code">node plugins\relay\relay.js</code>。</div>
+            </div>
+          </section>
+        </div>
+
+        <!-- ==================== 账号 ==================== -->
+        <div class="tabpane hidden" data-pane="account">
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">云端账号</div>
+            </div>
+            <div class="note" id="gwHint">登录后所有 AI 调用走网关（Key 由服务器托管，按账号限额）；不登录仍可用自己填的 Key。</div>
+            <div class="field" style="margin-top:10px;">
+              <label for="gwChatServer">社区服务地址</label>
+              <input type="text" id="gwChatServer" class="url-input" placeholder="http://127.0.0.1:8792">
+            </div>
+          </section>
+
+          <section class="set-sec" id="gwLoggedOut">
+            <div class="set-sec-head">
+              <div class="set-sec-t">登录 / 注册</div>
+            </div>
+            <div class="field">
+              <label for="gwServer">网关地址</label>
+              <input type="text" id="gwServer" class="url-input" placeholder="http://127.0.0.1:8791">
+            </div>
+            <div class="set-grid">
+              <div class="field">
+                <label for="gwEmail">邮箱</label>
+                <input type="text" id="gwEmail" autocomplete="username" placeholder="you@example.com">
+              </div>
+              <div class="field">
+                <label for="gwPassword">密码</label>
+                <input type="password" id="gwPassword" autocomplete="current-password" placeholder="至少 6 位">
               </div>
             </div>
             <div class="field">
-              <label for="respPath">响应图片字段路径</label>
-              <input type="text" id="respPath" value="data[0].url">
+              <label for="gwCode">邀请码（服务器开启时需要）</label>
+              <input type="text" id="gwCode" placeholder="可留空">
             </div>
-            <label class="check"><input type="checkbox" id="sendImage" checked> 生图时附加原图</label>
-          </div>
-          <div id="tripoAdv" class="hidden note">Tripo 输出固定 2K 图片；3D 版本在上方选择，任务异步执行并自动轮询。</div>
-        </details>
-
-        <div class="test-row">
-          <button class="linkbtn" id="testIMG">测试生图接口</button>
-        </div>
-        <div id="testIMGResult" class="test-list"></div>
-      </div>
-
-      <div class="tabpane hidden" data-pane="video">
-        <div class="empty" style="min-height:200px;">
-          <div>
-            <b style="display:block;color:var(--text);font-size:12.5px;margin-bottom:4px;">视频生成尚未接入</b>
-            预留配置位。接入视频模型后，会在此提供接口来源、模型与参数设置。
-          </div>
-        </div>
-      </div>
-
-      <div class="tabpane hidden" data-pane="relay">
-        <div class="field">
-          <label for="relayUrl">中转服务地址</label>
-          <input type="text" id="relayUrl" class="url-input" style="margin-top:0;" placeholder="http://127.0.0.1:8787">
-          <div class="relay-row" style="margin-top:10px;">
-            <label class="relay-check"><input type="checkbox" id="relayOn" checked> 启用本地中转</label>
-            <button class="btn sm" id="btnTestRelay">测试中转</button>
-            <button class="btn sm" id="btnRelayDefault" title="把中转地址清空，回到默认的 127.0.0.1:8787">恢复默认</button>
-          </div>
-          <div class="note" id="relayStatus">双击项目里的 <code class="relay-code">start.bat</code> 一键启动（桌面模式下本地中转已由主进程托管），再点测试中转。也可手动运行 <code class="relay-code">node plugins\relay\relay.js</code>。</div>
-        </div>
-        <div class="note">灵算、Tripo 等服务商不开放浏览器跨域，开启中转后请求改由本机转发；API Key 仍只保存在本机浏览器，不会上传到第三方。</div>
-      </div>
-
-      <div class="tabpane hidden" data-pane="account">
-        <div class="field">
-          <label>云端账号</label>
-          <div class="note" id="gwHint">登录后所有 AI 调用走网关（Key 由服务器托管，按账号限额）；不登录仍可用自己填的 Key。</div>
-        </div>
-
-        <div class="field">
-          <label for="gwChatServer">社区服务地址</label>
-          <input type="text" id="gwChatServer" class="url-input" placeholder="http://127.0.0.1:8792">
-        </div>
-
-        <div id="gwLoggedOut">
-          <div class="field">
-            <label for="gwServer">网关地址</label>
-            <input type="text" id="gwServer" class="url-input" placeholder="http://127.0.0.1:8791">
-          </div>
-          <div class="field">
-            <label for="gwEmail">邮箱</label>
-            <input type="text" id="gwEmail" autocomplete="username" placeholder="you@example.com">
-          </div>
-          <div class="field">
-            <label for="gwPassword">密码</label>
-            <input type="password" id="gwPassword" autocomplete="current-password" placeholder="至少 6 位">
-          </div>
-          <div class="field">
-            <label for="gwCode">邀请码（服务器开启时需要）</label>
-            <input type="text" id="gwCode" placeholder="可留空">
-          </div>
-          <div class="inline">
-            <button class="btn primary" id="gwLogin">登录</button>
-            <button class="btn" id="gwRegister">注册新账号</button>
-          </div>
-          <div class="note" id="gwMsg"></div>
-        </div>
-
-        <div id="gwLoggedIn" class="hidden">
-          <div class="field">
-            <label>当前账号</label>
-            <div class="note" id="gwUserLine"></div>
-          </div>
-          <div class="field">
-            <label>今日额度</label>
-            <div class="note" id="gwUsage"></div>
-          </div>
-          <div class="field">
-            <label>模型（倍率 = 每次消耗的额度）</label>
-            <div id="gwModels" class="gw-models"></div>
-            <div class="inline" style="margin-top:8px">
-              <button class="linkbtn" id="gwCustom">配置自定义模型</button>
-              <button class="linkbtn" id="gwUseCloud">使用云端模型</button>
+            <div class="inline">
+              <button class="btn primary" id="gwLogin">登录</button>
+              <button class="btn" id="gwRegister">注册新账号</button>
             </div>
-          </div>
-          <div class="inline">
-            <button class="btn" id="gwRefresh">刷新额度</button>
-            <button class="btn ghost" id="gwLogout">退出登录</button>
-          </div>
-        </div>
-      </div>
+            <div class="note" id="gwMsg"></div>
+          </section>
 
-      <!-- 资产库：内容全部由 renderAssetsPane() 渲染（占用随导入/删除随时变，静态写死必然过期） -->
-      <div class="tabpane hidden" data-pane="assets" id="paneAssets"></div>
+          <section class="set-sec hidden" id="gwLoggedIn">
+            <div class="set-sec-head">
+              <div class="set-sec-t">已登录</div>
+            </div>
+            <div class="field">
+              <label>当前账号</label>
+              <div class="note" id="gwUserLine"></div>
+            </div>
+            <div class="field">
+              <label>今日额度</label>
+              <div class="note" id="gwUsage"></div>
+            </div>
+            <div class="field">
+              <label>模型（倍率 = 每次消耗的额度）</label>
+              <div id="gwModels" class="gw-models"></div>
+              <div class="inline" style="margin-top:8px">
+                <button class="linkbtn" id="gwCustom">配置自定义模型</button>
+                <button class="linkbtn" id="gwUseCloud">使用云端模型</button>
+              </div>
+            </div>
+            <div class="inline">
+              <button class="btn" id="gwRefresh">刷新额度</button>
+              <button class="btn ghost" id="gwLogout">退出登录</button>
+            </div>
+          </section>
+        </div>
+
+        <!-- ==================== 存储与数据 ==================== -->
+        <!-- 卡片内容由 renderAssetsPane() 渲染（占用随导入/删除随时变，静态写死必然过期）；
+             分组标题留在外面，否则浏览器模式下只剩一个孤零零的虚线空态框 -->
+        <div class="tabpane hidden" data-pane="assets">
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">占用与清理</div>
+              <div class="set-sec-s">图片与 3D 模型都落在应用数据目录里，不进浏览器存储；整个文件夹可以直接备份或搬到别的机器。</div>
+            </div>
+            <div id="paneAssets"></div>
+          </section>
+        </div>
+
+        <!-- ==================== 关于 ==================== -->
+        <div class="tabpane hidden" data-pane="about">
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">Open AGI · 本地优先的 AI 工作台</div>
+              <div class="set-sec-s">工作流编排、本地生图（ComfyUI）、3D 生成与多视图、对话内生图、媒体播放——都在一台机器上跑，模型可以全本地。</div>
+            </div>
+            <div class="note">开源（MIT）。所有 Key、工作流、资产都存在本机浏览器存储与用户数据目录里，没有账号也能用完整功能。</div>
+          </section>
+
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">数据与隐私</div>
+            </div>
+            <div class="note">API Key 存 localStorage，仅在请求你配置的服务商时带上，不经任何中间服务器（除非你自己开了中转）。</div>
+            <div class="note">生成的工作流、图片、3D 资产存在浏览器 IndexedDB 与桌面端用户数据目录；卸载应用不会自动删除它们，需要手动清。</div>
+            <div class="note">「清空全部 Key」只清 Key，不动工作流和资产。</div>
+          </section>
+
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">快捷键</div>
+            </div>
+            <div class="set-grid">
+              <div class="note"><code class="relay-code">Ctrl</code> + <code class="relay-code">K</code> 打开设置</div>
+              <div class="note"><code class="relay-code">Esc</code> 关闭当前弹层</div>
+              <div class="note"><code class="relay-code">空格</code> 工作流画布 / 多视图：重跑</div>
+              <div class="note"><code class="relay-code">1</code>–<code class="relay-code">4</code> 多视图：切渲染模式</div>
+            </div>
+          </section>
+        </div>
+
+      </div>
     </div>
 
-    <footer class="settings-foot">
+    <footer class="set-foot">
       <button class="linkbtn" id="resetKey">清空全部 Key</button>
-      <span class="note" style="margin:0;">本地存储 · 自动保存</span>
+      <span class="sp"></span>
+      <span class="note">本地存储 · 自动保存</span>
     </footer>
   </section>
 </div>
+
 
 <!-- 3D：three.js r149 与加载器（本地 vendor，UMD 全局，file:// 可用） -->
 <!-- 交流社区入口（悬浮按钮 + 面板）已移除；js/chat-client.js 保留但找不到入口时会自行退出 -->
@@ -795,6 +1229,9 @@
 <script src="js/gateway-client.js"></script>
 <script src="js/chat-client.js"></script>
 <script src="js/workbench.js"></script>
+<!-- 设置总览的状态卡与左侧小圆点：只读真值，不另存状态。必须在 workbench.js 之后
+     （要用 switchTab 跳分组），且 config.js 之后（要读 relayBase / gwSession） -->
+<script src="js/settings-home.js"></script>
 <script src="js/blueprint-core.js"></script>
 <script src="js/node-registry.js"></script>
 <script src="js/node-defs.js"></script>
@@ -808,7 +1245,11 @@
 <script src="js/flow-memory.js"></script>
 <script src="js/desktop.js"></script>
 <script src="js/desk-image.js"></script>
+<script src="js/desk-search.js"></script>
 <script src="js/desk-chat.js"></script>
+<script src="js/player.js"></script>
+<script src="js/dev-card.js"></script>
+<script src="js/multiview.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/blueprint-runtime.js"></script>
 <script src="js/flow-gen-panel.js"></script>

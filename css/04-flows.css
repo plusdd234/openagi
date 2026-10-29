@@ -1,0 +1,122 @@
+/* ============================================================
+ * app.css 拆分 · 04-flows
+ * 桌面左侧工作流区 / 工作流卡片
+ *
+ * ⚠ 这份文件是按**原始行号连续切片**出来的，各文件之间靠 index.html 的
+ *   <link> 顺序维持层叠关系。加新样式请放进对应 App 的文件，不要在这里
+ *   随手追加——也不要在 08-theme 之前的文件里写「最终样式」，那会被覆盖。
+ * ============================================================ */
+
+  /* ---- 桌面左侧固定工作流区 ---- */
+  .desk-side {
+    flex: 0 0 auto; width: 214px; min-height: 0; padding: 10px 8px;
+    display: flex; flex-direction: column;
+    background: #fbfbfc; border-right: 1px solid #eceef2;
+  }
+  .desk-side-head { display: flex; align-items: center; gap: 7px; padding: 2px 5px 8px; }
+  .desk-side-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: #6a7488; }
+  .desk-side-count {
+    font-family: var(--mono); font-size: 10px; color: #6a7488;
+    background: #eceef2; border-radius: 999px; padding: 0 6px; min-width: 18px; text-align: center;
+  }
+  .desk-side-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 1px; }
+  .desk-side-new {
+    margin-bottom: 8px; height: 30px; display: flex; align-items: center; justify-content: center; gap: 6px;
+    border: 1px dashed #d9dde3; border-radius: 8px; background: transparent;
+    font-family: inherit; font-size: 11.5px; color: #5a6068; cursor: pointer;
+    transition: color .13s, background .13s, border-color .13s;
+  }
+  .desk-side-new svg { width: 13px; height: 13px; }
+  .desk-side-new:hover { color: #1f2328; border-color: #c9ced6; background: #fff; }
+  /* 列表底部：占用条 + 备份入口 */
+  .desk-side-foot { flex: 0 0 auto; padding-top: 8px; border-top: 1px solid #eceef2; }
+  /* 侧栏很窄，占用条改成上下两行（文字一行、进度条一行） */
+  .desk-side-foot .wf-storage { margin: 0 0 7px; flex-direction: column; align-items: stretch; gap: 4px; }
+  .desk-side-foot .wf-storage-label { white-space: normal; font-size: 9.5px; }
+  .desk-side-foot .wf-storage-bar { flex: 0 0 auto; width: 100%; }
+  .desk-side-io { display: flex; gap: 6px; }
+  .desk-side-io-btn {
+    flex: 1 1 0; height: 24px; border: 1px solid #e1e4e9; border-radius: 7px;
+    background: #fff; color: #6a7488; font-family: inherit; font-size: 11px; cursor: pointer;
+    transition: color .13s, border-color .13s, background .13s;
+  }
+  .desk-side-io-btn:hover { color: #1f2328; border-color: #c9ced6; }
+  .wf-side-item {
+    width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 8px;
+    border: 1px solid transparent; border-radius: 8px; background: transparent;
+    font-family: inherit; text-align: left; cursor: pointer;
+    transition: background .13s, border-color .13s;
+  }
+  .wf-side-item:hover { background: #f0f2f5; }
+  .wf-side-item.active { background: #e9ebef; border-color: #dcdfe4; }
+  .wf-side-item:focus-visible { outline: 2px solid rgba(232,138,0,.45); outline-offset: 1px; }
+  .wf-side-item svg { width: 15px; height: 15px; flex: 0 0 auto; color: #8a9098; }
+  .wf-side-item-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .wf-side-name {
+    font-size: 12px; color: #1f2328; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .wf-side-sub { font: 10px var(--mono); color: #98a0aa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wf-side-sub.hot { color: #c2564c; }
+  .wf-side-more {
+    width: 20px; height: 20px; flex: 0 0 auto; display: grid; place-items: center;
+    border: none; border-radius: 5px; background: transparent; color: #8a9098;
+    font-size: 13px; line-height: 1; cursor: pointer; opacity: 0;
+    transition: opacity .13s, background .13s, color .13s;
+  }
+  .wf-side-item:hover .wf-side-more, .wf-side-more:focus-visible { opacity: 1; }
+  .wf-side-more:hover { background: #e2e5ea; color: #1f2328; }
+  .wf-side-empty { padding: 10px 6px; font-size: 11px; line-height: 1.7; color: #9aa1aa; }
+
+  .wf-menu {
+    position: fixed; z-index: 90; min-width: 118px; padding: 4px;
+    background: #fff; border: 1px solid #e1e4e9; border-radius: 9px;
+    box-shadow: 0 12px 28px rgba(20,30,50,.16), 0 2px 6px rgba(20,30,50,.06);
+  }
+  .wf-menu button {
+    display: block; width: 100%; padding: 6px 9px; border: none; border-radius: 6px;
+    background: transparent; font-family: inherit; font-size: 12px; color: #2a2f36;
+    text-align: left; cursor: pointer;
+  }
+  .wf-menu button:hover { background: #f2f3f5; }
+  .wf-menu button.danger { color: #c9342a; }
+  .wf-menu button.danger:hover { background: #fdecea; }
+
+  /* ---- 工作流卡片 ---- */
+  .wf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr)); gap: 12px; }
+  .wf-card {
+    position: relative; min-height: 128px; padding: 15px; text-align: left;
+    display: flex; flex-direction: column; justify-content: space-between; gap: 14px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 11px;
+    color: var(--text); font-family: inherit; cursor: pointer;
+    transition: border-color .15s, background .15s, transform .15s;
+  }
+  .wf-card:hover { background: #141821; border-color: #39445c; transform: translateY(-1px); }
+  .wf-name { font-size: 12.5px; font-weight: 600; padding-right: 18px; }
+  .wf-desc { font-size: 10.5px; color: var(--muted); line-height: 1.5; margin-top: 4px; }
+  .wf-meta { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #6a7488; font-family: var(--mono); }
+  .wf-del {
+    position: absolute; top: 9px; right: 9px; width: 22px; height: 22px; display: grid; place-items: center;
+    border: none; border-radius: 6px; background: transparent; color: #59637a; font-size: 14px;
+    cursor: pointer; opacity: 0; transition: opacity .15s, color .15s, background .15s;
+  }
+  .wf-card:hover .wf-del { opacity: 1; }
+  .wf-del:hover { color: #ff8a8a; background: rgba(255,120,120,.08); }
+  .wf-card.new { border-style: dashed; align-items: center; justify-content: center; color: var(--muted); font-size: 11.5px; gap: 8px; }
+  .wf-card.new:hover { color: var(--text); border-color: #41506e; }
+  .wf-plus { font-size: 22px; line-height: 1; font-weight: 300; }
+  /* 存储用量条：localStorage 约 5MB，快满时提前预警 */
+  .wf-storage { display: flex; align-items: center; gap: 9px; margin: -4px 0 12px; }
+  .wf-storage-label { font-size: 10px; color: var(--muted); font-family: var(--mono); white-space: nowrap; }
+  .wf-storage-bar { flex: 1; height: 5px; border-radius: 3px; background: rgba(255,255,255,.07); overflow: hidden; }
+  .wf-storage-fill { display: block; height: 100%; border-radius: 3px; background: #4b7bff; transition: width .2s; }
+  .wf-storage-fill.warn { background: var(--warn); }
+  .wf-storage-fill.hot { background: #ff6b6b; }
+  .wf-size {
+    font-size: 9.5px; padding: 2px 6px; border-radius: 4px; font-family: var(--mono);
+    color: #6a7488; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.07);
+  }
+  .wf-size.hot { color: #ff9a9a; background: rgba(255,107,107,.1); border-color: rgba(255,107,107,.25); }
+  .wf-state { font-size: 9.5px; padding: 2px 6px; border-radius: 4px; font-family: var(--mono); border: 1px solid transparent; }
+  .wf-state.ok { color: var(--ok); background: rgba(61,214,140,.1); border-color: rgba(61,214,140,.22); }
+  .wf-state.wait { color: var(--warn); background: rgba(255,180,84,.1); border-color: rgba(255,180,84,.22); }
+

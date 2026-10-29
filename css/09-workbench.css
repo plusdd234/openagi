@@ -1,0 +1,362 @@
+/* ============================================================
+ * app.css 拆分 · 09-workbench
+ * 工作台视觉重做：顶栏天际线 / 画布地面 / 内凹面板 / 悬浮条
+ *
+ * ⚠ 这份文件是按**原始行号连续切片**出来的，各文件之间靠 index.html 的
+ *   <link> 顺序维持层叠关系。加新样式请放进对应 App 的文件，不要在这里
+ *   随手追加——也不要在 08-theme 之前的文件里写「最终样式」，那会被覆盖。
+ * ============================================================ */
+
+  /* =============================================================
+   * 视觉深度层次（立体感）
+   * 4 层编号：1 顶栏（天际线·最高）→ 4 Dock（悬浮条）→
+   *          2 左侧工作流区（内凹嵌板）→ 3 中央舞台（地面·最底）
+   * ============================================================= */
+
+  /* ---- 3 中央舞台：外围是白底「桌面」，App 画布浮在上面（灰底那块在 .desk-canvas） ---- */
+  .desk-wall {
+    background: #ffffff;
+  }
+  /* 画布灰底：比外围白底深一档，配合内阴影把图标层「抬」起来 */
+  .desk-canvas {
+    background: linear-gradient(180deg, #f2f4f7 0%, #ebedf2 100%);
+    border-color: #e4e7ec;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.92),
+      inset 0 -18px 40px -28px rgba(28,38,60,.10),
+      0 1px 2px rgba(28,38,60,.05);
+  }
+  .desk-icons { z-index: 1; }
+
+  /* 图标卡浮于地面：双层投影 + 顶部内高光 */
+  .desk-app-icon {
+    background: linear-gradient(180deg, #ffffff 0%, #fbfbfc 100%);
+    box-shadow:
+      0 1px 2px rgba(28,38,60,.05),
+      0 10px 22px -8px rgba(28,38,60,.18),
+      inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .desk-app:hover .desk-app-icon {
+    background: linear-gradient(180deg, #ffffff 0%, #fdfcfa 100%);
+    box-shadow:
+      0 2px 4px rgba(28,38,60,.06),
+      0 16px 30px -8px rgba(28,38,60,.24),
+      inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .desk-app.dragging .desk-app-icon {
+    background: linear-gradient(180deg, #ffffff 0%, #f8f9fb 100%);
+    box-shadow:
+      0 2px 4px rgba(28,38,60,.08),
+      0 18px 34px -8px rgba(28,38,60,.28),
+      inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .desk-app:active .desk-app-icon {
+    transform: translateY(1px) scale(.97);
+    box-shadow:
+      0 1px 3px rgba(28,38,60,.18),
+      inset 0 1px 0 rgba(255,255,255,.9);
+  }
+  .desk-app:hover .desk-app-icon { transform: translateY(-2px) scale(1.02); }
+  .desk-app.dragging .desk-app-icon { transform: scale(1.08); }
+
+  /* ---- 2 左侧工作流区：内凹嵌板（比地面低半级） ---- */
+  .desk-side {
+    background: linear-gradient(180deg, #f4f5f7 0%, #eef0f3 100%);
+    box-shadow:
+      inset -1px 0 0 rgba(255,255,255,.75),
+      inset -8px 0 16px -10px rgba(28,38,60,.14);
+    z-index: 2;
+  }
+  .desk-side-head .desk-side-title { color: #5c6472; }
+  .desk-side-count { background: #e2e5ea; color: #5c6472; box-shadow: inset 0 1px 0 rgba(255,255,255,.8); }
+  /* 嵌板内的工作流卡：白卡浮起，与侧栏底形成反差 */
+  .wf-side-item {
+    background: #ffffff;
+    border-color: #e3e6ea;
+    box-shadow: 0 1px 2px rgba(28,38,60,.07), 0 3px 8px -4px rgba(28,38,60,.12);
+  }
+  .wf-side-item:hover {
+    background: #fffdf4;
+    border-color: #d98a00;
+    box-shadow: 0 2px 4px rgba(28,38,60,.08), 0 8px 16px -6px rgba(28,38,60,.16);
+  }
+  .desk-side-new {
+    background: rgba(255,255,255,.6);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.8);
+  }
+  .desk-side-new:hover { background: #fff; }
+
+  /* ---- 4 Dock：悬浮条（浮于地面之上） ---- */
+  .desk-dock {
+    background: linear-gradient(180deg, #ffffff 0%, #f7f8fa 100%);
+    box-shadow:
+      0 1px 2px rgba(28,38,60,.05),
+      0 4px 10px rgba(28,38,60,.08),
+      0 18px 38px -8px rgba(28,38,60,.18),
+      inset 0 1px 0 rgba(255,255,255,.95);
+    z-index: 3;
+  }
+  .dock-app {
+    background: linear-gradient(180deg, #ffffff 0%, #fbfbfc 100%);
+    box-shadow:
+      0 1px 2px rgba(28,38,60,.06),
+      inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .dock-app:hover {
+    background: linear-gradient(180deg, #ffffff 0%, #fffaf0 100%);
+    box-shadow:
+      0 2px 4px rgba(28,38,60,.06),
+      0 8px 16px -6px rgba(28,38,60,.16),
+      inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .dock-sep { background: #e3e6ea; box-shadow: 0 1px 0 rgba(255,255,255,.8); }
+  .dock-clock {
+    background: linear-gradient(180deg, #ffffff 0%, #f5f6f8 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 1px 2px rgba(28,38,60,.06);
+  }
+
+  /* ---- 1 顶栏：天际线（最高层，与桌面形成投影分隔） ---- */
+  .appbar {
+    background: linear-gradient(180deg, #ffffff 0%, #fbfbfc 100%);
+    box-shadow:
+      0 1px 0 rgba(255,255,255,.9) inset,
+      0 1px 0 rgba(255,255,255,.6),
+      0 3px 12px rgba(28,38,60,.08);
+    z-index: 30;
+  }
+  .status-chip, .icon-btn {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 1px 2px rgba(28,38,60,.05);
+  }
+  .status-chip:active, .icon-btn:active { box-shadow: inset 0 1px 2px rgba(28,38,60,.08); }
+  .status-chip:hover:not(:active), .icon-btn:hover:not(:active) {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.95), 0 2px 6px rgba(28,38,60,.08);
+  }
+
+  /* =============================================================
+   * 工作流编辑器 · 视觉深度层次（与桌面 4 层体系同一套语言）
+   * 1 工具条（天际线·最高）→ 4 底部面板（悬浮条）→
+   * 2 左侧面板（内凹嵌板）→ 3 画布（地面·最底）
+   * ============================================================= */
+
+  /* ---- 3 画布：地面（保持网格底纹，叠加淡橙辉光） ---- */
+  .bp-canvas {
+    background-color: #f6f7f9;
+    background-image:
+      radial-gradient(1000px 420px at 72% -8%, rgba(232,138,0,.05), transparent 60%),
+      linear-gradient(180deg, #fbfbfc 0%, #f6f7f9 100%);
+  }
+  .bp-nodes-layer { z-index: 1; }
+  .bp-frames { z-index: 0; }
+
+  /* 节点卡浮于画布：双层投影 + 顶部内高光 */
+  .node {
+    background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+    box-shadow:
+      0 1px 2px rgba(20,30,50,.05),
+      0 12px 24px -16px rgba(20,30,50,.28),
+      inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .node:hover {
+    border-color: #c4cbd4;
+    box-shadow:
+      0 2px 4px rgba(20,30,50,.06),
+      0 18px 32px -16px rgba(20,30,50,.34),
+      inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .node.sel {
+    border-color: #2b7cd3;
+    box-shadow:
+      0 0 0 1px rgba(43,124,211,.35),
+      0 4px 10px -4px rgba(43,124,211,.25),
+      0 16px 30px -16px rgba(20,30,50,.34),
+      inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .node.running {
+    box-shadow:
+      0 0 0 1px rgba(232,138,0,.40),
+      0 0 26px -8px rgba(232,138,0,.55),
+      0 12px 24px -16px rgba(20,30,50,.28),
+      inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .node.frame-member {
+    border-color: #2b7cd3;
+    box-shadow:
+      0 0 0 1px rgba(43,124,211,.30),
+      0 12px 24px -16px rgba(20,30,50,.28),
+      inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .node-head {
+    background-image:
+      linear-gradient(180deg, rgba(255,255,255,.85), rgba(0,0,0,0)),
+      linear-gradient(180deg, #fbfbfc, #f1f3f5);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .node[data-kind="text"] .node-head,
+  .node[data-kind="start"] .node-head {
+    background-image:
+      linear-gradient(180deg, rgba(31,157,99,.16), rgba(31,157,99,.04)),
+      linear-gradient(180deg, rgba(255,255,255,.85), rgba(0,0,0,0)),
+      linear-gradient(180deg, #fbfbfc, #f1f3f5);
+  }
+  .node[data-kind="gen"] .node-head {
+    background-image:
+      linear-gradient(180deg, rgba(232,138,0,.18), rgba(232,138,0,.05)),
+      linear-gradient(180deg, rgba(255,255,255,.85), rgba(0,0,0,0)),
+      linear-gradient(180deg, #fbfbfc, #f1f3f5);
+  }
+  .node[data-kind="model"] .node-head {
+    background-image:
+      linear-gradient(180deg, rgba(142,68,173,.15), rgba(142,68,173,.04)),
+      linear-gradient(180deg, rgba(255,255,255,.85), rgba(0,0,0,0)),
+      linear-gradient(180deg, #fbfbfc, #f1f3f5);
+  }
+  .node[data-kind="image"] .node-head {
+    background-image:
+      linear-gradient(180deg, rgba(43,124,211,.15), rgba(43,124,211,.04)),
+      linear-gradient(180deg, rgba(255,255,255,.85), rgba(0,0,0,0)),
+      linear-gradient(180deg, #fbfbfc, #f1f3f5);
+  }
+  .node[data-kind="out"] .node-head,
+  .node[data-kind="end"] .node-head {
+    background-image:
+      linear-gradient(180deg, rgba(23,160,190,.16), rgba(23,160,190,.04)),
+      linear-gradient(180deg, rgba(255,255,255,.85), rgba(0,0,0,0)),
+      linear-gradient(180deg, #fbfbfc, #f1f3f5);
+  }
+  .node[data-kind="logic"] .node-head {
+    background-image:
+      linear-gradient(180deg, rgba(201,52,42,.14), rgba(201,52,42,.04)),
+      linear-gradient(180deg, rgba(255,255,255,.85), rgba(0,0,0,0)),
+      linear-gradient(180deg, #fbfbfc, #f1f3f5);
+  }
+  .node[data-kind="var"] .node-head {
+    background-image:
+      linear-gradient(180deg, rgba(106,116,136,.15), rgba(106,116,136,.04)),
+      linear-gradient(180deg, rgba(255,255,255,.85), rgba(0,0,0,0)),
+      linear-gradient(180deg, #fbfbfc, #f1f3f5);
+  }
+  .node-plus {
+    background: linear-gradient(180deg, #ffffff 0%, #f6f7f9 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.95), 0 1px 2px rgba(20,30,50,.06);
+  }
+  .node-plus:hover { background: linear-gradient(180deg, #eef8f2 0%, #e4f2e9 100%); }
+  .node-exec {
+    background: #fbfbfc;
+    box-shadow: inset 0 1px 0 rgba(0,0,0,.025);
+  }
+  .pin { box-shadow: 0 0 0 2px #fff; }
+  .pin:hover { box-shadow: 0 0 0 2px #fff, 0 0 0 4px rgba(232,138,0,.25); }
+  .pin.exec { box-shadow: 0 0 0 2px #fff; }
+
+  /* 注释 frame：半透明玻璃浮层（在画布之上、节点之下） */
+  .bp-frames .frame {
+    box-shadow:
+      0 1px 3px rgba(20,30,50,.05),
+      0 8px 18px -12px rgba(20,30,50,.20),
+      inset 0 1px 0 rgba(255,255,255,.6);
+  }
+
+  /* ---- 2 左侧面板：内凹嵌板（比画布低半级） ---- */
+  .bp-side {
+    background: linear-gradient(180deg, #f4f5f7 0%, #eef0f3 100%);
+    box-shadow:
+      inset -1px 0 0 rgba(255,255,255,.75),
+      inset -8px 0 16px -10px rgba(28,38,60,.14);
+    z-index: 2;
+  }
+  .bp-side-tabs {
+    background: linear-gradient(180deg, rgba(255,255,255,.5), rgba(255,255,255,0));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.6);
+  }
+  .bp-side-tab.active {
+    background: linear-gradient(180deg, #ffffff 0%, #fbfbfc 100%);
+    box-shadow: 0 1px 2px rgba(28,38,60,.05), inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .bp-side-head, .lib-group { color: #98a0aa; }
+  /* 节点库卡与变量行：白卡浮在嵌板上 */
+  .lib-item {
+    background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+    box-shadow: 0 1px 2px rgba(28,38,60,.06), 0 3px 8px -4px rgba(28,38,60,.10);
+  }
+  .lib-item:hover {
+    background: linear-gradient(180deg, #fffdf4 0%, #fcf6ea 100%);
+    box-shadow: 0 2px 4px rgba(28,38,60,.07), 0 8px 16px -6px rgba(28,38,60,.14);
+  }
+  .lib-txt b { color: #1f2328; }
+  .var-row {
+    background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+    box-shadow: 0 1px 2px rgba(28,38,60,.06), 0 3px 8px -4px rgba(28,38,60,.10);
+  }
+  .var-row:hover {
+    background: linear-gradient(180deg, #fffdf4 0%, #fcf6ea 100%);
+    box-shadow: 0 2px 4px rgba(28,38,60,.07), 0 8px 16px -6px rgba(28,38,60,.14);
+  }
+  .var-addform { background: #f4f5f7; box-shadow: inset 0 1px 0 rgba(255,255,255,.8); }
+  .var-add { box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 1px 2px rgba(28,38,60,.05); }
+
+  /* ---- 4 底部面板：悬浮条（浮于画布之上） ---- */
+  .bp-statusbar {
+    background: linear-gradient(180deg, #ffffff 0%, #f5f6f8 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.9),
+      0 -2px 8px rgba(28,38,60,.05);
+    z-index: 3;
+  }
+  .bp-log {
+    background: linear-gradient(180deg, #ffffff 0%, #f7f8fa 100%);
+    box-shadow:
+      0 -2px 6px rgba(28,38,60,.04),
+      0 8px 24px -10px rgba(28,38,60,.16),
+      inset 0 1px 0 rgba(255,255,255,.95);
+    z-index: 3;
+  }
+  .bp-log-head {
+    background: linear-gradient(180deg, rgba(255,255,255,.7), rgba(255,255,255,0));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.8);
+  }
+  .sb-zoom {
+    background: linear-gradient(180deg, #ffffff 0%, #f5f6f8 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 1px 2px rgba(28,38,60,.06);
+  }
+  .sb-zoom button:hover { background: rgba(28,38,60,.06); }
+  .bp-toast {
+    background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+    box-shadow:
+      0 2px 6px rgba(28,38,60,.08),
+      0 18px 38px -8px rgba(28,38,60,.20),
+      inset 0 1px 0 rgba(255,255,255,.95);
+  }
+
+  /* ---- 1 工具条：天际线（高于画布，与下方投影分隔） ---- */
+  .bp-bar {
+    background: linear-gradient(180deg, #ffffff 0%, #fbfbfc 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.9),
+      0 1px 0 rgba(255,255,255,.6),
+      0 3px 12px rgba(28,38,60,.08);
+    z-index: 4;
+  }
+  .bp-bar .icon-btn, .bp-add {
+    background: linear-gradient(180deg, #ffffff 0%, #f6f7f9 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 1px 2px rgba(28,38,60,.05);
+  }
+  .bp-bar .icon-btn:active, .bp-add:active { box-shadow: inset 0 1px 2px rgba(28,38,60,.08); }
+  .bp-bar .icon-btn:hover:not(:active), .bp-add:hover:not(:active) {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.95), 0 2px 6px rgba(28,38,60,.08);
+  }
+  .bp-actions .btn:not(.primary):not(.danger) {
+    background: linear-gradient(180deg, #ffffff 0%, #f6f7f9 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 1px 2px rgba(28,38,60,.05);
+  }
+  .bp-actions .btn:not(.primary):not(.danger):active { box-shadow: inset 0 1px 2px rgba(28,38,60,.08); }
+  .bp-actions .btn.primary {
+    background: linear-gradient(180deg, #f39b12 0%, #e88a00 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 1px 2px rgba(180,110,0,.28);
+  }
+  .bp-actions .btn.primary:active { box-shadow: inset 0 2px 4px rgba(120,72,0,.22); }
+  .bp-actions .btn.danger {
+    background: linear-gradient(180deg, #e05252 0%, #c9342a 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 1px 2px rgba(150,40,30,.25);
+  }
+  .bp-actions .btn.danger:active { box-shadow: inset 0 2px 4px rgba(110,30,20,.2); }
+

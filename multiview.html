@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>多视图工具 · 3D 模型转三视图 / 六视图 / 八视图</title>
+<!-- 样式跟桌面 App 里的 #mvWin 共用同一份，改一次两边同步 -->
+<link rel="stylesheet" href="css/multiview.css">
+</head>
+<body>
+
+<!-- ⚠ 这个 id 是 multiview.js 的锚点：桌面 App 里同样叫 #mvWin（那边是 .os-win），
+     所以两处 DOM 结构必须保持一致。tools/multiview.js 里有一条断言在比对两边的
+     mv* id 集合——加一个控件两处都要加，否则测试会红。 -->
+<div class="mv-standalone" id="mvWin">
+
+  <header class="mv-top">
+    <svg class="mv-top-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="8.4" y="8.4" width="7.2" height="7.2" rx="1.6"/>
+      <path d="M12 2.6v3.4M12 18v3.4M2.6 12h3.4M18 12h3.4"/>
+    </svg>
+    <div class="mv-top-t">多视图工具</div>
+    <div class="mv-top-s">各格严格等比例 · 默认正交相机 · 支持四边面</div>
+    <div class="mv-top-sp"></div>
+    <div class="mv-top-hint">拖入 glb / obj · <kbd>空格</kbd> 重新渲染 · <kbd>1</kbd>–<kbd>4</kbd> 切模式</div>
+  </header>
+
+  <div class="mv-wrap">
+
+    <!-- ================= 左：模型来源 ================= -->
+    <aside class="mv-side">
+      <div class="mv-side-head">
+        <span class="mv-side-t">模型</span>
+        <button type="button" class="mv-mini" id="mvOpenFile" title="打开本机的 glb / gltf / obj">＋ 文件</button>
+      </div>
+      <div class="mv-list" id="mvList"></div>
+      <div class="mv-side-foot">
+        <button type="button" class="mv-mini wide" id="mvOpenLib">打开模型库</button>
+      </div>
+      <input type="file" id="mvFile" class="hidden" accept=".glb,.gltf,.obj">
+    </aside>
+
+    <!-- ================= 右：参数 + 舞台 ================= -->
+    <section class="mv-main">
+
+      <div class="mv-ctl">
+        <div class="mv-row">
+          <span class="mv-lab">视图</span>
+          <div class="mv-chips" id="mvPresets"></div>
+          <div class="mv-chips" id="mvViews"></div>
+        </div>
+        <div class="mv-row">
+          <span class="mv-lab">模式</span>
+          <div class="mv-seg" id="mvModes"></div>
+          <label class="mv-check" title="在当前模式的面之上叠加线框；OBJ 走四边面"><input type="checkbox" id="mvWire"><span>线框</span></label>
+          <span class="mv-lab">相机</span>
+          <div class="mv-seg" id="mvCams"></div>
+          <span class="mv-lab">单格</span>
+          <div class="mv-seg" id="mvSizes"></div>
+        </div>
+      </div>
+
+      <details class="mv-more" id="mvMore">
+        <summary>精细</summary>
+        <div class="mv-more-body">
+          <div class="mv-field"><span>列数</span><div class="mv-seg" id="mvCols"></div></div>
+          <div class="mv-field"><span>间距</span><input type="range" id="mvGap" min="0" max="48" step="2"><b id="mvGapV">0</b></div>
+          <div class="mv-field"><span>留白</span><input type="range" id="mvMargin" min="100" max="160" step="2"><b id="mvMarginV">108</b></div>
+          <div class="mv-field"><span>线宽</span><input type="range" id="mvLineW" min="4" max="60" step="2"><b id="mvLineWV">14</b></div>
+          <label class="mv-field"><input type="checkbox" id="mvLabels"><span>视图标签</span></label>
+        </div>
+      </details>
+
+      <div class="mv-stage" id="mvStage">
+        <div class="mv-empty" id="mvEmpty">
+          <div class="mv-empty-t">把 glb / obj 拖进来</div>
+          <div class="mv-empty-s">也可以点左上「＋ 文件」。obj 的四边形面会按原始拓扑画线框，不会出现三角化的对角线。</div>
+        </div>
+        <img id="mvOut" alt="多视图结果" draggable="false" class="hidden">
+        <div class="mv-pick hidden" id="mvPick"></div>
+      </div>
+
+      <div class="mv-bar">
+        <span class="mv-info" id="mvInfo"></span>
+        <button type="button" class="btn sm" id="mvPreview">3D 预览</button>
+        <button type="button" class="btn sm" id="mvSaveLib">存入图库</button>
+        <button type="button" class="btn sm" id="mvDlCell" disabled>下载这格</button>
+        <button type="button" class="btn sm" id="mvDlAll" disabled>下载整图</button>
+        <button type="button" class="btn sm primary" id="mvRender">重新渲染</button>
+      </div>
+
+    </section>
+  </div>
+</div>
+
+<!-- three.js 与解析器都是本地 vendor，双击这个文件就能用，不需要起服务 -->
+<script src="vendor/three.min.js"></script>
+<script src="vendor/GLTFLoader.js"></script>
+<script src="vendor/OBJLoader.js"></script>
+<script src="vendor/OrbitControls.js"></script>
+<script src="js/model3d.js"></script>
+<script src="js/multiview.js"></script>
+<script>
+  (function () {
+    function boot() {
+      if (window.multiview && typeof multiview.open === 'function') multiview.open();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+    else boot();
+  })();
+</script>
+</body>
+</html>

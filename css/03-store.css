@@ -1,0 +1,199 @@
+/* ============================================================
+ * app.css 拆分 · 03-store
+ * 模型商店
+ *
+ * ⚠ 这份文件是按**原始行号连续切片**出来的，各文件之间靠 index.html 的
+ *   <link> 顺序维持层叠关系。加新样式请放进对应 App 的文件，不要在这里
+ *   随手追加——也不要在 08-theme 之前的文件里写「最终样式」，那会被覆盖。
+ * ============================================================ */
+
+  /* ---- 模型商店 ---- */
+  /* 商店是独立 app（工作台图标打开），比模型控制台宽一点，两列卡片不挤 */
+  .os-win.store { width: min(880px, 92vw); max-height: min(80vh, 720px); }
+  .mc-store { margin-bottom: 16px; }
+  .ms-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .ms-title { font-size: 13.5px; font-weight: 600; color: #1f2328; }
+  .ms-sub { font-size: 11px; color: #8a9098; }
+  .ms-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .ms-filters { display: flex; gap: 4px; }
+  .ms-chip {
+    font-size: 11.5px; height: 26px; padding: 0 12px; border-radius: 999px; cursor: pointer;
+    border: 1px solid #dfe2e7; background: #fff; color: #3a4048;
+  }
+  .ms-chip:hover { background: #f7f8fa; }
+  .ms-chip.on { background: #fff4e5; border-color: #e88a00; color: #a35f00; font-weight: 600; }
+  .ms-toggle { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: #5a6068; cursor: pointer; }
+  .ms-hint {
+    display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; padding: 6px 10px;
+    font-size: 11px; color: #8a5a00; background: #fff8ec; border: 1px solid #f0dcb8; border-radius: 8px;
+  }
+  .ms-sec { margin-bottom: 14px; }
+  .ms-tip {
+    margin-bottom: 8px; padding: 6px 10px; font-size: 11px; line-height: 1.55; color: #4a5058;
+    background: #f7f8fa; border: 1px solid #e6e9ee; border-radius: 8px;
+  }
+  .ms-sec-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .ms-sec-head > span:first-child { font-size: 12.5px; font-weight: 600; color: #1f2328; }
+  .ms-sec-n {
+    font-size: 10.5px; color: #6a7488; background: #f0f1f4; border-radius: 999px; padding: 1px 8px; line-height: 1.6;
+  }
+  .ms-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(228px, 1fr)); gap: 8px; }
+  .ms-card {
+    display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
+    background: #fff; border: 1px solid #e3e6ea; border-radius: 10px;
+    /* 同一行等高：说明文字长短不一时，「安装」按钮会参差不齐地悬在半空，
+     * 看起来像是排版坏了（识图模型那批说明本来就比对话模型长） */
+    height: 100%;
+  }
+  .ms-card.on { border-color: #e8a13a; background: #fffdf8; }
+  .ms-top { display: flex; align-items: baseline; gap: 8px; }
+  .ms-name {
+    flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; color: #1f2328;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ms-size { flex: 0 0 auto; font-size: 11px; color: #6a7488; }
+  .ms-meta { font-size: 11px; color: #7a828c; }
+  .ms-file {
+    font-size: 10.5px; color: #8a9098; font-family: ui-monospace, Menlo, Consolas, monospace;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ms-desc { font-size: 11.5px; color: #4a5058; line-height: 1.55; }
+  .ms-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .ms-tag { font-size: 10.5px; color: #4a5058; background: #f4f5f7; border-radius: 4px; padding: 1px 6px; }
+  .ms-fit { font-size: 11px; line-height: 1.5; }
+  .ms-fit.ok { color: #1f8a4c; }
+  .ms-fit.warn { color: #8a5a00; }
+  .ms-fit.bad { color: #c9342a; }
+  .ms-fit.mute { color: #8a9098; }
+  .ms-prog { height: 5px; background: #eef1f5; border-radius: 999px; overflow: hidden; }
+  .ms-prog i { display: block; height: 100%; background: #2f81f7; transition: width .2s; }
+  /* 进度未知（引擎还没报总大小）：斜纹来回跑，让「在动」这件事看得见 */
+  .ms-prog.indet i {
+    width: 38%; background: linear-gradient(90deg, #cfe0f8, #2f81f7, #cfe0f8);
+    animation: msIndet 1.15s ease-in-out infinite;
+  }
+  @keyframes msIndet {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(365%); }
+  }
+  .ms-prog-txt { font-size: 10.5px; color: #6a7488; line-height: 1.5; }
+  .ms-err { font-size: 11px; color: #c9342a; line-height: 1.5; }
+  .ms-note { font-size: 11px; color: #8a5a00; line-height: 1.5; }
+  .ms-foot { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: auto; padding-top: 2px; }
+  .ms-on { margin-right: auto; font-size: 11px; font-weight: 600; color: #1f8a4c; }
+  .mc-sec { margin-bottom: 14px; }
+  .mc-sec-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .mc-sec-name { font-size: 12.5px; font-weight: 600; color: #1f2328; }
+  .mc-sec-count {
+    font-size: 10.5px; color: #6a7488; background: #f0f1f4; border-radius: 999px; padding: 1px 8px; line-height: 1.6;
+  }
+  .mc-sec-body { display: flex; flex-direction: column; gap: 8px; }
+  .mc-prov {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+    background: #fff; border: 1px solid #e3e6ea; border-radius: 10px;
+  }
+  .mc-prov-icon { display: flex; color: #6a7488; }
+  .mc-prov-icon svg { width: 18px; height: 18px; }
+  .mc-prov-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  /* 提供方名字都很短（ComfyUI 本地生图 / 云端生图接口），展开列表挤窄时不该折行 */
+  .mc-prov-name { font-size: 12.5px; font-weight: 600; color: #1f2328; white-space: nowrap; }
+  .mc-prov-id { font-size: 11px; color: #8a9098; }
+  .mc-prov-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .mc-prov-dot.ok { background: #1f8a4c; }
+  .mc-prov-dot.off { background: #b9bec4; }
+  .mc-prov-x { margin-top: 8px; }
+  .mc-models { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mc-model-chip {
+    font-size: 11.5px; color: #2a2f36; background: #f4f5f7; border: 1px solid #dfe2e7; border-radius: 999px;
+    padding: 2px 10px; line-height: 1.6;
+  }
+  /* 可点的模型 chip（本地生图选 ckpt）：不做出可点样子用户不会去点 */
+  .mc-model-chip.mc-pick { cursor: pointer; }
+  .mc-model-chip.mc-pick:hover { border-color: #c9ced6; background: #eef1f5; }
+  .mc-model-chip.mc-pick.on { background: #fff5e0; border-color: #e8c98a; color: #8a5a00; font-weight: 600; }
+  .mc-empty { font-size: 11.5px; color: #8a9098; }
+  .mc-loading { font-size: 11.5px; color: #8a9098; }
+  /* 模型拉取条（Ollama） */
+  .mc-pull { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .mc-pull-input {
+    flex: 1; min-width: 0; height: 30px; padding: 0 10px;
+    border: 1px solid #c9ced4; border-radius: 7px; background: #fff;
+    font-family: var(--mono); font-size: 11.5px; color: #1f2328; outline: none;
+  }
+  .mc-pull-input:focus { border-color: #d98a00; }
+  .mc-pull-input:disabled { background: #f4f5f7; color: #8a9098; }
+  .mc-pull-progress {
+    flex: 1; min-width: 0; height: 24px; padding: 0 10px; box-sizing: border-box;
+    border-radius: 6px; background: #eef1f5; overflow: hidden;
+    font-size: 11px; color: #2a2f36; line-height: 24px; white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .mc-pull-progress.hidden { display: none; }
+  /* 模型 chip 删除钮 */
+  .mc-chip-del {
+    margin-left: 5px; width: 16px; height: 16px; padding: 0; line-height: 14px;
+    border: none; border-radius: 50%; background: transparent; color: #8a9098;
+    font-size: 12px; cursor: pointer; vertical-align: middle;
+  }
+  .mc-chip-del:hover { background: #fdecea; color: #c9342a; }
+  .mc-chip-del:disabled { opacity: .5; cursor: default; }
+  /* 本地引擎状态条（三态 + 安装进度） */
+  .mc-eng {
+    background: #fffdf4; border: 1px solid #efe2c2; border-radius: 10px;
+    padding: 10px 14px; margin-bottom: 14px;
+  }
+  .mc-eng-head { display: flex; align-items: center; gap: 8px; }
+  .mc-eng-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .mc-eng-dot.ok { background: #1f8a4c; }
+  .mc-eng-dot.wait { background: #d98a00; }
+  .mc-eng-dot.off { background: #b9bec4; }
+  .mc-eng-title { font-size: 12.5px; font-weight: 600; color: #1f2328; }
+  .mc-eng-state { font-size: 11px; color: #8a5a00; background: #fff5e0; border: 1px solid #e8c98a; border-radius: 999px; padding: 1px 8px; line-height: 1.6; }
+  .mc-eng-head .btn { margin-left: auto; }
+  .mc-eng-sub { margin-top: 6px; font-size: 11.5px; color: #6a7488; line-height: 1.6; }
+  /* 自动启动开关：默认值是产品决策，但必须让用户改得动 */
+  .mc-eng-auto { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; }
+  .mc-eng-auto label {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11.5px; color: #6a7488; cursor: pointer; user-select: none;
+  }
+  .mc-eng-auto label:hover { color: #1f2328; }
+  .mc-eng-auto input { width: 13px; height: 13px; margin: 0; accent-color: #e88a00; cursor: pointer; flex: none; }
+  /* 缺 7-Zip 这类「不解决就装不成」的提示，用暖色区分于普通说明 */
+  .mc-eng-sub.warn { color: #9a6412; }
+  /* 模型驻留中：这是好消息（不再冷加载 → 不再弹黑窗口），用绿色区分 */
+  .mc-eng-sub.ok { color: #1f7a4d; }
+  /* 引擎启动失败的日志尾巴：ComfyUI 起不来的原因（缺 torch / CUDA 不匹配）都在里面 */
+  .mc-eng-log {
+    margin: 8px 0 0; padding: 8px 10px; max-height: 132px; overflow: auto;
+    background: #f7f8fa; border: 1px solid #e6e9ee; border-radius: 7px;
+    font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: #4a5361; white-space: pre-wrap; word-break: break-all;
+  }
+  .mc-eng-progress {
+    position: relative; margin-top: 8px; height: 22px; border-radius: 6px;
+    background: #eef1f5; overflow: hidden;
+  }
+  .mc-eng-progress i { position: absolute; left: 0; top: 0; bottom: 0; background: #f7d79a; transition: width .2s; }
+  .mc-eng-progress span {
+    position: relative; display: block; padding: 0 10px; font-size: 11px; color: #2a2f36;
+    line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* 速度 / 剩余时间 / 当前源：下载 1.6 GB 时没有这三个数字，用户分不清慢与卡死 */
+  .mc-eng-meta {
+    display: flex; flex-wrap: wrap; gap: 10px; margin-top: 5px;
+    font-size: 11px; color: #8a6a30;
+  }
+  .mc-eng-meta span { display: inline-flex; align-items: center; }
+  .mc-eng-meta span + span::before {
+    content: ''; width: 1px; height: 9px; background: #e2d3ae; margin-right: 10px;
+  }
+  /* 语言模型 本地 / 云端 选项卡 */
+  .mc-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+  .mc-tab {
+    height: 26px; padding: 0 12px; border: 1px solid #dfe2e7; border-radius: 7px;
+    background: #fff; color: #5a6068; font-size: 11.5px; cursor: pointer;
+  }
+  .mc-tab:hover { border-color: #c9ced6; color: #1f2328; }
+  .mc-tab.active { background: #fff5e0; border-color: #e8c98a; color: #8a5a00; font-weight: 600; }
+

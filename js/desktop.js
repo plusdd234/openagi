@@ -16,7 +16,16 @@ const DESK_GLYPH = {
    * 一眼能看出这是「很多张图」而不是「一张图」。 */
   gallery: '<rect x="3" y="4.4" width="7.6" height="7.6" rx="1.6"/><rect x="13.4" y="4.4" width="7.6" height="7.6" rx="1.6"/><rect x="3" y="14.9" width="7.6" height="5.6" rx="1.6"/><rect x="13.4" y="14.9" width="7.6" height="5.6" rx="1.6"/>',
   /* 模型库用线框立方体：3D 资产的通用符号。 */
-  modelLib: '<path d="M12 2.9 20 7.2v9.6L12 21.1 4 16.8V7.2l8-4.3Z"/><path d="M4 7.2l8 4.3 8-4.3"/><path d="M12 11.5v9.6"/>'
+  modelLib: '<path d="M12 2.9 20 7.2v9.6L12 21.1 4 16.8V7.2l8-4.3Z"/><path d="M4 7.2l8 4.3 8-4.3"/><path d="M12 11.5v9.6"/>',
+  /* 播放器用「屏幕 + 播放三角」：别用纯三角，那个和上面的文档/流程图标太像；
+   * 带屏幕边框才一眼看出是「播片」的 App。 */
+  video: '<rect x="2.6" y="4.4" width="18.8" height="15.2" rx="2.6"/><path d="m10 9.2 5.2 2.8-5.2 2.8z"/>',
+  /* 名片用「证件卡」：卡片框 + 头像 + 右侧两行信息，是「自我介绍」的通用符号。
+   * 别用「人形剪影」——那个在通讯录类 App 里太泛滥，和这里的开发者名片不是一件事。 */
+  card: '<rect x="2.6" y="4.8" width="18.8" height="14.4" rx="2.6"/><circle cx="8.4" cy="10.8" r="2.1"/><path d="M5.2 16.4c.5-1.6 1.8-2.5 3.2-2.5s2.7.9 3.2 2.5"/><path d="M14.4 9.8h4.2M14.4 13.2h4.2"/>',
+  /* 多视图用「一个模型 + 四向视线」：中心是模型，四个方向的短线表示从前后左右看。
+   * 不能再用四宫格——那跟图库的两列画框几乎一样，摆一起就分不清谁是谁。 */
+  mv: '<rect x="8.4" y="8.4" width="7.2" height="7.2" rx="1.6"/><path d="M12 2.6v3.4M12 18v3.4M2.6 12h3.4M18 12h3.4"/>'
 };
 function deskSvg(kind){
   return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (DESK_GLYPH[kind] || DESK_GLYPH.flow) + '</svg>';
@@ -38,6 +47,11 @@ const DESK_APPS = [
   /* 图库 / 模型库：资产的去处。挨着两个引擎图标，形成「造东西的」和「存东西的」两排。 */
   { id:'gallery', name:'图库', glyph:'gallery', type:'system', open: () => { if(typeof openLibrary === 'function') openLibrary('image'); } },
   { id:'modelLib', name:'模型库', glyph:'modelLib', type:'system', open: () => { if(typeof openLibrary === 'function') openLibrary('model'); } },
+  /* 播放器：和图库配对——图库里是「造出来的图」，播放器里是「攒下来的影音」。
+   * 它只播本地已有的文件（媒体库目录），不负责去网上抓内容。 */
+  { id:'player', name:'播放器', glyph:'video', type:'system', open: () => {
+    if(typeof window.playerApp !== 'undefined' && typeof window.playerApp.open === 'function') window.playerApp.open();
+  } },
   /* 「对话 / 文生图 / 图生图」三个单步工具 App 与「基线工具」界面已整块移除：
    * 对话有底部 AI 输入条（翻页即对话页）、生图有工作流节点与本地 ComfyUI，
    * 再留一套单步面板是重复入口。 */
@@ -46,6 +60,17 @@ const DESK_APPS = [
     const m = DESK_APP_META.models;
     deskMountApp($('modelsWin'), m.title, m.sub);
     if(typeof renderModelsConsole === 'function') renderModelsConsole();
+  } },
+  /* 多视图：挨着「模型」放——模型是输入，多视图是把它摊开看的工具。
+   * 它也是唯一一个**同时有独立页**的 App（multiview.html，双击就能用、不需要桌面），
+   * 两边的 DOM 与逻辑共用，别在这里另写一套。 */
+  { id:'multiview', name:'多视图', glyph:'mv', type:'system', open: () => {
+    if(typeof window.multiview !== 'undefined' && typeof window.multiview.open === 'function') window.multiview.open();
+  } },
+  /* 名片：放最后一位。它不是「做东西」的 App，是「关于这个人」的 App——
+   * 按使用频率排最后，但位置要固定，否则用户每次都要找。 */
+  { id:'card', name:'名片', glyph:'card', type:'system', open: () => {
+    if(typeof window.devCard !== 'undefined' && typeof window.devCard.open === 'function') window.devCard.open();
   } }
 ];
 function deskAppById(id){ return DESK_APPS.find(a => a.id === id); }
@@ -381,8 +406,11 @@ const DESK_APP_META = {
   chat:     { title: 'AI 对话', sub: '问点什么，或让它画一张', win: 'chatWin'  },
   store:    { title: '模型商店', sub: '安装 / 删除本地模型', win: 'storeWin'  },
   comfy:    { title: '本地生图', sub: 'ComfyUI 引擎',        win: 'comfyWin'  },
-  gallery:  { title: '图库',     sub: '生成结果与素材',      win: 'libWin'    },
-  modelLib: { title: '模型库',   sub: '本机模型文件',        win: 'libWin'    },
+    gallery:  { title: '图库',     sub: '生成结果与素材',      win: 'libWin'    },
+    modelLib: { title: '模型库',   sub: '本机模型文件',        win: 'libWin'    },
+    player:   { title: '播放器',   sub: '本地的视频与音频',    win: 'playerWin' },
+    multiview:{ title: '多视图',   sub: '模型转三视图 / 六视图 / 八视图', win: 'mvWin' },
+    card:     { title: '名片',     sub: '作者与联系方式',      win: 'cardWin'   },
   models:   { title: '模型',     sub: '引擎与 Provider',     win: 'modelsWin' }
 };
 let deskAppWin = null;                    // 当前挂在 App 页里的窗口

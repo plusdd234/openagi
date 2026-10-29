@@ -78,5 +78,20 @@ contextBridge.exposeInMainWorld('openagiDesktop', {
   onContentProgress: cb => {
     if(typeof cb !== 'function') return;
     ipcRenderer.on('content:progress', (_e, info) => cb(info));
+  },
+  /* 媒体库（播放器 App）：视频/音频/字幕落 userData/media，界面只拿 id。
+   * 播放地址由主进程的 openagi-media:// 协议提供，渲染层不接触真实路径。 */
+  mediaList: () => ipcRenderer.invoke('media:list'),
+  mediaStat: () => ipcRenderer.invoke('media:stat'),
+  mediaImport: () => ipcRenderer.invoke('media:import'),
+  mediaImportDir: () => ipcRenderer.invoke('media:import-dir'),
+  mediaRemove: ids => ipcRenderer.invoke('media:remove', ids),
+  mediaReveal: id => ipcRenderer.invoke('media:reveal', id),
+  mediaOpenDir: () => ipcRenderer.invoke('media:open-dir'),
+  mediaDownload: req => ipcRenderer.invoke('media:download', req || {}),
+  mediaCancel: jobId => ipcRenderer.invoke('media:cancel', jobId),
+  onMediaProgress: cb => {
+    if(typeof cb !== 'function') return;
+    ipcRenderer.on('media:progress', (_e, info) => cb(info));
   }
 });

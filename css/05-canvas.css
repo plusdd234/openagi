@@ -1,0 +1,357 @@
+/* ============================================================
+ * app.css 拆分 · 05-canvas
+ * 蓝图编辑器：画布 / 侧栏 / 工具条 / 注释框
+ *
+ * ⚠ 这份文件是按**原始行号连续切片**出来的，各文件之间靠 index.html 的
+ *   <link> 顺序维持层叠关系。加新样式请放进对应 App 的文件，不要在这里
+ *   随手追加——也不要在 08-theme 之前的文件里写「最终样式」，那会被覆盖。
+ * ============================================================ */
+
+  /* ---- 蓝图编辑器 ---- */
+  /* 设计基调：深色专业编辑器（对齐 UE 蓝图的观感）——
+     三档面板底色区分层次、1px 分隔线、克制的强调色、节点按类别染标题栏。 */
+  .bp {
+    --bp-bg: #101216;
+    --bp-panel: #171a1f;
+    --bp-panel-2: #1c2026;
+    --bp-line: #262b33;
+    --bp-line-soft: #1f242b;
+    --bp-text: #e7eaf0;
+    --bp-muted: #8b939f;
+    --bp-accent: #7c8cff;
+    --bp-shadow: 0 14px 34px -20px rgba(0,0,0,.95);
+    height: calc(100vh - 52px); display: flex; flex-direction: column;
+    background: var(--bp-bg);
+  }
+  .bp-bar {
+    height: 48px; flex: none; display: flex; align-items: center; gap: 9px; padding: 0 13px;
+    border-bottom: 1px solid var(--bp-line);
+    background: linear-gradient(180deg, #1b1f25, #16191e);
+    box-shadow: 0 1px 0 rgba(255,255,255,.035) inset, 0 10px 24px -22px #000;
+    position: relative; z-index: 6;
+  }
+  .bp-bar .icon-btn { width: 30px; height: 30px; background: rgba(255,255,255,.03); border-color: #2b313a; }
+  .bp-bar .bp-name {
+    width: 224px; height: 30px; padding: 0 10px; border-radius: 7px;
+    background: rgba(255,255,255,.028); border: 1px solid transparent; color: var(--bp-text);
+    font-family: inherit; font-size: 12.5px; font-weight: 600; letter-spacing: .01em;
+    transition: border-color .14s, background .14s, box-shadow .14s;
+  }
+  .bp-bar .bp-name:hover { border-color: #343c47; }
+  .bp-bar .bp-name:focus {
+    outline: none; border-color: rgba(124,140,255,.75); background: #12151a;
+    box-shadow: 0 0 0 3px rgba(124,140,255,.12);
+  }
+  .bp-state {
+    font-size: 9.5px; color: var(--bp-muted); font-family: var(--mono);
+    padding: 3px 7px; border-radius: 5px; background: rgba(255,255,255,.03);
+  }
+  .bp-state:empty { display: none; }
+  .bp-main { flex: 1; display: flex; min-height: 0; }
+  .bp-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .bp-actions .btn { height: 30px; border-radius: 7px; font-size: 11.5px; }
+  .bp-actions .btn:not(.primary):not(.danger) {
+    background: rgba(255,255,255,.035); border-color: #2f3641; color: #d3d9e3;
+  }
+  .bp-actions .btn:not(.primary):not(.danger):hover { background: rgba(255,255,255,.07); border-color: #404a58; }
+  .bp-add {
+    width: auto !important; height: 30px; padding: 0 9px; font-size: 11.5px;
+    border-radius: 7px; background: rgba(255,255,255,.035); border: 1px solid #2f3641; color: #d3d9e3;
+  }
+  .bp-add:hover { border-color: #404a58; }
+
+  /* 侧栏：两档底色 + 微标题 */
+  .bp-side {
+    width: 218px; flex: none; display: flex; flex-direction: column; min-height: 0;
+    border-right: 1px solid var(--bp-line);
+    background: linear-gradient(180deg, #181c21, #14171b);
+  }
+  .bp-side-tabs {
+    flex: none; display: flex; gap: 3px; padding: 8px 8px 0;
+    border-bottom: 1px solid var(--bp-line);
+  }
+  .bp-side-tab {
+    flex: 1; height: 28px; display: flex; align-items: center; justify-content: center; gap: 5px;
+    border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0;
+    background: transparent; color: #7f8794; font-family: inherit; font-size: 10.5px;
+    cursor: pointer; position: relative; top: 1px;
+    transition: color .12s, background .12s, border-color .12s;
+  }
+  .bp-side-tab:hover { color: #d5dbe3; background: rgba(255,255,255,.04); }
+  .bp-side-tab.active {
+    color: #f2f5f9; background: var(--bp-panel); border-color: var(--bp-line);
+    border-bottom-color: var(--bp-panel); font-weight: 600;
+  }
+  .bp-tab-count {
+    min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+    background: #2b323b; color: #b8c0cc; font-size: 8.5px; line-height: 15px;
+    font-weight: 500; text-align: center;
+  }
+  .bp-side-tab.active .bp-tab-count { background: rgba(124,140,255,.28); color: #dfe5ff; }
+  .bp-side-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bp-panel); }
+  .bp-side-head {
+    flex: none; padding: 11px 13px 7px; font-size: 8.5px; font-weight: 600;
+    letter-spacing: .1em; text-transform: uppercase; color: #6b7480;
+  }
+  .bp-lib-body { flex: 1; overflow-y: auto; padding: 0 9px 16px; }
+  .lib-group {
+    padding: 12px 4px 6px; font-size: 8.5px; font-weight: 700;
+    letter-spacing: .11em; text-transform: uppercase; color: #6b7480;
+  }
+  .lib-item {
+    position: relative; display: flex; gap: 9px; align-items: flex-start; padding: 7px 9px;
+    border-radius: 7px; border: 1px solid #252b33; background: #1b1f25; cursor: grab;
+    user-select: none; touch-action: none; margin-bottom: 4px;
+    transition: background .12s, border-color .12s, transform .12s;
+  }
+  .lib-item::before {
+    content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
+    border-radius: 0 2px 2px 0; background: transparent; transition: background .12s;
+  }
+  .lib-item:hover { background: #212630; border-color: #38414e; }
+  .lib-item:hover::before { background: var(--bp-accent); }
+  .lib-item:active { cursor: grabbing; transform: scale(.995); }
+  .lib-item .node-dot { margin-top: 5px; }
+  .lib-txt { min-width: 0; }
+  .lib-txt b { display: block; font-size: 10.5px; font-weight: 600; color: #e2e7ee; letter-spacing: .01em; }
+  .lib-txt small { display: block; margin-top: 2px; font-size: 9px; line-height: 1.45; color: #757e8b; }
+  .lib-ghost {
+    position: fixed; z-index: 999; transform: translate(-50%, -50%); pointer-events: none;
+    padding: 6px 10px; border-radius: 6px; background: #232a33; border: 1px solid #46505e;
+    font-size: 11px; color: #e7eaf0; opacity: .95; box-shadow: 0 14px 30px -14px #000;
+  }
+  .var-list { flex: 1; overflow-y: auto; padding: 0 9px 10px; }
+  .var-empty { padding: 24px 10px; font-size: 10px; line-height: 1.7; color: #6b7480; text-align: center; }
+  .var-row {
+    padding: 7px; border-radius: 7px; border: 1px solid #252b33; background: #1b1f25;
+    margin-bottom: 5px; transition: background .12s, border-color .12s;
+  }
+  .var-row:hover { background: #212630; border-color: #38414e; }
+  .var-top { display: flex; align-items: center; gap: 5px; }
+  .var-grip {
+    flex: none; width: 12px; height: 20px; display: grid; place-items: center;
+    color: #6b7480; font-size: 11px; line-height: 1; cursor: grab; user-select: none; touch-action: none;
+  }
+  .var-grip:hover { color: #b7bfcb; }
+  .var-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .bp-side .var-name {
+    flex: 1; min-width: 0; width: auto; height: 20px; padding: 0 4px; font-size: 10.5px;
+    color: #e2e7ee; background: transparent; border: 1px solid transparent; border-radius: 4px;
+  }
+  .bp-side .var-name:hover { border-color: #343c47; }
+  .bp-side .var-name:focus { outline: none; border-color: rgba(124,140,255,.7); background: #12151a; }
+  .var-type { flex: none; font-size: 8px; padding: 1px 4px; border-radius: 3px; background: #262d36; color: #9aa3b0; }
+  .var-del {
+    flex: none; border: none; background: none; color: #7f8794;
+    font-size: 12px; line-height: 1; padding: 0 2px; cursor: pointer;
+  }
+  .var-del:hover { color: #ff8a8a; }
+  .var-val { margin-top: 4px; padding-left: 23px; }
+  .var-val input, .var-val select { width: 100%; height: 21px; font-size: 9.5px; }
+  .var-val .param-file { height: 24px; font-size: 9px; }
+  .var-val-note { font-size: 9px; color: #7f8794; word-break: break-word; }
+  .var-val-note img { width: 100%; max-height: 62px; object-fit: contain; margin-top: 3px; border-radius: 4px; display: block; }
+  .var-add {
+    flex: none; margin: 0 9px 10px; height: 30px; border-radius: 7px;
+    border: 1px dashed #333c48; background: #1b1f25; color: #9aa3b0;
+    font-family: inherit; font-size: 10.5px; cursor: pointer; transition: border-color .12s, color .12s;
+  }
+  .var-add:hover { border-color: #4b5563; color: #e2e7ee; }
+  .var-addform {
+    margin: 0 9px 8px; padding: 9px; display: grid; gap: 6px;
+    border: 1px solid #333c48; border-radius: 7px; background: #1b1f25;
+  }
+  .var-addform .prow { display: flex; gap: 4px; }
+  .var-addform .prow input { flex: 1; min-width: 0; height: 24px; font-size: 10px; }
+  .var-addform .prow select { width: 72px; flex: none; height: 24px; font-size: 10px; }
+  .var-addform .btn { height: 24px; padding: 0 8px; font-size: 10px; }
+  .var-menu {
+    position: absolute; z-index: 7; width: 162px; padding: 5px;
+    border-radius: 8px; background: #1d232b; border: 1px solid #38414e;
+    box-shadow: 0 20px 40px -18px #000, 0 1px 0 rgba(255,255,255,.05) inset;
+  }
+  .var-menu-head {
+    padding: 5px 7px 6px; font-size: 9.5px; color: #9aa3b0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .var-menu button {
+    display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 6px 7px;
+    border: none; border-radius: 5px; background: none; color: #e2e7ee;
+    font-family: inherit; font-size: 10.5px; text-align: left; cursor: pointer;
+  }
+  .var-menu button:hover { background: #2a323c; color: #fff; }
+  .var-menu button span { font-size: 8.5px; color: #7f8794; }
+
+  /* 画布：网格随平移缩放一起走（background-position/size 由编辑引擎同步） */
+  .bp-canvas {
+    position: relative; flex: 1; overflow: hidden; touch-action: none; cursor: default;
+    background-color: #101216;
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,.026) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,.026) 1px, transparent 1px),
+      linear-gradient(to right, rgba(255,255,255,.058) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,.058) 1px, transparent 1px);
+    background-size: 20px 20px, 20px 20px, 100px 100px, 100px 100px;
+  }
+  .bp-canvas.panning { cursor: grabbing; }
+  .bp-canvas.space-pan { cursor: grab; }
+  body.ed-dragging { cursor: grabbing; user-select: none; }
+  /* 拖动期关掉节点的 hover/选中过渡：节点从光标底下穿过时 :hover 会反复切换，
+     每次都是一次 border-color + box-shadow 的插值重绘（带模糊，最贵的那种）。
+     UE 的 SGraphNode 在拖拽时也只更新位置，不回放样式动画。 */
+  body.ed-dragging .node { transition: none; }
+  .bp-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+  .bp-nodes-layer { position: absolute; left: 0; top: 0; }
+  .bp-frames { position: absolute; left: 0; top: 0; }
+  .bp-links { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+  .bp-link {
+    fill: none; stroke: #7c8cff; stroke-width: 2; opacity: .82;
+    pointer-events: stroke; cursor: pointer;
+    transition: opacity .12s, stroke-width .12s;
+  }
+  .bp-link:hover { stroke: #a9b5ff; opacity: 1; stroke-width: 2.6; }
+  .bp-link.t-string { stroke: #6fdc9f; }
+  .bp-link.t-int { stroke: #f2c14e; }
+  .bp-link.t-float { stroke: #ef8354; }
+  .bp-link.t-image { stroke: #5b9dff; }
+  .bp-link.t-model { stroke: #c77dff; }
+  .bp-link.t-bool { stroke: #e05252; }
+  .bp-link.t-exec { stroke: #e9edf3; stroke-width: 2.4; filter: drop-shadow(0 0 3px rgba(255,255,255,.16)); }
+  .bp-link.active {
+    stroke: #ffd35c; stroke-width: 2.8; opacity: 1; stroke-dasharray: 7 5;
+    animation: bp-flow .45s linear infinite;
+    filter: drop-shadow(0 0 6px rgba(255,211,92,.8));
+  }
+  @keyframes bp-flow { to { stroke-dashoffset: -12; } }
+  .bp-link.temp { stroke: #a9b5ff; stroke-dasharray: 5 4; opacity: .95; stroke-width: 2.2; }
+
+  /* 框选矩形 */
+  .bp-marquee {
+    position: absolute; z-index: 2; pointer-events: none; border-radius: 4px;
+    border: 1px solid rgba(124,140,255,.9); background: rgba(124,140,255,.10);
+    box-shadow: 0 0 0 1px rgba(124,140,255,.16) inset, 0 0 18px -6px rgba(124,140,255,.5);
+  }
+  .bp-marquee.add { border-color: rgba(111,220,159,.9); background: rgba(111,220,159,.10); }
+
+  /* 底部状态栏：快捷键提示 + 选择信息 + 缩放 */
+  .bp-statusbar {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 32px; z-index: 3;
+    display: flex; align-items: center; gap: 14px; padding: 0 10px;
+    border-top: 1px solid #242932;
+    background: linear-gradient(180deg, rgba(21,24,29,.88), rgba(16,18,22,.97));
+    backdrop-filter: blur(8px);
+    font-size: 10.5px; color: #808895; pointer-events: none;
+  }
+  .bp-statusbar .sb-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bp-statusbar .sb-hint b { color: #a8b1be; font-weight: 600; }
+  .bp-statusbar kbd {
+    display: inline-block; min-width: 15px; padding: 0 4px; margin: 0 1px;
+    border-radius: 3px; border: 1px solid #3a4350; border-bottom-width: 2px;
+    background: #232a33; color: #dbe1ea; font-family: var(--mono); font-size: 8.5px;
+    line-height: 13px; text-align: center;
+  }
+  .sb-sel {
+    flex: none; padding: 2px 8px; border-radius: 10px;
+    background: rgba(124,140,255,.16); border: 1px solid rgba(124,140,255,.34); color: #c3ccff;
+  }
+  .sb-zoom {
+    margin-left: auto; flex: none; display: flex; align-items: center; gap: 2px;
+    padding: 2px; border-radius: 7px; border: 1px solid #2b323c;
+    background: rgba(255,255,255,.03); pointer-events: auto;
+  }
+  .sb-zoom button {
+    height: 19px; min-width: 21px; padding: 0 5px; display: grid; place-items: center;
+    border: none; border-radius: 5px; background: transparent; color: #9aa3b0;
+    font-family: inherit; font-size: 10px; cursor: pointer;
+  }
+  .sb-zoom button:hover { background: rgba(255,255,255,.08); color: #e7eaf0; }
+  .sb-zoom #btnZoomReset { font-family: var(--mono); font-size: 9px; min-width: 38px; color: #cfd6e0; }
+  .bp-empty {
+    position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+    color: #5f6773; font-size: 12px; letter-spacing: .02em;
+  }
+  .bp-toast {
+    position: absolute; left: 50%; top: 12px; transform: translateX(-50%);
+    padding: 8px 13px; border-radius: 7px; background: #232a33; border: 1px solid #3b4450;
+    color: #e7eaf0; font-size: 11px; box-shadow: 0 16px 34px -18px #000; z-index: 8;
+  }
+  .bp-log {
+    position: absolute; right: 14px; bottom: 42px; width: min(460px, 46vw); max-height: 250px;
+    display: flex; flex-direction: column; z-index: 4; overflow: hidden;
+    background: rgba(18,21,26,.95); border: 1px solid #2c333d; border-radius: 9px;
+    box-shadow: 0 16px 38px -20px rgba(0,0,0,.95), 0 1px 0 rgba(255,255,255,.04) inset;
+    backdrop-filter: blur(6px);
+  }
+  .bp-log.collapsed { max-height: 31px; }
+  .bp-log.collapsed .bp-log-body { display: none; }
+  .bp-log-head {
+    display: flex; align-items: center; justify-content: space-between; flex: none;
+    height: 31px; padding: 0 8px 0 11px; border-bottom: 1px solid #252b34;
+    font-size: 9px; letter-spacing: .09em; text-transform: uppercase; color: #8b939f;
+  }
+  .bp-log-head button { font-size: 9.5px; color: #7f8794; background: none; border: none; cursor: pointer; padding: 2px 5px; font-family: inherit; border-radius: 4px; }
+  .bp-log-head button:hover { color: #e2e7ee; background: rgba(255,255,255,.06); }
+  .bp-log-body { overflow-y: auto; padding: 7px 11px 9px; font-family: var(--mono); font-size: 9.5px; line-height: 1.7; color: #b8c0cc; }
+  .bp-log-row { display: flex; gap: 7px; padding: 1px 0; white-space: pre-wrap; word-break: break-word; }
+  .bp-log-time { color: #545c69; flex: none; }
+  .bp-log-msg { min-width: 0; }
+  .bp-log-row.ok .bp-log-msg { color: #7fd6a5; }
+  .bp-log-row.error .bp-log-msg { color: #ff9c9c; }
+  .bp-log-row.live .bp-log-msg { color: #cdd6e6; }
+  .bp-log-row.warn .bp-log-msg { color: #f2c14e; }
+  .bp-log-empty { color: #5b636f; }
+
+  /* ---- 注释面板（comment frame）---- */
+  .bp-frame {
+    position: absolute; border-radius: 12px; pointer-events: none;
+    border: 1px solid var(--frame-line, rgba(124,140,255,.45));
+    background: var(--frame-fill, rgba(124,140,255,.06));
+    transition: border-color .12s, box-shadow .12s;
+  }
+  .bp-frame.sel {
+    border-color: var(--frame-c);
+    box-shadow: 0 0 0 1px var(--frame-line), 0 0 34px -14px var(--frame-c);
+  }
+  .frame-head {
+    pointer-events: auto; position: absolute; left: -1px; right: -1px; top: -1px; height: 31px;
+    display: flex; align-items: center; gap: 7px; padding: 0 5px 0 9px;
+    border-radius: 11px 11px 0 0; border-bottom: 1px solid var(--frame-line);
+    background: var(--frame-head); cursor: move; backdrop-filter: blur(2px);
+  }
+  .bp-frame.sel .frame-head { background: var(--frame-head); filter: brightness(1.12); }
+  .frame-grip {
+    flex: none; width: 14px; height: 18px; display: grid; place-items: center;
+    color: rgba(255,255,255,.42); font-size: 10px; letter-spacing: -1px; line-height: 1;
+    cursor: move; border-radius: 4px;
+  }
+  .frame-head:hover .frame-grip { color: rgba(255,255,255,.75); }
+  .frame-dot {
+    flex: none; width: 8px; height: 8px; padding: 0; border: none; border-radius: 50%;
+    background: var(--frame-c); cursor: pointer;
+    box-shadow: 0 0 0 3px var(--frame-line), 0 0 10px -2px var(--frame-c);
+  }
+  .frame-dot:hover { filter: brightness(1.2); }
+  .frame-title {
+    flex: 1; min-width: 0; height: 22px; padding: 0 6px; border-radius: 5px;
+    background: transparent; border: 1px solid transparent; color: #f2f5f9;
+    font-family: inherit; font-size: 11.5px; font-weight: 650; letter-spacing: .015em;
+  }
+  .frame-title::placeholder { color: rgba(255,255,255,.35); font-weight: 500; }
+  .frame-title:hover { border-color: rgba(255,255,255,.14); }
+  .frame-title:focus { outline: none; background: #12151a; border-color: rgba(255,255,255,.26); }
+  .frame-del {
+    flex: none; width: 18px; height: 18px; padding: 0; border: none; border-radius: 5px;
+    background: transparent; color: #c3cbd6; font-size: 13px; line-height: 1; cursor: pointer;
+  }
+  .frame-del:hover { background: rgba(255,90,90,.18); color: #ff9c9c; }
+  .frame-resize {
+    pointer-events: auto; position: absolute; right: -4px; bottom: -4px; width: 18px; height: 18px;
+    cursor: nwse-resize; border-radius: 4px;
+  }
+  .frame-resize::after {
+    content: ''; position: absolute; right: 5px; bottom: 5px; width: 7px; height: 7px;
+    border-right: 2px solid var(--frame-c); border-bottom: 2px solid var(--frame-c);
+    border-radius: 0 0 2px 0; opacity: .8;
+  }
+  .bp-frame.sel .frame-resize::after { opacity: 1; }
+

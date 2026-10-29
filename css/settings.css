@@ -1,0 +1,584 @@
+/* ============================================================
+ * 设置面板 · 版式（v2 重做）
+ *
+ * 为什么另起一份而不是改 css/app.css 里的 .settings.xp：
+ *   旧的那套是「深色底 + 表单平铺」，字段一层层往下堆，一眼看不出
+ *   「我现在什么配好了、什么没配」。这次换成左侧分组导航 + 右侧卡片分组，
+ *   并且新增「总览」页。壳的类名换成 .settings2，旧规则自然失效，
+ *   不用去删那 200 行——删了万一别处还引用就炸了。
+ *
+ * 这里把 shell 内所有控件的样式写全（输入框 / 下拉 / 按钮 / 提示 / 折叠），
+ * 不依赖 app.css 里的 .field / .note / .btn：那几套是按深色面板调的，
+ * 直接继承过来会出现「白底上的浅灰字」。
+ * ============================================================ */
+
+.settings2 {
+  --s2-line: #e5e8ee;
+  --s2-line-soft: #eff1f5;
+  --s2-ink: #1f2328;
+  --s2-ink2: #3d4657;
+  --s2-muted: #6a7488;
+  --s2-dim: #99a2b2;
+  --s2-gold: #f0b429;
+  --s2-gold-deep: #d99a12;
+  --s2-gold-ink: #3b2c05;
+  --s2-ok: #1f8a4c;
+  --s2-warn: #b26a00;
+  --s2-bad: #c9342a;
+
+  width: min(1000px, 94vw);
+  height: min(780px, 92vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid #dfe3ea;
+  box-shadow: 0 32px 80px -20px rgba(16, 24, 40, .45), 0 2px 8px rgba(16, 24, 40, .08);
+  color: var(--s2-ink);
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+/* ---------------- 头部 ---------------- */
+
+.set-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 54px;
+  padding: 0 12px 0 20px;
+  border-bottom: 1px solid var(--s2-line-soft);
+  background: #fff;
+}
+.set-head-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+.set-head .settings-title { font-size: 14px; font-weight: 700; letter-spacing: .01em; }
+.set-head-sub { font-size: 11px; color: var(--s2-dim); }
+
+.set-x {
+  flex: 0 0 auto;
+  width: 28px; height: 28px;
+  display: grid; place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #8b929a;
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.set-x:hover { background: #f1f2f4; color: #1f2328; border-color: #e3e6ea; }
+
+/* ---------------- 主体：左导航 + 右内容 ---------------- */
+
+.set-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 178px minmax(0, 1fr);
+}
+
+.set-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 10px 8px;
+  border-right: 1px solid var(--s2-line-soft);
+  background: #fafbfc;
+  overflow-y: auto;
+}
+
+.set-nav .tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--s2-ink2);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.set-nav .tab:hover { background: #f0f2f5; }
+.set-nav .tab.active {
+  background: #fff;
+  color: var(--s2-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 0 0 1px var(--s2-line);
+}
+/* 选中态左侧一道金条：不靠加粗也能一眼定位 */
+.set-nav .tab.active::before {
+  content: '';
+  position: absolute;
+  left: -8px; top: 50%;
+  width: 3px; height: 16px;
+  transform: translateY(-50%);
+  border-radius: 0 2px 2px 0;
+  background: var(--s2-gold);
+}
+
+.set-nav-ico {
+  flex: 0 0 auto;
+  width: 15px; height: 15px;
+  color: #9aa3b2;
+}
+.set-nav .tab.active .set-nav-ico { color: var(--s2-gold-deep); }
+
+.set-nav-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 状态点：已配置=绿、需要注意=橙、未配置=灰空心。
+ * 放在导航上比塞进内容区有用得多——不点进去就知道哪块还没配。 */
+.set-dot {
+  flex: 0 0 auto;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #cdd3de;
+}
+.set-dot.ok { background: var(--s2-ok); }
+.set-dot.warn { background: var(--s2-warn); }
+.set-dot.bad { background: var(--s2-bad); }
+.set-dot.off { background: transparent; box-shadow: inset 0 0 0 1.5px #cdd3de; }
+
+.set-nav-sep {
+  margin: 8px 9px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: #b6bdc9;
+}
+
+.set-panes {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px 18px 20px;
+  background: #fff;
+}
+.set-panes::-webkit-scrollbar { width: 9px; }
+.set-panes::-webkit-scrollbar-thumb { background: #e0e4ea; border-radius: 5px; }
+.set-panes::-webkit-scrollbar-thumb:hover { background: #ccd3dd; }
+.set-panes::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------------- 分组卡片 ---------------- */
+
+.set-sec {
+  border: 1px solid var(--s2-line);
+  border-radius: 11px;
+  background: #fff;
+  padding: 13px 15px 14px;
+  margin-bottom: 12px;
+}
+.set-sec:last-child { margin-bottom: 0; }
+
+.set-sec-head { margin-bottom: 11px; }
+.set-sec-t {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--s2-ink);
+}
+.set-sec-t .set-sec-tag {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: #f2f4f7;
+  color: var(--s2-muted);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+.set-sec-s {
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--s2-muted);
+}
+
+/* 两列：字段多的时候能把垂直滚动砍掉一半 */
+.set-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+.set-grid.one { grid-template-columns: minmax(0, 1fr); }
+.set-grid .span2 { grid-column: span 2; }
+
+/* ---------------- 字段 ---------------- */
+
+.settings2 .field { margin-bottom: 10px; }
+.settings2 .field:last-child { margin-bottom: 0; }
+.set-grid .field { margin-bottom: 0; }
+
+.settings2 label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--s2-ink2);
+}
+.settings2 label.sf-inline { display: inline-flex; align-items: center; gap: 7px; margin: 0; font-weight: 400; }
+
+.settings2 input[type="text"],
+.settings2 input[type="password"],
+.settings2 input[type="number"],
+.settings2 select,
+.settings2 textarea {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #dfe3e9;
+  border-radius: 8px;
+  background: #fff;
+  color: #2a2f36;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+.settings2 textarea { height: auto; min-height: 64px; padding: 8px 10px; }
+.settings2 input:focus,
+.settings2 select:focus,
+.settings2 textarea:focus {
+  border-color: var(--s2-gold);
+  box-shadow: 0 0 0 3px rgba(240, 180, 41, .18);
+}
+.settings2 input::placeholder { color: #a8b0bd; }
+.settings2 select { cursor: pointer; }
+
+/* 密码框右侧「显示」 */
+.settings2 .api-key-wrap { position: relative; }
+.settings2 .api-key-wrap input { padding-right: 48px; }
+.settings2 .toggle-pw {
+  position: absolute;
+  right: 4px; top: 50%;
+  transform: translateY(-50%);
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #7b8494;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.settings2 .toggle-pw:hover { background: #f1f3f6; color: #2a2f36; }
+
+.settings2 .inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* ⚠ 必须 flex-basis:0 而不是 auto：全局 input/select 是 width:100%，
+ * basis:auto 会取到那个 100%，把同一行的按钮挤到下一行（「读取模型」单独一行就是这么来的）。 */
+.settings2 .inline > input,
+.settings2 .inline > select { flex: 1 1 0; width: auto; min-width: 0; }
+/* 同一行里还有按钮时，让输入控件先长、按钮保原宽 */
+.settings2 .inline > .btn { flex: 0 0 auto; }
+.settings2 .url-input { margin-top: 6px; }
+.settings2 .model-input { margin-top: 0; }
+
+/* 说明文字：只留一句话的位置，长解释收进 details */
+.settings2 .note {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--s2-muted);
+}
+.settings2 .note code,
+.settings2 .relay-code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #f2f4f7;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  color: #4a5058;
+}
+.settings2 .hint { font-size: 11px; color: var(--s2-dim); }
+
+.settings2 .check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--s2-ink2);
+  cursor: pointer;
+}
+.settings2 .check input { width: 14px; height: 14px; margin-top: 2px; accent-color: var(--s2-gold-deep); flex: 0 0 auto; }
+
+.settings2 .relay-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.settings2 .relay-check { display: inline-flex; align-items: center; gap: 7px; margin: 0; font-size: 12px; font-weight: 400; }
+.settings2 .relay-check input { width: 14px; height: 14px; accent-color: var(--s2-gold-deep); }
+
+/* 按钮 */
+.settings2 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #d9dde3;
+  border-radius: 8px;
+  background: #fff;
+  color: #2a2f36;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.settings2 .btn:hover { background: #f7f8fa; border-color: #c9ced6; }
+.settings2 .btn:disabled { opacity: .5; cursor: not-allowed; }
+.settings2 .btn.sm { height: 28px; padding: 0 10px; font-size: 11.5px; }
+.settings2 .btn.primary {
+  background: linear-gradient(180deg, var(--s2-gold), var(--s2-gold-deep));
+  border-color: var(--s2-gold-deep);
+  color: var(--s2-gold-ink);
+  font-weight: 700;
+}
+.settings2 .btn.ghost { background: transparent; }
+/* `.test-row .linkbtn::before` 那颗 4px 圆点来自 01-base 的暗色主题（#3b4763），
+ * 摆到白底上像一粒墨点，跟旁边金褐色的字不是一个色系。这里换成浅金。
+ * 只命中 .test-row 里的（测试分析/生图接口），清空 Key / 配置自定义模型那些没有点。 */
+.settings2 .test-row .linkbtn::before { background: #c8a44a; opacity: .7; }
+.settings2 .linkbtn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #7a5a12;
+  font: inherit;
+  font-size: 11.5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.settings2 .linkbtn:hover { color: var(--s2-gold-deep); }
+.settings2 .test-row { margin-top: 4px; }
+
+/* 来源官网链接行（renderPresetLinks 生成） */
+.settings2 .preset-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--s2-dim);
+}
+.settings2 .preset-links a { color: #5a6b8c; text-decoration: none; }
+.settings2 .preset-links a:hover { color: var(--s2-gold-deep); text-decoration: underline; }
+
+/* 折叠块（模型选择 / 高级参数 / 联网搜索旧位置） */
+.settings2 .msel,
+.settings2 .adv {
+  border: 1px solid var(--s2-line);
+  border-radius: 9px;
+  background: #fcfcfd;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.settings2 .msel > summary,
+.settings2 .adv > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--s2-ink2);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.settings2 .msel > summary::-webkit-details-marker,
+.settings2 .adv > summary::-webkit-details-marker { display: none; }
+.settings2 .msel > summary::after,
+.settings2 .adv > summary::after {
+  content: '▾';
+  margin-left: auto;
+  font-size: 10px;
+  color: #b6bdc9;
+  transition: transform .14s;
+}
+.settings2 details[open] > summary::after { transform: rotate(180deg); }
+.settings2 .msel-title { flex: 0 0 auto; }
+.settings2 .msel-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: #4a5058;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings2 .msel-value.empty { color: #a8b0bd; }
+/* ⚠ app.css 里有个全局空态 `.empty`（虚线框 + padding 22px + 居中 flex）。
+ * `<span class="msel-value empty">未选择</span>` 会同时命中它，于是模型下拉里
+ * 长出一个虚线大框。这里必须把空态的盒子属性全部撤掉，只保留文字色。 */
+.settings2 .msel-value.empty {
+  border: 0;
+  padding: 0;
+  display: block;
+  border-radius: 0;
+  text-align: right;
+}
+.settings2 .msel-body,
+.settings2 .adv > div { padding: 0 12px 12px; }
+.settings2 .picker-head { margin-bottom: 7px; }
+.settings2 .picker-filter { height: 30px; }
+.settings2 .model-tabs {
+  margin-top: 8px;
+  max-height: 168px;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.settings2 .model-tabs .hint { padding: 6px 0; }
+
+/* 测试结果列表 */
+.settings2 .test-list { margin-top: 6px; font-size: 11px; line-height: 1.7; color: var(--s2-muted); }
+.settings2 .test-list .ok { color: var(--s2-ok); }
+.settings2 .test-list .bad { color: var(--s2-bad); }
+
+.settings2 .empty { color: var(--s2-muted); font-size: 11.5px; }
+
+/* 只读信息行：左边标签、中间当前值、右边动作按钮。
+ * 用于「Key / 地址改到对话条去配」之后的替代展示——设置页不再摆输入框，
+ * 但必须还能一眼看到「现在接的是哪个站」，否则用户只能靠猜。 */
+.set-kv {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 6px 10px;
+  margin-top: 6px;
+  border: 1px solid var(--s2-line-soft);
+  border-radius: 8px;
+  background: #fafbfc;
+}
+.set-kv-k {
+  flex: 0 0 62px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--s2-dim);
+}
+.set-kv-v {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--s2-ink2);
+  font-family: ui-monospace, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.set-kv-v.is-err { color: var(--s2-bad); font-family: inherit; }
+.set-kv .btn { flex: 0 0 auto; }
+
+/* ---------------- 总览 ---------------- */
+
+.set-home-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.set-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 13px;
+  border: 1px solid var(--s2-line);
+  border-radius: 10px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .12s, box-shadow .12s, transform .12s;
+}
+.set-card:hover {
+  border-color: #d8cba8;
+  box-shadow: 0 6px 16px -10px rgba(28, 38, 60, .45);
+}
+.set-card-ico {
+  flex: 0 0 auto;
+  width: 30px; height: 30px;
+  display: grid; place-items: center;
+  border-radius: 8px;
+  background: #f4f6f9;
+  color: #7b8494;
+}
+.set-card-ico svg { width: 16px; height: 16px; }
+.set-card.ok .set-card-ico { background: #eaf6ef; color: #1f8a4c; }
+.set-card.warn .set-card-ico { background: #fff5e6; color: #b26a00; }
+.set-card.bad .set-card-ico { background: #fdeceb; color: #c9342a; }
+
+.set-card-main { flex: 1 1 auto; min-width: 0; }
+.set-card-t {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--s2-ink);
+}
+.set-card-t .set-dot { width: 6px; height: 6px; }
+.set-card-v {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--s2-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.set-card-v code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  color: #4a5058;
+}
+
+/* ---------------- 底部 ---------------- */
+
+.set-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 46px;
+  padding: 0 18px;
+  border-top: 1px solid var(--s2-line-soft);
+  background: #fafbfc;
+  font-size: 11px;
+  color: var(--s2-dim);
+}
+.set-foot .sp { flex: 1 1 auto; }
+.set-foot .note { margin: 0; font-size: 11px; color: var(--s2-dim); }
+
+/* ---------------- 窄窗 ---------------- */
+
+@media (max-width: 760px) {
+  .settings2 { width: 100vw; height: 100vh; border-radius: 0; border: 0; }
+  .set-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .set-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--s2-line-soft);
+    padding: 8px;
+  }
+  .set-nav .tab { flex: 0 0 auto; width: auto; white-space: nowrap; }
+  .set-nav .tab.active::before { display: none; }
+  /* 只砍掉装饰（分隔字、状态点），**保留文字标签**：
+   * 八个图标排成一排，没人记得住哪个是「存储与数据」；横向滚动比猜图标好。 */
+  .set-nav-sep { display: none; }
+  .set-nav-ico { width: 17px; height: 17px; }
+  .set-dot { display: none; }
+  .set-grid, .set-home-grid { grid-template-columns: minmax(0, 1fr); }
+  .set-grid .span2 { grid-column: span 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .set-nav .tab, .set-card, .settings2 input, .settings2 select,
+  .settings2 .btn, .settings2 .msel > summary::after { transition: none !important; }
+}

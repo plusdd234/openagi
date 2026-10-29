@@ -31,11 +31,13 @@
   let genTick = 0;
   let chatImgMode = 'auto'; // auto | image | chat
   let refineOn = true;      // 提示词改写：口语 → 可生图的描述
+  let webSearchOn = false;  // 联网搜索：这一轮回答前先去搜一遍（默认关）
 
   const CTX_KEY = 'hf_desk_ctx';
   const MODEL_KEY = 'hf_desk_model';
   const IMG_MODE_KEY = 'hf_desk_imgmode';
   const REFINE_KEY = 'hf_desk_imgrefine';
+  const WEB_KEY = 'hf_desk_websearch';
 
   /* 教模型「它其实能出图」。模型不该假装自己画不了，也不该编图片链接；
      由它写提示词、由系统真正去调生图模型，是唯一不会说谎的分工。 */
@@ -362,6 +364,30 @@
   const PICKERS = {};
   const SRC_LABEL = { gw: '云端', oll: 'Ollama', local: '自定义' };
 
+  /* 菜单底部第二行：直接打开**当前站的官网**。
+   * 只在「已经配过在线接口、且这个地址能对上官网」时出现 ——
+   * 刚起步的用户先看到的是「配置自定义云端生图」，配过的人看到的是「去官网充值 / 看新模型」。
+   * Tripo 模式下不给（引擎是 Tripo，在线接口的站不是当前在用的东西）。 */
+  function imgSiteMenuEntry(){
+    try{
+      if(tripoEngineActive()) return null;
+      const base = (($('imgBaseUrl') && $('imgBaseUrl').value.trim())
+        || ($('llmBaseUrl') && $('llmBaseUrl').value.trim()) || '');
+      const s = imgSiteFor(base);
+      if(!s) return null;
+      const a = document.createElement('a');
+      a.className = 'dai-menu-cfg dai-menu-site';
+      a.id = 'daiImgSiteOpen';
+      a.href = s.url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.title = '在浏览器打开 ' + s.url + '（注册 / 建 Key / 看报价）';
+      a.textContent = '打开 ' + s.name + ' 官网 ↗';
+      a.addEventListener('click', () => { closeMenus(); });
+      return a;
+    }catch(e){ return null; }
+  }
+
   function initPicker(key, cfg){
     const sel = el(cfg.sel), btn = el(cfg.btn);
     if(!sel || !btn) return;
@@ -461,7 +487,14 @@
     if(p.cfg.config){
       const foot = document.createElement('div');
       foot.className = 'dai-menu-foot';
-      foot.appendChild(configEntry());
+      foot.appendChild(configEntry(
+        p.cfg.configLabel || '配置自定义模型',
+        p.cfg.onConfig,
+        p.cfg.configId || 'daiCfgOpen'
+      ));
+      /* 可选第二行（生图模型：直接去当前站的官网）。返回 null 就不占位。 */
+      const extra = (typeof p.cfg.footEntry === 'function') ? p.cfg.footEntry() : null;
+      if(extra) foot.appendChild(extra);
       m.appendChild(foot);
     }
     return m;
@@ -751,12 +784,14 @@
     }).catch(() => deskToast('配置已保存，模型清单刷新失败'));
   }
 
-  /* 模型菜单底部那一行「＋ 配置自定义模型」 */
-  function configEntry(){
+  /* 菜单底部那一行「＋ 配置自定义…」。
+   * 语言模型与生图模型共用这一个构造函数，只换文案与点击动作（id 也随之区分，
+   * 否则同一时刻两个菜单都在 DOM 里时 getElementById 会拿错那个）。 */
+  function configEntry(label, onOpen, id){
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'dai-menu-cfg';
-    b.id = 'daiCfgOpen';
+    b.id = id || 'daiCfgOpen';
     const NS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
@@ -769,10 +804,420 @@
     p1.setAttribute('d', 'M12 5.5v13M5.5 12h13');
     svg.appendChild(p1);
     const t = document.createElement('span');
-    t.textContent = '配置自定义模型';
+    t.textContent = label || '配置自定义模型';
     b.append(svg, t);
-    b.addEventListener('click', e => { e.stopPropagation(); openModelCfg(); });
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      if(typeof onOpen === 'function') onOpen();
+      else openModelCfg();
+    });
     return b;
+  }
+
+  /* ---------- 配置自定义云端生图（中转站） ----------
+   *
+   * 落点和「配置自定义模型」一样：写的全是设置页那几个字段
+   * （imgBaseUrl / imgKey / imgModel / imgEndpoint / imgSize），保存即等于在设置里改过，
+   * 节点里的「图像生成」立刻走新站——不另存一份，避免「下拉 A、出图 B」。
+   *
+   * 为什么必须补这个入口：生图模型下拉的「在线接口」组来自 IMG_MODEL_CACHE，
+   * 用户没去设置页配过接口时它是空的，下拉里就只剩本地 ckpt，看着像「云端生图没做」。
+   * 语言模型下拉早就挂着「配置自定义模型」，两边不对称更会让人以为生图那边没这能力。
+   *
+   * 中转站兼容性（实测记录见 LOCAL-ENGINES.md「云端生图中转站」一节）：
+   * 绝大多数是 OpenAI 兼容的 /images/generations + /images/edits，Key 走 Bearer，
+   * 差异只有三处 —— ① gpt-image 系恒返回 b64_json 且不接受 response_format；
+   * ② 部分站（Kunavo 等）图生图只收 JSON、不收 multipart；③ banana 系的 size
+   * 既收 1024x1024，也收 1:1 / 2K 这类档位串。所以「端点 / 尺寸」直接露在弹层里，
+   * 而不是逼用户回设置页翻「高级参数」。
+   */
+  const IMG_CFG_FIELDS = ['imgBaseUrl', 'imgKey', 'imgModel', 'imgEndpoint', 'imgSize'];
+
+  function imgPresetList(){
+    try{
+      const groups = (typeof IMG_PRESET_GROUPS !== 'undefined' && IMG_PRESET_GROUPS) ? IMG_PRESET_GROUPS : [];
+      /* 组内展开并带上组名，弹层里按组排一行，用户一眼看出「中转站 / 官方直连」 */
+      return groups.reduce((acc, g) => acc.concat((g.items || []).map(it => Object.assign({ group: g.label }, it))), []);
+    }catch(e){ return []; }
+  }
+
+  /* 「这个地址该去哪个官网拿 Key？」
+   *
+   * 优先级：命中预设 → 用预设里登记的官网；否则退回 Base URL 的 origin
+   * （任意站都能给出一个可点的地址，用户不用自己去搜）。
+   * 本机地址没有官网可去 —— 给 127.0.0.1 一个「打开官网」的链接纯属骗人，直接不给。
+   */
+  function imgSiteFor(base){
+    const b = String(base || '').trim().replace(/\/$/, '');
+    const hit = imgPresetList().find(p => (p.base || '').replace(/\/$/, '') === b);
+    if(hit && hit.site) return { url: hit.site, name: hit.name };
+    if(!/^https?:\/\//i.test(b)) return null;
+    try{
+      const u = new URL(b);
+      if(!u.hostname) return null;
+      if(/^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)$/i.test(u.hostname)) return null;
+      return { url: u.origin, name: u.hostname.replace(/^www\./i, '') };
+    }catch(e){ return null; }
+  }
+
+  /* 「还没有 Key？打开 xx 官网 ↗」——中转站都要先去官网注册、建 Key、充值，
+   * 让用户自己回去搜站名是最没必要的摩擦。地址留空（复用分析接口）时
+   * 指向分析侧那家；都拿不到就整行隐藏，不摆一个点不动的死链。 */
+  function renderImgSite(){
+    const row = el('daiImgCfgGetKey');
+    const a = el('daiImgCfgSite');
+    if(!row || !a || !el('daiImgCfgBase')) return;
+    const base = (el('daiImgCfgBase').value || '').trim()
+      || ((($('llmBaseUrl') && $('llmBaseUrl').value.trim()) || ''));
+    const s = imgSiteFor(base);
+    if(!s){
+      row.classList.add('hidden');
+      a.removeAttribute('href');
+      a.textContent = '';
+      return;
+    }
+    row.classList.remove('hidden');
+    a.href = s.url;
+    a.textContent = '打开 ' + s.name + ' 官网 ↗';
+    a.title = '在浏览器打开 ' + s.url + ' · 注册账号并创建 API Key（本应用不保存账号密码）';
+  }
+
+  function buildImgCfg(){
+    const mask = document.createElement('div');
+    mask.id = 'daiImgCfgMask';
+    mask.className = 'dai-cfg-mask hidden';
+
+    const card = document.createElement('div');
+    card.className = 'dai-cfg';
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+    card.setAttribute('aria-label', '配置自定义云端生图');
+
+    const head = document.createElement('div');
+    head.className = 'dai-cfg-head';
+    const title = document.createElement('span');
+    title.textContent = '配置自定义云端生图';
+    const sub = document.createElement('span');
+    sub.className = 'dai-cfg-sub';
+    sub.textContent = 'OpenAI 兼容生图接口 / 中转站';
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'dai-cfg-x';
+    x.textContent = '×';
+    x.setAttribute('aria-label', '关闭');
+    x.addEventListener('click', closeImgCfg);
+    head.append(title, sub, x);
+
+    const body = document.createElement('div');
+    body.className = 'dai-cfg-body';
+
+    /* 来源芯片：点一下就填好地址 + 模型 + 端点，省掉手敲一长串 URL */
+    const srcBox = document.createElement('div');
+    srcBox.className = 'dai-cfg-field';
+    const srcLab = document.createElement('span');
+    srcLab.textContent = '快捷选择（中转站 / 官方直连）';
+    const chips = document.createElement('div');
+    chips.className = 'dai-cfg-list';
+    chips.id = 'daiImgCfgSrc';
+    srcBox.append(srcLab, chips);
+
+    /* 「还没有 Key？」紧跟 Key 输入框：中转站的 Key 只能去它自己官网建，
+       这一行就是「访问官网」的落点——用户不用回设置页、也不用自己去搜站名。 */
+    const getKey = document.createElement('div');
+    getKey.className = 'dai-cfg-getkey';
+    getKey.id = 'daiImgCfgGetKey';
+    const getKeyTxt = document.createElement('span');
+    getKeyTxt.textContent = '还没有 Key？';
+    const site = document.createElement('a');
+    site.id = 'daiImgCfgSite';
+    site.className = 'dai-cfg-site';
+    site.target = '_blank';
+    site.rel = 'noopener noreferrer';
+    getKey.append(getKeyTxt, site);
+
+    body.append(
+      srcBox,
+      cfgField('接口地址（Base URL）', 'daiImgCfgBase', { ph: 'https://api.example.com/v1' }),
+      cfgField('API Key', 'daiImgCfgKey', { ph: 'sk-…（留空则复用分析侧 Key）', password: true }),
+      getKey,
+      cfgField('生图模型', 'daiImgCfgModel', { ph: 'nano-banana-2.1 / gpt-image-1 / seedream_v5 …' })
+    );
+
+    const row = document.createElement('div');
+    row.className = 'dai-cfg-row';
+    const epField = cfgField('生图端点', 'daiImgCfgEndpoint', { ph: '/images/edits' });
+    const sizeField = cfgField('尺寸', 'daiImgCfgSize', { ph: '1024x1024' });
+    row.append(epField, sizeField);
+    body.appendChild(row);
+
+    const list = document.createElement('div');
+    list.className = 'dai-cfg-list';
+    list.id = 'daiImgCfgList';
+    const hint = document.createElement('div');
+    hint.className = 'dai-cfg-hint';
+    hint.id = 'daiImgCfgHint';
+    hint.textContent = '填好地址和 Key 后点「读取模型」，可从该站返回的清单里点选；也可以直接手填模型名。';
+    /* 价目参考只写量级，不写死单站报价——中转站调价比模型还快，写死了就是错误信息 */
+    const priceNote = document.createElement('div');
+    priceNote.className = 'dai-cfg-hint';
+    priceNote.textContent = '成本口径：中转站多按张计价（banana 系约 ¥0.05–0.35/张），官方接口按 token 计（2K 输出约 $0.05–0.14/张）。以站内实时价格为准。';
+    const err = document.createElement('div');
+    err.className = 'dai-cfg-err hidden';
+    err.id = 'daiImgCfgErr';
+    body.append(list, hint, priceNote, err);
+
+    const foot = document.createElement('div');
+    foot.className = 'dai-cfg-foot';
+    const read = document.createElement('button');
+    read.type = 'button';
+    read.className = 'btn sm';
+    read.id = 'daiImgCfgRead';
+    read.textContent = '读取模型';
+    read.addEventListener('click', imgCfgReadModels);
+    const grow = document.createElement('span');
+    grow.className = 'grow';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn sm';
+    cancel.id = 'daiImgCfgCancel';
+    cancel.textContent = '取消';
+    cancel.addEventListener('click', closeImgCfg);
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'btn primary sm';
+    save.id = 'daiImgCfgSave';
+    save.textContent = '保存并使用';
+    save.addEventListener('click', imgCfgSave);
+    foot.append(read, grow, cancel, save);
+
+    card.append(head, body, foot);
+    mask.appendChild(card);
+    mask.addEventListener('pointerdown', e => { if(e.target === mask) closeImgCfg(); });
+    mask.addEventListener('keydown', e => {
+      if(e.key === 'Enter' && e.target && e.target.tagName === 'INPUT'){ e.preventDefault(); imgCfgSave(); }
+    });
+    /* 手工改地址时官网链接要跟着走（命中预设给登记官网，否则给 origin）。
+       ⚠ 必须挂在 appendChild 之后：挂之前 `el()` 在 document 里还查不到这些节点。 */
+    document.body.appendChild(mask);
+    el('daiImgCfgBase').addEventListener('input', renderImgSite);
+    return mask;
+  }
+
+  function openImgCfg(){
+    closeMenus();
+    const mask = el('daiImgCfgMask') || buildImgCfg();
+    el('daiImgCfgBase').value = $('imgBaseUrl') ? $('imgBaseUrl').value.trim() : '';
+    el('daiImgCfgKey').value = $('imgKey') ? $('imgKey').value.trim() : '';
+    el('daiImgCfgModel').value = $('imgModel') ? $('imgModel').value.trim() : '';
+    el('daiImgCfgEndpoint').value = ($('imgEndpoint') && $('imgEndpoint').value.trim()) || '/images/edits';
+    el('daiImgCfgSize').value = ($('imgSize') && $('imgSize').value.trim()) || '1024x1024';
+    el('daiImgCfgList').innerHTML = '';
+    el('daiImgCfgHint').textContent = '填好地址和 Key 后点「读取模型」，可从该站返回的清单里点选；也可以直接手填模型名。';
+    imgCfgErr('');
+    renderImgCfgChips();
+    renderImgSite();
+    mask.classList.remove('hidden');
+    setTimeout(() => {
+      const node = el('daiImgCfgBase').value ? el('daiImgCfgModel') : el('daiImgCfgBase');
+      try{ node.focus(); }catch(e){}
+    }, 60);
+  }
+
+  function closeImgCfg(){
+    const mask = el('daiImgCfgMask');
+    if(mask) mask.classList.add('hidden');
+  }
+
+  function imgCfgErr(msg){
+    const box = el('daiImgCfgErr');
+    if(!box) return;
+    box.textContent = msg || '';
+    box.classList.toggle('hidden', !msg);
+  }
+
+  /* 芯片：第一枚「复用分析接口」，中间是各中转站/官方直连，最后一枚「自定义」。
+   * 点芯片只**填字段**，不落盘——用户还得点「保存并使用」，避免点错一下就改了线上配置。 */
+  function renderImgCfgChips(){
+    const box = el('daiImgCfgSrc');
+    if(!box) return;
+    box.innerHTML = '';
+    const curBase = (el('daiImgCfgBase').value || '').trim().replace(/\/$/, '');
+
+    const mk = (label, onPick, on) => {
+      const c = document.createElement('button');
+      c.type = 'button';
+      c.className = 'dai-cfg-chip' + (on ? ' on' : '');
+      c.textContent = label;
+      c.addEventListener('click', () => {
+        onPick();
+        Array.from(box.children).forEach(n => n.classList.toggle('on', n === c));
+        renderImgSite();      // 换了站 → 「打开 xx 官网」跟着换
+      });
+      box.appendChild(c);
+    };
+
+    mk('复用分析接口', () => {
+      el('daiImgCfgBase').value = '';
+      el('daiImgCfgEndpoint').value = '/images/edits';
+      el('daiImgCfgHint').textContent = '留空即沿用分析侧 Base URL；图像 Key 留空时也复用分析侧 Key。';
+    }, !curBase);
+
+    imgPresetList().forEach(p => {
+      const base = (p.base || '').replace(/\/$/, '');
+      /* 芯片只写名字：带上「约 $0.027/张」会把一排芯片撑成三四行，
+         而价格适合读、不适合扫。价格的去处是 hint —— 点中之后才看细节。 */
+      mk(p.name, () => {
+        el('daiImgCfgBase').value = base;
+        if(p.model) el('daiImgCfgModel').value = p.model;
+        el('daiImgCfgEndpoint').value = p.endpoint || '/images/edits';
+        if(p.size) el('daiImgCfgSize').value = p.size;
+        const price = p.price ? ('计费：' + p.price + '，以站内实时为准。') : '';
+        el('daiImgCfgHint').textContent = price + (p.note || ('接口 ' + base));
+        /* 该站没给端点/尺寸偏好时保持当前值，别把用户手改过的参数冲掉 */
+      }, !!curBase && base === curBase);
+    });
+
+    mk('自定义', () => {
+      el('daiImgCfgHint').textContent = '直接填任意 OpenAI 兼容站的 Base URL（一般以 /v1 结尾），Key 填该站的 sk-…';
+      try{ el('daiImgCfgBase').focus(); }catch(e){}
+    }, !!curBase && !imgPresetList().some(p => (p.base || '').replace(/\/$/, '') === curBase));
+  }
+
+  function imgCfgValues(){
+    return {
+      base: (el('daiImgCfgBase').value || '').trim(),
+      key: (el('daiImgCfgKey').value || '').trim(),
+      model: (el('daiImgCfgModel').value || '').trim(),
+      endpoint: (el('daiImgCfgEndpoint').value || '').trim(),
+      size: (el('daiImgCfgSize').value || '').trim()
+    };
+  }
+
+  /* 写回设置页字段并派发 input（预设同步、状态胶囊、防抖保存都靠这些监听） */
+  function imgCfgPush(){
+    const v = imgCfgValues();
+    const fixed = (typeof fixUrl === 'function' ? fixUrl(v.base) : '') || v.base;
+    const ep = v.endpoint || '/images/edits';
+    if($('imgBaseUrl')) $('imgBaseUrl').value = fixed;
+    if($('imgKey')) $('imgKey').value = v.key;
+    if($('imgModel')) $('imgModel').value = v.model;
+    if($('imgEndpoint')) $('imgEndpoint').value = ep.charAt(0) === '/' ? ep : '/' + ep;
+    if($('imgSize')) $('imgSize').value = v.size || '1024x1024';
+    IMG_CFG_FIELDS.forEach(id => {
+      const n = $(id);
+      if(n) n.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    return {
+      base: fixed.replace(/\/$/, ''),
+      key: v.key,
+      model: v.model,
+      endpoint: ep,
+      size: v.size || '1024x1024'
+    };
+  }
+
+  async function imgCfgReadModels(){
+    const v = imgCfgValues();
+    imgCfgErr('');
+    if(!v.base && !($('llmBaseUrl') && $('llmBaseUrl').value.trim())){
+      imgCfgErr('先填接口地址，例如 https://api.example.com/v1；或点「复用分析接口」');
+      return;
+    }
+    if(!v.key && !($('llmKey') && $('llmKey').value.trim())){
+      imgCfgErr('先填 API Key（留空时需要有分析侧 Key 可复用）');
+      return;
+    }
+    imgCfgPush();
+    const btn = el('daiImgCfgRead');
+    const hint = el('daiImgCfgHint');
+    const box = el('daiImgCfgList');
+    btn.disabled = true;
+    btn.textContent = '读取中…';
+    if(hint) hint.textContent = '正在请求 ' + (v.base || '分析侧地址').replace(/\/$/, '') + '/models …';
+    try{
+      if(typeof loadImgModels === 'function') await loadImgModels();
+      const base = ((v.base || $('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim()) || '').replace(/\/$/, '');
+      const cache = (typeof IMG_MODEL_CACHE !== 'undefined' && IMG_MODEL_CACHE) ? IMG_MODEL_CACHE : null;
+      const list = (cache && cache.base === base && Array.isArray(cache.list)) ? cache.list : [];
+      box.innerHTML = '';
+      const cur = (el('daiImgCfgModel').value || '').trim();
+      list.slice(0, 80).forEach(m => {
+        const c = document.createElement('button');
+        c.type = 'button';
+        c.className = 'dai-cfg-chip' + (m.id === cur ? ' on' : '');
+        c.textContent = m.id;
+        c.addEventListener('click', () => {
+          el('daiImgCfgModel').value = m.id;
+          Array.from(box.children).forEach(n => n.classList.toggle('on', n === c));
+        });
+        box.appendChild(c);
+      });
+      if(hint){
+        hint.textContent = list.length
+          ? '已读到 ' + list.length + ' 个模型，点上面的名字填入（生图模型常混在对话模型里，挑带 image / banana / flux / seedream 字样的）。'
+          : '没读到模型清单：' + (($('imgModelStatus') && $('imgModelStatus').textContent) || '接口没有返回模型 id') + '。手填模型名也能用。';
+      }
+    }catch(e){
+      imgCfgErr('读取失败：' + (e && e.message || e));
+    }finally{
+      btn.disabled = false;
+      btn.textContent = '读取模型';
+    }
+  }
+
+  function imgCfgSave(){
+    const v = imgCfgValues();
+    imgCfgErr('');
+    const fixed = (typeof fixUrl === 'function' ? fixUrl(v.base) : '') || v.base;
+    /* 地址可以留空（=复用分析侧），留空时分析侧必须已经有地址 */
+    const effBase = fixed.replace(/\/$/, '') || (($('llmBaseUrl') && $('llmBaseUrl').value.trim()) || '').replace(/\/$/, '');
+    if(!effBase){
+      imgCfgErr('请填接口地址，或点「复用分析接口」（那样需要分析侧已经配好 Base URL）');
+      return;
+    }
+    if(!/^https?:\/\/[^\s]+$/i.test(effBase)){
+      imgCfgErr('接口地址要以 http:// 或 https:// 开头');
+      return;
+    }
+    if(!v.model){ imgCfgErr('请填写生图模型名，例如 nano-banana-2.1 / gpt-image-1'); return; }
+    const w = imgCfgPush();
+
+    /* 引擎总开关必须切回 openai：停在 Tripo 时请求会发给 Tripo，而不是刚配的站 */
+    try{
+      const eng = $('genEngine');
+      if(eng && eng.value !== 'openai'){
+        eng.value = 'openai';
+        eng.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }catch(e){}
+    if(typeof setImgMode === 'function') setImgMode('online');
+    try{ localStorage.setItem('hf_imgModel', w.model); }catch(e){}
+    /* 清单里补一条，否则刚配好的模型会落进「当前选择」这个临时分组 */
+    try{
+      if(typeof IMG_MODEL_CACHE !== 'undefined' && IMG_MODEL_CACHE){
+        if(IMG_MODEL_CACHE.base !== w.base) IMG_MODEL_CACHE = { base: w.base, list: [] };
+        if(!IMG_MODEL_CACHE.list.some(m => m && m.id === w.model)) IMG_MODEL_CACHE.list.push({ id: w.model, owned_by: '' });
+      }
+    }catch(e){}
+    try{ if(typeof saveAll === 'function') saveAll(); }catch(e){}
+    try{ if(typeof updateStatusChips === 'function') updateStatusChips(); }catch(e){}
+
+    closeImgCfg();
+    try{ window.dispatchEvent(new CustomEvent('hf-img-source-changed')); }catch(e){}
+
+    const want = 'online:' + w.model;
+    Promise.resolve(renderImgModelSelect()).then(() => {
+      const sel = el('deskAiImgModel');
+      if(sel && Array.from(sel.options).some(o => o.value === want)){
+        if(sel.value !== want){
+          sel.value = want;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));   // → applyImgModel
+        }
+      }
+      syncPicker('imgmodel');
+      renderImgLabel();
+      deskToast('已接入云端生图 ' + w.model + '（' + (w.base || '复用分析接口') + '）');
+    }).catch(() => deskToast('配置已保存，生图模型刷新失败'));
   }
 
   /* ---------- 上下文清单 ---------- */
@@ -891,7 +1336,13 @@
     const cSig = Array.isArray(c)
       ? c.map(p => p.type === 'text' ? 't:' + String(p.text || '').length : 'i').join(',')
       : String(c == null ? '' : c);
-    return 'txt|' + cSig + '|' + (m.error ? 1 : 0) + '|' + (m.reasoning ? m.reasoning.length : 0);
+    /* 来源列表在正文之外单独渲染，签名里也要带上：不带的话，流式回复结束后
+       补上的来源永远画不出来（行被判定为「没变」而直接复用旧节点）。 */
+    const srcSig = (m.sources && m.sources.length)
+      ? m.sources.map(s => s.url).join('|').length + '#' + m.sources.length
+      : '';
+    return 'txt|' + cSig + '|' + (m.error ? 1 : 0) + '|' + (m.reasoning ? m.reasoning.length : 0)
+      + '|' + srcSig + '|' + (m.searchNote ? m.searchNote.length : 0);
   }
 
   function buildRow(m){
@@ -948,6 +1399,34 @@
           body.appendChild(img);
         }
       });
+    }
+    /* 联网搜索的痕迹：搜到了就列来源（点开是原网页），没搜到/失败了给一句话说明。
+       失败说明是灰色小字、不挂在正文里——它不该占正文的位置，但也不能悄悄消失。 */
+    if(m.searchNote){
+      const n = document.createElement('div');
+      n.className = 'dchat-srcnote';
+      n.textContent = m.searchNote;
+      body.appendChild(n);
+    }
+    if(m.sources && m.sources.length){
+      const box = document.createElement('div');
+      box.className = 'dchat-sources';
+      const lab = document.createElement('span');
+      lab.className = 'dchat-src-label';
+      lab.textContent = '联网来源';
+      box.appendChild(lab);
+      m.sources.forEach((s, i) => {
+        const a = document.createElement('a');
+        a.className = 'dchat-src';
+        a.href = s.url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = '[' + (i + 1) + '] ' + (s.title || s.host || '网页');
+        const snip = s.snippet || '';
+        a.title = (snip ? (snip.length > 160 ? snip.slice(0, 159) + '…' : snip) + '\n' : '') + s.url;
+        box.appendChild(a);
+      });
+      body.appendChild(box);
     }
     if(m.kind === 'image') body.appendChild(genCard(m));
     row.appendChild(body);
@@ -1520,6 +1999,35 @@
     deskToast('生图模式：' + cur.t);
   }
 
+  /* ---------- 联网搜索 ----------
+   * 按钮只是一个开关：开着时，这条消息在交给模型之前先搜一次，
+   * 把摘要拼进这一轮的系统提示（见 send 里的 searchPack）。
+   * 默认关：每句话都去搜既慢、又容易被站方限流，要不要事实由用户决定。 */
+  function renderWebSearch(){
+    const b = el('deskAiWeb');
+    if(!b) return;
+    b.classList.toggle('is-on', !!webSearchOn);
+    b.setAttribute('aria-pressed', webSearchOn ? 'true' : 'false');
+    b.title = webSearchOn
+      ? '联网搜索：开（回答前先检索网页，引用会标 [1][2]；点一下关闭）'
+      : '联网搜索：关（点一下打开，回答前先检索网页）';
+  }
+
+  function toggleWebSearch(on){
+    webSearchOn = (on === undefined) ? !webSearchOn : !!on;
+    try{ localStorage.setItem(WEB_KEY, webSearchOn ? '1' : '0'); }catch(e){}
+    renderWebSearch();
+    if(webSearchOn && typeof deskSearch === 'undefined'){
+      deskToast('搜索模块没加载，联网不会生效');
+      return webSearchOn;
+    }
+    const p = (typeof deskSearch !== 'undefined' && deskSearch.cfg) ? deskSearch.cfg() : null;
+    deskToast(webSearchOn
+      ? ('联网搜索：开 · ' + (p ? deskSearch.labelOf(p.provider) : '') + '（可在设置 → 联网搜索里换来源）')
+      : '联网搜索：关');
+    return webSearchOn;
+  }
+
   /* 这条消息走哪条路：显式模式优先，auto 交给意图判断 */
   function routeOf(text, hasAtt){
     if(chatImgMode === 'image'){
@@ -1744,7 +2252,26 @@
     renderLog();
 
     // 仅对话模式下不教模型出图，省得它每句都想画
+    /* 联网：先把「刚搜到的网页摘要」拿到，再交给模型。
+       失败**不拦**——搜不到还照常聊，才是用户要的行为；失败原因挂在这条回复下面，
+       不弹框、不打断（一次 403 / 超时就把话堵死，用户会以为「开了联网就不能聊了」）。 */
+    let pack = null;
+    if(webSearchOn && typeof deskSearch !== 'undefined' && text){
+      setDot('busy', '联网搜索…');
+      pack = await deskSearch.run(text);
+      if(pack && pack.ok){
+        setDot('busy', pack.results.length ? ('搜到 ' + pack.results.length + ' 条 · 生成中…') : '没搜到结果 · 生成中…');
+      }
+    }
+
     const sys = '你是 The seed 的桌面助手。回答准确、简洁，能给可执行的下一步，别编造不确定的信息。'
+      + (pack && pack.ok ? deskSearch.contextBlock(pack.results) : '')
+      + (pack && pack.ok && !(pack.results || []).length
+        ? '\n【联网搜索】这次没取回可用结果；涉及时效/事实的问题要直说没搜到，别用旧知识硬凑。'
+        : '')
+      + (pack && !pack.ok
+        ? '\n【联网搜索】这次检索失败（' + (pack.error || '未知原因') + '），只能按你已知的信息回答，必要时说明可能不是最新。'
+        : '')
       + (ctx ? '\n' + ctx : '')
       + (chatImgMode === 'chat' ? '' : '\n' + IMG_SYS);
     const sent = historyForModel();
@@ -1753,6 +2280,17 @@
     lockSend(true);
     setDot('busy', '生成中…');
     const reply = { id: ++msgSeq, role: 'assistant', content: '' };
+    if(pack){
+      if(pack.ok && pack.results.length) reply.sources = pack.results.slice(0, 5);
+      else if(!pack.ok) reply.searchNote = '联网搜索失败：' + (pack.error || '未知原因') + '（已按离线回答）';
+      else reply.searchNote = '联网搜索没有取回结果（可到设置 → 联网搜索里换来源或关键词）';
+      /* 换了源要说出来：不静默替换，否则用户以为原来那个是通的 */
+      if(pack.ok && pack.fellBackFrom){
+        reply.searchNote = '原来源 ' + deskSearch.labelOf(pack.fellBackFrom)
+          + ' 连不上（' + (pack.fellBackWhy || '未知原因') + '），这次自动改用 '
+          + deskSearch.labelOf(pack.provider) + ' 取回 ' + pack.results.length + ' 条';
+      }
+    }
     msgs.push(reply);
     renderLog();
     try{
@@ -1839,11 +2377,15 @@
       empty: '还没有可用模型 —— 点下面的「配置自定义模型」接一个'
     });
     /* 生图模型下拉：没有 storeKey（值由 applyImgModel 写进真正生效的配置），
-       对齐到左侧（它挨着生图模式按钮，不贴右边缘）。 */
+       对齐到左侧（它挨着生图模式按钮，不贴右边缘）。
+       底部挂「配置自定义云端生图」——在线那一组来自设置页读过的清单，
+       没配过接口时下拉里只剩本地 ckpt，看着像云端生图没做。 */
     initPicker('imgmodel', {
       sel: 'deskAiImgModel', btn: 'deskAiImgBtn', label: 'deskAiImgLabel',
       title: '生图模型', placeholder: '未选生图模型',
-      empty: '没有可用的生图模型 —— 先在设置里配置生图接口，或启动本地 ComfyUI'
+      config: true, configLabel: '配置自定义云端生图', configId: 'daiImgCfgOpen',
+      onConfig: openImgCfg, footEntry: imgSiteMenuEntry,
+      empty: '没有可用的生图模型 —— 点下面的「配置自定义云端生图」接一个，或启动本地 ComfyUI'
     });
     renderContextSelect();
     renderAtts();
@@ -1969,6 +2511,12 @@
     renderImgMode();
     renderImgLabel();
 
+    /* ---- 联网搜索开关 ---- */
+    try{ webSearchOn = localStorage.getItem(WEB_KEY) === '1'; }catch(e){}
+    renderWebSearch();
+    const webBtn = el('deskAiWeb');
+    if(webBtn) webBtn.addEventListener('click', () => toggleWebSearch());
+
     const imgBtn = el('deskAiImage');
     if(imgBtn) imgBtn.addEventListener('click', cycleImgMode);
     const imgChip = el('deskChatImg');
@@ -2000,6 +2548,7 @@
       if(v && !v.classList.contains('hidden')){ v.classList.add('hidden'); return; }
       closeMenus();
       closeModelCfg();
+      closeImgCfg();
     });
     // 菜单自己内部滚动（当前项 scrollIntoView）不算「页面滚动」，否则一打开就自我关闭
     document.addEventListener('scroll', e => {
@@ -2063,6 +2612,13 @@
       return chatImgMode;
     },
     imgSource: imgSourceInfo,
+    /* 联网搜索开关（测试与别的面板用） */
+    webSearch: toggleWebSearch,
+    /* 配置自定义云端生图（测试与别的面板可以用，不必去点菜单） */
+    imgCfg: { open: openImgCfg, close: closeImgCfg, values: imgCfgValues, save: imgCfgSave },
+    /* 语言模型的配置弹层。设置页已经不再摆 Key / 地址输入框，
+     * 「去配置」就是调这里——两边操作的是同一批设置字段，不另存。 */
+    modelCfg: { open: openModelCfg, close: closeModelCfg },
     refine: function(on){
       if(on === undefined) return refineOn;
       refineOn = !!on;

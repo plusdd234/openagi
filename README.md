@@ -96,7 +96,8 @@ node server/chat.js                   # 交流社区
 
 ```
 index.html            静态入口（无打包器，浏览器可直开）
-css/app.css           唯一样式表
+css/01-base … 12-media 样式按 App 切成 12 份，<link> 顺序即层叠顺序，不可调换
+  （另有 multiview.css 给独立工具页共用、settings.css 给设置面板）
 js/
   node-defs.js        ★ 节点注册表：新增节点只改这一个文件
   node-registry.js      引脚类型解析的唯一来源

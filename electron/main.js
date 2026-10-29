@@ -21,6 +21,7 @@ const content = require('./content-updater');
 const ollamaDl = require('./ollama-download');
 const comfySetup = require('./comfy-setup');
 const modelStore = require('./model-store');
+const mediaStoreMod = require('./media-store');
 const engineAuto = require('./engine-autostart');
 const engineKeepalive = require('./engine-keepalive');
 const { probeHardwareMain } = require('./hardware-info');
@@ -57,6 +58,12 @@ const CONTENT_ORIGIN = 'app://openagi';
 protocol.registerSchemesAsPrivileged([{
   scheme: 'app',
   privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
+}, {
+  /* 媒体协议：播放器要播本地视频，而 app://openagi 这个源不允许直接读 file://。
+   * stream:true 是硬要求——没有它就整个文件读进内存再播，一集 1 GB 直接爆。
+   * bypassCSP:true 是因为页面 CSP 里没有这个源，字幕 / 封面都要从这儿取。 */
+  scheme: 'openagi-media',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true }
 }]);
 
 let mainWin = null;
@@ -66,6 +73,9 @@ let contentRoot = REPO_ROOT;       // 协议处理器读这个变量（热更新
 let contentVersion = 'bundled';
 let pluginPorts = {};             // 插件实际端口（key = 插件 id，从 manifest 默认值顺延）
 let chatPort = 8792;
+/* 媒体库实例（electron/media-store.js）。协议处理器和 media:* IPC 都用它，
+ * 在 ready 里创建——因为它的根目录要用 app.getPath('userData')。 */
+let MEDIA = null;
 
 // ---- Ollama 引擎管理（检测 / 下载 / 静默安装 / 启动）----
 //
@@ -771,6 +781,71 @@ if(!gotLock){
       return res;
     });
 
+    /* 媒体库落点：开发态放仓库下 media/（直接看文件方便），打包后放 userData/media/。 */
+    const mediaRoot = app.isPackaged
+      ? path.join(app.getPath('userData'), 'media')
+      : path.join(REPO_ROOT, 'media');
+    MEDIA = mediaStoreMod.createMediaStore(mediaRoot, { dl: ollamaDl });
+
+    /* 媒体协议：openagi-media://media/<encodeURIComponent(相对路径)>
+     *
+     * 必须自己实现 Range —— <video> 拖动进度条时会发 `Range: bytes=x-`，
+     * 不认这个头就只能从头播到尾，用户一拖就回到 0 秒。Chromium 对不带
+     * Accept-Ranges 的响应就是这么处理的（而且不报错，只表现为「拖不动」）。
+     */
+    protocol.handle('openagi-media', async req => {
+      try{
+        const u = new URL(req.url);
+        const id = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+        const info = await MEDIA.open(id);
+        const rangeHeader = req.headers.get('range');
+        let start = 0;
+        let end = info.size - 1;
+        let status = 200;
+        if(rangeHeader){
+          const m = /bytes=(\d*)-(\d*)/i.exec(rangeHeader);
+          if(m){
+            if(m[1] === '' && m[2] !== ''){
+              // bytes=-500 这种后缀写法：要最后 500 字节
+              const tail = parseInt(m[2], 10);
+              start = Math.max(0, info.size - (isFinite(tail) ? tail : 0));
+            }else{
+              start = parseInt(m[1], 10) || 0;
+              if(m[2] !== '') end = Math.min(parseInt(m[2], 10), info.size - 1);
+            }
+            if(!isFinite(start) || !isFinite(end) || start > end || start >= info.size){
+              return new Response(null, { status: 416, headers: { 'content-range': 'bytes */' + info.size } });
+            }
+            status = 206;
+          }
+        }
+        const len = end - start + 1;
+        const headers = {
+          'content-type': info.mime,
+          'content-length': String(len),
+          'accept-ranges': 'bytes',
+          // 本地文件随时可被用户改/删，缓存住会播到旧内容
+          'cache-control': 'no-store'
+        };
+        if(status === 206) headers['content-range'] = 'bytes ' + start + '-' + end + '/' + info.size;
+        if(req.method === 'HEAD') return new Response(null, { status, headers });
+        const stream = fs.createReadStream(info.abs, { start, end });
+        stream.on('error', e => logLine('[media] 读取出错 ' + id + '：' + ((e && e.message) || e)));
+        /* Node 流要转成 Web 流才能塞进 Response；转不了就退化成整块 Buffer
+         * （只对小文件安全，大文件宁可报错也不要把内存吃满）。 */
+        if(typeof ReadableStream !== 'undefined' && typeof require('stream').Readable.toWeb === 'function'){
+          return new Response(require('stream').Readable.toWeb(stream), { status, headers });
+        }
+        if(info.size > 64 * 1048576) throw new Error('当前运行时不支持流式读取，文件过大');
+        const buf = await fsp.readFile(info.abs);
+        return new Response(buf.slice(start, end + 1), { status, headers });
+      }catch(e){
+        const msg = String((e && e.message) || e);
+        logLine('[media] ' + msg + ' ← ' + req.url);
+        return new Response('找不到媒体文件：' + msg, { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+      }
+    });
+
     // 2) 端口（被占用就顺延，然后通过 ?relay= / ?tripo= 告诉前端）
     //    四个服务互斥分配：即使外部残留进程占了中间端口，也不会出现两个服务撞同一端口
     try {
@@ -1224,6 +1299,92 @@ if(!gotLock){
     const res = await ASSETS.exportTo(ids, r.filePaths[0]);
     return { ok: true, dir: r.filePaths[0], files: res.files };
   });
+
+  /* ---- 媒体库：播放器 App 的落点 ----
+   * 界面只认 id（相对 mediaRoot 的路径），真实路径只有协议处理器知道。
+   * 这样文件被用户在资源管理器里改名/搬走后，界面报「找不到」而不是拿一条死路径硬播。 */
+  ipcMain.handle('media:list', () => MEDIA.list());
+  ipcMain.handle('media:stat', () => MEDIA.stat());
+  ipcMain.handle('media:remove', (e, ids) => MEDIA.remove(ids));
+  ipcMain.handle('media:reveal', async (e, id) => {
+    try{
+      const abs = MEDIA.absOf(String(id || ''));
+      shell.showItemInFolder(abs);
+      return { ok: true };
+    }catch(err){ return { ok: false, message: String((err && err.message) || err) }; }
+  });
+  ipcMain.handle('media:open-dir', async () => {
+    try{
+      await MEDIA.ensure();
+      const r = await shell.openPath(MEDIA.root);
+      return { ok: !r, dir: MEDIA.root, message: r || '' };
+    }catch(err){ return { ok: false, message: String((err && err.message) || err) }; }
+  });
+
+  ipcMain.handle('media:import', async () => {
+    const r = await dialog.showOpenDialog(mainWin || undefined, {
+      title: '导入要播放的文件（视频 / 音频 / 字幕）',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: '视频', extensions: ['mp4', 'm4v', 'webm', 'mkv', 'mov', 'avi', 'ts', 'flv', 'wmv', 'mpg', 'ogv'] },
+        { name: '音频', extensions: ['mp3', 'm4a', 'aac', 'flac', 'wav', 'ogg', 'opus'] },
+        { name: '字幕', extensions: ['srt', 'vtt', 'ass'] },
+        { name: '全部支持的格式', extensions: Object.keys(mediaStoreMod.VIDEO_MIME).concat(Object.keys(mediaStoreMod.AUDIO_MIME), ['srt', 'vtt', 'ass']) }
+      ]
+    });
+    if(r.canceled || !r.filePaths || !r.filePaths.length) return { ok: false, cancelled: true };
+    /* 多选时按共同父目录算相对层级：选的是同一部番的若干集就直接平铺，
+     * 跨目录多选就各自带上自己的层级，播完不会混成一锅。 */
+    const dirs = r.filePaths.map(p => path.dirname(p));
+    const sameDir = dirs.every(d => d === dirs[0]);
+    const res = await MEDIA.importFiles(r.filePaths, sameDir ? { baseDir: dirs[0] } : {});
+    return Object.assign({ ok: true }, res);
+  });
+
+  /* 导入整个文件夹（一部番一个文件夹是最常见的形态）。
+   * 递归在渲染层做不了——渲染层拿不到任意路径，只能主进程扫。 */
+  ipcMain.handle('media:import-dir', async () => {
+    const r = await dialog.showOpenDialog(mainWin || undefined, {
+      title: '选择作品文件夹（里面可以有子文件夹，按子文件夹分组成剧集）',
+      properties: ['openDirectory']
+    });
+    if(r.canceled || !r.filePaths || !r.filePaths.length) return { ok: false, cancelled: true };
+    const base = r.filePaths[0];
+    const found = [];
+    const walk = async (dir, depth) => {
+      if(depth > 5 || found.length >= mediaStoreMod.MAX_FILES) return;
+      let ents = [];
+      try{ ents = await fsp.readdir(dir, { withFileTypes: true }); }catch(e){ return; }
+      for(const ent of ents){
+        if(ent.name.startsWith('.')) continue;
+        const full = path.join(dir, ent.name);
+        if(ent.isDirectory()){ await walk(full, depth + 1); continue; }
+        if(ent.isFile() && mediaStoreMod.kindOf(ent.name)) found.push(full);
+      }
+    };
+    await walk(base, 0);
+    if(!found.length) return { ok: false, empty: true, message: '这个文件夹里没找到视频/音频/字幕文件' };
+    const res = await MEDIA.importFiles(found, { baseDir: base });
+    return Object.assign({ ok: true, dir: base, scanned: found.length }, res);
+  });
+
+  /* 从 URL 下载。进度用事件推回渲染层（同一套 ui 就能画进度条），
+   * jobId 由渲染层生成，取消时按它找回任务。 */
+  ipcMain.handle('media:download', async (event, req) => {
+    const r = req || {};
+    try{
+      const res = await MEDIA.download(r, {
+        onProgress: p => {
+          try{ event.sender.send('media:progress', p); }catch(e){}
+        },
+        onLog: msg => logLine('[media-dl] ' + msg)
+      });
+      return res;
+    }catch(err){
+      return { ok: false, cancelled: !!(err && err.cancelled), message: String((err && err.message) || err) };
+    }
+  });
+  ipcMain.handle('media:cancel', (e, jobId) => MEDIA.cancel(jobId));
 
   // 让用户直接选目录：自动搜索再全也可能找不到（装在不常见的盘/自定义路径）
   ipcMain.handle('comfy:pick-dir', async () => {

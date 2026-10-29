@@ -53,6 +53,13 @@ const REFINED = '一只穿黑色风衣的赛博朋克猫站在雨夜街头，霓
   });
 
   const url = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';
+  /* 第 3 段第一条断言是「默认是自动」，所以**加载前**就把上一次留下的生图模式清掉：
+   * 单独跑没问题，跟在别的用例后面串着跑时会被上一条留在「对话 / 生图」状态，
+   * 于是从这里开始一整串断言都红（踩过一次，排查很久才发现是脏状态不是回归）。
+   * 用 initScript 而不是「加载后再 reload」——reload 会把后面那段配置重置掉。 */
+  await page.addInitScript(() => {
+    try{ localStorage.removeItem('hf_desk_imgmode'); }catch(e){}
+  });
   await page.goto(url, { waitUntil: 'load' });
   await page.waitForTimeout(800);
 

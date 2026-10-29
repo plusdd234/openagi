@@ -1,0 +1,645 @@
+/* ============================================================
+ * app.css 拆分 · 10-deskui
+ * 桌面两页 / 加载骨架 / 联网来源 / 对话生图卡片
+ *
+ * ⚠ 这份文件是按**原始行号连续切片**出来的，各文件之间靠 index.html 的
+ *   <link> 顺序维持层叠关系。加新样式请放进对应 App 的文件，不要在这里
+ *   随手追加——也不要在 08-theme 之前的文件里写「最终样式」，那会被覆盖。
+ * ============================================================ */
+
+  /* =============================================================
+   * 桌面 AI 对话条（红框区）+ 右侧聊天面板
+   * 输入条固定在桌面底部空白带；发送后桌面整体左移、面板从右滑入
+   * ============================================================= */
+  .desk-ai-wrap {
+    /* Dock 移除后底部只剩输入条：左右铺满，只留 20px 边距 */
+    position: absolute; left: 50%; bottom: 30px; transform: translateX(-50%);
+    width: calc(100% - 40px); z-index: 6;
+  }
+  .desk-ai {
+    background: rgba(255,255,255,.92);
+    backdrop-filter: blur(14px) saturate(1.2);
+    border: 1px solid #e3e6ea;
+    border-radius: 20px;
+    padding: 14px 16px 11px;
+    box-shadow: 0 18px 40px -12px rgba(28,38,60,.22), 0 2px 6px rgba(28,38,60,.06),
+                inset 0 1px 0 rgba(255,255,255,.9);
+    transition: box-shadow .2s ease;
+  }
+  .desk-ai:focus-within {
+    border-color: #d3d8de;
+    box-shadow: 0 22px 46px -12px rgba(28,38,60,.28), 0 2px 6px rgba(28,38,60,.07),
+                inset 0 1px 0 rgba(255,255,255,.95);
+  }
+  .dai-head { display: flex; flex-direction: column; gap: 7px; }
+  .dai-atts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .dai-atts:empty { display: none; }
+  .dai-chip {
+    position: relative; display: inline-flex; align-items: center;
+    padding: 3px 20px 3px 3px; border-radius: 9px;
+    background: #f2f3f5; border: 1px solid #e3e6ea;
+  }
+  .dai-chip img { width: 44px; height: 44px; object-fit: cover; border-radius: 7px; display: block; }
+  .dai-chip-x {
+    position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; padding: 0;
+    border: none; border-radius: 50%; cursor: pointer; line-height: 14px; font-size: 12px;
+    color: #6a7488; background: #ffffff; box-shadow: 0 1px 3px rgba(28,38,60,.2);
+  }
+  .dai-chip-x:hover { color: #c9342a; }
+  .dai-text {
+    width: 100%; border: none; outline: none; resize: none; background: transparent;
+    font-family: inherit; font-size: 14px; line-height: 1.55; color: #2a2f36;
+    min-height: 44px; max-height: 200px; padding: 2px 2px 4px;
+  }
+  .dai-text::placeholder { color: #98a0ae; }
+  .dai-bar { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+  .dai-btn {
+    width: 32px; height: 32px; flex: 0 0 auto; padding: 0; border-radius: 10px; cursor: pointer;
+    display: grid; place-items: center; color: #4a515c;
+    background: transparent; border: 1px solid transparent;
+    transition: background .14s ease, border-color .14s ease;
+  }
+  .dai-btn:hover { background: #f2f3f5; border-color: #e3e6ea; }
+  .dai-btn svg { width: 17px; height: 17px; }
+  /* 联网搜索打开时：金黄底 + 实色图标。它决定「这句话会不会先发一次检索」，
+     状态必须一眼看出来，不能只靠 title。 */
+  .dai-btn.is-on { background: #fdf6e6; border-color: #f0d79a; color: #a5761a; }
+  .dai-btn.is-on:hover { background: #fbf0d4; border-color: #e9c97f; }
+  /* 生图模式（自动 / 生图 / 对话）：带文字而不是纯图标——
+     这是「会不会花钱」的开关，状态必须一眼能读出来。 */
+  .dai-mode {
+    display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto;
+    height: 32px; padding: 0 9px; border-radius: 10px; cursor: pointer;
+    font-family: inherit; font-size: 11.5px; color: #5b6472; outline: none;
+    background: #f7f8fa; border: 1px solid #e3e6ea;
+    transition: background .14s ease, border-color .14s ease, color .14s ease;
+  }
+  .dai-mode:hover { background: #f2f3f5; border-color: #d5d9df; }
+  .dai-mode:focus-visible { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(240,180,41,.2); }
+  .dai-mode svg { width: 15px; height: 15px; color: #8d96a3; transition: color .14s ease; }
+  .dai-mode-txt { font-weight: 500; letter-spacing: .2px; }
+  .dai-mode[data-mode="image"] { background: #fdf6e6; border-color: #f0d79a; color: #8a6108; }
+  .dai-mode[data-mode="image"] svg { color: #c8920f; }
+  .dai-mode[data-mode="chat"] { background: #ffffff; color: #77808f; }
+  .dai-mode[data-mode="chat"] svg { opacity: .45; }
+  .dai-flex { flex: 1 1 auto; }
+  /* 状态点：平面金黄，不加光环（参考图的黄是纯色块，不是发光点） */
+  .dai-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
+    background: #c8cdd6;
+    transition: background .18s ease, opacity .18s ease;
+  }
+  .dai-dot.busy { background: var(--gold); animation: daiPulse 1.1s ease-in-out infinite; }
+  .dai-dot.ok { background: var(--gold); }
+  .dai-dot.err { background: var(--gold); opacity: .55; }
+  @keyframes daiPulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  /* 原生 select 只做值容器：弹层由系统绘制，改不了字色/高亮，所以整体藏起来 */
+  .dai-native { display: none; }
+  /* 自绘下拉触发器 */
+  .dai-pick {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 32px; max-width: 200px; min-width: 0; padding: 0 8px 0 9px; border-radius: 10px;
+    font-family: inherit; font-size: 12px; color: #3d444e; cursor: pointer;
+    background: #f7f8fa; border: 1px solid #e3e6ea; outline: none;
+    transition: border-color .14s ease, background .14s ease, box-shadow .14s ease;
+  }
+  .dai-pick:hover { border-color: #d5d9df; background: #f2f3f5; }
+  .dai-pick:focus-visible { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(240,180,41,.2); }
+  .dai-pick.is-open {
+    background: #ffffff; border-color: var(--gold);
+    box-shadow: 0 0 0 3px rgba(240,180,41,.16);
+  }
+  .dai-pick-label {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 150px; min-width: 0;
+  }
+  .dai-pick.is-empty .dai-pick-label { color: #98a0ae; }
+  .dai-pick-ico { width: 14px; height: 14px; flex: 0 0 auto; color: #8d96a3; }
+  .dai-pick-chev { width: 9px; height: 6px; flex: 0 0 auto; color: #8d96a3; transition: transform .16s ease; }
+  .dai-pick.is-open .dai-pick-chev { transform: rotate(180deg); color: var(--gold-deep); }
+  /* 来源角标：一眼看出这条是从云端网关 / 自定义接口 / Ollama 来的 */
+  .dai-pick-tag {
+    flex: 0 0 auto; font-size: 10px; line-height: 1; padding: 3px 5px; border-radius: 5px;
+    letter-spacing: .02em; background: #eceff3; color: #6b7488;
+  }
+  .dai-pick-tag[data-src="oll"] { background: #fdf3dd; color: #96690a; }
+  .dai-pick-tag[data-src="gw"] { background: #e9edf4; color: #4d5769; }
+  .dai-pick-tag[data-src="local"] { background: #eef2ec; color: #4a6b45; }
+  .dai-pick-model { max-width: 246px; }
+  .dai-pick-model .dai-pick-label { max-width: 176px; font-weight: 500; }
+  /* 生图模型下拉：挨着生图模式按钮，宽度比语言模型窄（模型名普遍更长） */
+  .dai-pick-img { max-width: 186px; }
+  .dai-pick-img .dai-pick-label { max-width: 128px; }
+  .dai-pick-img.is-empty .dai-pick-label { color: #98a0ae; }
+  /* 窄窗口：工具栏放不下时先丢角标和图标，只留名字（不允许挤到换行或溢出） */
+  @media (max-width: 820px) {
+    .dai-pick-tag { display: none; }
+    .dai-pick-ico { display: none; }
+    .dai-pick { max-width: 132px; padding: 0 6px 0 9px; }
+    .dai-pick-model { max-width: 158px; }
+    .dai-pick-model .dai-pick-label { max-width: 120px; }
+    .dai-pick-img { max-width: 120px; }
+    .dai-pick-img .dai-pick-label { max-width: 96px; }
+    /* 生图模式只留图标：三个字的位置比一个「自动」重要得多 */
+    .dai-mode { padding: 0 7px; }
+    .dai-mode-txt { display: none; }
+  }
+
+  /* 自绘弹层：挂在 body 上（桌面页有 3D transform，放在里面会跟着翻） */
+  .dai-menu {
+    position: fixed; z-index: 96; min-width: 232px;
+    padding: 6px; border-radius: 14px; background: #ffffff;
+    border: 1px solid #e6e8ec;
+    box-shadow: 0 18px 44px rgba(20,28,45,.16), 0 2px 8px rgba(20,28,45,.06);
+    animation: daiMenuIn .14s ease-out;
+  }
+  @keyframes daiMenuIn {
+    from { opacity: 0; transform: translateY(6px) scale(.985); }
+    to { opacity: 1; transform: none; }
+  }
+  .dai-menu-body { max-height: 296px; overflow-y: auto; overscroll-behavior: contain; }
+  .dai-menu-group {
+    padding: 8px 10px 4px; font-size: 10.5px; letter-spacing: .07em;
+    color: #98a0ae; font-weight: 600;
+  }
+  .dai-menu-group:first-child { padding-top: 4px; }
+  .dai-menu-item {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 7px 10px; border: none; border-radius: 8px; background: transparent;
+    font-family: inherit; font-size: 12.5px; color: #33383f; text-align: left; cursor: pointer;
+    transition: background .12s ease, color .12s ease;
+  }
+  .dai-menu-item:hover { background: #f5f6f8; }
+  .dai-menu-item.is-on { background: #fdf6e6; color: #7a5a06; font-weight: 600; }
+  .dai-menu-txt { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dai-menu-tick { width: 13px; height: 13px; flex: 0 0 auto; color: var(--gold-deep); opacity: 0; }
+  .dai-menu-item.is-on .dai-menu-tick { opacity: 1; }
+  .dai-menu-empty { padding: 14px 12px; font-size: 12px; color: #98a0ae; line-height: 1.7; }
+  .dai-menu-foot { margin-top: 6px; padding-top: 6px; border-top: 1px solid #eef0f3; }
+  .dai-menu-cfg {
+    display: flex; align-items: center; gap: 7px; width: 100%;
+    padding: 8px 10px; border: none; border-radius: 8px; background: transparent;
+    font-family: inherit; font-size: 12.5px; font-weight: 600; color: #8a6a12; cursor: pointer;
+    transition: background .12s ease;
+  }
+  .dai-menu-cfg:hover { background: #fdf6e6; }
+  .dai-menu-cfg svg { width: 14px; height: 14px; flex: 0 0 auto; }
+  /* 第二行是「打开 xx 官网」的链接（<a>）：同一套排版，别带下划线 */
+  .dai-menu-cfg.dai-menu-site { text-decoration: none; font-weight: 500; color: #8d8578; }
+  .dai-menu-cfg.dai-menu-site:hover { color: #8a6a12; }
+
+  /* 配置外接大模型：轻量遮罩弹窗（不打断桌面，关掉就回到输入条） */
+  .dai-cfg-mask {
+    position: fixed; inset: 0; z-index: 120; display: grid; place-items: center;
+    background: rgba(18,24,36,.34); backdrop-filter: blur(2px);
+    animation: daiMaskIn .16s ease-out;
+  }
+  @keyframes daiMaskIn { from { opacity: 0; } to { opacity: 1; } }
+  .dai-cfg {
+    width: min(430px, calc(100vw - 40px)); border-radius: 16px; overflow: hidden;
+    background: #ffffff; box-shadow: 0 30px 70px rgba(15,22,35,.28);
+    animation: daiCfgIn .18s ease-out;
+  }
+  @keyframes daiCfgIn {
+    from { opacity: 0; transform: translateY(10px) scale(.98); }
+    to { opacity: 1; transform: none; }
+  }
+  .dai-cfg-head {
+    display: flex; align-items: center; gap: 9px; padding: 15px 16px 12px;
+    font-size: 13.5px; font-weight: 700; color: #23282f;
+  }
+  .dai-cfg-head .dai-cfg-sub { font-size: 11.5px; font-weight: 400; color: #98a0ae; }
+  .dai-cfg-x {
+    margin-left: auto; width: 24px; height: 24px; padding: 0; border: none; border-radius: 7px;
+    background: transparent; color: #8d96a3; font-size: 16px; line-height: 1; cursor: pointer;
+  }
+  .dai-cfg-x:hover { background: #f2f3f5; color: #4a515c; }
+  .dai-cfg-body { padding: 2px 16px 12px; display: flex; flex-direction: column; gap: 11px; }
+  .dai-cfg-field { display: flex; flex-direction: column; gap: 5px; }
+  .dai-cfg-field > span { font-size: 11.5px; color: #7b8494; }
+  .dai-cfg-field input {
+    height: 34px; padding: 0 10px; border-radius: 9px; outline: none;
+    border: 1px solid #e3e6ea; background: #f8f9fb;
+    font-family: inherit; font-size: 12.5px; color: #2a2f36;
+    transition: border-color .14s ease, background .14s ease, box-shadow .14s ease;
+  }
+  .dai-cfg-field input:focus {
+    background: #ffffff; border-color: var(--gold); box-shadow: 0 0 0 3px rgba(240,180,41,.15);
+  }
+  .dai-cfg-field input::placeholder { color: #b3bac5; }
+  /* 端点 + 尺寸 并排：两个都短，各占一行会把弹层撑得太长 */
+  .dai-cfg-row { display: grid; grid-template-columns: 1fr 104px; gap: 9px; }
+  /* 「还没有 Key？打开 xx 官网 ↗」：紧贴 Key 输入框，负 margin 把两行拉成一组 */
+  .dai-cfg-getkey {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 5px;
+    margin-top: -5px; font-size: 11.5px; color: #98a0ae;
+  }
+  .dai-cfg-getkey .dai-cfg-site {
+    color: #a5761a; text-decoration: none; font-weight: 600;
+    border-bottom: 1px dashed rgba(165,118,26,.45);
+  }
+  .dai-cfg-getkey .dai-cfg-site:hover { color: var(--gold-deep); border-bottom-color: currentColor; }
+  .dai-cfg-getkey .dai-cfg-site:focus-visible { outline: 2px solid rgba(240,180,41,.5); outline-offset: 2px; border-radius: 3px; }
+  .dai-cfg-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 118px; overflow-y: auto; }
+  .dai-cfg-list:empty { display: none; }
+  .dai-cfg-chip {
+    padding: 4px 8px; border-radius: 7px; cursor: pointer; font-family: inherit;
+    border: 1px solid #e3e6ea; background: #f8f9fb; font-size: 11.5px; color: #4a515c;
+  }
+  .dai-cfg-chip:hover { border-color: #d5d9df; background: #f2f3f5; }
+  .dai-cfg-chip.on { border-color: var(--gold); background: #fdf6e6; color: #7a5a06; font-weight: 600; }
+  .dai-cfg-hint { font-size: 11px; color: #98a0ae; line-height: 1.65; }
+  .dai-cfg-err {
+    font-size: 11.5px; color: #b4341f; background: #fdf1f0; border: 1px solid #f0c3be;
+    border-radius: 8px; padding: 7px 9px; line-height: 1.55;
+  }
+  .dai-cfg-foot { display: flex; align-items: center; gap: 8px; padding: 0 16px 15px; }
+  .dai-cfg-foot .grow { flex: 1 1 auto; }
+  /* 发送：平面金黄圆角方框 + 英文 Send（替代原来的蓝色圆形箭头按钮） */
+  .dai-send {
+    flex: 0 0 auto; height: 34px; padding: 0 16px; border-radius: 10px; cursor: pointer;
+    display: inline-grid; place-items: center; border: none;
+    font-family: inherit; font-size: 12.5px; font-weight: 700; letter-spacing: .05em;
+    color: var(--gold-ink); background: var(--gold);
+    transition: background .13s ease, transform .13s ease, opacity .13s ease;
+  }
+  .dai-send:hover { background: var(--gold-deep); }
+  .dai-send:active { transform: translateY(1px); }
+  .dai-send:disabled { opacity: .45; cursor: default; transform: none; }
+
+  /* ---- 翻页容器 ----
+     桌面（第一页）↔ App 页（第三页）。对话曾经独占一个第二页，
+     现在它也是普通 App，所以只有两页，翻页状态只有 app-open 一个。 */
+  .desk-wall { perspective: 1800px; }
+  .desk-pages {
+    position: absolute; inset: 0;
+    transform-style: preserve-3d;
+    perspective: 1800px;
+  }
+  .desk-page {
+    position: absolute; inset: 0;
+    backface-visibility: hidden;
+    transition: transform .52s cubic-bezier(.32,.72,.24,1), opacity .34s ease;
+  }
+  /* 第一页：桌面 */
+  .desk-page-1 { transform-origin: left center; z-index: 1; }
+
+  /* ---- 第三页：App（双击图标同样整页翻过来，不是弹窗） ---- */
+  .desk-page-3 {
+    transform-origin: right center;
+    transform: rotateY(84deg);
+    opacity: 0;
+    z-index: 2;
+    display: flex; flex-direction: column;
+    /* 外围纯白，灰底画布才立得起来（和第一页「白底 + 灰画布」同一套层次） */
+    background: #ffffff;
+  }
+  .desk-wall.app-open .desk-page-1 { transform: rotateY(-84deg); opacity: 0; pointer-events: none; }
+  .desk-wall.app-open .desk-page-3 { transform: rotateY(0deg); opacity: 1; }
+
+  .dapp-head {
+    display: flex; align-items: center; gap: 12px; padding: 11px 22px 10px;
+    border-bottom: 1px solid #e6e8ec;
+    background: linear-gradient(180deg, rgba(255,255,255,.98) 0%, rgba(255,255,255,.74) 100%);
+    backdrop-filter: blur(8px);
+    animation: dappHeadIn .34s cubic-bezier(.22,.61,.36,1) both;
+  }
+  /* 名称与返回按钮换了位置：返回去左边（原来放名称的地方），名称靠右。 */
+  .dapp-div {
+    margin-left: auto; width: 1px; height: 18px; flex: 0 0 auto;
+    background: linear-gradient(180deg, rgba(230,233,238,0), #e2e6ec 22%, #e2e6ec 78%, rgba(230,233,238,0));
+  }
+  .dapp-titles { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .dapp-title {
+    font-size: 13.5px; font-weight: 600; color: #2a2f36; letter-spacing: .01em;
+    white-space: nowrap;
+  }
+  .dapp-sub {
+    font-size: 11px; color: #6a7488; background: #f4f5f7; border: 1px solid #e6e8ec;
+    border-radius: 7px; padding: 2px 7px; max-width: 240px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* <<< 返回：三枚 chevron 依次向左游动；按下再整体左压，悬停给浅金底 */
+  .dapp-back {
+    position: relative; flex: 0 0 auto;
+    width: 38px; height: 30px; padding: 0; font: inherit; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: #5b6472; background: #fff; border: 1px solid #e3e6ea; border-radius: 9px;
+    transition: background .16s ease, border-color .16s ease, color .16s ease,
+                box-shadow .18s ease, transform .12s ease;
+  }
+  .dapp-back-ico { width: 27px; height: 24px; display: block; overflow: visible; }
+  .dab-ch {
+    transition: transform .24s cubic-bezier(.22,.61,.36,1), opacity .24s ease;
+    will-change: transform;
+  }
+  .dab-1 { transition-delay: 0s; }
+  .dab-2 { transition-delay: .055s; }
+  .dab-3 { transition-delay: .11s; }
+  .dapp-back:hover {
+    color: #a45f00; background: #fffaf0; border-color: #f2cd88;
+    box-shadow: 0 1px 2px rgba(164,95,0,.06), 0 6px 14px -10px rgba(164,95,0,.5);
+  }
+  /* 三枚依次出发：右枚先淡一点，读起来就是「往回走」 */
+  .dapp-back:hover .dab-1 { transform: translateX(-1.6px); }
+  .dapp-back:hover .dab-2 { transform: translateX(-1.6px); opacity: .92; }
+  .dapp-back:hover .dab-3 { transform: translateX(-1.6px); opacity: .74; }
+  .dapp-back:active { transform: scale(.965); background: #fff4e2; }
+  .dapp-back:active .dab-ch { transform: translateX(-3.4px); opacity: 1; transition-delay: 0s; }
+  .dapp-back:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(240,180,41,.30); border-color: #f0b429; }
+  /* 悬停浮出的小提示：不用 title 的浏览器原生框，节奏和整套动画一致 */
+  .dapp-back::after {
+    content: attr(aria-label);
+    position: absolute; left: 50%; top: calc(100% + 7px);
+    transform: translate(-50%, -3px); opacity: 0; pointer-events: none;
+    font-size: 11px; line-height: 1; white-space: nowrap; color: #fff;
+    background: rgba(32,38,47,.92); border-radius: 6px; padding: 5px 8px;
+    box-shadow: 0 6px 16px -8px rgba(20,30,50,.5);
+    transition: opacity .16s ease .08s, transform .16s ease .08s;
+    z-index: 20;
+  }
+  .dapp-back:hover::after, .dapp-back:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
+  @keyframes dappHeadIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: none; }
+  }
+  /* 灰底圆角画布：和第一页的 .desk-canvas 同一套观感，左右与页面留 20px，
+     内容（.os-win）缩在里面，露出这一圈灰底当边框 */
+  .dapp-canvas {
+    position: relative; flex: 1 1 auto; min-height: 0;
+    margin: 16px 20px 20px;
+    border-radius: 18px;
+    background: linear-gradient(180deg, #eef1f6 0%, #e7ebf1 100%);
+    border: 1px solid #dee3ea;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.9),
+      inset 0 -20px 44px -30px rgba(28,38,60,.13),
+      0 1px 2px rgba(28,38,60,.05);
+    padding: 16px;
+    overflow: hidden;
+  }
+  .dapp-host { position: absolute; inset: 16px; }
+  /* 搬进来的窗口不再居中浮动：铺满画布、去掉外投影，标题栏由 .dapp-head 顶替 */
+  .dapp-host .os-win {
+    position: absolute; inset: 0; left: 0; top: 0;
+    width: auto; max-height: none; transform: none;
+    border-radius: 13px; border: 1px solid #dfe3e9;
+    box-shadow: 0 1px 2px rgba(28,38,60,.05), 0 14px 30px -22px rgba(28,38,60,.28);
+  }
+  .dapp-host .os-win-bar { display: none; }
+  .dapp-host .os-win-body { flex: 1 1 auto; min-height: 0; padding: 16px 18px 18px; }
+
+  /* ---- 加载骨架 ----
+     旧版用 background-position 扫光：那是要主线程重绘的属性，
+     模块一开工（正是这半秒里）动画就冻在半路——所以全换成 transform / opacity，
+     交给合成器跑，主线程再忙也不停。 */
+  .dapp-skel {
+    /* 窗口自带 z-index: 20（.os-win），骨架要盖在它上面，但不能高过弹层 */
+    position: absolute; inset: 16px; z-index: 25;
+    display: flex; flex-direction: column; gap: 15px; padding: 17px 18px;
+    border-radius: 13px; background: #fff; border: 1px solid #e6e9ee;
+    overflow: hidden;
+    opacity: 0; transition: opacity .2s ease;
+  }
+  .dapp-skel[hidden] { display: none; }
+  .dapp-skel:not([hidden]) { opacity: 1; }
+  .dapp-skel.is-out { opacity: 0; }
+  .sk-bar {
+    position: relative; flex: 0 0 auto; height: 3px; border-radius: 2px;
+    background: #e9edf3; overflow: hidden;
+  }
+  .sk-bar > i {
+    position: absolute; top: 0; left: 0; width: 36%; height: 100%; border-radius: inherit;
+    background: linear-gradient(90deg, rgba(240,180,41,0), #f0b429 42%, rgba(240,180,41,0));
+    transform: translateX(-120%);
+    animation: skBar 1.15s cubic-bezier(.45,.05,.55,.95) infinite;
+    will-change: transform;
+  }
+  @keyframes skBar { 0% { transform: translateX(-120%); } 100% { transform: translateX(310%); } }
+  .sk-body { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+  .sk-row, .sk-card {
+    position: relative; width: 100%; background: #dfe5ee; border-radius: 8px;
+    overflow: hidden;
+  }
+  .sk-card { background: #e9edf4; }
+  .sk-row { flex: 0 0 auto; height: 12px; }
+  .sk-card { flex: 0 0 auto; height: 60px; border-radius: 11px; }
+  .sk-w60 { width: 60%; } .sk-w85 { width: 85%; } .sk-w70 { width: 70%; } .sk-w45 { width: 45%; }
+  .sk-row::after, .sk-card::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(100deg, rgba(255,255,255,0) 20%, rgba(255,255,255,.72) 50%, rgba(255,255,255,0) 80%);
+    transform: translateX(-105%);
+    animation: skShimmer 1.45s ease-in-out infinite;
+    will-change: transform;
+  }
+  /* 每行错开一点，像在往下走，不像一张静止的灰图 */
+  .sk-body > :nth-child(1)::after { animation-delay: 0s; }
+  .sk-body > :nth-child(2)::after { animation-delay: .09s; }
+  .sk-body > :nth-child(3)::after { animation-delay: .18s; }
+  .sk-body > :nth-child(4)::after { animation-delay: .27s; }
+  .sk-body > :nth-child(5)::after { animation-delay: .36s; }
+  .sk-body > :nth-child(6)::after { animation-delay: .45s; }
+  @keyframes skShimmer { 0% { transform: translateX(-105%); } 100% { transform: translateX(105%); } }
+
+  /* 原来叫 .dchat-head（第二页的页头）。对话变成普通 App 后页头让位给 .dapp-head
+     （统一的 << 返回按钮 + 标题），这三个角标挪到对话区顶部，成为一条信息带。 */
+  .dchat-meta {
+    display: flex; align-items: center; gap: 9px; flex: 0 0 auto;
+    padding: 9px 18px; border-bottom: 1px solid #eceef2; background: rgba(250,251,252,.7);
+  }
+  .dchat-model {
+    font-size: 11px; color: #6a7488; background: #f2f3f5; border: 1px solid #e3e6ea;
+    border-radius: 7px; padding: 2px 7px; max-width: 190px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .dchat-ctx {
+    font-size: 11px; color: #4a6ea8; background: #eef3fb; border: 1px solid #d5e2f5;
+    border-radius: 7px; padding: 2px 7px; max-width: 220px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .dchat-ctx:empty { display: none; }
+  /* 出图来源：本地 / Tripo / 在线。为什么不直接沿用「模型」角标——
+     对话模型和生图模型是两套配置，混在一起显示会让人以为图是对话模型画的。 */
+  .dchat-imgsrc {
+    font-size: 11px; color: #8a6108; background: #fdf6e6; border: 1px solid #f0d79a;
+    border-radius: 7px; padding: 2px 7px; max-width: 230px; cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    transition: background .14s ease;
+  }
+  .dchat-imgsrc:hover { background: #fbecc9; }
+  .dchat-imgsrc.off { color: #a8461b; background: #fdf1ea; border-color: #f0cdb8; }
+  /* 对话 App 的窗口体要撑满：日志区滚动、输入条钉在底部 */
+  .os-win.chat .os-win-body {
+    display: flex; flex-direction: column; min-height: 0; padding: 0;
+  }
+  .dchat-log {
+    flex: 1 1 auto; overflow-y: auto; padding: 22px 24px 12px;
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+  }
+  /* QQ 式一行：头像 + 气泡，用户靠右、AI 靠左 */
+  .dchat-msg { display: flex; width: 100%; gap: 10px; align-items: flex-start; }
+  .dchat-msg.user { justify-content: flex-end; }
+  .dchat-ava {
+    width: 34px; height: 34px; flex: 0 0 auto; border-radius: 50%; overflow: hidden;
+    display: grid; place-items: center;
+    background: #ffffff; border: 1px solid #e3e6ea;
+    box-shadow: 0 1px 2px rgba(28,38,60,.05);
+    font-size: 12px; color: #6a7488; user-select: none;
+  }
+  .dchat-ava img { width: 26px; height: 26px; object-fit: contain; display: block; }
+  .dchat-ava.user { background: #f2f3f5; }
+  .dchat-body {
+    max-width: min(680px, 74%); border-radius: 14px; padding: 10px 13px;
+    font-size: 13.5px; line-height: 1.68;
+    /* AI 用灰底，用户用白底——两种气泡靠明度分开，不靠彩色 */
+    background: #f2f3f5; border: 1px solid #e6e8ec; color: #2a2f36;
+    border-top-left-radius: 5px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .dchat-msg.user .dchat-body {
+    max-width: min(680px, 74%);
+    background: #ffffff; border-color: #e3e6ea; color: #2a2f36;
+    border-top-left-radius: 14px; border-top-right-radius: 5px;
+    box-shadow: 0 2px 8px rgba(28,38,60,.06);
+  }
+  .dchat-body.error { color: #c9342a; background: #fdf1f0; border-color: #f0c3be; }
+  .dchat-text { white-space: pre-wrap; word-break: break-word; }
+  /* ---- 联网来源 ----
+     列在气泡底部，点开是原网页。行高比正文小一档：它是证据，不是答案。 */
+  .dchat-sources {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+    margin-top: 8px; padding-top: 7px; border-top: 1px dashed #dde1e7;
+    font-size: 11.5px; line-height: 1.6;
+  }
+  .dchat-src-label { color: #98a0ae; flex: 0 0 auto; }
+  .dchat-src {
+    color: #7b6a3a; text-decoration: none; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    border-bottom: 1px dashed rgba(165,118,26,.4);
+  }
+  .dchat-src:hover { color: #8a6108; border-bottom-color: #8a6108; }
+  .dchat-srcnote { margin-top: 7px; font-size: 11.5px; color: #a0a7b2; line-height: 1.6; }
+  /* 用户自己带的图：缩略图级别，别把整条气泡撑成一屏（附件的用途是"参考"） */
+  .dchat-img {
+    display: block; max-width: 320px; max-height: 220px; width: auto;
+    border-radius: 10px; margin-top: 7px; background: #f7f8fa; object-fit: contain;
+  }
+  .dchat-msg.user .dchat-img { margin-left: auto; }
+
+  /* ---- 对话内生图卡片 ----
+     只有图没有字时气泡改成透明（.is-gen），卡片自己带边框：
+     灰气泡 + 白卡片套两层会在图片周围留一圈突兀的灰边。 */
+  .dchat-body.is-gen {
+    background: transparent; border-color: transparent; padding: 0; box-shadow: none;
+  }
+  .dgen {
+    /* 定宽而不是 min(430px,100%)：气泡是 flex 项、宽度由内容撑开，
+       出图前的骨架/状态行很窄，用百分比会把卡片压成一条细条 */
+    width: 430px; max-width: 100%; margin-top: 7px; border-radius: 12px; overflow: hidden;
+    background: #ffffff; border: 1px solid #e6e8ec;
+    box-shadow: 0 2px 10px rgba(28,38,60,.06);
+  }
+  .dchat-body.is-gen .dgen { margin-top: 0; }
+  .dgen-img {
+    display: block; width: 100%; max-height: 420px; object-fit: contain;
+    background: #f2f3f5; cursor: zoom-in;
+  }
+  /* 占位骨架：和出图后的卡片同高，出图时不会把上面的消息顶一下 */
+  .dgen-skel {
+    position: relative; aspect-ratio: 3 / 2; min-height: 200px; max-height: 420px;
+    overflow: hidden; background: linear-gradient(135deg, #eef1f5, #e4e8ee);
+  }
+  .dgen-skel::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(100deg, transparent 22%, rgba(255,255,255,.72) 50%, transparent 78%);
+    animation: dgenSweep 1.25s linear infinite;
+  }
+  @keyframes dgenSweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+  .dgen-ref {
+    display: flex; align-items: center; gap: 8px; padding: 9px 11px 0;
+    font-size: 11px; color: #8d96a3;
+  }
+  .dgen-ref img {
+    width: 38px; height: 38px; object-fit: cover; border-radius: 8px;
+    border: 1px solid #e6e8ec; display: block;
+  }
+  .dgen-st {
+    display: flex; align-items: center; gap: 7px; padding: 9px 11px;
+    font-size: 12px; color: #5b6472; line-height: 1.45;
+  }
+  .dgen-phase { flex: 1 1 auto; min-width: 0; }
+  .dgen.is-error .dgen-st { color: #c9342a; }
+  .dgen.is-error .dgen-phase { word-break: break-word; }
+  .dgen-spin {
+    width: 12px; height: 12px; flex: 0 0 auto; border-radius: 50%;
+    border: 2px solid #e6e8ec; border-top-color: var(--gold);
+    animation: dgenSpin .8s linear infinite;
+  }
+  @keyframes dgenSpin { to { transform: rotate(360deg); } }
+  .dgen-prompt {
+    padding: 0 11px 9px; font-size: 11.5px; line-height: 1.55; color: #6a7488;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  /* 本地模型只认英文提示词：这句翻译状态必须露出来，否则用户永远猜不到
+     「图为什么和描述没关系」 */
+  .dgen-hint {
+    padding: 0 11px 9px; font-size: 11px; line-height: 1.5; color: #8a8f99;
+  }
+  .dgen-hint.warn { color: #a8461b; }
+  .dgen-acts {
+    display: flex; flex-wrap: wrap; gap: 3px; padding: 6px;
+    border-top: 1px solid #f0f2f5; background: #fcfcfd;
+  }
+  .dgen-act {
+    font-family: inherit; font-size: 11.5px; color: #5b6472; cursor: pointer;
+    background: transparent; border: 0; border-radius: 7px; padding: 4px 8px;
+    transition: background .14s ease, color .14s ease;
+  }
+  .dgen-act:hover { background: #f0f2f5; color: #2a2f36; }
+  .dgen-act.primary { color: #8a6108; background: #fdf6e6; }
+  .dgen-act.primary:hover { background: #fbecc9; }
+  .dgen-act.stop { margin-left: auto; color: #a8461b; }
+  .dgen-act.stop:hover { background: #fdf1ea; }
+  .dgen-act:disabled { opacity: .55; cursor: default; }
+  /* 看大图 */
+  .dgen-view {
+    position: fixed; inset: 0; z-index: 90; background: rgba(16,20,26,.84);
+    display: grid; place-items: center; padding: 40px; cursor: zoom-out;
+    animation: dgenFade .16s ease;
+  }
+  .dgen-view img {
+    max-width: 100%; max-height: 100%; border-radius: 10px; background: #fff;
+    box-shadow: 0 24px 70px rgba(0,0,0,.45);
+  }
+  @keyframes dgenFade { from { opacity: 0; } to { opacity: 1; } }
+  .dchat-think {
+    margin-bottom: 8px; font-size: 11.5px; color: #6a7488;
+    background: #f7f8fa; border: 1px solid #e6e8ec; border-radius: 9px; padding: 6px 9px;
+  }
+  .dchat-think summary { cursor: pointer; }
+  .dchat-think pre {
+    margin: 6px 0 0; white-space: pre-wrap; word-break: break-word;
+    font-family: inherit; font-size: 11.5px; max-height: 220px; overflow: auto;
+  }
+  .dchat-empty {
+    margin: auto; text-align: center; font-size: 12.5px; color: #8d96a3; padding: 20px;
+  }
+  /* 输入条搬进对话窗口底部后改成流式布局，但「尺寸必须和桌面上一模一样」：
+     用户在桌面输入框里打了一半字，翻进对话页时输入框不该变样。
+     .desk-ai-wrap 在桌面上是绝对定位（left:50%/bottom:30px/translateX(-50%）），
+     搬进窗口后这些定位必须清掉，否则它会飘到窗口外面去。 */
+  .dchat-foot { padding: 10px 18px 14px; display: flex; justify-content: center; flex: 0 0 auto; }
+  /* 特异性必须压过 .desk-ai-wrap 的绝对定位（后者是 0,1,0，这里是 0,2,0） */
+  .os-win.chat .dchat-foot .desk-ai-wrap {
+    position: static; left: auto; bottom: auto; transform: none;
+    width: 100%;
+  }
+
+  /* 桌面轻提示（输入条加高后抬高，避免压在输入框上） */
+  .desk-toast {
+    position: fixed; left: 50%; bottom: 168px; transform: translateX(-50%);
+    z-index: 60; max-width: 70vw; padding: 9px 14px; border-radius: 10px;
+    font-size: 12.5px; color: #ffffff; background: rgba(38,44,54,.94);
+    box-shadow: 0 10px 26px rgba(0,0,0,.28); pointer-events: none;
+  }
+

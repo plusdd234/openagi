@@ -326,6 +326,8 @@ function openSettings(tab){
   if(tab) switchTab(tab);
   if(tab === 'image') setTimeout(() => refreshTripoWebStatus(true), 200);
   if(typeof renderGatewayPane === 'function') renderGatewayPane();
+  // 状态卡要反映「刚打开这一刻」的真实情况：上次关窗后用户可能又去引擎里装了模型
+  if(window.settingsHome) settingsHome.refresh();
   $('settingsBackdrop').classList.remove('hidden');
   $('btnCloseSettings').focus();
 }

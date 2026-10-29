@@ -38,9 +38,11 @@
       "electron/**",
       "package.json",
       "index.html",
+      "multiview.html",
       "css/**",
       "js/**",
-      "vendor/**"
+      "vendor/**",
+      "img/**"
     ],
     "extraResources": [
       {

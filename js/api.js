@@ -11,7 +11,7 @@ async function tripoWebFetch(pathname, opts, timeoutMs){
     const res = await fetch(TRIPO_WEB_BASE + pathname, Object.assign({ signal: ctrl.signal }, opts || {}));
     let data = null;
     try { data = await res.json(); } catch(e) {}
-    if(!res.ok) throw new Error((data && data.message) || ('HTTP ' + res.status));
+    if(!res.ok) throw new Error(pickErrMsg(data, 0) || ('HTTP ' + res.status));
     return data || {};
   }catch(e){
     if(e && e.name === 'AbortError') throw new Error('本地助手无响应（' + Math.round(ms / 1000) + ' 秒超时）');
@@ -94,10 +94,15 @@ function updateModelLabels(){
 // 顶栏显示三类模型的配置状态
 const TRIPO_TIER = { 'v3.1-20260211': 'H3.1', 'v3.0-20250812': 'H3.0', 'v2.5-20250123': 'H2.5' };
 
+/* ⚠ 元素可能不存在：语言 / 图像 / 3D 三个胶囊已从顶栏撤掉（和输入条的模型选择器重复），
+ * 但 updateStatusChips 仍在算这三个状态——它带副作用（本地引擎没跑时去刷引擎状态），
+ * 不能因为「没人看」就把整段删掉。所以这里找不到元素就静默跳过。 */
 function setChip(id, ok, text, tip){
   const el = $(id);
+  if(!el) return;
   el.classList.toggle('off', !ok);
-  el.querySelector('.sc-value').textContent = text;
+  const v = el.querySelector('.sc-value');
+  if(v) v.textContent = text;
   el.title = tip;
 }
 
@@ -291,13 +296,89 @@ function lookupPath(o, path){
 }
 
 // 中转返回的 JSON 错误体（{"error":"..."}）比裸文本更可读
+/* 上游的错误体五花八门：
+ *   官方 OpenAI   {"error":{"message":"…","type":"invalid_request_error"}}
+ *   Ollama        {"error":"model requires more system memory"}
+ *   vLLM / TGI    {"object":"error","message":"…"}
+ *   网关          {"error":"upstream timeout"} / {"detail":"…"}
+ * 老实现只取 `j.error || j.message` 再 String() —— **error 是对象时直接变 "[object Object]"**，
+ * 于是运行日志只剩一句「HTTP 400: [object Object]」，等于没报错（真踩过）。
+ * 这里递归把真正的那句话挖出来，实在挖不到才退回原文。 */
+function pickErrMsg(o, depth){
+  if(o == null) return '';
+  if(typeof o === 'string'){ const s = o.trim(); return s ? s.slice(0, 300) : ''; }
+  if(typeof o === 'number' || typeof o === 'boolean') return String(o);
+  if(depth > 4) return '';
+  if(Array.isArray(o)){
+    for(const x of o){ const s = pickErrMsg(x, depth + 1); if(s) return s; }
+    return '';
+  }
+  if(typeof o === 'object'){
+    /* 顺序有讲究：`error` 放最后。OAuth 风格的 {"error":"invalid_request",
+     * "error_description":"Missing Authorization header"} 里，前者只是错误码，
+     * 能读的是后者；而 OpenAI 那种 error 本身是个对象，会自己往下递归到 message。 */
+    const keys = ['message', 'msg', 'error_description', 'detail', 'reason', 'error'];
+    for(const k of keys){
+      if(!(k in o)) continue;
+      const s = pickErrMsg(o[k], depth + 1);
+      if(s) return s;
+    }
+  }
+  return '';
+}
+
 function prettyError(text){
-  const t = String(text || '');
+  const t = String(text == null ? '' : text).trim();
+  if(!t) return '（响应体为空）';
   try{
     const j = JSON.parse(t);
-    if(j && (j.error || j.message)) return String(j.error || j.message);
-  }catch(e){}
-  return t.slice(0, 300);
+    const s = pickErrMsg(j, 0);
+    if(s) return s;
+    /* 结构认不出来（如 {"code":4001,"data":{…}}）就压成一行 JSON，别把原始信息丢掉 */
+    const flat = JSON.stringify(j);
+    return flat && flat !== '{}' ? flat.slice(0, 300) : '（响应体是空对象）';
+  }catch(e){
+    return t.slice(0, 300);
+  }
+}
+
+/* 上游一律说英语。运行日志直接甩一句
+ * 「Multimodal data provided, but model does not support multimodal requests.」
+ * 用户既看不懂、也不知道该改什么，只能来问「这是什么意思」。
+ * 这里把常见病因翻成中文，**中文在前、原文附在括号里**——排错时还要靠原文去搜。
+ * 只翻译，不改写语义：认不出就明说「上游返回错误」，不要假装看懂了。 */
+const ERR_ZH = [
+  [/multimodal|does not support (image|vision|multimodal)|image input is not supported/i,
+    '这个模型不接受图像输入', '把「图像」引脚的连线摘掉，或换成视觉模型（Qwen3-VL / Qwen2.5-VL）'],
+  [/context length|maximum context|too many tokens|context window|token limit/i,
+    '输入超出上下文长度', '减少图片数量 / 尺寸，或关掉引用上一轮的上下文'],
+  [/invalid api key|incorrect api key|invalid_api_key|api key not valid|unauthorized|authentication/i,
+    'API Key 无效或已失效', '到设置里重新粘贴该站的 Key（注意别带空格，账号密码不能用于接口）'],
+  [/rate limit|too many requests|429/i,
+    '被上游限流（请求太频繁）', '等一会儿再试，或换一条线路 / 换服务商'],
+  [/model .{0,40}(not found|not exist|does not exist|unknown)|no such model|unknown model|model_not_found/i,
+    '模型名不存在', '到设置里点「读取模型」，从清单里选一个'],
+  [/insufficient (quota|balance)|quota exceeded|billing|payment required|out of credits|recharge/i,
+    '额度或余额不足', '到该站的控制台充值，或换用别的来源'],
+  [/upstream (timeout|timed out)|gateway time-?out|deadline exceeded/i,
+    '上游超时', '稍后重试，或把该节点的「超时」调大'],
+  [/content (policy|filter)|safety system|blocked by (policy|safety)/i,
+    '被内容安全策略拦截', '换个说法再试（这类拦截来自上游，本地改不了）'],
+  [/max_tokens|maximum.{0,20}tokens.{0,20}exceed/i,
+    '输出长度超出上限', '把「最大输出」调大，或让它分次回答']
+];
+
+function translateErr(m){
+  const raw = String(m || '').trim();
+  if(!raw) return '';
+  for(const row of ERR_ZH){
+    if(row[0].test(raw)) return row[1] + '：' + row[2] + '（原文：' + raw.slice(0, 140) + '）';
+  }
+  /* 全英文又认不出：至少标明「这是上游原文」，别让人以为是我们自己写的中文提示 */
+  if(!/[\u4e00-\u9fa5]/.test(raw) && /[a-z]{4,}/i.test(raw)){
+    return '上游返回错误：' + raw.slice(0, 160);
+  }
+  return '';
 }
 
 function friendlyErr(e){
@@ -332,6 +413,10 @@ function friendlyErr(e){
   if(/无法连接上游服务|域名解析失败/.test(m)){
     return m + '｜请检查本机网络与代理设置是否可用。';
   }
+  /* 走到这里的基本都是上游原样抛回来的英文。翻成中文再收尾——
+   * 前面几段已经处理过的（CORS / 重置 / OOM / 超时）本来就是中文，不会重复翻译。 */
+  const zh = translateErr(m);
+  if(zh) return zh;
   return m;
 }
 

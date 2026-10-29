@@ -1,0 +1,227 @@
+/* ============================================================
+ * app.css 拆分 · 02-console
+ * 模型控制台 / ComfyUI App / 图片编辑器 / 资产面板 / 图库 · 模型库
+ *
+ * ⚠ 这份文件是按**原始行号连续切片**出来的，各文件之间靠 index.html 的
+ *   <link> 顺序维持层叠关系。加新样式请放进对应 App 的文件，不要在这里
+ *   随手追加——也不要在 08-theme 之前的文件里写「最终样式」，那会被覆盖。
+ * ============================================================ */
+
+  /* ---- 模型控制台（os-win 内） ---- */
+  .mc-hard {
+    background: #fafbfc; border: 1px solid #e3e6ea; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
+  }
+  .mc-hard-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .mc-hard-title { font-size: 12.5px; font-weight: 600; color: #1f2328; }
+  .mc-hard-line { font-size: 13px; color: #2a2f36; line-height: 1.6; }
+  /* 第二行是「另有：xxx（核显）」——双显卡机器上说明独显已被识别，弱化显示免得抢主线 */
+  .mc-hard-sub { font-size: 11.5px; color: #7a828c; line-height: 1.5; }
+  .mc-rec-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .mc-rec {
+    font-size: 11.5px; color: #1f2328; background: #fff; border: 1px solid #c9ced4; border-radius: 999px;
+    padding: 3px 10px; line-height: 1.5;
+  }
+  .mc-hard-meta { margin-top: 8px; font-size: 11px; color: #8a9098; }
+
+  /* ---- 本地生图引擎（ComfyUI）独立 app ---- */
+  .os-win.comfy { width: min(720px, 92vw); max-height: min(82vh, 760px); }
+  .cf-app { display: flex; flex-direction: column; gap: 12px; }
+  .cf-hero {
+    padding: 14px 16px; border: 1px solid #e3e6ea; border-radius: 12px; background: #fff;
+  }
+  .cf-hero-top { display: flex; align-items: center; gap: 8px; }
+  .cf-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: #c3c8d0; }
+  .cf-dot.ok { background: #1f8a4c; box-shadow: 0 0 0 3px rgba(31,138,76,.14); }
+  .cf-dot.wait { background: #e8a13a; box-shadow: 0 0 0 3px rgba(232,161,58,.14); }
+  .cf-dot.off { background: #c3c8d0; }
+  .cf-title { font-size: 13.5px; font-weight: 600; color: #1f2328; }
+  .cf-state {
+    margin-left: auto; font-size: 11px; padding: 1px 9px; border-radius: 999px;
+    background: #f4f5f7; color: #6a7488; line-height: 1.7;
+  }
+  .cf-state.ok { background: #eaf6ee; color: #1f8a4c; }
+  .cf-state.wait { background: #fff4e5; color: #a35f00; }
+  .cf-sub { margin-top: 8px; font-size: 11.5px; line-height: 1.6; color: #4a5058; word-break: break-all; }
+  .cf-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .cf-prog { height: 5px; margin-top: 10px; background: #eef1f5; border-radius: 999px; overflow: hidden; }
+  .cf-prog i { display: block; height: 100%; background: #2f81f7; transition: width .2s; }
+  /* 解压 1.5 GB 要几分钟且报不出百分比：走不确定态，别让进度条钉死在 100% 让人以为卡死 */
+  .cf-prog.indet i {
+    width: 38%; background: linear-gradient(90deg, #cfe0f8, #2f81f7, #cfe0f8);
+    animation: msIndet 1.15s ease-in-out infinite;
+  }
+  .cf-prog-txt { margin-top: 5px; font-size: 10.5px; color: #6a7488; line-height: 1.5; }
+  .cf-err {
+    margin-top: 10px; padding: 7px 10px; font-size: 11.5px; line-height: 1.6; color: #c9342a;
+    background: #fdf2f1; border: 1px solid #f6d5d2; border-radius: 8px; word-break: break-word;
+  }
+  .cf-warn {
+    margin-top: 10px; padding: 7px 10px; font-size: 11px; line-height: 1.6; color: #8a5a00;
+    background: #fff8ec; border: 1px solid #f0dcb8; border-radius: 8px;
+  }
+  /* 「装好之后怎么走」：没装过的人最需要这段，否则装完还是不知道下一步 */
+  .cf-steps {
+    display: flex; flex-direction: column; gap: 7px; padding: 12px 14px;
+    background: #f7f8fa; border: 1px solid #e6e9ee; border-radius: 10px;
+  }
+  .cf-step { display: flex; align-items: flex-start; gap: 8px; font-size: 11.5px; color: #4a5058; line-height: 1.6; }
+  .cf-step i {
+    flex: 0 0 auto; width: 17px; height: 17px; border-radius: 50%; font-style: normal;
+    font-size: 10.5px; line-height: 17px; text-align: center;
+    background: #e88a00; color: #fff; font-weight: 600;
+  }
+  .cf-facts {
+    display: flex; flex-direction: column; gap: 5px; padding: 10px 14px;
+    border: 1px solid #e9ecf0; border-radius: 10px; background: #fcfcfd;
+  }
+  .cf-fact { display: flex; gap: 10px; font-size: 11px; line-height: 1.5; }
+  .cf-fact > span { flex: 0 0 74px; color: #8a9098; }
+  .cf-fact > b {
+    flex: 1; min-width: 0; font-weight: 500; color: #3a4048;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cf-log-wrap summary {
+    font-size: 11px; color: #6a7488; cursor: pointer; padding: 4px 0; user-select: none;
+  }
+  .cf-log {
+    margin: 6px 0 0; padding: 10px 12px; max-height: 210px; overflow: auto;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; line-height: 1.55;
+    color: #3a4048; background: #f7f8fa; border: 1px solid #e6e9ee; border-radius: 8px;
+    white-space: pre-wrap; word-break: break-all;
+  }
+
+  /* ---- 图片编辑器 ---- */
+  .os-win.imgedit { width: min(1040px, 95vw); max-height: min(88vh, 840px); }
+  .ie-wrap { display: flex; gap: 12px; min-height: 420px; }
+  /* 棋盘格底色：PNG 透明区域能一眼看出来，纯白底会把透明当成白色 */
+  .ie-stage {
+    flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center;
+    padding: 14px; border-radius: 10px; overflow: auto;
+    background-color: #fafbfc;
+    background-image:
+      linear-gradient(45deg, #eef1f5 25%, transparent 25%, transparent 75%, #eef1f5 75%),
+      linear-gradient(45deg, #eef1f5 25%, transparent 25%, transparent 75%, #eef1f5 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 8px 8px;
+  }
+  .ie-stage canvas {
+    max-width: 100%; max-height: 58vh; object-fit: contain;
+    box-shadow: 0 2px 12px rgba(20,30,50,.14); background: #fff; border-radius: 2px;
+  }
+  .ie-side { flex: 0 0 214px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+  .ie-sec { display: flex; flex-direction: column; gap: 7px; }
+  .ie-h { font-size: 11px; font-weight: 600; color: #6a7488; letter-spacing: .3px; }
+  .ie-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ie-row { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #5a6068; }
+  .ie-row > span { flex: 0 0 44px; }
+  .ie-row > input[type=range] { flex: 1; min-width: 0; accent-color: #e88a00; }
+  .ie-row > b { flex: 0 0 40px; text-align: right; font-weight: 500; color: #3a4048; font-variant-numeric: tabular-nums; }
+  .ie-size { font-size: 11px; color: #7a828c; }
+  .ie-size b { color: #3a4048; font-variant-numeric: tabular-nums; }
+
+  /* ---- 设置 → 资产库 ---- */
+  .ap-head { font-size: 12.5px; color: #4a5058; margin-bottom: 10px; }
+  .ap-head b { font-size: 15px; color: #1f2328; font-variant-numeric: tabular-nums; }
+  .ap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .ap-card {
+    display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; text-align: left;
+    border: 1px solid #e3e6ea; border-radius: 10px; background: #fff; cursor: pointer;
+  }
+  .ap-card:hover { border-color: #cdd3db; box-shadow: 0 1px 5px rgba(20,30,50,.07); }
+  .ap-card b { font-size: 17px; font-weight: 600; color: #1f2328; font-variant-numeric: tabular-nums; }
+  .ap-card span { font-size: 12px; color: #3a4048; font-weight: 600; }
+  .ap-card i { font-size: 10.5px; color: #8a9098; font-style: normal; }
+  .ap-card.warn b { color: #a35f00; }
+  .ap-card.mute { opacity: .55; cursor: default; }
+  .ap-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .ap-path { font-size: 11px; color: #7a828c; word-break: break-all; }
+  .ap-path code {
+    padding: 2px 6px; border-radius: 5px; background: #f4f5f7; color: #3a4048;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px;
+  }
+  .ap-note { font-size: 11px; line-height: 1.65; color: #8a9098; }
+  .ap-loading { font-size: 12px; color: #8a9098; padding: 20px 0; text-align: center; }
+
+  /* ---- 图库 / 模型库（资产 Content Browser） ---- */
+  .os-win.lib { width: min(980px, 94vw); max-height: min(86vh, 820px); }
+  .lib-body { display: flex; flex-direction: column; gap: 10px; }
+  .lib-head { display: flex; align-items: flex-end; gap: 12px; }
+  .lib-head-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+  .lib-title { font-size: 14px; font-weight: 600; color: #1f2328; }
+  .lib-sub { font-size: 11px; color: #8a9098; }
+  /* 占用面积是用户打开这个 app 的第一诉求，摆到最显眼的位置 */
+  .lib-usage { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
+  .lib-usage b { font-size: 17px; font-weight: 600; color: #1f2328; font-variant-numeric: tabular-nums; }
+  .lib-usage span { font-size: 10.5px; color: #8a9098; }
+  .lib-trash {
+    padding: 6px 10px; font-size: 11px; color: #8a5a00;
+    background: #fff8ec; border: 1px solid #f0dcb8; border-radius: 8px;
+  }
+  .lib-trash b { font-variant-numeric: tabular-nums; }
+  .lib-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .lib-search {
+    flex: 1; min-width: 140px; height: 28px; padding: 0 10px; font-size: 11.5px;
+    border: 1px solid #dfe2e7; border-radius: 7px; background: #fff; color: #1f2328; outline: none;
+  }
+  .lib-search:focus { border-color: #e88a00; }
+  .lib-sorts { display: flex; gap: 4px; }
+  .lib-chip {
+    font-size: 11.5px; height: 26px; padding: 0 10px; border-radius: 999px; cursor: pointer;
+    border: 1px solid #dfe2e7; background: #fff; color: #3a4048;
+  }
+  .lib-chip.on { background: #fff4e5; border-color: #e88a00; color: #a35f00; font-weight: 600; }
+  .lib-acts { display: flex; gap: 6px; }
+  .lib-selbar {
+    display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 11.5px;
+    color: #3a4048; background: #f2f5f9; border: 1px solid #dde3ec; border-radius: 8px;
+  }
+  .lib-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
+    gap: 10px; align-content: start;
+  }
+  .lib-card {
+    position: relative; display: flex; flex-direction: column; gap: 3px; padding: 6px;
+    border: 1px solid #e3e6ea; border-radius: 10px; background: #fff; cursor: default;
+  }
+  .lib-card:hover { border-color: #cdd3db; box-shadow: 0 1px 4px rgba(20,30,50,.06); }
+  .lib-card.on { border-color: #e88a00; background: #fffdf8; box-shadow: 0 0 0 1px #e88a00 inset; }
+  .lib-card.miss { border-color: #f0c2be; background: #fffafa; }
+  .lib-check {
+    position: absolute; top: 8px; left: 8px; z-index: 2; display: flex; padding: 2px;
+    border-radius: 5px; background: rgba(255,255,255,.9); opacity: 0; transition: opacity .12s;
+  }
+  .lib-card:hover .lib-check, .lib-card.on .lib-check { opacity: 1; }
+  .lib-check input { margin: 0; cursor: pointer; }
+  .lib-thumb {
+    position: relative; width: 100%; aspect-ratio: 1 / 1; border-radius: 7px; overflow: hidden;
+    background: #f4f5f7; display: flex; align-items: center; justify-content: center;
+  }
+  .lib-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .lib-thumb.model { background: linear-gradient(145deg, #f7f8fa, #eceff4); }
+  .lib-ext {
+    font-size: 12px; font-weight: 700; letter-spacing: .5px; color: #9aa2ad;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .lib-loading { font-size: 12px; color: #b8bec7; }
+  .lib-miss { font-size: 10.5px; color: #c9342a; }
+  .lib-name {
+    font-size: 11.5px; color: #1f2328; line-height: 1.4;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .lib-meta { font-size: 10.5px; color: #7a828c; font-variant-numeric: tabular-nums; }
+  .lib-meta2 { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 10px; color: #9aa2ad; }
+  .lib-ref { color: #1f8a4c; }
+  .lib-bad { color: #c9342a; font-weight: 600; }
+  .lib-empty {
+    padding: 36px 20px; text-align: center; font-size: 11.5px; line-height: 1.7; color: #8a9098;
+    border: 1px dashed #dfe2e7; border-radius: 10px; background: #fcfcfd;
+  }
+  .lib-err {
+    padding: 7px 10px; font-size: 11.5px; line-height: 1.6; color: #c9342a;
+    background: #fdf2f1; border: 1px solid #f6d5d2; border-radius: 8px;
+  }
+  .lib-note {
+    padding: 7px 10px; font-size: 11.5px; line-height: 1.6; color: #1f8a4c;
+    background: #f0f9f3; border: 1px solid #cfe8d8; border-radius: 8px;
+  }
+

@@ -119,6 +119,11 @@ function parseFlowList(str){
         loadAll();
         if(typeof syncEngineUI === 'function') syncEngineUI();
         if(typeof updateStatusChips === 'function') updateStatusChips();
+        /* loadAll 是**直接赋值** value，不触发 change 事件 → 依赖「当前选中来源」
+         * 的显隐不会自己跟上：磁盘里明明是 SearXNG，界面上却只露出 DDG 的说明，
+         * 看起来就像设置没保存。这里补一次同步。 */
+        if(typeof syncWsUI === 'function') syncWsUI();
+        if(typeof updateModelLabels === 'function') updateModelLabels();
       }
       if(filled) return;
     }
@@ -130,7 +135,7 @@ const $ = id => document.getElementById(id);
 const loadKey = k => localStorage.getItem('hf_' + k);
 
 // ---- 配置持久化 ----
-const CFG = ['llmBaseUrl','llmModel','llmThink','imgBaseUrl','imgEndpoint','imgModel','imgSize','respPath','sendImage','genEngine','tripoVersion','tripoWebUrl','relayUrl','relayOn'];
+const CFG = ['llmBaseUrl','llmModel','llmThink','imgBaseUrl','imgEndpoint','imgModel','imgSize','respPath','sendImage','genEngine','tripoVersion','tripoWebUrl','relayUrl','relayOn','wsProvider','wsBase','wsCount'];
 let saveTimer = null;
 
 // ---- 本地中转（绕过服务商 CORS 限制）----
@@ -300,37 +305,50 @@ function renderPresetLinks(containerId){
 }
 
 // ---- 生图中转站：走 OpenAI 兼容 images 接口，按张计价 ----
+// 可选字段：endpoint（图生图端点）、size（该站习惯的尺寸写法）、note（弹层里的一句话说明）
+// ⚠ price 只是下单时的参考，价格变得比模型还快，别在别处再抄一遍、更别当承诺。
 const IMG_PRESET_GROUPS = [
   { label: '生图中转站', items: [
-    { name: 'Crazyrouter', base: 'https://cn.crazyrouter.com/v1', model: 'nano-banana', price: '约 $0.02/张', site: 'https://crazyrouter.com' },
-    { name: 'Kunavo', base: 'https://api.kunavo.com/v1', model: 'nano-banana', price: '约 $0.027/张', site: 'https://kunavo.com' },
-    { name: 'API易', base: 'https://api.apiyi.com/v1', model: 'gemini-3.1-flash-lite-image', price: '约 $0.025/张起', site: 'https://apiyi.com' },
-    { name: 'AIHubMix', base: 'https://aihubmix.com/ai/v1', model: 'gemini-nano-banana-2.1', price: '按 token 计费', site: 'https://aihubmix.com' }
+    { name: 'Crazyrouter', base: 'https://cn.crazyrouter.com/v1', model: 'nano-banana', price: '约 $0.02/张', site: 'https://crazyrouter.com',
+      note: 'Banana 系按张计价，图生图走 multipart /images/edits；size 也收 1:1 / 2K 这类档位串。' },
+    { name: 'Kunavo', base: 'https://api.kunavo.com/v1', model: 'nano-banana', price: '约 $0.027/张', site: 'https://kunavo.com',
+      note: '这家图生图只收 JSON（image 传 base64），端点要改成 /images/generations 或按站内文档填。' },
+    { name: 'API易', base: 'https://api.apiyi.com/v1', model: 'gemini-3.1-flash-lite-image', price: '约 $0.025/张起', site: 'https://apiyi.com',
+      note: 'Gemini 图像模型（banana 系）多档位，尺寸习惯写 1K / 2K / 4K 或 1024x1024。' },
+    { name: 'AIHubMix', base: 'https://aihubmix.com/ai/v1', model: 'gemini-nano-banana-2.1', price: '按 token 计费', site: 'https://aihubmix.com',
+      note: '按 token 计费，单张成本随分辨率变；2.1 的 2K/4K 输出比 1K 贵一截。' }
   ] },
   { label: '官方直连', items: [
-    { name: 'OpenAI', base: 'https://api.openai.com/v1', model: 'gpt-image-1', price: '按质量计费', site: 'https://platform.openai.com' },
-    { name: '硅基流动', base: 'https://api.siliconflow.cn/v1', model: 'Kwai-Kolors/Kolors', price: '', site: 'https://cloud.siliconflow.cn' }
+    { name: 'OpenAI', base: 'https://api.openai.com/v1', model: 'gpt-image-1', price: '按质量计费', site: 'https://platform.openai.com',
+      endpoint: '/images/generations', size: '1024x1024',
+      note: 'gpt-image 系只认 1024x1024 / 1024x1536 / 1536x1024，恒返回 b64_json 且不接受 response_format；图生图用 /images/edits（multipart）。' },
+    { name: '硅基流动', base: 'https://api.siliconflow.cn/v1', model: 'Kwai-Kolors/Kolors', price: '', site: 'https://cloud.siliconflow.cn',
+      note: '国内直连，Flux / Kolors 系；size 按该站文档写，别照抄 OpenAI 的三种。' }
   ] }
 ];
 const IMG_PRESETS = IMG_PRESET_GROUPS.flatMap(g => g.items);
 
+/* 设置页的「访问官网」一行：**每一类来源都给链接**（原来只列中转站，
+   官方直连那两家反而要用户自己去搜）。去官网注册、建 Key、充值，
+   顺手看清报价；价格以站内为准，这里只作提示。 */
 function renderImgPresetLinks(){
   const box = $('imgPresetLinks');
   if(!box) return;
   box.innerHTML = '';
   const lab = document.createElement('span');
   lab.className = 'pl-label';
-  lab.textContent = '中转站官网（含报价）：';
+  lab.textContent = '访问官网（注册 / 建 Key / 看报价）：';
   box.appendChild(lab);
-  IMG_PRESET_GROUPS[0].items.forEach(p => {
+  IMG_PRESET_GROUPS.forEach(g => (g.items || []).forEach(p => {
+    if(!p.site) return;
     const a = document.createElement('a');
     a.href = p.site;
     a.target = '_blank';
-    a.rel = 'noopener';
+    a.rel = 'noopener noreferrer';
     a.textContent = p.name + (p.price ? ' ' + p.price : '') + ' ↗';
-    a.title = '打开 ' + p.name + ' 官网（' + p.price + '，以站内实时价格为准）';
+    a.title = '打开 ' + p.name + ' 官网' + (p.price ? '（' + p.price + '，以站内实时价格为准）' : '');
     box.appendChild(a);
-  });
+  }));
 }
 
 function renderPresets(){
@@ -365,7 +383,8 @@ function applyPreset(p, silent){
   syncPresetSelect();
   $('testLLMResult').innerHTML = '';
   $('testIMGResult').innerHTML = '';
-  $('modelStatus').textContent = '选择来源并填入 Key 后，点「读取模型」';
+  /* Key / 地址输入框已经挪到对话输入条的配置弹层里，这里不再提示「填入 Key」 */
+  $('modelStatus').textContent = '点「读取模型」拉取这个站点的清单';
   renderAllModelTabs();
   updateStatusChips();
   scheduleSave();
@@ -457,7 +476,10 @@ function applyImgPreset(p, silent){
     $('imgBaseUrl').value = p.base;
     if(p.model){
       $('imgModel').value = p.model;
-      $('imgEndpoint').value = '/images/edits';
+      /* 端点/尺寸按该站的脾气来：gpt-image 只认三种固定尺寸，
+         banana 系还收 1:1、2K 这类档位串，统一写 1024x1024 会有一半的站不认。 */
+      $('imgEndpoint').value = p.endpoint || '/images/edits';
+      if(p.size) $('imgSize').value = p.size;
       updateModelLabels();
     }
   } else if(p.name === CUSTOM_PRESET.name){
@@ -469,10 +491,10 @@ function applyImgPreset(p, silent){
   syncImgPresetSelect();
   $('testIMGResult').innerHTML = '';
   $('imgModelStatus').textContent = p.name === IMG_FOLLOW
-    ? '沿用分析侧的 Base URL；图像 Key 留空时也复用分析侧 Key'
+    ? '沿用分析侧地址与 Key；点「读取模型」拉清单'
     : (p.base
-      ? `已选择 ${p.name}${p.model ? ' · ' + p.model : ''}：填入该站 Key 后可「读取模型」`
-      : '请填写该站的 Base URL');
+      ? `已选择 ${p.name}${p.model ? ' · ' + p.model : ''}；点「读取模型」拉清单`
+      : '该站还没配地址，去「去配置」里填');
   renderModelTabs('img');
   scheduleSave();
   updateStatusChips();
@@ -570,6 +592,7 @@ function loadAll(){
   setInputValue($('llmKey'), loadKey('llmKey'));
   setInputValue($('imgKey'), loadKey('imgKey'));
   setInputValue($('tripoKey'), loadKey('tripoKey'));
+  setInputValue($('wsKey'), loadKey('wsKey'));
   try{
     const r = sanitizeCfg();
     if(r.fixed.length) saveAll();
@@ -594,6 +617,7 @@ function saveAll(){
   localStorage.setItem('hf_llmKey', $('llmKey').value);
   localStorage.setItem('hf_imgKey', $('imgKey').value);
   localStorage.setItem('hf_tripoKey', $('tripoKey').value);
+  localStorage.setItem('hf_wsKey', $('wsKey').value);
 }
 function scheduleSave(){
   clearTimeout(saveTimer);
@@ -623,3 +647,44 @@ $('genEngine').addEventListener('change', () => {
 $('tripoVersion').addEventListener('change', () => updateStatusChips());
 $('btnTripoCheck').addEventListener('click', () => checkTripoKey());
 
+
+// ---- 联网搜索（对话用）----
+/* 三个来源的差别只在「要填什么」：bing / ddg 什么都不用，searxng 要地址，tavily 要 Key。
+   所以按选中的来源只露对应的输入框，而不是把三个框全摆出来让人猜哪个生效。 */
+function syncWsUI(){
+  const sel = $('wsProvider');
+  const p = (sel && sel.value) || 'bing';
+  const baseBox = $('wsBaseBox'), keyBox = $('wsKeyBox');
+  if(baseBox) baseBox.classList.toggle('hidden', p !== 'searxng');
+  if(keyBox) keyBox.classList.toggle('hidden', p !== 'tavily');
+}
+if($('wsProvider')) $('wsProvider').addEventListener('change', () => { syncWsUI(); scheduleSave(); });
+if($('wsKey')) $('wsKey').addEventListener('input', () => scheduleSave());
+if($('wsCount')) $('wsCount').addEventListener('input', () => scheduleSave());
+syncWsUI();
+
+if($('btnTestSearch')) $('btnTestSearch').addEventListener('click', async () => {
+  const box = $('wsStatus');
+  const btn = $('btnTestSearch');
+  if(typeof deskSearch === 'undefined'){ if(box) box.textContent = '搜索模块（desk-search.js）没加载'; return; }
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '搜索中…';
+  saveAll();            // 先落盘：deskSearch 读的是 localStorage，不是输入框
+  if(box) box.textContent = '正在检索「OpenAGI 是什么」…';
+  try{
+    /* force：测试按钮是**用户主动要求再试一次**，必须绕过失败熔断，
+     * 否则刚改完设置点「测试搜索」还是回放上次的旧错误。 */
+    const r = await deskSearch.run('OpenAGI 是什么', { force: true });
+    if(!box) return;
+    if(r.ok){
+      box.textContent = '来源 ' + deskSearch.labelOf(r.provider) + ' · ' + r.ms + 'ms · 取回 ' + r.results.length + ' 条'
+        + (r.results.length ? '：' + r.results.slice(0, 2).map(x => x.title).join(' / ') : '（0 条，换来源或换关键词再试）');
+    }else{
+      box.textContent = '搜索失败（' + deskSearch.labelOf(r.provider) + '）：' + r.error;
+    }
+  }finally{
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+});

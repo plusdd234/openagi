@@ -1,0 +1,499 @@
+/* ============================================================
+ * 多视图工具 · 版式
+ *
+ * 这一份样式**两处共用**：
+ *   ① 桌面 App   index.html 里的 #mvWin（.os-win.mv）
+ *   ② 独立工具   multiview.html 里整页的 #mvWin（.mv-standalone）
+ *
+ * 所以这里只写 .mv-* 和布局，不碰 .os-win 的窗口装饰。两处都引用它，
+ * 改一次两边同步——不这么做就会出现「桌面里对、独立页里错」这种最难查的偏差。
+ *
+ * 配色沿用项目变量；独立页没有 app.css 时用兜底值，颜色也不会掉。
+ * ============================================================ */
+
+.mv-wrap {
+  --mv-line: var(--border, #e3e6ea);
+  --mv-soft: var(--border-soft, #eceef2);
+  --mv-ink: var(--text, #1f2328);
+  --mv-muted: var(--muted, #6a7488);
+  --mv-gold: var(--gold, #f0b429);
+  --mv-gold-deep: var(--gold-deep, #d99a12);
+  --mv-gold-ink: var(--gold-ink, #3b2c05);
+
+  display: grid;
+  grid-template-columns: 212px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  background: #fff;
+  color: var(--mv-ink);
+}
+
+/* 独立页没有 app.css，.hidden 得自己定义。
+ * 少了它文件 input、高亮框、空态全部会露出来——这是「独立页样式不全」的典型症状。 */
+.mv-standalone .hidden,
+.mv-wrap .hidden { display: none !important; }
+
+/* 独立页没有模型库，这个入口点不了 */
+.mv-standalone .mv-side-foot { display: none; }
+
+/* ---------------- 左：模型列表 ---------------- */
+
+.mv-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--mv-soft);
+  background: #fafbfc;
+}
+
+.mv-side-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px 8px 12px;
+}
+.mv-side-t {
+  flex: 1 1 auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: #8b94a5;
+}
+.mv-mini {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--mv-line);
+  border-radius: 7px;
+  background: #fff;
+  color: #5d6675;
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color .12s, color .12s, background .12s;
+}
+.mv-mini:hover { border-color: var(--mv-gold); color: var(--mv-gold-deep); background: #fffbef; }
+.mv-mini.wide { width: 100%; height: 26px; }
+
+.mv-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.mv-list::-webkit-scrollbar { width: 8px; }
+.mv-list::-webkit-scrollbar-thumb { background: #e0e4ea; border-radius: 4px; }
+.mv-list::-webkit-scrollbar-thumb:hover { background: #ccd3dd; }
+.mv-list::-webkit-scrollbar-track { background: transparent; }
+
+.mv-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.mv-item:hover { background: #f1f3f6; }
+.mv-item.is-on {
+  background: #fffaec;
+  border-color: #f0dca8;
+}
+.mv-item-ext {
+  flex: 0 0 auto;
+  min-width: 30px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: #eceff4;
+  color: #7c8698;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-align: center;
+}
+.mv-item.is-on .mv-item-ext { background: var(--mv-gold); color: var(--mv-gold-ink); }
+.mv-item-main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.mv-item-n {
+  font-size: 12px;
+  color: #333c4c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mv-item.is-on .mv-item-n { font-weight: 600; }
+.mv-item-m { font-size: 10px; color: #9aa3b2; }
+
+.mv-none {
+  padding: 18px 12px;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: #97a0b0;
+}
+
+.mv-side-foot {
+  flex: 0 0 auto;
+  padding: 8px;
+  border-top: 1px solid var(--mv-soft);
+}
+
+/* ---------------- 右：参数 + 舞台 ---------------- */
+
+.mv-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mv-ctl {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--mv-soft);
+  background: #fff;
+}
+
+.mv-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.mv-lab {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #9aa3b2;
+  letter-spacing: .03em;
+  /* 相邻两组之间要透气：全是 11px 小控件排一行，不留缝就看不清哪几个是一组 */
+  margin-left: 10px;
+}
+.mv-lab:first-child { margin-left: 0; }
+.mv-spacer { flex: 1 1 auto; min-width: 8px; }
+
+.mv-chips { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+
+/* 预设和「单个视图」是两组控件，挨着放会连成一片按钮墙。
+ * 用一道竖线分开，不用 spacer 把它们推到两端——推开来视线要横跳。 */
+#mvViews { padding-left: 8px; margin-left: 3px; border-left: 1px solid var(--mv-soft); }
+
+.mv-chip {
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--mv-line);
+  border-radius: 7px;
+  background: #f7f8fa;
+  color: #5d6675;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.mv-chip:hover { border-color: #d5dae2; color: #2f3744; }
+.mv-chip.is-on {
+  background: var(--mv-gold);
+  border-color: var(--mv-gold);
+  color: var(--mv-gold-ink);
+  font-weight: 600;
+}
+.mv-preset { background: #fff; }
+
+.mv-seg {
+  display: inline-flex;
+  border: 1px solid var(--mv-line);
+  border-radius: 7px;
+  overflow: hidden;
+  background: #f7f8fa;
+}
+.mv-seg-b {
+  height: 22px;
+  padding: 0 9px;
+  border: 0;
+  border-right: 1px solid var(--mv-line);
+  background: transparent;
+  color: #5d6675;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.mv-seg-b:last-child { border-right: 0; }
+.mv-seg-b:hover { background: #eef0f4; }
+.mv-seg-b.is-on {
+  background: #fff;
+  color: var(--mv-gold-deep);
+  font-weight: 700;
+  box-shadow: inset 0 -2px 0 var(--mv-gold);
+}
+
+/* 精细参数折起来：默认不占地方，需要的人再展开 */
+.mv-more {
+  flex: 0 0 auto;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--mv-soft);
+  background: #fcfcfd;
+}
+.mv-more > summary {
+  padding: 6px 0;
+  font-size: 11px;
+  color: #8b94a5;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.mv-more > summary::-webkit-details-marker { display: none; }
+.mv-more > summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 12px;
+  transition: transform .14s;
+}
+.mv-more[open] > summary::before { transform: rotate(90deg); }
+.mv-more-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 2px 0 9px;
+}
+.mv-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #6a7488;
+}
+.mv-field input[type="range"] { width: 88px; accent-color: var(--mv-gold-deep); }
+.mv-field b {
+  min-width: 30px;
+  font-weight: 600;
+  color: #3d4657;
+  font-variant-numeric: tabular-nums;
+}
+.mv-field input[type="checkbox"] { accent-color: var(--mv-gold-deep); }
+
+/* 工具栏里的勾选项（「线框」这类）：要跟旁边 22px 高的分段按钮对齐，
+ * 直接复用 .mv-field 会因为字号/间距不同而上下错半行。 */
+.mv-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  margin-left: -2px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font-size: 11px;
+  color: #5d6675;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.mv-check:hover { background: #f2f4f7; }
+.mv-check input { width: 12px; height: 12px; margin: 0; accent-color: var(--mv-gold-deep); cursor: pointer; }
+/* 勾上时整块变成金色 chips 的同款，一眼能看出「线框开着」 */
+.mv-check:has(input:checked) { background: #fff8e6; border-color: rgba(240,180,41,.55); color: #7a5200; }
+
+/* ---------------- 舞台 ---------------- */
+
+.mv-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background:
+    linear-gradient(45deg, #eceef2 25%, transparent 25%, transparent 75%, #eceef2 75%) 0 0 / 16px 16px,
+    linear-gradient(45deg, #eceef2 25%, #f4f6f8 25%, #f4f6f8 75%, #eceef2 75%) 8px 8px / 16px 16px;
+}
+.mv-stage.is-drop { outline: 2px dashed var(--mv-gold); outline-offset: -8px; }
+
+/* 结果图**铺满舞台再 contain**，不靠 max-height 百分比：
+ * 在 grid/flex 里父高是 auto 的时候，max-height:100% 会解析成 none，
+ * 图就直接按原始像素撑开、把底条顶出窗口（第一次截图就是这样）。
+ * 绝对定位 + inset 是唯一不依赖父高解析的写法。 */
+#mvOut {
+  position: absolute;
+  inset: 12px;
+  width: calc(100% - 24px);
+  height: calc(100% - 24px);
+  object-fit: contain;
+  display: block;
+  cursor: crosshair;
+  /* 只是给点击热区，不能有背景色——否则透明底的图会看不出透明 */
+  background: transparent;
+}
+#mvOut.hidden { display: none; }
+
+/* 选中格的高亮：位置由 JS 按 img 的实际绘制区算，不用百分比 */
+.mv-pick {
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid var(--mv-gold);
+  border-radius: 3px;
+  background: rgba(240, 180, 41, .10);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .8) inset;
+  transition: left .1s, top .1s, width .1s, height .1s;
+}
+.mv-pick.hidden { display: none; }
+
+.mv-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  text-align: center;
+  padding: 24px;
+  pointer-events: none;
+}
+.mv-empty.hidden { display: none; }
+.mv-empty-t { font-size: 13px; font-weight: 600; color: #55607a; }
+.mv-empty-s { font-size: 11.5px; line-height: 1.65; color: #8b94a5; max-width: 380px; }
+
+/* ---------------- 底条 ---------------- */
+
+.mv-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--mv-soft);
+  background: #fff;
+}
+.mv-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: #8b94a5;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mv-info.is-say { color: #7a6a2c; }
+.mv-info.is-err { color: var(--bad, #c9342a); }
+
+.mv-bar .btn {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  /* 独立页里没有 app.css，所以基础外观写全，别指望继承 .btn */
+  border: 1px solid #d9dde3;
+  background: #fff;
+  color: #2a2f36;
+  cursor: pointer;
+  transition: border-color .12s, background .12s, color .12s;
+}
+.mv-bar .btn:hover:not(:disabled) { border-color: #c3c9d3; background: #fafbfc; }
+.mv-bar .btn:disabled { opacity: .45; cursor: not-allowed; }
+.mv-bar .btn.primary {
+  background: linear-gradient(180deg, var(--mv-gold), var(--mv-gold-deep));
+  border-color: var(--mv-gold-deep);
+  color: var(--mv-gold-ink);
+  font-weight: 700;
+}
+
+/* ============================================================
+ * 独立工具页外壳（multiview.html）
+ * 同一个 #mvWin，在桌面里是 .os-win，这里是一整页。
+ * ============================================================ */
+.mv-standalone {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: #f4f6f9;
+  color: var(--text, #1f2328);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+}
+
+.mv-top {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  height: 46px;
+  background: #fff;
+  border-bottom: 1px solid #e3e6ea;
+}
+.mv-top-ico {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  color: var(--gold-deep, #d99a12);
+}
+.mv-top-t { font-size: 13px; font-weight: 700; letter-spacing: .01em; }
+.mv-top-s { font-size: 11px; color: #9aa3b2; }
+.mv-top-sp { flex: 1 1 auto; }
+.mv-top-hint { font-size: 11px; color: #9aa3b2; }
+.mv-top-hint kbd {
+  display: inline-block;
+  padding: 0 4px;
+  border: 1px solid #e3e6ea;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #fafbfc;
+  font-family: inherit;
+  font-size: 10px;
+  color: #6a7488;
+}
+
+.mv-standalone .mv-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-width: 1680px;
+  width: 100%;
+  margin: 0 auto;
+  border-left: 1px solid #e3e6ea;
+  border-right: 1px solid #e3e6ea;
+}
+
+/* 桌面窗口里：body 不能滚动，wrap 撑满 */
+.os-win.mv {
+  width: min(1180px, 94vw);
+  height: min(84vh, 820px);
+  max-height: none;
+}
+.os-win.mv .os-win-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+}
+/* ⚠ body 是 flex 行容器，`.mv-wrap` 作为 flex item 的 flex-basis 是 auto（＝内容宽度），
+ * 于是它只长到「刚好放下自己的最小内容」就停住，窗口右边留一大片空白，
+ * 而工具栏那一行还按内容宽度排版 → 被窗口的 overflow:hidden 从右边裁掉
+ * （症状：越靠右的按钮越看不到，末尾的「透明 / 背轴测」直接消失）。
+ * 必须显式 flex:1 + width:100% 才会铺满。 */
+.os-win.mv .os-win-body > .mv-wrap {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+}
+
+/* 窄屏：左栏收起成顶栏一行，别把预览挤没 */
+@media (max-width: 720px) {
+  .mv-wrap { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .mv-side { border-right: 0; border-bottom: 1px solid var(--mv-soft); }
+  .mv-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 0 8px 8px; }
+  .mv-item { flex: 0 0 auto; width: 150px; }
+  .mv-side-foot { display: none; }
+  .mv-top-s { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mv-item, .mv-chip, .mv-seg-b, .mv-mini, .mv-pick, .mv-more > summary::before { transition: none !important; }
+}
