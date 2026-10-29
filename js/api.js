@@ -283,6 +283,12 @@ async function post(base, key, path, body){
     const t = await res.text();
     throw new Error('HTTP ' + res.status + ': ' + prettyError(t));
   }
+  /* 网关对拼错/缺 /v1 的路径可能回退 SPA 首页（200 + text/html），
+     res.json() 只会报「Unexpected token '<'」——先拦下来给出可操作建议。 */
+  if((res.headers.get('content-type') || '').toLowerCase().includes('text/html')){
+    throw new Error('接口返回的是网页而不是 API 数据：通常是接口地址少了 /v1，'
+      + '试试「' + base.replace(/\/$/,'') + '/v1」');
+  }
   return res.json();
 }
 
@@ -664,6 +670,11 @@ async function loadModels(){
       headers: { 'Authorization': 'Bearer ' + key }
     }, 25000);
     if(!res.ok) throw new Error('HTTP ' + res.status + ': ' + (await res.text()).slice(0, 200));
+    /* 网关对不认识的路径可能回退到 SPA 首页（200 + text/html），JSON.parse 只会报
+       一句难懂的「Unexpected token <」——先拦下来给出可操作的建议。 */
+    if((res.headers.get('content-type') || '').toLowerCase().includes('text/html')){
+      throw new Error('接口返回的是网页而不是模型列表：通常是地址少了 /v1，试试「' + base + '/v1」');
+    }
     const list = parseModelList(await res.json());
 
     if(!list.length) throw new Error('接口返回里没有模型 id');
@@ -692,6 +703,9 @@ async function loadImgModels(){
       headers: { 'Authorization': 'Bearer ' + key }
     }, 25000);
     if(!res.ok) throw new Error('HTTP ' + res.status + ': ' + (await res.text()).slice(0, 200));
+    if((res.headers.get('content-type') || '').toLowerCase().includes('text/html')){
+      throw new Error('接口返回的是网页而不是模型列表：通常是地址少了 /v1，试试「' + base + '/v1」');
+    }
     const list = parseModelList(await res.json());
 
     if(!list.length) throw new Error('接口返回里没有模型 id');

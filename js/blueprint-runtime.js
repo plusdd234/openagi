@@ -671,6 +671,14 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
       throw new Error('HTTP ' + res.status + '：' + (typeof prettyError === 'function' ? prettyError(detail) : String(detail).slice(0, 200)));
     }
     const ctype = (res.headers.get('content-type') || '').toLowerCase();
+    /* 有些网关（实测 edge.lingsuan.org）对 /models 特判返回 JSON、但对拼错/缺 /v1 的
+       chat 路径回退到 SPA 首页 —— HTTP 200 + text/html。不在这里拦住的话，
+       SSE 解析器一行 data: 都收不到，最后只报「模型没有返回内容」，用户无从排查。 */
+    if(ctype.includes('text/html')){
+      throw new Error('接口返回的是网页而不是 API 数据（HTTP 200 + text/html）。'
+        + '通常是接口地址少了 /v1 或路径不对——当前地址「' + base + '」，'
+        + '试试改成「' + base + '/v1」再重试');
+    }
     if(!res.body || ctype.includes('application/json')){
       const data = await res.json();
       const msg = (data.choices && data.choices[0] && data.choices[0].message) || {};

@@ -83,3 +83,10 @@ server/data/
 tools/shots/
 tools/legacy/
 tmp-*
+
+# ===== 运行期存储快照与恢复产物（含 API Key / 用户数据，切勿提交） =====
+/openagi-store.json.pre-recover-*
+/flow-*.json
+
+# ===== 调试草稿 =====
+tools/_dbg*.js
