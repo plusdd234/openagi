@@ -45,6 +45,7 @@ const CAP_META = {
   imageSplit:      { cost: 0,   latency:'med',  determinism:'exact' },
   // AI 能力
   aiTask:          { cost: 1,   latency:'slow', determinism:'structural', unit:'次' },
+  featureExtract:  { cost: 1,   latency:'slow', determinism:'structural', unit:'次' },
   smartBranch:     { cost: 1,   latency:'slow', determinism:'none',       unit:'次' },
   imageGen:        { cost: 30,  latency:'slow', determinism:'none',       unit:'张' },
   tripoImg:        { cost: 30,  latency:'slow', determinism:'none',       unit:'张' },
@@ -63,11 +64,15 @@ const CAP_META = {
 const CAP_FALLBACK = { cost: 1, latency:'med', determinism:'structural', unit:'次' };
 
 /* 合并出最终描述符：总表 → 节点覆盖 → 兜底。
- * cacheable 由 cost 派生：不花钱的节点缓存它没有意义，还会污染命中率统计。 */
+ * cacheable 默认由 cost 派生：不花钱的节点缓存它没有意义，还会污染命中率统计。
+ * 但允许节点显式覆盖 —— 分析任务（aiTask）就明确关闭跨运行复用：
+ * 同输入也该重跑，自动复用上次的结论会掩盖输入图已经变了的事实。 */
 function capMetaOf(type, override){
   const base = CAP_META[type] || CAP_FALLBACK;
   const m = Object.assign({}, CAP_FALLBACK, base, override || {});
-  m.cacheable = Number(m.cost) > 0;
+  m.cacheable = (override && override.cacheable !== undefined)
+    ? !!override.cacheable
+    : Number(m.cost) > 0;
   return m;
 }
 

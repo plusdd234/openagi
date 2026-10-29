@@ -1158,6 +1158,234 @@ async function wfSplitViews(imageUrl, prompt, views, timeoutSec, onDelta){
   return parseSplitJson(raw, views);
 }
 
+/* 特征定位：开放式的「工作要求」驱动 —— 特征清单不写死，AI 按要求自行决定
+ * 找哪些区域并命名（最多 9 个）。返回 [{ name, box:[x,y,w,h] 归一化 }]。
+ * more 补齐模式：{ avoid:[已试过的特征名], need:这次要几个 }。 */
+async function wfFeatureLocate(imageUrl, requirement, timeoutSec, more){
+  const mo = more || {};
+  const sys = '你是图像特征定位器。按用户的工作要求在图中找出值得提取的特征区域并命名。只输出 JSON，不要输出 JSON 之外的任何文字。';
+  const user = [
+    '工作要求：' + (String(requirement || '').trim() || '挑出图中最值得关注的细节区域（主体可辨识的部位 / 物件），最多 9 个'),
+    (mo.avoid && mo.avoid.length ? '以下特征已经找过（含没通过复核的），必须避开它们，另找不同的：' + mo.avoid.join('、') : ''),
+    '以图片左上角为原点，输出归一化坐标（0~1，保留 3 位小数）。只返回这个 JSON：',
+    '{"regions":[{"name":"眼睛","box":[x,y,w,h]}]}',
+    'box 是该区域的最小外接矩形 [左,上,宽,高]；name 用简短的部位 / 物件名（2~6 字）；'
+      + (mo.need ? '这次只需要 ' + mo.need + ' 个，按重要程度排序。' : '最多 9 个，按重要程度排序。')
+  ].filter(Boolean).join('\n');
+  const timeoutMs = Math.round((Number(timeoutSec) || 180) * 1000);
+  const raw = await llmStreamRequest(sys, [{ role:'user', content:[
+    { type:'text', text: user },
+    { type:'image_url', image_url:{ url: imageUrl } }
+  ]}], null, { timeoutMs, signal: runSignal() });
+  const text = String(raw || '').trim();
+  let obj = null;
+  const m = text.match(/\{[\s\S]*\}/);
+  if(m){ try{ obj = JSON.parse(m[0]); }catch(e){ obj = null; } }
+  const arr = obj && Array.isArray(obj.regions) ? obj.regions : [];
+  if(!arr.length) throw new Error('模型没有定位到任何特征区域（调整「工作要求」后重试）');
+  const clamp01 = v => { const x = Number(v); return isFinite(x) ? Math.max(0, Math.min(1, x)) : null; };
+  const out = [];
+  arr.forEach(item => {
+    if(!item || typeof item !== 'object') return;
+    const name = String(item.name || '').trim();
+    if(!name || !Array.isArray(item.box) || item.box.length !== 4) return;
+    const b = item.box.map(clamp01);
+    if(b.every(x => x !== null) && b[2] > 0 && b[3] > 0) out.push({ name, box:b });
+  });
+  if(!out.length) throw new Error('模型返回的特征区域无法解析（box 缺失或格式不对）');
+  return out.slice(0, 9);
+}
+
+/* 特征提取：AI 定位各特征区域 → 回原图裁切放大 → 3×3 网格拼接 + 位置标注文本。
+ * 最多 3 张输入图；特征不写死，由「工作要求」驱动 AI 自行决定，每格一个命名区域，
+ * 行优先填满 9 格，没凑满的格子留空。 */
+const FEATURE_POS = ['左上','中上','右上','左中','正中','右中','左下','中下','右下'];
+/* 特征复核：裁切完成后，把每张小图按顺序发给视觉模型，逐张判断
+ * 「这张图是否确实是名字所指的部位」。返回 { [idx(1基)]: {ok, reason} }。 */
+async function wfFeatureVerify(cells, crops, requirement, timeoutSec){
+  const sys = '你是图像裁切质检员。给你若干张从原图裁切出来的小图（按顺序编号），逐张判断它是否确实符合对应的名字与工作要求。只输出 JSON，不要输出 JSON 之外的任何文字。';
+  const list = cells.map((c, i) => (i + 1) + '. ' + c.name).join('\n');
+  const user = [
+    '工作要求：' + (String(requirement || '').trim() || '小图的画面主体应正好是名字所指的部位 / 物件'),
+    '小图清单：',
+    list,
+    '逐张判断：小图内容是否就是清单中对应序号所指的部位 / 物件（画面里能清楚看到它，而不是背景或别的部位）。只返回这个 JSON：',
+    '{"checks":[{"idx":1,"ok":true,"reason":"部位清晰居中"},{"idx":2,"ok":false,"reason":"切到的是背景"}]}',
+    'idx 从 1 开始，与小图清单序号对应；看不出来或拿不准时判 false。'
+  ].join('\n');
+  const content = [{ type:'text', text: user }];
+  crops.forEach(u => content.push({ type:'image_url', image_url:{ url: u } }));
+  const timeoutMs = Math.round((Number(timeoutSec) || 180) * 1000);
+  const raw = await llmStreamRequest(sys, [{ role:'user', content }], null, { timeoutMs, signal: runSignal() });
+  const text = String(raw || '').trim();
+  let obj = null;
+  const m = text.match(/\{[\s\S]*\}/);
+  if(m){ try{ obj = JSON.parse(m[0]); }catch(e){ obj = null; } }
+  const out = {};
+  if(obj && Array.isArray(obj.checks)){
+    obj.checks.forEach(it => {
+      if(!it || typeof it !== 'object') return;
+      const idx = Math.trunc(Number(it.idx));
+      if(idx >= 1) out[idx] = { ok: it.ok !== false, reason: String(it.reason || '') };
+    });
+  }
+  return out;
+}
+
+async function wfFeatureExtract(srcs, opts){
+  const o = opts || {};
+  const subject = o.subject || '人物';
+  const cell = Math.max(128, Math.min(1024, Math.trunc(Number(o.cell) || 512)));
+  const margin = Math.max(0, Math.min(100, Number(o.margin) || 0)) / 100;
+  const cells = [];            // 最终入格：{ imgIdx, name, box, cv }
+  const usedNames = new Set(); // 试过的特征名（含被剔的），补齐时让 AI 避开
+  const notes = [];
+  let droppedN = 0;            // 复核剔除总数
+  let backfillN = 0;           // 补齐进来的格数
+  const loaded = {};           // imgIdx → image（懒加载缓存）
+
+  /* 单格渲染：归一化 box → 原图像素（外扩 margin）→ cover 居中铺满格子 */
+  const renderCell = (imgIdx, box) => {
+    const { img } = loaded[imgIdx];
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    let bx = Number(box[0]), by = Number(box[1]);
+    let bw = Number(box[2]), bh = Number(box[3]);
+    const cv = document.createElement('canvas');
+    cv.width = cell; cv.height = cell;
+    if(bw > 0 && bh > 0){
+      const cvx = cv.getContext('2d');
+      const mx = bw * margin / 2, my = bh * margin / 2;   // 外扩，避免切到边缘
+      let sx = (bx - mx) * w, sy = (by - my) * h;
+      let sw = (bw + 2 * mx) * w, sh = (bh + 2 * my) * h;
+      sx = Math.max(0, Math.min(w - 4, sx));
+      sy = Math.max(0, Math.min(h - 4, sy));
+      sw = Math.max(4, Math.min(w - sx, sw));
+      sh = Math.max(4, Math.min(h - sy, sh));
+      // cover 居中：裁切区域铺满格子（小部位由此自然放大，吃满网格分辨率）
+      const sr = sw / sh;
+      let cw = sw, ch = sh;
+      if(sr > 1) cw = sh; else ch = sw;
+      const cx = sx + (sw - cw) / 2, cy = sy + (sh - ch) / 2;
+      cvx.drawImage(img, cx, cy, cw, ch, 0, 0, cell, cell);
+    }
+    return cv;
+  };
+
+  /* 一轮定位：逐图让 AI 找特征（avoid 为要避开的名字），裁切 + 复核，通过的形成格子。
+   * want：本轮最多要几个；noteCount：逐图把识别数量记进 notes（只首轮用）。 */
+  const runRound = async (want, avoid, phaseLabel, noteCount) => {
+    if(want <= 0 || cells.length >= 9) return 0;
+    const cands = [];
+    for(let i = 0; i < srcs.length && cands.length < want; i++){
+      if(o.onPhase) o.onPhase(phaseLabel + ' · 图' + (i + 1));
+      const small = await wfCompressImage(srcs[i], 768, 0.7);   // 坐标归一化，映射回原图不受影响
+      let regions = [];
+      try {
+        regions = await wfFeatureLocate(small.image, o.requirement, o.timeoutSec, { avoid, need: want - cands.length });
+      } catch(e){
+        if(srcs.length === 1 && !cells.length) throw e;   // 单图首轮失败 = 没得拼，直接报
+        notes.push('图' + (i + 1) + ' 定位失败');           // 其余：跳过这张，别拖垮整次拼图
+        continue;
+      }
+      if(noteCount) notes.push('图' + (i + 1) + ' 识别 ' + regions.length + ' 个');
+      for(const rg of regions){
+        if(cands.length >= want || cells.length + cands.length >= 9) break;
+        if(usedNames.has(rg.name)) continue;   // AI 没避开时兜底去重
+        usedNames.add(rg.name);
+        cands.push({ imgIdx: i, name: rg.name, box: rg.box });
+      }
+    }
+    if(!cands.length) return 0;
+    for(const c of cands){
+      if(!loaded[c.imgIdx]) loaded[c.imgIdx] = await loadImageForCanvas(srcs[c.imgIdx]);
+      c.cv = renderCell(c.imgIdx, c.box);
+    }
+    /* 复核：把每张小图发给视觉模型判断「是否确实是名字所指的部位」，
+       判 false 的候选剔除 —— 定位模型偶尔会框到背景或邻近部位，
+       拼进网格再送下游分析就会污染结论，宁缺毋滥；剔掉的格位会触发补齐。 */
+    if(o.verify){
+      if(o.onPhase) o.onPhase('复核 ' + cands.length + ' 格');
+      const crops = cands.map(c => {
+        const s = document.createElement('canvas');
+        s.width = 224; s.height = 224;
+        s.getContext('2d').drawImage(c.cv, 0, 0, 224, 224);
+        return s.toDataURL('image/jpeg', 0.75);
+      });
+      let checks = null;
+      try {
+        checks = await wfFeatureVerify(cands, crops, o.requirement, o.timeoutSec);
+      } catch(e){
+        checks = null;   // 复核本身失败不拦拼图：宁可放行也不白跑
+        if(o.onNote) o.onNote('复核失败已跳过（' + friendlyErr(e) + '）');
+      }
+      if(checks){
+        cands.forEach((c, k) => {
+          const chk = checks[k + 1];
+          if(chk && !chk.ok){
+            c.drop = true;
+            droppedN++;
+            if(o.onNote) o.onNote('复核剔除「' + c.name + '」：' + (chk.reason || '不像'));
+          }
+        });
+      }
+    }
+    let added = 0;
+    for(const c of cands){
+      if(c.drop || cells.length >= 9) continue;
+      cells.push(c);
+      added++;
+    }
+    return added;
+  };
+
+  /* 第一轮：正常定位 */
+  await runRound(9, [], '定位特征', true);
+  /* 补齐：复核剔掉几格就试着追加几个新特征（最多 2 轮，控制 AI 调用成本）；
+   * 补进来的又被剔了就再追一轮，轮数用完为止。 */
+  let toFill = o.verify ? droppedN : 0;
+  let rounds = 0;
+  while(toFill > 0 && rounds < 2 && cells.length < 9){
+    rounds++;
+    if(o.onNote) o.onNote('尝试补齐 ' + toFill + ' 格（第 ' + rounds + ' 轮）');
+    const dropBefore = droppedN;
+    backfillN += await runRound(toFill, [...usedNames], '补齐特征');
+    toFill = droppedN - dropBefore;   // 本轮补进来的又被剔了几格 → 再追一轮
+  }
+
+  if(o.onPhase) o.onPhase('拼图');
+  const canvas = document.createElement('canvas');
+  canvas.width = cell * 3;
+  canvas.height = cell * 3;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#15181d';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // cells 是紧凑的（剔掉的不占位），按行优先直接铺
+  cells.forEach((c, k) => {
+    ctx.drawImage(c.cv, (k % 3) * cell, Math.floor(k / 3) * cell);
+  });
+  let image = '';
+  try{ image = canvas.toDataURL('image/webp', 0.9); }
+  catch(e){ throw new Error('拼图导出失败（画布受跨域污染）：请使用本地图像或已过中转的图像地址'); }
+  // 标注：3行3列，左上为图1人物的发髻，中上为图1人物的眼睛，…；行与行之间用「；」
+  let text;
+  if(!cells.length){
+    text = '3行3列 · 没有通过复核的特征区域（调整「工作要求」或换更清晰的图后重试）';
+  } else {
+    const rows = [];
+    for(let r = 0; r < 3; r++){
+      const row = cells.filter((c, k) => Math.floor(k / 3) === r);
+      if(row.length) rows.push(row.map((c, k2) => FEATURE_POS[r * 3 + k2] + '为图' + (c.imgIdx + 1) + subject + '的' + c.name).join('，'));
+    }
+    text = '3行3列，' + rows.join('；') + '。';
+  }
+  const noteAll = '共 ' + cells.length + '/9 格'
+    + (droppedN ? '（复核剔除 ' + droppedN + ' 格）' : '')
+    + (backfillN ? '（补齐 ' + backfillN + ' 格）' : '')
+    + ' · ' + notes.join(' · ') + ' · ' + (cell * 3) + '×' + (cell * 3);
+  return { image, text, notes: noteAll };
+}
+
 /* AI 分支：让模型按选择依据 + 上下文从出口清单里挑一条
  * branches: [{ id, name, hint }]
  * 返回 { id, name, reason, matched }；matched=false 表示模型没给出可识别的出口 */
@@ -1395,7 +1623,7 @@ async function runFlow(){
   const engineOf = n => {
     try {
       if(n.type === 'imageGen' || n.type === 'tripoImg') return (typeof imgMode === 'function') ? imgMode() : '';
-      if(n.type === 'aiTask' || n.type === 'smartBranch') return (typeof llmMode === 'function') ? llmMode() : '';
+      if(n.type === 'aiTask' || n.type === 'smartBranch' || n.type === 'featureExtract') return (typeof llmMode === 'function') ? llmMode() : '';
       if(n.type === 'model3d' || n.type === 'tripoModel' || n.type === 'tripoModelMulti'){
         return (typeof isTripoWeb === 'function' && isTripoWeb()) ? 'web' : 'api';
       }
@@ -1434,7 +1662,7 @@ async function runFlow(){
   const ASSET_NODES = {
     imageGen:'imageGen', imageEdit:'imageEdit', tripoImg:'tripoImg',
     model3d:'model3d', tripoModel:'tripoModel', tripoModelMulti:'tripoModelMulti',
-    modelViews:'modelViews'
+    modelViews:'modelViews', featureExtract:'featureExtract'
   };
   const collectAssetEdges = (n, meta) => {
     if(!ASSET_NODES[n.type] || !n.out || runEdges.length >= 60) return;

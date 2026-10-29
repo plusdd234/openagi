@@ -53,7 +53,9 @@ const check = (ok, name, extra) => {
       if (['exact', 'structural', 'none'].indexOf(m.determinism) < 0) bad.push(t + ':det');
       if (typeof m.cost !== 'number') bad.push(t + ':cost');
       if (['fast', 'med', 'slow'].indexOf(m.latency) < 0) bad.push(t + ':latency');
-      if (!!m.cacheable !== (Number(m.cost) > 0)) bad.push(t + ':cacheable');
+      /* cacheable 默认由 cost>0 派生；节点可显式覆盖（如 aiTask 关闭复用）。
+         不变量只剩一条：0 成本的节点绝不允许进缓存。 */
+      if (m.cacheable && !(Number(m.cost) > 0)) bad.push(t + ':cacheable');
     });
     return {
       n: types.length, bad,
@@ -68,6 +70,8 @@ const check = (ok, name, extra) => {
   check(meta.gen.cost === 30 && meta.gen.determinism === 'none', '出图 = 30u + 不可逐像素复现', JSON.stringify(meta.gen));
   check(meta.txt.cost === 0 && meta.txt.determinism === 'exact', '纯文本 = 0u + 确定性', JSON.stringify(meta.txt));
   check(meta.model.cost === 300, '3D 生成 = 300u', String(meta.model.cost));
+  const aiMeta = await page.evaluate(() => NODE_DEFS.aiTask.meta);
+  check(aiMeta.cacheable === false, '分析任务默认不跨运行复用（cacheable=false）', JSON.stringify(aiMeta));
   check(meta.metaOfUnknown === 'structural', '未知类型走兜底档（不返回 undefined）');
 
   console.log('\n=== 3. 轨迹落盘 ===');

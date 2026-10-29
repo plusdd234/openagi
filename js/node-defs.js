@@ -76,7 +76,8 @@ registerNode({
 
 registerNode({
   type:'aiTask', title:'分析任务', dot:'text', group:'分析任务',
-  desc:'按指令分析文本 / 图像，自定义输入输出引脚与超时',
+  desc:'按指令分析文本 / 图像，自定义输入输出引脚与超时。每次都真实调用模型，不跨运行复用上次结论',
+  meta:{ cacheable:false },   // 分析任务不主动复用：输入图变了结论必须跟着变，复用反而掩盖差异
   execIn:true, execOut:['exec'],
   quiet:true,   // 自己会打一条带流式统计的完成日志，外壳不再重复打
   params:[
@@ -261,6 +262,49 @@ registerNode({
       });
     }
   }
+});
+
+registerNode({
+  type:'featureExtract', title:'特征提取', dot:'image', group:'图像任务',
+  desc:'按「工作要求」让 AI 自行定位并命名图中的特征区域，逐个裁切放大拼成 3×3 网格图，并输出「左上为图1人物的发髻，…」式标注。复核不通过的格子会自动追加特征补齐；特征不写死；最多 3 张输入图，共 9 格',
+  meta:{ cacheable:false },   // 同分析任务：输入图变了，定位与拼图必须重做
+  execIn:true, execOut:['exec'],
+  inputs:['image','image2','image3'], outputs:['image','text'],
+  params:[
+    { key:'prompt', label:'工作要求', ctl:'textarea', ph:'例：定位人物的头部位（发髻 / 眼睛 / 眉毛 / 耳朵）与身体部位（衣领 / 胸部 / 手部 / 腰带 / 鞋部），每个部位一个区域。留空则由 AI 挑最值得关注的 9 个细节区域' },
+    { key:'subject', label:'主体', ctl:'text', ph:'标注里的主体词，默认「人物」' },
+    { key:'cell', label:'单元尺寸', ctl:'select', default:512, options:[[256,'256px'],[384,'384px'],[512,'512px']] },
+    { key:'margin', label:'外扩边距', ctl:'number', type:'int', min:0, max:100, step:5, unit:'%', default:30 },
+    { key:'verify', label:'复核', ctl:'select', default:'on', options:[['on','开启 · 逐格检查（多一次 AI 调用）'],['off','关闭']] },
+    { key:'timeout', label:'超时', ctl:'number', type:'int', min:10, max:600, step:10, unit:'秒', default:180 },
+    { tip:'特征由 AI 按工作要求自行决定并命名，不写死清单；每张图先压缩送视觉模型定位，再回原图裁切放大，按行优先填进 3×3 网格，没凑满的格子留空。' },
+    { tip:'复核：裁切完成后把每张小图再发给模型逐张判断「是否确实是名字所指的部位」，判否的格子剔除——定位偶尔框到背景或邻近部位，宁缺毋滥。剔掉的格子会自动追加定位新特征来补齐（避开已试过的名字，最多补 2 轮），补齐成功标注会自动重排。' }
+  ],
+  seed: () => ({ data:{
+    prompt:'', subject:'人物', cell:512, margin:30, verify:'on', timeout:180
+  }, params:null }),
+  run: async ({ n, input, paramIn, setStatus, log }) => {
+    const srcs = [];
+    for(const k of ['image','image2','image3']){
+      const v = await input(k);
+      if(v) srcs.push(v);
+    }
+    if(!srcs.length) throw new Error('缺少图像输入');
+    const r = await wfFeatureExtract(srcs, {
+      requirement: String(await paramIn('prompt') || ''),
+      subject: String(await paramIn('subject') || '').trim() || '人物',
+      cell: Number(await paramIn('cell')) || 512,
+      margin: Number(await paramIn('margin')),
+      verify: (String(await paramIn('verify') || 'on') !== 'off'),
+      timeoutSec: Math.max(10, Math.min(600, Math.trunc(Number(await paramIn('timeout')) || 0)) || 180),
+      onPhase: t => setStatus(n, t, 'running'),
+      onNote: m => log('· ' + m, 'warn')
+    });
+    n.out.image = r.image;
+    n.out.text = r.text;
+    log('· ' + r.notes, 'warn');
+  },
+  validate: (n, c) => c.linked('image') ? [] : [{ code:'W-REQ', message:'「特征提取」缺少图像输入（可连线）' }]
 });
 
 registerNode({
