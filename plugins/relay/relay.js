@@ -99,6 +99,17 @@ function mergeFlowLists(a, b){
 function parseFlowList(str){
   try { const v = JSON.parse(str); return Array.isArray(v) ? v : null; } catch(e) { return null; }
 }
+// 删除墓碑是字符串 id 数组，单独一套解析 / 合并 / 读取
+function parseIdList(str){
+  try { const v = JSON.parse(str); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : []; } catch(e){ return []; }
+}
+function mergeIdList(a, b){
+  const set = new Set([...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])].filter(x => typeof x === 'string'));
+  return Array.from(set);
+}
+function readDelSet(store){
+  return new Set(parseIdList(store['hf_flows_del']));
+}
 
 // 覆盖前把旧值存一份带时间戳的备份，最多保留 BACKUP_KEEP 份
 function backupStoreValue(key, oldValue){
@@ -213,15 +224,32 @@ const server = http.createServer((req, res) => {
       const store = loadStore();
       const old = store[key];
       if (key === 'hf_flows') {
-        // 工作流：与已有值合并（按 id 取较新版本），并先备份旧值
+        // 工作流：与已有值合并（按 id 取较新版本），再剔除已删除的（墓碑）。
+        // 否则删除永远只是「本地消失、磁盘还在」，别的源一合并又复活
+        // （2026-10-29 用户实测：删一个刷新又恢复，正是 union 把磁盘旧副本并了回来）。
         const merged = mergeFlowLists(parseFlowList(old), parseFlowList(val));
-        if (merged.length) {
-          backupStoreValue(key, old);
-          store[key] = JSON.stringify(merged);
-          scheduleStoreFlush();
-          sendJson(res, 200, { ok: true, count: merged.length });
-          return;
+        const del = readDelSet(store);
+        const finalList = merged.filter(f => f && !del.has(f.id));
+        const finalJs = JSON.stringify(finalList);
+        if (finalJs !== old) backupStoreValue(key, old);   // 有变化才备份
+        store[key] = finalJs;
+        scheduleStoreFlush();
+        sendJson(res, 200, { ok: true, count: finalList.length });
+        return;
+      }
+      if (key === 'hf_flows_del') {
+        // 删除墓碑：取并集（多源都删过就都记着），并立刻用最新墓碑重筛 hf_flows，
+        // 让「在某源删除」即时传播到磁盘上的工作流列表。
+        const merged = mergeIdList(parseIdList(old), parseIdList(val));
+        store[key] = JSON.stringify(merged);
+        const flows = parseFlowList(store['hf_flows']);
+        if (Array.isArray(flows)) {
+          const left = flows.filter(f => f && !merged.includes(f.id));
+          store['hf_flows'] = JSON.stringify(left);
         }
+        scheduleStoreFlush();
+        sendJson(res, 200, { ok: true, count: merged.length });
+        return;
       }
       store[key] = val;
       scheduleStoreFlush();

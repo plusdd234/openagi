@@ -134,6 +134,88 @@ const getStore = (key) => new Promise(resolve => {
   await p5.close();
   await ctx2.close();
 
+  /* ---------- 5. 删除一个流程 → 重新加载后别复活（墓碑跨源生效） ---------- */
+  // 根因回归：union 合并只增不减，删除的流程因磁盘上还有旧副本而被并回
+  // （2026-10-29 用户实测：删一个刷新又恢复）。
+  const ctx3 = await browser.newContext();
+  const p6 = await ctx3.newPage();
+  await p6.goto(APP + '?relay=' + encodeURIComponent(RELAY_BASE), { waitUntil: 'load' });
+  await p6.waitForTimeout(1200);
+  await p6.evaluate(() => {
+    localStorage.setItem('hf_flows', JSON.stringify([
+      { id: 'keepA', name: '留着', updated: 5000, nodes: [{ id: 'k1', type: 'start' }], links: [], vars: [] },
+      { id: 'delA',  name: '要删', updated: 5000, nodes: [{ id: 'd1', type: 'start' }], links: [], vars: [] }
+    ]));
+  });
+  await p6.waitForTimeout(900);
+  await p6.reload({ waitUntil: 'load' });
+  await p6.waitForTimeout(2200);
+  // 删掉 delA：走与界面一致的删除路径（记录墓碑 + 落盘）
+  await p6.evaluate(() => {
+    FLOWS = FLOWS.filter(x => x.id !== 'delA');
+    if (typeof recordFlowDelete === 'function') recordFlowDelete('delA');
+    persistFlows();
+  });
+  await p6.waitForTimeout(900);
+  // 同源重新加载：delA 不该复活（之前这里会复活）
+  await p6.reload({ waitUntil: 'load' });
+  await p6.waitForTimeout(2200);
+  const sameSrc = await p6.evaluate(() => (typeof FLOWS !== 'undefined' ? FLOWS.map(f => f.id) : []));
+  check(sameSrc.includes('keepA') && !sameSrc.includes('delA'), '同源删除单个后刷新不复活', 'FLOWS=' + JSON.stringify(sameSrc));
+  // 全新源打开：磁盘上的墓碑应当拦住 delA，不被并回
+  const ctx4 = await browser.newContext();
+  const p7 = await ctx4.newPage();
+  await p7.goto(APP + '?relay=' + encodeURIComponent(RELAY_BASE), { waitUntil: 'load' });
+  await p7.waitForTimeout(2600);
+  const freshSrc = await p7.evaluate(() => (typeof FLOWS !== 'undefined' ? FLOWS.map(f => f.id) : []));
+  check(freshSrc.includes('keepA') && !freshSrc.includes('delA'), '新源不会把别处删掉的流程并回来', 'FLOWS=' + JSON.stringify(freshSrc));
+  // 磁盘 store 本身也不该再含有 delA
+  let diskAfter = [];
+  try { diskAfter = JSON.parse(await getStore('hf_flows')); } catch (e) {}
+  check(!diskAfter.some(f => f.id === 'delA'), '磁盘 store 已剔除被删流程', 'disk=' + diskAfter.map(f => f.id).join(','));
+  await p6.close();
+  await ctx3.close();
+  await p7.close();
+  await ctx4.close();
+
+  /* ---------- 6. 重命名走行内输入（Electron 不支持 prompt()，点了必须出输入框） ---------- */
+  const ctx5 = await browser.newContext();
+  const p8 = await ctx5.newPage();
+  await p8.goto(APP + '?relay=' + encodeURIComponent(RELAY_BASE), { waitUntil: 'load' });
+  await p8.waitForTimeout(2600);
+  // 点 ⋯ → 菜单 → 重命名：必须原地出现输入框（回归：之前 prompt 在 Electron 里直接抛错、毫无反应）
+  const keepItem = p8.locator('#deskSideList .wf-side-item', { hasText: '留着' });
+  await keepItem.locator('.wf-side-more').click();
+  await p8.locator('.wf-menu button', { hasText: '重命名' }).click();
+  const renameInput = p8.locator('#deskSideList .wf-side-rename');
+  let renameOk = true;
+  try { await renameInput.waitFor({ state: 'visible', timeout: 5000 }); }
+  catch (e) { renameOk = false; }
+  check(renameOk, '点重命名后原地出现行内输入框');
+  if (renameOk) {
+    await renameInput.fill('改名后的流程');
+    await renameInput.press('Enter');
+    await p8.waitForTimeout(900);
+    const names = await p8.evaluate(() => (typeof FLOWS !== 'undefined' ? FLOWS : []).map(f => f.name));
+    check(names.includes('改名后的流程') && !names.includes('留着'), 'Enter 提交后流程名已更新', 'names=' + names.join(','));
+    let diskRenamed = [];
+    try { diskRenamed = JSON.parse(await getStore('hf_flows')); } catch (e) {}
+    check(diskRenamed.some(f => f.name === '改名后的流程'), '改名同步落到磁盘 store');
+    // Esc 取消路径：名字不能变
+    const item2 = p8.locator('#deskSideList .wf-side-item', { hasText: '改名后的流程' });
+    await item2.locator('.wf-side-more').click();
+    await p8.locator('.wf-menu button', { hasText: '重命名' }).click();
+    const input2 = p8.locator('#deskSideList .wf-side-rename');
+    await input2.waitFor({ state: 'visible', timeout: 5000 });
+    await input2.fill('不该生效的名字');
+    await input2.press('Escape');
+    await p8.waitForTimeout(600);
+    const names2 = await p8.evaluate(() => (typeof FLOWS !== 'undefined' ? FLOWS : []).map(f => f.name));
+    check(names2.includes('改名后的流程') && !names2.includes('不该生效的名字'), 'Esc 取消不改名', 'names=' + names2.join(','));
+  }
+  await p8.close();
+  await ctx5.close();
+
   await p4.close();
   await ctx.close();
   await p3.close();

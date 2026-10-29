@@ -79,6 +79,41 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 
 let FLOWS = [];
 try { FLOWS = JSON.parse(localStorage.getItem('hf_flows') || '[]'); } catch(e) { FLOWS = []; }
+/* 本会话是否确认过「流程列表的真实状态」：
+ *   启动时 localStorage 里有流程 → 已确认为真；
+ *   config.js 的 hydrate 合并到流程后调 markFlowsLoaded() → 已确认为真；
+ *   persistFlows 成功写过一次 → 已确认为真。
+ * persistFlows 的「空列表防抹」安全网只在该标志为 false 时生效——
+ * 否则「删光所有工作流」会被当成「还没 hydrate」，空列表不落盘，
+ * 被删的流程留在 localStorage 和磁盘 store 里，下次加载全部复活
+ * （2026-10-29 用户实测：删除工作流后刷新又出来了）。 */
+let flowsKnown = FLOWS.length > 0;
+function markFlowsLoaded(){ flowsKnown = true; }
+
+/* 删除墓碑（tombstone）：被删工作流的 id 集合。
+ * 为什么需要它：工作流在 localStorage（按 origin 隔离）与磁盘 store（只有一份）之间
+ * 用「按 id 取较新版本的 union」合并。union 是只增不减的——磁盘上那份还留着被删流程，
+ * 下次 hydrate 一合并就把删掉的流程并了回来（2026-10-29 用户实测：删一个刷新又恢复）。
+ * 只有显式记下「哪些 id 已删除」，合并时把它们剔除，删除才能真正跨源/跨刷新生效。
+ * 墓碑随 hf_flows_del 一起落盘，并由 config.js 的 hydrate 在本地与磁盘两源之间收敛。 */
+let deletedFlowIds = new Set();
+try {
+  JSON.parse(localStorage.getItem('hf_flows_del') || '[]').forEach(id => { if (id) deletedFlowIds.add(id); });
+} catch (e) {}
+function persistDeletedIds(){
+  try { localStorage.setItem('hf_flows_del', JSON.stringify(Array.from(deletedFlowIds))); }
+  catch (e) {}
+}
+function recordFlowDelete(id){
+  if (!id) return;
+  deletedFlowIds.add(id);
+  persistDeletedIds();   // 触发 setItem 包装器把墓碑 POST 到磁盘中转
+}
+// 重新导入某个 id 视为「复活」，清掉它的墓碑，避免下次加载又被过滤掉
+function clearFlowDelete(id){
+  if (!id) return;
+  if (deletedFlowIds.delete(id)) persistDeletedIds();
+}
 // 迁移调用已移到 js/bind.js 开头：migrateAiTaskNodes 定义在更晚加载的 js/desktop.js，
 // 此处直接调用会因跨 script 不再提升而抛 ReferenceError。
 let bp = null;
@@ -123,6 +158,23 @@ function flowsInlineBytes(){
   return FLOWS.reduce((s, f) => s + flowInlineBytes(f), 0);
 }
 
+/* 磁盘口径：大块外置成存根后，真正要写进 localStorage 的字节数。
+ * ⚠ 计量条 / 列表尺寸必须用它，不能用上面的内存口径——
+ * 外置只发生在写盘那一刻（persistFlows → blobPackFlows），内存里的 FLOWS
+ * 永远是完整原文。拿内存口径画条，拖一个 8MB 模型进来就「永远爆仓」，
+ * 而盘上其实只有一个几十字节的存根，保存毫无压力（2026-10-29 用户实测踩过）。
+ * 内存口径只留给 persistFlows 的救援阶梯：那里问的是「清掉它能省多少」。 */
+function flowDiskBytes(f){
+  if(typeof blobPackFlows !== 'function') return flowInlineBytes(f);
+  try { return JSON.stringify(blobPackFlows([f])).length; }
+  catch(e){ return flowInlineBytes(f); }
+}
+function flowsDiskBytes(){
+  if(typeof blobPackFlows !== 'function') return flowsInlineBytes();
+  try { return JSON.stringify(blobPackFlows(FLOWS)).length; }
+  catch(e){ return flowsInlineBytes(); }
+}
+
 // 把某个工作流里的内联大块清掉（最后手段：优先保住当前正在编辑的流程）
 function stripInline(f){
   let hit = 0;
@@ -153,10 +205,10 @@ function stripInline(f){
 
 function persistFlows(){
   try {
-    // 安全网：内存列表为空时**不覆盖**已存储的流程。
-    // 场景：磁盘/其他源有流程，但本源的 localStorage 还没从磁盘回填完（hydrate 是异步的），
-    // 此时任何一次保存都会把「空列表」写回去，等于把用户的流程抹掉。
-    if (!FLOWS.length) {
+    // 安全网：内存列表为空时**不覆盖**已存储的流程 —— 但只保护「本会话从未确认过
+    // 流程状态」的情况（hydrate 可能还没落）。用户真的删光了（flowsKnown=true）
+    // 必须把空列表写下去，否则删除会在下次加载时复活。
+    if (!FLOWS.length && !flowsKnown) {
       try {
         const cur = JSON.parse(localStorage.getItem('hf_flows') || '[]');
         if (Array.isArray(cur) && cur.length){
@@ -184,6 +236,9 @@ function persistFlows(){
 
   try {
     write();
+    // 成功写过一次（含删光后写空列表）→ 本会话的列表状态已被确认，
+    // 之后的空列表是真实删除，安全网不再拦
+    flowsKnown = true;
     const roots = [packed].concat(FLOWS);
     if(typeof bp !== 'undefined' && bp) roots.push(bp);
     blobGC(roots);
@@ -381,6 +436,7 @@ function importFlowsText(text){
     const old = map.get(f.id);
     if (!old) { map.set(f.id, f); added++; }
     else if ((Number(f.updated) || 0) > (Number(old.updated) || 0)) { map.set(f.id, f); updated++; }
+    clearFlowDelete(f.id);   // 重新导入视为「复活」，清掉它的删除墓碑
   });
   FLOWS = Array.from(map.values()).sort((a, b) => (Number(b.updated) || 0) - (Number(a.updated) || 0));
   persistFlows();
@@ -430,6 +486,47 @@ function wfMenuEsc(e){
   if(e.key === 'Escape'){ e.stopPropagation(); closeWfMenu(); }
 }
 
+// 行内改名：Electron 不支持 window.prompt()（调用即抛错，按钮会「点了没反应」），
+// 所以重命名必须用行内输入框，Enter 提交 / Esc 取消 / 失焦提交
+function beginFlowRename(anchor, f){
+  const item = anchor && anchor.closest ? anchor.closest('.wf-side-item') : null;
+  const nameEl = item ? item.querySelector('.wf-side-name') : null;
+  if(!nameEl) return;
+  const old = f.name || '未命名工作流';
+  const input = document.createElement('input');
+  input.className = 'wf-side-rename';
+  input.type = 'text';
+  input.value = old;
+  input.maxLength = 60;
+  input.setAttribute('aria-label', '重命名工作流');
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const commit = ok => {
+    if(done) return;
+    done = true;
+    const next = input.value.trim();
+    if(ok && next && next !== old){
+      f.name = next;
+      f.updated = Date.now();
+      persistFlows();
+    }
+    renderHome();
+  };
+  input.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if(e.key === 'Enter'){ e.preventDefault(); commit(true); }
+    else if(e.key === 'Escape'){ e.preventDefault(); commit(false); }
+  });
+  input.addEventListener('keyup', e => e.stopPropagation());
+  input.addEventListener('keypress', e => e.stopPropagation());
+  // 点输入框不能触发 item 的 click（那会 openFlow），也不能被外点关闭逻辑误伤
+  input.addEventListener('pointerdown', e => e.stopPropagation());
+  input.addEventListener('click', e => e.stopPropagation());
+  input.addEventListener('blur', () => commit(true));
+}
+
 function openWfMenu(anchor, f){
   closeWfMenu();
   const menu = document.createElement('div');
@@ -439,14 +536,7 @@ function openWfMenu(anchor, f){
   rename.textContent = '重命名';
   rename.addEventListener('click', () => {
     closeWfMenu();
-    const next = prompt('重命名工作流', f.name || '未命名工作流');
-    if(next === null) return;
-    const name = next.trim();
-    if(!name || name === f.name) return;
-    f.name = name;
-    f.updated = Date.now();
-    persistFlows();
-    renderHome();
+    beginFlowRename(anchor, f);
   });
 
   const del = document.createElement('button');
@@ -457,6 +547,7 @@ function openWfMenu(anchor, f){
     if(!confirm('删除工作流「' + (f.name || '未命名') + '」？')) return;
     FLOWS = FLOWS.filter(x => x.id !== f.id);
     if(wfActiveId === f.id) wfActiveId = '';
+    recordFlowDelete(f.id);   // 记下墓碑，删除才能跨源/跨刷新真正生效
     persistFlows();
     renderHome();
   });
@@ -486,7 +577,8 @@ function wfSideItemEl(f){
   item.querySelector('.wf-side-name').textContent = f.name || '未命名工作流';
   // 副标题：节点数 + 素材占用 + 更新时间
   // 占用必须显示出来：localStorage 只有 5MB，谁在吃空间要能一眼看到
-  const size = flowInlineBytes(f);
+  // 列表尺寸也用磁盘口径：跟容量条同一个道理，内存口径会把存根态画成 8MB
+  const size = flowDiskBytes(f);
   const parts = [(f.nodes || []).length + ' 节点'];
   if(size > 0) parts.push(fmtBytes(size));
   parts.push(wfAgoText(f.updated));
@@ -538,7 +630,9 @@ function renderDeskFlows(){
 function renderStorageMeter(){
   const host = $('wfStorage');
   if(!host) return;
-  const used = flowsInlineBytes();
+  // 磁盘口径（见 flowDiskBytes 注释）：内存里的大原文在盘上只是存根，
+  // 按内存量会把「完全健康」画成「爆仓」
+  const used = flowsDiskBytes();
   const LIMIT = 5 * 1024 * 1024;
   const pct = Math.min(100, Math.round(used / LIMIT * 100));
   host.innerHTML = '';
@@ -553,8 +647,8 @@ function renderStorageMeter(){
   bar.appendChild(fill);
   host.append(label, bar);
   host.title = pct >= 80
-    ? '本地存储接近上限：大块图片/模型已自动外置，若仍保存失败请先导出备份再删除旧工作流'
-    : '图片与模型已自动存到 IndexedDB，这里只统计未外置的残留部分';
+    ? '本地存储接近上限：图片/模型保存时自动外置到 IndexedDB，这里已经是外置后的占用。仍超限时先导出备份，再删除不用的工作流'
+    : '按写盘后的实际占用统计：大块图片/模型自动存进 IndexedDB，localStorage 里只留几十字节的存根';
   // 常驻显示：占用信息放在列表底部，没工作流时也要能看到容量余量
   host.classList.remove('hidden');
 }

@@ -260,8 +260,42 @@ const COUNT_KEYS = `(() => new Promise(res => {
     };
   }, BIG);
   check('存储条给出了用量', /内联素材/.test(r11.label) && /MB|KB/.test(r11.label), 'label=' + r11.label);
+  check('存储条按写盘口径统计（300KB 外置后只剩存根，不得显示成 300KB）', (() => {
+    const m = /内联素材 ([\d.]+) (KB|MB)/.exec(r11.label || '');
+    if(!m) return false;
+    const kb = m[2] === 'MB' ? parseFloat(m[1]) * 1024 : parseFloat(m[1]);
+    return kb < 50;
+  })(), 'label=' + r11.label);
   check('存储条始终可见', r11.hidden === false);
   check('列表项上标出了该工作流的占用', /KB|MB/.test(r11.badge || ''), 'badge=' + r11.badge);
+
+  console.log('\n=== 11b. 删除工作流的落盘（删除复活回归） ===');
+  const r11b = await page.evaluate(() => {
+    FLOWS.length = 0;
+    persistFlows();                       // flowsKnown 已被上一步的非空写入置真
+    return localStorage.getItem('hf_flows');
+  });
+  check(r11b === '[]', '删光工作流后空列表必须写下去（否则刷新复活）', JSON.stringify(r11b).slice(0, 40));
+  const r11c = await page.evaluate(() => {
+    // 防抹安全网仍要生效：模拟 hydrate 未落（未确认过流程状态），盘上有流程、内存为空
+    localStorage.setItem('hf_flows', JSON.stringify([{ id: 'keep', name: '保留', updated: Date.now(), nodes: [], links: [], vars: [] }]));
+    FLOWS.length = 0;
+    flowsKnown = false;
+    persistFlows();
+    const kept = JSON.parse(localStorage.getItem('hf_flows') || '[]').map(f => f.id).join(',');
+    // 恢复确认态：删光必须落盘
+    flowsKnown = true;
+    persistFlows();
+    return { kept, after: localStorage.getItem('hf_flows') };
+  });
+  check(r11c.kept === 'keep', '未确认过流程状态时空列表不得覆盖盘上数据（防抹安全网）', r11c.kept);
+  check(r11c.after === '[]', '确认状态后删光要落盘为空列表', r11c.after);
+  // 清空 FLOWS 后上面两次 persist 的 blobGC 会把大块素材当垃圾回收，
+  // 而第 12 节还要用这个 blob 演示「存根还原」——放回去保存一次保住引用
+  await page.evaluate(big => {
+    FLOWS.push({ id: 'f3', name: '容量', updated: Date.now(), vars: [], links: [], nodes: [{ id: 'n3', type: 'imageIn', x: 0, y: 0, data: { image: big } }] });
+    persistFlows();
+  }, BIG);
 
   console.log('\n=== 12. 打开时数据还没进内存，用之前能还原 ===');
   const r12 = await page.evaluate(big => new Promise(res => {

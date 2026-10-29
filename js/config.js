@@ -18,12 +18,15 @@ const STORE_BASE = RELAY_PARAM ? decodeURIComponent(RELAY_PARAM).replace(/\/$/, 
 const STORE_SYNC_OFF = /(^|[?&])nostore=1(&|$)/.test(location.search);
 
 // 合并两个工作流列表：按 id 归并，同 id 取 updated 更大的那份；两边都没有的保留
-function mergeFlowLists(a, b){
+// delSet（可选）：被删除流程的 id 集合（墓碑）。凡是进了墓碑的，合并时一律排除——
+// 否则多源 union 会把磁盘上还没清掉的旧副本并回来，造成「删了又复活」。
+function mergeFlowLists(a, b, delSet){
   const pa = Array.isArray(a) ? a : [];
   const pb = Array.isArray(b) ? b : [];
   const map = new Map();
   const put = f => {
     if(!f || !f.id) return;
+    if(delSet && delSet.has(f.id)) return;          // 墓碑：已删除的绝不再回来
     const old = map.get(f.id);
     if(!old || (Number(f.updated) || 0) > (Number(old.updated) || 0)) map.set(f.id, f);
   };
@@ -33,6 +36,10 @@ function mergeFlowLists(a, b){
 }
 function parseFlowList(str){
   try { const v = JSON.parse(str); return Array.isArray(v) ? v : null; } catch(e) { return null; }
+}
+// 删除墓碑是字符串 id 数组（不是流程对象），单独一套解析
+function parseIdList(str){
+  try { const v = JSON.parse(str); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : []; } catch(e){ return []; }
 }
 
 (function(){
@@ -76,11 +83,17 @@ function parseFlowList(str){
           if(k === 'hf_flows'){
             const disk = parseFlowList(data[k]);
             const mine = parseFlowList(localStorage.getItem('hf_flows'));
+            // 删除墓碑：本地 + 磁盘两边都看，合并去重 —— 这样「别的源删的」当前源也能收到，
+            // 当前源删的也不会因为磁盘上还有旧副本而被并回
+            // （2026-10-29 用户实测：删一个刷新又恢复，根因就是 union 把磁盘旧副本并了回来）
+            const delMine = parseIdList(localStorage.getItem('hf_flows_del'));
+            const delDisk = parseIdList(data['hf_flows_del']);
+            const del = new Set([...(delMine || []), ...(delDisk || [])]);
             let merged = null;
             if(disk && mine){
-              merged = mergeFlowLists(mine, disk);
+              merged = mergeFlowLists(mine, disk, del);
             }else if(disk && !mine){
-              merged = disk;
+              merged = (disk || []).filter(f => f && !del.has(f.id));
             }
             if(merged){
               const js = JSON.stringify(merged);
@@ -90,12 +103,23 @@ function parseFlowList(str){
                 // 合并结果回写磁盘，保证各源最终收敛到同一份
                 if(!STORE_SYNC_OFF) fetch(STORE_BASE + '/store/' + encodeURIComponent(k), { method:'POST', body:js, keepalive:true }).catch(() => {});
               }
+              // 墓碑集也回写：让各源最终收敛到同一份删除记录，别让已删的在某源死灰复燃
+              if(del.size){
+                const delJs = JSON.stringify(Array.from(del));
+                if(delJs !== localStorage.getItem('hf_flows_del')){
+                  rawSet.call(localStorage, 'hf_flows_del', delJs);
+                  if(!STORE_SYNC_OFF) fetch(STORE_BASE + '/store/hf_flows_del', { method:'POST', body:delJs, keepalive:true }).catch(() => {});
+                }
+              }
               // ⚠️ 关键：FLOWS 是在脚本加载时同步读 localStorage 的，
               // hydrate 是异步的 → 不刷新内存列表的话，界面仍然是空的，
               // 而且此后任何一次保存都会把「空列表」写回去，把磁盘上的流程抹掉。
               if(typeof FLOWS !== 'undefined' && Array.isArray(FLOWS)){
                 const before = FLOWS.length;
                 FLOWS = merged;
+                // 流程状态已确认：此后 persistFlows 的「空列表防抹」安全网不再生效，
+                // 用户删光工作流必须落盘，否则删除会在下次加载时复活
+                if(typeof markFlowsLoaded === 'function') markFlowsLoaded();
                 // 合并进来的流程里可能带着存根（大块数据在 IndexedDB），要解析回原文
                 if(typeof blobResolveFlowsAsync === 'function'){
                   blobResolveFlowsAsync(FLOWS).then(() => {
@@ -112,6 +136,8 @@ function parseFlowList(str){
             }
             return;
           }
+          // hf_flows_del 由上面的 hf_flows 分支统一读取 / 回填，这里不再单独处理
+          if(k === 'hf_flows_del') return;
           if(localStorage.getItem(k) == null){ rawSet.call(localStorage, k, data[k]); filled++; }
         }catch(e){}
       });

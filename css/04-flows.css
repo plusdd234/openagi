@@ -55,6 +55,11 @@
   .wf-side-name {
     font-size: 12px; color: #1f2328; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  .wf-side-rename {
+    width: 100%; min-width: 0; padding: 2px 6px; font-family: inherit; font-size: 12px; color: #1f2328;
+    background: #fff; border: 1px solid #d98a00; border-radius: 5px; outline: none;
+    box-shadow: 0 0 0 2px rgba(232,138,0,.18);
+  }
   .wf-side-sub { font: 10px var(--mono); color: #98a0aa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .wf-side-sub.hot { color: #c2564c; }
   .wf-side-more {
