@@ -24,10 +24,13 @@ function eq(a, b, label){
 
 function makeEl(id){
   const cls = new Set();
+  const children = [];
   return {
     id, innerHTML: '', textContent: '', value: '', checked: false, dataset: {},
     classList: { add(c){ cls.add(c); }, remove(c){ cls.delete(c); }, toggle(c, on){ on ? cls.add(c) : cls.delete(c); }, contains(c){ return cls.has(c); } },
-    querySelectorAll(){ return []; }, querySelector(){ return null; }, addEventListener(){}, focus(){}
+    querySelectorAll(){ return []; }, querySelector(){ return null; }, addEventListener(){}, focus(){},
+    appendChild(c){ children.push(c); }, remove(){},
+    getBoundingClientRect(){ return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }; }
   };
 }
 
@@ -75,7 +78,13 @@ function makeEnv(desk, opts){
     console, Date, Math, JSON, Object, Array, String, Number, Boolean, Promise, Set, Map, isNaN, isFinite,
     setTimeout: () => 0, clearTimeout: () => {},
     window: { openagiDesktop: desk || null },
-    document: { getElementById: id => (els[id] || (els[id] = makeEl(id))) },
+    document: {
+      getElementById: id => (els[id] || (els[id] = makeEl(id))),
+      addEventListener(){}, removeEventListener(){},
+      querySelectorAll(){ return []; },
+      createElement: tag => makeEl('<' + tag + '>'),
+      body: makeEl('body')
+    },
     $: id => (els[id] || (els[id] = makeEl(id))),
     mcEsc: s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])),
     confirm: msg => { log.confirms.push(String(msg)); return o.confirm !== false; },
@@ -319,6 +328,52 @@ function htmlOf(env){ return env.__els.libBody.innerHTML; }
     await env2.openLibrary('image');
     await env2.libOpenAsset('gone');
     ok(/打不开/.test(htmlOf(env2)), '打开失败要有提示（双击没反应会被当成卡死）', htmlOf(env2).slice(0, 160));
+  }
+
+  console.log('\n=== N. 点选 / 框选 / 拖到垃圾桶 ===');
+  {
+    const assets = [
+      { id: 's1', kind: 'image', name: 'a.png', size: MB, created: 3000, missing: false, ext: 'png' },
+      { id: 's2', kind: 'image', name: 'b.png', size: MB, created: 2000, missing: false, ext: 'png' },
+      { id: 's3', kind: 'image', name: 'c.png', size: MB, created: 1000, missing: false, ext: 'png' }
+    ];
+    const desk = makeDesk({ assets });
+    const env = makeEnv(desk);
+    await env.openLibrary('image');
+
+    // 卡片必须禁掉原生拖拽，否则拖到垃圾桶会变成「拖个图片文件」
+    ok(/draggable="false"/.test(htmlOf(env)), '卡片禁掉原生拖拽（浏览器默认拖 img 会劫持手势）');
+
+    // 点选：单点替换选中集
+    env.libSetSel(['s1']);
+    eq(stateOf(env).sel.size, 1, '点选一张只选中一张');
+    env.libToggleSel('s2', true);
+    eq(stateOf(env).sel.size, 2, 'Ctrl/复选框可以加选');
+    env.libToggleSel('s2', false);
+    eq(stateOf(env).sel.size, 1, '再点一次取消该项');
+
+    // 框选的范围选择：在可见顺序里从锚点到目标全选
+    env.libSetSel([]);
+    env.libSelectRange('s1', 's3');   // 默认按最新排序：s1, s2, s3
+    const ids = Array.from(stateOf(env).sel);
+    ok(ids.length === 3 && ids.indexOf('s1') >= 0 && ids.indexOf('s3') >= 0, '范围选择覆盖锚点到目标之间全部', ids.join(','));
+
+    // 拖到垃圾桶：复用 libRemoveSelected（引用警告 + 确认 + 移入回收站）
+    // 空选中时不能误删
+    env.libSetSel([]);
+    const before = desk.calls.filter(c => /^remove:/.test(c)).length;
+    env.libTrashDrop();
+    eq(desk.calls.filter(c => /^remove:/.test(c)).length, before, '没有选中项时拖入垃圾桶不会误删');
+
+    env.libSetSel(['s1', 's3']);
+    env.__log.confirms.length = 0;
+    env.libTrashDrop();
+    ok(env.__log.confirms.length > 0, '拖入垃圾桶仍然要确认（资产是用户产出，不能一松手就没）', env.__log.confirms.join(' | '));
+    await new Promise(r => setImmediate(r));
+    ok(desk.calls.some(c => /^remove:s1,s3/.test(c)), '确认后把拖拽的这批送去回收站', desk.calls.join(' | '));
+
+    // 垃圾桶不能画在 #libBody 里，否则 libPaint 每次重绘都会把它冲掉
+    ok(!/lib-trashcan/.test(htmlOf(env)), '垃圾桶不在 libBody 内（否则重绘时会被清掉）');
   }
 
   console.log('\n结果：' + pass + ' / ' + (pass + fail) + ' 通过');

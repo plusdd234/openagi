@@ -238,8 +238,237 @@ async function libEmptyTrash(){
 
 function libToggleSel(id, on){
   if(on) libState.sel.add(id); else libState.sel.delete(id);
-  const bar = $('libWin');
-  if(bar) libPaint();
+  libSyncSelectionUI();
+}
+
+/* 只更新选中态的 UI（卡片 .on、复选框、浮动选中条、垃圾桶），不重建 DOM。
+ * ⚠ 选中条千万不能放在 libBody 的流里：框选过程中「第一次选中 → 选中条插入 →
+ * 网格整体下移 40px」，卡片会在手底下跳走，框选直接废掉。所以它和垃圾桶一样
+ * 挂在窗口本体上，用绝对定位浮在底部。 */
+function libSyncSelectionUI(){
+  const box = $('libBody');
+  if(!box) return;
+  box.querySelectorAll('.lib-card').forEach(c => {
+    const on = libState.sel.has(c.dataset.libId);
+    if(c.classList.contains('on') !== on) c.classList.toggle('on', on);
+    const cb = c.querySelector('.lib-check input');
+    if(cb && cb.checked !== on) cb.checked = on;
+  });
+  const selN = libState.sel.size;
+  const bar = $('libSelBar');
+  if(bar){
+    bar.classList.toggle('show', selN > 0);
+    const cnt = bar.querySelector('.lib-selcount');
+    if(cnt) cnt.textContent = '已选 ' + selN + ' 个';
+  }
+  const tc = $('libTrash');
+  if(tc) tc.classList.toggle('show', selN > 0);
+}
+
+function libSetSel(ids){
+  libState.sel = new Set(ids);
+  libSyncSelectionUI();
+}
+
+/* Shift+点击：在「可见列表」里从锚点选到目标，和文件管理器一致 */
+function libSelectRange(anchorId, targetId){
+  const ids = libVisible().map(a => a.id);
+  const a = ids.indexOf(anchorId), b = ids.indexOf(targetId);
+  if(a < 0 || b < 0){ libSetSel([targetId]); return; }
+  const [s, e] = a < b ? [a, b] : [b, a];
+  libSetSel(ids.slice(s, e + 1));
+}
+
+/* ---------- 点选 / 框选 / 拖拽到垃圾桶 ---------- */
+let libGesture = null;
+let libLastAnchor = null;
+let libBodyBound = false;
+
+/* 右下角垃圾桶 + 浮动选中条：都常驻在窗口里（不在 #libBody 内，否则被 libPaint 重绘冲掉） */
+function libEnsureChrome(){
+  const win = $('libWin');
+  if(!win) return;
+  if(!$('libTrash')){
+    const tc = document.createElement('div');
+    tc.id = 'libTrash';
+    tc.className = 'lib-trashcan';
+    tc.setAttribute('title', '把选中的资产拖到这里删除（移入回收站）');
+    tc.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"/></svg>' +
+      '<span>拖到此处删除</span>';
+    win.appendChild(tc);
+  }
+  if(!$('libSelBar')){
+    const bar = document.createElement('div');
+    bar.id = 'libSelBar';
+    bar.className = 'lib-selbar';
+    bar.innerHTML = '<span class="lib-selcount">已选 0 个</span>' +
+      '<button type="button" class="btn sm" data-lib-sel-act="export">导出</button>' +
+      '<button type="button" class="btn sm danger" data-lib-sel-act="remove">删除</button>' +
+      '<button type="button" class="btn sm" data-lib-sel-act="clear">取消选择</button>';
+    bar.querySelectorAll('[data-lib-sel-act]').forEach(b => {
+      b.addEventListener('click', () => {
+        const a = b.dataset.libSelAct;
+        if(a === 'export') libExportSelected();
+        else if(a === 'remove') libRemoveSelected();
+        else { libState.sel.clear(); libSyncSelectionUI(); }
+      });
+    });
+    win.appendChild(bar);
+  }
+}
+
+function libOverTrash(e){
+  const tc = $('libTrash');
+  if(!tc) return false;
+  const r = tc.getBoundingClientRect();
+  return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+}
+
+function libCreateMarquee(){
+  const el = document.createElement('div');
+  el.className = 'lib-marquee';
+  document.body.appendChild(el);
+  libGesture.rectEl = el;
+}
+function libUpdateMarquee(e){
+  const g = libGesture, el = g.rectEl;
+  const x1 = Math.min(g.startX, e.clientX), y1 = Math.min(g.startY, e.clientY);
+  const x2 = Math.max(g.startX, e.clientX), y2 = Math.max(g.startY, e.clientY);
+  el.style.left = x1 + 'px'; el.style.top = y1 + 'px';
+  el.style.width = (x2 - x1) + 'px'; el.style.height = (y2 - y1) + 'px';
+}
+function libApplyMarquee(){
+  const g = libGesture, el = g.rectEl;
+  const r = el.getBoundingClientRect();
+  const ids = [];
+  document.querySelectorAll('#libBody .lib-card').forEach(c => {
+    const b = c.getBoundingClientRect();
+    const ix = Math.min(r.right, b.right) - Math.max(r.left, b.left);
+    const iy = Math.min(r.bottom, b.bottom) - Math.max(r.top, b.top);
+    if(ix > 0 && iy > 0) ids.push(c.dataset.libId);
+  });
+  if(g.additive) libSetSel(Array.from(new Set([...g.base, ...ids])));
+  else libSetSel(ids);
+}
+
+function libBeginTrashDrag(e){
+  /* 自愈：上一次手势若因 pointercancel/失焦漏了清理，这里先把残骸扫掉，
+   * 不能让「N 项 · 拖到垃圾桶删除」的幽灵在页面上越积越多 */
+  document.querySelectorAll('.lib-drag-ghost').forEach(el => el.remove());
+  document.querySelectorAll('#libBody .lib-card.dragging').forEach(c => c.classList.remove('dragging'));
+  const tc = $('libTrash');
+  if(tc) tc.classList.remove('hot');
+  document.querySelectorAll('#libBody .lib-card.on').forEach(c => c.classList.add('dragging'));
+  const ghost = document.createElement('div');
+  ghost.className = 'lib-drag-ghost';
+  ghost.innerHTML = '<span class="lib-drag-n">' + libState.sel.size + '</span><span>项 · 拖到垃圾桶删除</span>';
+  document.body.appendChild(ghost);
+  libGesture.ghost = ghost;
+  libMoveTrashDrag(e);
+}
+function libMoveTrashDrag(e){
+  const g = libGesture;
+  if(!g || !g.ghost) return;
+  g.ghost.style.left = (e.clientX + 14) + 'px';
+  g.ghost.style.top = (e.clientY + 14) + 'px';
+  const tc = $('libTrash');
+  if(tc) tc.classList.toggle('hot', libOverTrash(e));
+}
+
+/* 唯一的清理出口：pointerup / pointercancel / 窗口失焦 / Esc 全走这里。
+ * 幂等——重复调用无害。漏清理的后果就是用户截图里那样：幽灵和红色垃圾桶永远留在页面上。 */
+function libGestureAbort(){
+  window.removeEventListener('pointermove', libOnPointerMove);
+  window.removeEventListener('pointerup', libOnPointerUp);
+  window.removeEventListener('pointercancel', libOnPointerCancel);
+  window.removeEventListener('blur', libGestureAbort);
+  const body = $('libBody');
+  if(body) body.classList.remove('lib-selecting');
+  const g = libGesture;
+  libGesture = null;
+  if(!g) return;
+  if(g.rectEl) g.rectEl.remove();
+  if(g.ghost) g.ghost.remove();
+  document.querySelectorAll('#libBody .lib-card.dragging').forEach(c => c.classList.remove('dragging'));
+  const tc = $('libTrash');
+  if(tc) tc.classList.remove('hot');
+}
+
+function libOnPointerUp(e){
+  const g = libGesture;
+  const drop = !!(g && g.mode === 'trash' && libOverTrash(e));
+  libGestureAbort();
+  if(drop) libTrashDrop();
+}
+function libOnPointerCancel(){ libGestureAbort(); }
+
+/* 垃圾桶松手落点：复用 libRemoveSelected（引用警告 + 确认 + 移入回收站） */
+function libTrashDrop(){
+  if(!libState.sel.size) return;
+  libRemoveSelected();
+}
+
+function libOnPointerDown(e){
+  if(e.button !== 0) return;
+  const body = $('libBody');
+  if(!body || !body.contains(e.target)) return;
+  // 这些区域有各自的交互，不能劫持
+  if(e.target.closest('.lib-check')) return;
+  if(e.target.closest('input, button, a, .lib-bar, .lib-head, .lib-trash, .lib-selbar')) return;
+  const card = e.target.closest('.lib-card');
+  const grid = e.target.closest('.lib-grid');
+  if(!card && !grid) return;
+  const startX = e.clientX, startY = e.clientY;
+  if(card){
+    const id = card.dataset.libId;
+    const additive = e.ctrlKey || e.metaKey;
+    const range = e.shiftKey;
+    if(range && libLastAnchor) libSelectRange(libLastAnchor, id);
+    else if(additive) libToggleSel(id, !libState.sel.has(id));
+    else if(!libState.sel.has(id)) libSetSel([id]);
+    libLastAnchor = id;
+    libGesture = { mode: 'maybe-trash', id, startX, startY };
+  } else {
+    const additive = e.ctrlKey || e.metaKey || e.shiftKey;
+    if(!additive) libSetSel([]);
+    libGesture = { mode: 'marquee', startX, startY, additive, base: new Set(libState.sel) };
+    e.preventDefault();
+  }
+  body.classList.add('lib-selecting');
+  window.addEventListener('pointermove', libOnPointerMove);
+  window.addEventListener('pointerup', libOnPointerUp);
+  window.addEventListener('pointercancel', libOnPointerCancel);
+  window.addEventListener('blur', libGestureAbort);
+}
+
+function libOnPointerMove(e){
+  const g = libGesture;
+  if(!g) return;
+  const dist = Math.hypot(e.clientX - g.startX, e.clientY - g.startY);
+  if(g.mode === 'maybe-trash'){
+    if(dist > 6){ g.mode = 'trash'; libBeginTrashDrag(e); }
+    return;
+  }
+  if(g.mode === 'trash'){ libMoveTrashDrag(e); return; }
+  // marquee
+  if(!g.rectEl) libCreateMarquee();
+  libUpdateMarquee(e);
+  libApplyMarquee();
+}
+
+function libBindGestures(){
+  const body = $('libBody');
+  if(!body || libBodyBound) return;
+  body.addEventListener('pointerdown', libOnPointerDown);
+  // 原生拖拽（选中文字 / 图片）会打断指针手势，干脆禁掉
+  body.addEventListener('dragstart', e => e.preventDefault());
+  // Esc 随时中止进行中的框选/拖拽（和 blur、pointercancel 一样走统一清理出口）
+  document.addEventListener('keydown', e => {
+    if(e.key === 'Escape' && libGesture) libGestureAbort();
+  });
+  libBodyBound = true;
 }
 
 /* ---------- 缩略图懒加载 ----------
@@ -275,7 +504,7 @@ function libQueue(fn){
 
 async function libLoadThumb(id, holder){
   if(!id || !holder) return;
-  const put = url => { holder.innerHTML = '<img alt="" src="' + url + '">'; };
+  const put = url => { holder.innerHTML = '<img alt="" src="' + url + '" draggable="false">'; };
   if(libThumbCache.has(id)){ put(libThumbCache.get(id)); return; }
   const d = libDesk();
   if(!d) return;
@@ -385,7 +614,7 @@ function libCard(a){
     ? '<span class="lib-ref" title="' + libEsc(where) + '">' + refs + ' 处在用</span>'
     : '';
 
-  return '<div class="lib-card' + sel + miss + '" data-lib-id="' + libEsc(a.id) + '" title="双击打开">' +
+  return '<div class="lib-card' + sel + miss + '" data-lib-id="' + libEsc(a.id) + '" title="双击打开" draggable="false">' +
     '<label class="lib-check"><input type="checkbox" data-lib-sel="' + libEsc(a.id) + '"' +
       (on ? ' checked' : '') + '></label>' +
     thumb +
@@ -407,7 +636,8 @@ function libPaint(){
   const st = libState.stat || {};
   const kindStat = (st.byKind && st.byKind[libState.kind]) || { count: 0, bytes: 0 };
   const list = libVisible();
-  const selN = libState.sel.size;
+  /* 选中条已改为挂在窗口上的浮动条（libEnsureChrome），不进 libBody 的流——
+   * 否则框选时「第一次选中 → 选中条插入 → 网格下移」，卡片会在手底下跳走 */
 
   const chips = [
     ['new', '最新'], ['big', '最大'], ['name', '名称']
@@ -441,14 +671,7 @@ function libPaint(){
         '<button type="button" class="btn sm" data-lib-act="reconcile" title="磁盘是真相：补回外部放进去的文件、清掉已消失的记录">核对磁盘</button>' +
         '<button type="button" class="btn sm" data-lib-act="empty">清空回收站</button>' +
       '</div>' +
-    '</div>' +
-    (selN
-      ? '<div class="lib-selbar">已选 ' + selN + ' 个' +
-          '<button type="button" class="btn sm" data-lib-act="export">导出</button>' +
-          '<button type="button" class="btn sm danger" data-lib-act="remove">删除</button>' +
-          '<button type="button" class="btn sm" data-lib-act="clearsel">取消选择</button>' +
-        '</div>'
-      : '');
+    '</div>';
 
   const body = list.length
     ? '<div class="lib-grid">' + list.map(libCard).join('') + '</div>'
@@ -464,6 +687,8 @@ function libPaint(){
     b.addEventListener('click', () => { libState.sort = b.dataset.libSort; libPaint(); });
   });
   box.querySelectorAll('[data-lib-sel]').forEach(inp => {
+    // 复选框自己处理选中，别让卡片的 pointerdown 再触发一次
+    inp.addEventListener('pointerdown', e => e.stopPropagation());
     inp.addEventListener('change', () => libToggleSel(inp.dataset.libSel, inp.checked));
   });
   // 双击打开：3D 进查看器、图片进编辑器
@@ -496,6 +721,9 @@ function libPaint(){
     if(libObserver) libObserver.observe(el);
     else libLoadThumb(el.dataset.libThumb, el);
   });
+
+  // 重绘后同步浮动选中条 / 垃圾桶 / 卡片选中态
+  libSyncSelectionUI();
 }
 
 /* 打开 app：kind 决定是图库还是模型库。
@@ -515,6 +743,8 @@ async function openLibrary(kind){
   }else{
     win.classList.remove('hidden');
   }
+  libEnsureChrome();
+  libBindGestures();
   libPaint();
   await libRefresh(true);
   return true;
