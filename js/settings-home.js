@@ -20,6 +20,7 @@
     image: '<rect x="3.5" y="4.5" width="17" height="14" rx="2.5"/><circle cx="8.6" cy="9.6" r="1.4"/><path d="m4.5 16.5 4.6-4 3.4 2.7 3-2.2 4 3.5"/>',
     search: '<circle cx="12" cy="12" r="8.4"/><path d="M3.6 12h16.8"/>',
     relay: '<path d="M4 8h11l-3-3M20 16H9l3 3"/>',
+    webop: '<rect x="3" y="4.5" width="18" height="14" rx="2.5"/><path d="M3 8.5h18"/><circle cx="5.8" cy="6.5" r=".2"/><circle cx="8" cy="6.5" r=".2"/>',
     account: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
     assets: '<ellipse cx="12" cy="6" rx="8" ry="3.2"/><path d="M4 6v12c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2V6"/><path d="M4 12c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2"/>'
   };
@@ -63,21 +64,8 @@
   }
 
   function cardImage() {
-    var eng = val('genEngine') || 'openai';
-    if (eng === 'tripo') {
-      var tk = val('tripoKey');
-      return {
-        key: 'image', name: '图像生成', ico: 'image', state: tk ? 'ok' : 'off',
-        value: tk ? 'Tripo API · ' + esc(hostOf('' + (val('tripoVersion') || ''))) : 'Tripo 引擎，还没填 API Key'
-      };
-    }
-    if (eng === 'tripo-web') {
-      var ready = (typeof tripoWebReady !== 'undefined') && tripoWebReady;
-      return {
-        key: 'image', name: '图像生成', ico: 'image', state: ready ? 'ok' : 'warn',
-        value: ready ? 'Tripo 网页账号 · 已连接' : 'Tripo 网页账号 · 未登录'
-      };
-    }
+    /* Tripo 已从生图引擎移除（2026-10-29）：引擎只剩在线接口与本地 ComfyUI，
+       Tripo 网页账号在「网页操作」卡片上看状态。 */
     if (isLocalImg()) {
       var comfyOk = !!(typeof rtHealth === 'object' && rtHealth && rtHealth.comfy && rtHealth.comfy.ok);
       return {
@@ -125,6 +113,28 @@
     };
   }
 
+  function cardWebop() {
+    /* 状态只看连接真值（tripoWebReady 由状态探测回写），不再看引擎选择 */
+    var ready = (typeof tripoWebReady !== 'undefined') && tripoWebReady;
+    var hasKey = !!val('tripoKey');
+    if (ready) {
+      return {
+        key: 'webop', name: '网页操作', ico: 'webop', state: 'ok',
+        value: 'Tripo 网页助手 · 已连接，节点可用'
+      };
+    }
+    if (hasKey) {
+      return {
+        key: 'webop', name: '网页操作', ico: 'webop', state: 'warn',
+        value: 'Tripo 网页助手未连接 · 3D 走 API Key 兜底'
+      };
+    }
+    return {
+      key: 'webop', name: '网页操作', ico: 'webop', state: 'off',
+      value: 'Tripo 网页助手未连接 · 去「网页操作」登录后节点可用'
+    };
+  }
+
   function cardAccount() {
     var sess = (typeof gwSession !== 'undefined') ? gwSession : null;
     var who = sess && (sess.user && (sess.user.email || sess.user.name) || sess.email);
@@ -143,7 +153,7 @@
   }
 
   function cards() {
-    return [cardLlm(), cardImage(), cardSearch(), cardRelay(), cardAccount(), cardAssets()];
+    return [cardLlm(), cardImage(), cardWebop(), cardSearch(), cardRelay(), cardAccount(), cardAssets()];
   }
 
   /* ---------------- 渲染 ---------------- */

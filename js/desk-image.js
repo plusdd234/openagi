@@ -233,22 +233,8 @@
           : '本地生图引擎（ComfyUI）没在运行：打开桌面的「本地生图」启动引擎；或在设置 → 图像里把生图切回在线'
       };
     }
-    if(safe(() => isTripoWeb(), false)){
-      const ready = !!safe(() => tripoWebReady, false);
-      return {
-        kind: 'tripoWeb', label: 'Tripo 网页账号', ready: ready, where: 'image',
-        hint: ready ? ''
-          : 'Tripo 网页助手未连接：先启动项目（start.bat），再在设置 → 图像里点「打开登录页」'
-      };
-    }
-    if(safe(() => isTripo(), false)){
-      const key = safe(() => $('tripoKey').value.trim(), '');
-      const model = safe(() => $('imgModel').value.trim(), '') || 'seedream_v5';
-      return {
-        kind: 'tripo', label: 'Tripo · ' + model, ready: !!key, where: 'image',
-        hint: key ? '' : '还没填 Tripo API Key：设置 → 图像 → Tripo'
-      };
-    }
+    /* Tripo 不再参与对话生图（2026-10-29）：网页生图只在「Tripo 网页生图」
+       专用节点上，由 设置 → 网页操作 的连接状态管理。 */
     const base = safe(() => ($('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim()), '');
     const model = safe(() => ($('imgModel').value.trim() || $('llmModel').value.trim()), '');
     const key = safe(() => ($('imgKey').value.trim() || $('llmKey').value.trim()), '');

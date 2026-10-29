@@ -321,10 +321,13 @@ function switchTab(name){
   document.querySelectorAll('.tabpane').forEach(p => p.classList.toggle('hidden', p.dataset.pane !== name));
   // 资产占用随导入/删除随时变，切到这一页时重算一次，静态写死必然过期
   if(name === 'assets' && typeof renderAssetsPane === 'function') renderAssetsPane();
+  // 网页操作页：助手地址是运行期真值（桌面端 ?tripo= 会改端口），每次进来都重填并探测一次
+  if(name === 'webop' && typeof fillWebopPane === 'function') fillWebopPane();
 }
 function openSettings(tab){
   if(tab) switchTab(tab);
   if(tab === 'image') setTimeout(() => refreshTripoWebStatus(true), 200);
+  if(tab === 'webop') setTimeout(() => { if(typeof fillWebopPane === 'function') fillWebopPane(); }, 200);
   if(typeof renderGatewayPane === 'function') renderGatewayPane();
   // 状态卡要反映「刚打开这一刻」的真实情况：上次关窗后用户可能又去引擎里装了模型
   if(window.settingsHome) settingsHome.refresh();

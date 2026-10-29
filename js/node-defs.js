@@ -265,8 +265,8 @@ registerNode({
 
 registerNode({
   type:'tripoImg', title:'Tripo 网页生图', dot:'gen', group:'图像任务',
-  desc:'通过 Tripo 网页账号文生图 / 图生图，最多可传 3 张参考图',
-  execIn:true, execOut:['exec'],
+  desc:'通过 Tripo 网页账号文生图 / 图生图，最多可传 3 张参考图。异步节点：开始出口在任务启动时触发，完成出口在拿到图片后才触发',
+  asyncExec:true, execIn:true, execOut:['exec','done'],
   inputs:['prompt','image','image2','image3'], outputs:['image','text'],
   params:[
     { key:'prompt', label:'prompt', ctl:'textarea', ph:'提示词（未连线时使用）' },
@@ -303,14 +303,21 @@ registerNode({
 
 registerNode({
   type:'model3d', title:'3D 生成', dot:'model', group:'3D 任务',
-  desc:'图生 3D 模型（Tripo API 或网页账号）', execIn:true, execOut:['exec'],
+  desc:'图生 3D 模型（Tripo API 或网页账号）。异步节点：开始出口在任务启动时触发，完成出口在拿到模型后才触发',
+  asyncExec:true, execIn:true, execOut:['exec','done'],
   inputs:['image'], outputs:['model'],
   params:[ { tip:'使用设置中的 Tripo 版本，输出 GLB 模型' } ],
   seed: () => ({ data:{}, params:null }),
   run: async ({ n, input }) => {
     const img = await input('image');
     if(!img) throw new Error('缺少图像输入');
-    if(isTripoWeb()){
+    /* 取用顺序（2026-10-29 解耦后）：网页助手已连接 → 走网页账号；
+       未连接（或状态过期）→ 现场再探一次，仍不通 → 走 API Key 兜底。 */
+    let web = isTripoWeb();
+    if(!web && typeof refreshTripoWebStatus === 'function'){
+      try{ web = !!(await refreshTripoWebStatus(true)); }catch(_){}
+    }
+    if(web){
       n.out.model = (await wfTripoWebModel(img, { timeoutSec: 300, signal: runSignal() })).url;
     } else {
       n.out.model = await wf3D(img);
@@ -382,8 +389,8 @@ registerNode({
 
 registerNode({
   type:'tripoModel', title:'Tripo 网页生成模型', dot:'model', group:'3D 任务',
-  desc:'通过 Tripo 网页账号图生 3D 模型（单张参考图），可选智能网格 P2.0、拓扑 / 面数、数量、导出格式',
-  execIn:true, execOut:['exec'],
+  desc:'通过 Tripo 网页账号图生 3D 模型（单张参考图），可选智能网格 P2.0、拓扑 / 面数、数量、导出格式。异步节点：完成出口在拿到模型后才触发',
+  asyncExec:true, execIn:true, execOut:['exec','done'],
   inputs:['image'], outputs:['model','text'],
   params:[
     { tip:'通过 Tripo 网页账号生成 3D 模型；参考图引脚接图像（未连线需页面里已上传）' },
@@ -413,8 +420,8 @@ registerNode({
 
 registerNode({
   type:'tripoModelMulti', title:'Tripo 网页多视图生成', dot:'model', group:'3D 任务',
-  desc:'通过 Tripo 网页账号多视图生 3D 模型（前 / 左 / 右 / 后 四张参考图），可选智能网格 P2.0、拓扑 / 面数、数量、导出格式',
-  execIn:true, execOut:['exec'],
+  desc:'通过 Tripo 网页账号多视图生 3D 模型（前 / 左 / 右 / 后 四张参考图），可选智能网格 P2.0、拓扑 / 面数、数量、导出格式。异步节点：完成出口在拿到模型后才触发',
+  asyncExec:true, execIn:true, execOut:['exec','done'],
   inputs:['front','left','right','back'], outputs:['model','text'],
   params:[
     { tip:'前 / 左 / 右 / 后 四个引脚各接一张参考图（至少接一个）；页面会自动切到多视图上传模式' },

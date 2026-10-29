@@ -95,6 +95,7 @@ function registerNode(d){
     execIn: !!d.execIn,
     execOut: (d.execOut || []).slice(),
     execOutFrom: d.execOutFrom || '',
+    asyncExec: !!d.asyncExec,   // 异步节点：exec=开始（任务启动触发）、done=完成（拿到结果触发）
     pure: !!d.pure,
     meta: capMetaOf(d.type, d.meta)
   };
@@ -174,11 +175,13 @@ function pinMetaOf(n, key, vars){
   // 1) 执行引脚（声明在 execIn / execOut / execOutFrom 上）
   if(key === 'exec'){
     const isIn = !!d.execIn, isOut = (d.execOut || []).indexOf('exec') >= 0;
-    if(isIn || isOut) return { key, label:'执行', type:'exec', dir: isIn && isOut ? 'both' : (isIn ? 'in' : 'out') };
+    if(isIn || isOut) return { key, label: d.asyncExec ? '开始' : '执行', type:'exec', dir: isIn && isOut ? 'both' : (isIn ? 'in' : 'out') };
     return null;
   }
   if((d.execOut || []).indexOf(key) >= 0){
-    return { key, label: key === 'true' ? '真' : key === 'false' ? '假' : key, type:'exec', dir:'out' };
+    const lbl = key === 'true' ? '真' : key === 'false' ? '假'
+      : key === 'done' ? '完成' : key;
+    return { key, label: lbl, type:'exec', dir:'out' };
   }
   if(d.execOutFrom){
     const hit = (((n.data || {})[d.execOutFrom]) || []).find(b => b.id === key);

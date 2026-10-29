@@ -605,14 +605,19 @@ function migrateLegacyCondition(flow){
 function migrateExecLinks(flow){
   if(!flow || !Array.isArray(flow.links) || !Array.isArray(flow.nodes)) return 0;
   const before = flow.links.length;
+  /* 异步节点（asyncExec）引入「开始 / 完成」双出口后，老流程挂在 exec 上的
+     下游线语义是「完成后触发」→ 统一改接到 done 出口，行为逐字节一致；
+     exec 出口从此表示「任务启动时触发」。改接计数即返回值。 */
+  let rewired = 0;
   flow.links = flow.links.filter(l => {
     const src = flow.nodes.find(n => n.id === l.from.node);
     if(!src) return false;
     const d = NODE_DEFS[src.type];
     if(!d) return false;
+    if(d.asyncExec && l.from.key === 'exec'){ l.from.key = 'done'; rewired++; return true; }
     return !(l.from.key === 'exec' && !(d.execOut && d.execOut.length));
   });
-  return before - flow.links.length;
+  return before - flow.links.length + rewired;
 }
 
 function newNode(type, x, y){
@@ -1262,7 +1267,8 @@ function nodeEl(n){
   if((d.execOut && d.execOut.length) || execOutDyn.length){
     const outWrap = document.createElement('div');
     outWrap.className = 'exec-out';
-    (d.execOut || []).forEach(k => outWrap.appendChild(makeExecPort(k, 'out', k === 'true' ? '真' : k === 'false' ? '假' : '执行')));
+    (d.execOut || []).forEach(k => outWrap.appendChild(makeExecPort(k, 'out',
+      k === 'true' ? '真' : k === 'false' ? '假' : k === 'done' ? '完成' : (d.asyncExec && k === 'exec') ? '开始' : '执行')));
     execOutDyn.forEach(p => outWrap.appendChild(makeExecPort(p.id, 'out', p.name || '出口')));
     exec.appendChild(outWrap);
   }

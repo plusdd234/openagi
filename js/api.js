@@ -22,7 +22,14 @@ async function tripoWebFetch(pathname, opts, timeoutMs){
   }
 }
 
+let _tripoProbeAt = 0;
 async function refreshTripoWebStatus(silent){
+  /* 静默探测 30 秒节流：isTripoWeb() 以连接状态为准后，开机/切页/状态胶囊
+     都会来探一次，桥不在时每次都是 6 秒超时 × N 次调用太浪费。
+     手动点「检测状态」传 silent=false，永远实时。 */
+  const now = Date.now();
+  if(silent && now - _tripoProbeAt < 30000) return tripoWebReady;
+  _tripoProbeAt = now;
   const el = $('tripoWebState');
   if(!silent) el.textContent = '检测中…';
   try{
@@ -119,20 +126,13 @@ function updateStatusChips(){
       ? `语言模型：${llm} · ${llmLocal ? '本地推理（Ollama）' : (activePreset || base)}`
       : '未配置：需要 API Key、接口地址与模型');
 
-  const tripo = isTripo();
-  const tripoWeb = isTripoWeb();
-  const tKey = $('tripoKey').value.trim();
-  const tKeyOk = !!tKey && !tripoKeyLooksWrong(tKey);
-  const rawImg = $('imgModel').value.trim();
-  /* 图像 chip 按真实来源分三种说法：
+  /* 图像 chip 按真实来源分两种说法：
    *   本地生成 → 显示引擎状态（引擎没跑而出图必然失败，这是最常见的坑）
-   *   Tripo 网页 / 云端 → 沿用原逻辑
-   * 之前这里显示的是 llm 模型名（qwen3-vl 之类），看起来像「图像也是它生成的」，
-   * 实际上本地生图走的是 ComfyUI 的 checkpoint，两者毫无关系。 */
-  if(tripoWeb){
-    setChip('stIMG', tripoWebReady, 'Tripo 网页账号',
-      tripoWebReady ? '图像：Tripo 网页账号 · 已连接生图页' : '未连接：先启动项目（start.bat），再打开登录页');
-  } else if((typeof imgMode === 'function') && imgMode() === 'local'){
+   *   云端 → 接口与模型
+   * Tripo 不再参与通用生图（2026-10-29 解耦），网页生图只存在于专门的
+   * tripoImg 节点上，由「网页操作」页的连接状态管理，不占这里的 chip。 */
+  const webReady = isTripoWeb();
+  if((typeof imgMode === 'function') && imgMode() === 'local'){
     const c = (typeof mcComfy !== 'undefined' && mcComfy && mcComfy.checked) ? mcComfy : null;
     const running = !!(c && c.running);
     const ckpt = (typeof comfyCkptChoice === 'function') ? comfyCkptChoice() : '';
@@ -142,19 +142,26 @@ function updateStatusChips(){
         : '图像已切到本地生成，但 ComfyUI 没在跑——打开「本地生图」启动引擎，否则出图会失败');
     if(!running) refreshStatusEngine();
   } else {
-    const imgModel = rawImg || (tripo ? '' : llm);
+    const imgModel = $('imgModel').value.trim() || llm;
     const imgBase = $('imgBaseUrl').value.trim() || base;
-    const imgKey = tripo ? (tKeyOk ? tKey : '') : ($('imgKey').value.trim() || key);
-    const imgOk = !!(imgKey && imgModel && (tripo || imgBase));
-    const imgSource = tripo ? 'Tripo' : (activeImgPreset === IMG_FOLLOW ? '复用分析接口' : activeImgPreset);
+    const imgKey = $('imgKey').value.trim() || key;
+    const imgOk = !!(imgKey && imgModel && imgBase);
+    const imgSource = activeImgPreset === IMG_FOLLOW ? '复用分析接口' : activeImgPreset;
     setChip('stIMG', imgOk, '云端 · ' + (imgModel || '未配置'),
       imgOk ? `图像模型：${imgModel} · ${imgSource}` : '未配置：需要接口 Key 与图像模型');
   }
 
+  /* 3D chip：网页助手连接优先，API Key 兜底（与「3D 生成」节点的取用顺序一致） */
+  const tKey = $('tripoKey').value.trim();
+  const tKeyOk = !!tKey && !tripoKeyLooksWrong(tKey);
   const tier = TRIPO_TIER[$('tripoVersion').value] || 'H3.1';
-  const threeOk = tripo && tKeyOk;
-  setChip('st3D', threeOk, tripo ? (threeOk ? tier : (tKey ? 'Key 无效' : '缺 Key')) : '未启用',
-    threeOk ? `3D 模型：Tripo ${tier}` : '未配置：切换到 Tripo，并填入 platform.tripo3d.ai 生成的 API Key（不是账号密码）');
+  if(webReady){
+    setChip('st3D', true, 'Tripo 网页助手', `3D 模型：网页账号已连接（版本 ${tier}）· 未连接时自动改走 API Key`);
+  } else if(tKeyOk){
+    setChip('st3D', true, 'Tripo API · ' + tier, `3D 模型：Tripo API · ${tier} · 网页助手未连接，可在 设置 → 网页操作 登录`);
+  } else {
+    setChip('st3D', false, '未启用', '3D 模型：在 设置 → 网页操作 里登录 Tripo，或填入 platform.tripo3d.ai 生成的 API Key（不是账号密码）');
+  }
 
   refreshAssetChip();
 }
@@ -204,21 +211,19 @@ function refreshStatusEngine(){
   }).catch(() => {});
 }
 
+// 网页操作页每次展示时调用：填当前生效的助手地址（桌面端 ?tripo= 可能改端口）并探测状态
+function fillWebopPane(){
+  const addr = $('webopBridgeAddr');
+  if(addr) addr.textContent = TRIPO_WEB_BASE;
+  refreshTripoWebStatus(true);
+}
+
 // 按引擎切换可见配置
 function syncEngineUI(){
-  const tripo = isTripo();
-  const tripoWeb = isTripoWeb();
-  $('tripoBox').classList.toggle('hidden', !tripo);
-  $('tripoWebBox').classList.toggle('hidden', !tripoWeb);
-  $('openaiMain').classList.toggle('hidden', tripo || tripoWeb);
-  $('openaiAdv').classList.toggle('hidden', tripo || tripoWeb);
-  $('tripoAdv').classList.toggle('hidden', !tripo);
-  $('btnGenerate3D').classList.toggle('hidden', !tripo);
-  $('imgModelBox').classList.toggle('hidden', tripoWeb);
-  if(tripo && !TRIPO_IMAGE_MODELS.includes($('imgModel').value.trim())){
-    $('imgModel').value = 'seedream_v5';
-  }
-  if(tripoWeb) refreshTripoWebStatus(true);
+  /* Tripo 已从生图引擎中移除（2026-10-29）：网页账号在「网页操作」页独立管理，
+     isTripoWeb() 以连接状态为准，与引擎选择无关。引擎只剩 OpenAI 兼容一项，
+     这里只负责探一次网页助手状态（isTripoWeb 的真值来源）。 */
+  refreshTripoWebStatus(true);
   renderAllModelTabs();
   updateModelLabels();
 }

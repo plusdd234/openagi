@@ -1002,35 +1002,9 @@ async function wfImage(prompt, image, opts){
     if(!src) throw new Error('ComfyUI 没有返回图片');
     return src;
   }
-  if(isTripoWeb()){
-    const r = await wfTripoWebImage(prompt, image, {
-      timeoutSec: Math.max(30, Number(o.timeoutSec) || 240),
-      signal: sig
-    });
-    return r.url;
-  }
-  if(isTripo()){
-    const model = $('imgModel').value.trim() || 'seedream_v5';
-    let task;
-    if(image){
-      const token = await tripoUpload(image);
-      task = await tripoCall('/generation/image-to-image', {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ model, input:token, prompt, size:'2K', output_format:'png' })
-      });
-    } else {
-      task = await tripoCall('/generation/text-to-image', {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ model, prompt, size:'2K', output_format:'png', watermark:false })
-      });
-    }
-    const done = await tripoPoll(task.task_id);
-    const src = done.output && done.output.generated_image_url;
-    if(!src) throw new Error('任务完成但未返回图片地址');
-    return src;
-  }
+  /* Tripo 不再作为通用生图引擎（2026-10-29）：网页生图只存在于
+     「Tripo 网页生图」专用节点（tripoImg，支持多参考图）上，
+     由「网页操作」页的连接状态管理，与这里的引擎路由无关。 */
 
   const base = ($('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim()).replace(/\/$/, '');
   const model = $('imgModel').value.trim() || $('llmModel').value.trim();
@@ -1347,7 +1321,9 @@ async function renderSplit(img, w, h, geom, output, feather){
 }
 
 async function wf3D(image){
-  if(!isTripo()) throw new Error('3D 节点需要 Tripo 引擎');
+  /* Tripo 与生图引擎解耦后 isTripo() 恒为 false：API 兜底的门槛改为「有没有 Key」。
+     到这里说明网页助手也没连上（model3d 节点已先探过一轮），提示要指向新入口。 */
+  if(!$('tripoKey').value.trim()) throw new Error('3D 生成需要 Tripo：在 设置 → 网页操作 里登录网页账号，或填入 API Key');
   if(!image) throw new Error('缺少图像输入');
   const token = await tripoUpload(image);
   const task = await tripoCall('/generation/image-to-model', {
@@ -1391,6 +1367,7 @@ async function runFlow(){
   const cache = new Map();
   const visiting = new Set();
   const activated = new Set();     // 本次实际被求值的节点，用于提示「未接入执行线」
+  const startFired = new Set();    // 异步节点「开始」出口已触发过的节点（每节点每次运行只触发一次）
 
   /* ---- 运行级采集（P3）：这一层是「重放」和「成本账本」的唯一数据来源 ---- */
   const runId = 'run' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
@@ -1526,12 +1503,12 @@ async function runFlow(){
     renderLinks();
   };
 
-  async function resolveInput(n, key, viaLinkId){
+  async function resolveInput(n, key, viaLinkId, visited){
     const l = dataLinks.find(x => x.to.node === n.id && x.to.key === key);
     if(!l) return undefined;
     const src = byId[l.from.node];
     if(!src) return undefined;
-    const out = await evalNode(src, l.id);
+    const out = await evalNode(src, l.id, visited);
     highlight(n.id, viaLinkId);
     const v = out ? out[l.from.key] : undefined;
     /* 记「**解析后**」的值而不是流程里的原始参数：
@@ -1553,12 +1530,12 @@ async function runFlow(){
     return v;
   }
 
-  async function evalNode(n, viaLinkId){
+  async function evalNode(n, viaLinkId, visited){
     if(cache.has(n.id)) return cache.get(n.id);
     if(visiting.has(n.id)) throw new Error('检测到循环数据连接，请断开回路');
     visiting.add(n.id);
     try {
-      const out = await executeNode(n, viaLinkId);
+      const out = await executeNode(n, viaLinkId, visited);
       cache.set(n.id, out);
       activated.add(n.id);
       return out;
@@ -1567,13 +1544,13 @@ async function runFlow(){
     }
   }
 
-  async function executeNode(n, viaLinkId){
+  async function executeNode(n, viaLinkId, visited){
     if(isStopped()) throw stopError();      // 停止后不再启动新节点
     highlight(n.id, viaLinkId);
     setStatus(n, '运行中', 'running');
     const nodeStarted = Date.now();
     bpLog('▶ ' + bpNodeLabel(n) + ' 开始');
-    const input = key => resolveInput(n, key, viaLinkId);
+    const input = key => resolveInput(n, key, viaLinkId, visited);
     /* 参数引脚取值：连线优先，未连线才用节点上就地填写的值。
        少了这一步，数值节点连到 maxEdge / 超时这类引脚上也不会生效。 */
     const paramIn = async key => {
@@ -1623,6 +1600,15 @@ async function runFlow(){
       }
 
       if(!fromCache){
+        /* 异步节点的「开始」出口：任务真正启动时立即触发下游，不等结果。
+         * 需要拿到结果才动的节点必须接「完成」出口（done）——那才是
+         * 「网页生图结束、图片到手后才激活」的执行线。 */
+        const dDef = NODE_DEFS[n.type] || {};
+        if(dDef.asyncExec && !startFired.has(n.id)){
+          startFired.add(n.id);
+          bpLog('↷ ' + bpNodeLabel(n) + ' 任务启动（触发「开始」出口）');
+          try { await followExec(n, n.out, visited || new Set([n.id]), 'exec'); } catch(e){}
+        }
         await runner({ n, input, paramIn, setStatus, log: bpLog, startedAt: nodeStarted });
         if(cacheKey && meta.cacheable && typeof cachePut === 'function'){
           try {
@@ -1684,22 +1670,27 @@ async function runFlow(){
     visited.add(target.id);
     let out;
     try {
-      out = await evalNode(target, link.id);
+      out = await evalNode(target, link.id, visited);
     } catch(e){
       return;
     }
     await followExec(target, out, visited);
   }
 
-  async function followExec(n, out, visited){
+  async function followExec(n, out, visited, keyOverride){
     if(isStopped()) return;
     const d = NODE_DEFS[n.type] || {};
-    let key = 'exec';
-    if(d.execOutFrom) key = (out && out.choice) || '';           // AI 分支：走模型选中的那条出口
-    else if(n.type === 'branch') key = (out && out.bool) ? 'true' : 'false';
+    let key = keyOverride || 'exec';
+    if(!keyOverride){
+      /* 异步节点（asyncExec）完成后走「done · 完成」出口 —— 网页生图拿回图片、
+         3D 拿回模型之后下游才开始激活；「exec · 开始」出口已在任务启动时触发过。 */
+      if(d.asyncExec) key = 'done';
+      else if(d.execOutFrom) key = (out && out.choice) || '';       // AI 分支：走模型选中的那条出口
+      else if(n.type === 'branch') key = (out && out.bool) ? 'true' : 'false';
+    }
     if(!key) return;
     const outs = execLinks.filter(l => l.from.node === n.id && l.from.key === key);
-    if(!outs.length && d.execOutFrom){
+    if(!outs.length && !keyOverride && d.execOutFrom){
       const picked = ((n.data && n.data[d.execOutFrom]) || []).find(b => b.id === key);
       bpLog('· AI 分支选择了「' + (picked ? picked.name : key) + '」，但该出口没有连接执行线', 'warn');
     }

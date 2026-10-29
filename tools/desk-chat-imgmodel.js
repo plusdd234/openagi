@@ -175,23 +175,24 @@ const FAKE_IMG_MODELS = ['seedream_v5', 'nano-banana-pro'];
   check(appliedOnline.scope === 'online', '来源切回在线', String(appliedOnline.scope));
   check(appliedOnline.ckpt === 'dreamshaper_8.safetensors', '本地 ckpt 保留（换回来还能用）', String(appliedOnline.ckpt));
 
-  console.log('\n=== 6. 引擎切到 Tripo → 下拉禁用并说明（Tripo 是网页操作节点） ===');
+  console.log('\n=== 6. Tripo 已从引擎移除：对话生图下拉不再受引擎影响 ===');
   const tripoState = await page.evaluate(async () => {
     const eng = document.getElementById('genEngine');
+    // 旧值 'tripo' 已不在下拉里：赋值应不生效（value 保持 openai）
     eng.value = 'tripo';
     eng.dispatchEvent(new Event('change', { bubbles: true }));
     await new Promise(r => setTimeout(r, 400));
     const sel = document.getElementById('deskAiImgModel');
     const lab = document.getElementById('deskAiImgLabel');
     return {
+      engine: eng.value,
+      opts: eng ? eng.options.length : 0,
       disabled: sel ? sel.disabled : null,
-      text: sel && sel.options.length ? sel.options[0].textContent : '',
       label: lab ? lab.textContent : ''
     };
   });
-  check(tripoState.disabled === true, '引擎是 Tripo 时下拉禁用', String(tripoState.disabled));
-  check(/Tripo/.test(tripoState.text), '有说明文字（不是空白）', tripoState.text);
-  check(/Tripo/.test(tripoState.label), '按钮文字也说明了', tripoState.label);
+  check(tripoState.opts === 1 && tripoState.engine !== 'tripo', '引擎下拉只有 openai，旧值 tripo 不再生效', tripoState.engine + '/' + tripoState.opts);
+  check(tripoState.disabled === false, '对话生图下拉保持可用（Tripo 不再接管它）', String(tripoState.disabled));
 
   await page.evaluate(async () => {
     const eng = document.getElementById('genEngine');

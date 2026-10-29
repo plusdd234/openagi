@@ -662,8 +662,8 @@ function llmReady(){
   return !!($('llmKey').value.trim() && $('llmBaseUrl').value.trim() && $('llmModel').value.trim());
 }
 function imageReady(){
-  if(isTripoWeb()) return tripoWebReady;
-  if(isTripo()) return !!($('tripoKey').value.trim() && $('imgModel').value.trim());
+  /* Tripo 不再参与通用生图（2026-10-29）：网页生图只在 tripoImg 专用节点上，
+     就绪状态由「网页操作」页的连接状态（tripoWebReady）单独管理。 */
   const base = $('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim();
   const model = $('imgModel').value.trim() || $('llmModel').value.trim();
   return !!(base && model && ($('imgKey').value.trim() || $('llmKey').value.trim()));

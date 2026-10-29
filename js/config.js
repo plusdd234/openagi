@@ -261,12 +261,16 @@ const isTripo = () => $('genEngine').value === 'tripo';
 // 桌面版会把桥的端口告诉前端（8787/8790 被占用时会顺延），用 ?tripo= 覆盖
 const TRIPO_PARAM = (location.search.match(/[?&]tripo=([^&]+)/) || [])[1];
 const TRIPO_WEB_BASE = TRIPO_PARAM ? decodeURIComponent(TRIPO_PARAM).replace(/\/$/, '') : 'http://127.0.0.1:8790';
-const isTripoWeb = () => $('genEngine').value === 'tripo-web';
+/* Tripo 与生图引擎解耦（2026-10-29）：「网页操作」作为独立脚本管理，
+ * 助手连接（人工登录并进入生图页）即启用，不再看 genEngine。
+ * tripoWebReady 由 api.js 的 refreshTripoWebStatus 探测后回写；声明必须
+ * 在 isTripoWeb 之前，否则脚本加载期调用会踩 let 的 TDZ。 */
+let tripoWebReady = false;
+const isTripoWeb = () => tripoWebReady === true;
 /* 生图走本机 ComfyUI。判定只在 provider.js 的 imgMode() 里，这里只是薄封装——
  * 状态栏文案和实际执行的引擎必须来自同一个来源，否则会出现
  * 「显示 Tripo、其实在跑 ComfyUI」这种自相矛盾的提示。 */
 const isLocalImg = () => typeof imgMode === 'function' && imgMode() === 'local';
-let tripoWebReady = false;
 
 // ---- 接口来源预设（点击标签自动切换 Base URL）----
 const PRESET_GROUPS = [

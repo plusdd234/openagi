@@ -74,7 +74,7 @@ const MUST = {
     };
   });
   check(!!home && home.visible, '设置面板打开了');
-  check(home && home.n === 6, '总览 6 张状态卡', home ? String(home.n) : 'null');
+  check(home && home.n === 7, '总览 7 张状态卡（含网页操作）', home ? String(home.n) : 'null');
   check(home && home.states.every(s => !!s), '每张卡都有状态类', home ? home.states.join(',') : '');
   check(home && home.texts.every(t => t && t.trim() && t !== '读取中…'), '每张卡都有说明文字');
   check(home && home.goes.every(g => nav.tabs.includes(g)), '卡片跳转目标都是合法 tab', home ? home.goes.join(',') : '');
