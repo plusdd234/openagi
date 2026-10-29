@@ -64,6 +64,10 @@ function flowVersionSave(flow, opts){
     at: Date.now(),
     seq: ++_verSeq,
     reason: String(o.reason || '').slice(0, 60),
+    /* 结构签名：只由「节点类型 + 参数 + 连线」算出来，不含坐标。
+     * 用途是让「运行前自动存快照」在结构没变时**复用**上一份，
+     * 否则用户每跑一次就多一份，很快把 10 份上限挤满、把手工快照挤掉。 */
+    sig: String(o.sig || '').slice(0, 40),
     size,
     nodes: (flow.nodes || []).length,
     links: (flow.links || []).length,
@@ -81,9 +85,67 @@ function flowVersionList(flowId){
     const rows = flowId ? list.filter(v => v.flowId === flowId) : list;
     return rows.map(v => ({
       id: v.id, flowId: v.flowId, flowName: v.flowName, at: v.at,
-      reason: v.reason || '', size: v.size || 0, nodes: v.nodes || 0, links: v.links || 0
+      reason: v.reason || '', sig: v.sig || '', size: v.size || 0, nodes: v.nodes || 0, links: v.links || 0
     }));
   });
+}
+
+/* 结构签名：决定「这份快照能不能拿来重放这次运行」的东西全在里面。
+ * 刻意不含坐标 / 状态 / 上次结果 —— 挪一下节点位置并不产生新的一版。 */
+function flowSigOf(flow){
+  const nodes = (flow && flow.nodes) || [];
+  const links = (flow && flow.links) || [];
+  const body = nodes.map(n => {
+    let d = '';
+    try { d = JSON.stringify(n.data || {}); } catch(e){ d = ''; }
+    return n.type + '|' + d.slice(0, 400);
+  }).join(';') + '#' + links.map(l =>
+    l.from.node + ':' + l.from.key + '>' + l.to.node + ':' + l.to.key).join(';');
+  const h = (typeof fnv1a === 'function')
+    ? (fnv1a(body, 2166136261).toString(36) + fnv1a(body, 84696351).toString(36))
+    : String(body.length);
+  return 'g' + h;
+}
+
+const VER_AUTO_KEEP = 3;
+/* 带大媒体的流程整份快照不划算：stringify 要卡一下主线程，存下来也多半会被 30MB 总量淘汰。
+ * 超过这个阈值就跳过锁定，versionId 留空 —— 这是**诚实的降级**，
+ * 运行记录里会显示「没有版本」，而不是假装有。 */
+const PIN_MAX_INLINE = 6 * 1024 * 1024;
+/* 本会话内记住「这个流程上次锁的是哪一版」。
+ * 没有它的话，每次运行都要 verAll() 把最多 10 份完整快照（可能带图、几十 MB）读进内存，
+ * 只为比较一个结构签名 —— 那是把最贵的一次 IO 放在了运行的关键路径上。 */
+const _pinCache = {};
+
+/* 运行前锁定版本：返回 versionId，事后的运行记录靠它证明「跑的是哪一版」。
+ * 结构没变就复用上一份（不新增），所以正常迭代不会刷屏。
+ * 自动快照单独限 3 份，超了淘汰最旧的自动快照 —— 绝不动用户手工存的那几份。 */
+async function pinFlowVersion(flow){
+  if(!flow || !flow.id) return '';
+  const sig = flowSigOf(flow);
+  const memo = _pinCache[flow.id];
+  if(memo && memo.sig === sig) return memo.id;
+  try {
+    if(typeof flowInlineBytes === 'function' && flowInlineBytes(flow) > PIN_MAX_INLINE) return '';
+  } catch(e){}
+  let list = [];
+  try { list = await flowVersionList(flow.id); } catch(e){ list = []; }
+  const top = list[0];
+  if(top && top.sig === sig){
+    _pinCache[flow.id] = { sig, id: top.id };
+    return top.id;
+  }
+
+  const auto = list.filter(v => v.reason === '运行前自动');
+  if(auto.length >= VER_AUTO_KEEP){
+    const drop = auto.slice(VER_AUTO_KEEP - 1);
+    for(const v of drop){ try { await flowVersionDelete(v.id); } catch(e){} }
+  }
+  let r = null;
+  try { r = await flowVersionSave(flow, { reason: '运行前自动', sig }); } catch(e){ r = null; }
+  const id = (r && r.ok) ? r.id : '';
+  if(id) _pinCache[flow.id] = { sig, id };
+  return id;
 }
 
 function flowVersionDelete(id){

@@ -1384,6 +1384,100 @@ async function runFlow(){
   const visiting = new Set();
   const activated = new Set();     // 本次实际被求值的节点，用于提示「未接入执行线」
 
+  /* ---- 运行级采集（P3）：这一层是「重放」和「成本账本」的唯一数据来源 ---- */
+  const runId = 'run' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+  let runVersionId = '';           // 这次跑的是哪一版快照
+  let runCacheHits = 0;            // 跨运行复用了几个节点
+  const runNodeLog = [];           // 节点级快照（实际模型 / 解析后参数 / 成本 / 确定性）
+  const runInputs = new Map();     // nodeId -> { 引脚: 解析后的值 }，由 resolveInput 记
+  const runRaw = new Map();        // nodeId -> { 引脚: 原值 }，只留资产类（算血缘用）
+  const runEdges = [];             // 产出边，收尾时写进血缘表
+
+  /* 值不适合入库时压成一行说明：data URL 动辄几 MB，直接进快照会把配额吃光，
+   * 而且对「哪版参数出的这张图」没有信息量。长度和类型才是要留的信息。 */
+  const snapVal = v => {
+    if(v === undefined || v === null) return v;
+    if(typeof v === 'number' || typeof v === 'boolean') return v;
+    const s = typeof v === 'string' ? v : '';
+    if(!s){ try { return JSON.stringify(v).slice(0, 120); } catch(e){ return '[对象]'; } }
+    if(/^data:/i.test(s)) return '<内联数据 ' + s.length + 'B>';
+    if(/^(blob|desk):/i.test(s)) return s.length > 160 ? s.slice(0, 160) : s;
+    return s.length > 400 ? s.slice(0, 400) + '…' : s;
+  };
+
+  /* 引擎与模型名：快照里**必须**有这两项，否则「同参数重跑」根本对不上
+   * —— 同一个提示词在不同引擎上出的是两张完全不同的图。 */
+  const engineOf = n => {
+    try {
+      if(n.type === 'imageGen' || n.type === 'tripoImg') return (typeof imgMode === 'function') ? imgMode() : '';
+      if(n.type === 'aiTask' || n.type === 'smartBranch') return (typeof llmMode === 'function') ? llmMode() : '';
+      if(n.type === 'model3d' || n.type === 'tripoModel' || n.type === 'tripoModelMulti'){
+        return (typeof isTripoWeb === 'function' && isTripoWeb()) ? 'web' : 'api';
+      }
+    } catch(e){}
+    return '';
+  };
+  const modelOf = n => {
+    try {
+      if(n.type === 'imageGen' || n.type === 'tripoImg'){
+        const el = $('imgModel');
+        return el && el.value ? String(el.value) : '';
+      }
+      if(n.type === 'aiTask' || n.type === 'smartBranch'){
+        const el = $('bsModel') || $('modelSel');
+        return el && el.value ? String(el.value) : '';
+      }
+    } catch(e){}
+    return '';
+  };
+
+  /* 缓存键用的值归一。**不能用 snapVal**：它把任何 data: 都压成「<内联数据 NNNB>」，
+   * 于是两张字节数相同的不同参考图会算出同一个键 —— 出来的是上次那张图，且毫无报错。
+   * 这里改成短值原样、长值取指纹，既区分得开又不把 5MB 塞进哈希函数。 */
+  const keyVal = v => {
+    if(v === undefined || v === null) return v;
+    if(typeof v === 'number' || typeof v === 'boolean') return v;
+    if(typeof v !== 'string'){ try { return JSON.stringify(v).slice(0, 400); } catch(e){ return '[对象]'; } }
+    if(v.length <= 2048) return v;
+    const h = (typeof fnv1a === 'function') ? fnv1a(v, 2166136261).toString(36) : String(v.length);
+    return '#h' + h + ':' + v.length;
+  };
+
+  /* 产出边：哪些节点产出了可以被追溯的资产。
+   * 键用**内容哈希**而不是文件名 —— 同一份字节无论存到磁盘、又导入图库、还是被拿来当参考图，
+   * 都能对回同一条边；也不用改动资产写入的四条路径（桌面 / IndexedDB / 图库扫描 / 对话保存）。 */
+  const ASSET_NODES = {
+    imageGen:'imageGen', imageEdit:'imageEdit', tripoImg:'tripoImg',
+    model3d:'model3d', tripoModel:'tripoModel', tripoModelMulti:'tripoModelMulti',
+    modelViews:'modelViews'
+  };
+  const collectAssetEdges = (n, meta) => {
+    if(!ASSET_NODES[n.type] || !n.out || runEdges.length >= 60) return;
+    if(typeof blobIdFor !== 'function') return;
+    const parents = [];
+    const raw = runRaw.get(n.id) || {};
+    Object.keys(raw).forEach(k => {
+      const v = raw[k];
+      if(typeof v !== 'string' || v.length < 40) return;
+      if(!/^(data:|blob:|desk:|https?:)/i.test(v)) return;
+      parents.push('blob:' + blobIdFor(v));
+    });
+    Object.keys(n.out).forEach(k => {
+      const v = n.out[k];
+      if(typeof v !== 'string' || v.length < 40) return;
+      if(!/^(data:|blob:|desk:|https?:)/i.test(v)) return;
+      runEdges.push({
+        asset: 'blob:' + blobIdFor(v),
+        kind: /^(data:|blob:|desk:)/i.test(v) ? 'image' : 'ref',
+        runId, flowId: bp.id, versionId: runVersionId,
+        nodeId: n.id, nodeType: n.type, cap: ASSET_NODES[n.type],
+        model: modelOf(n), engine: engineOf(n),
+        determinism: meta.determinism,
+        parents: parents.slice(0, 8)
+      });
+    });
+  };
+
   bpRunBusy = true;
   bpRunAbort = false;
   bpRunCtrl = new AbortController();     // 停止时 abort：在途请求一起断
@@ -1401,6 +1495,12 @@ async function runFlow(){
   bpLogExpand();
   bpLogClear();
   bpLog(`开始运行 · ${bp.nodes.length} 个节点`);
+
+  /* 运行前锁定版本：拿到 versionId，事后的运行记录才能证明「跑的是哪一版」。
+   * 结构没变就复用上一份快照，不会每跑一次多一份。失败不影响运行。 */
+  try {
+    if(typeof pinFlowVersion === 'function') runVersionId = (await pinFlowVersion(bp)) || '';
+  } catch(e){ runVersionId = ''; }
 
   const setStatus = (n, text, cls) => {
     const el = $('n-' + n.id);
@@ -1425,7 +1525,24 @@ async function runFlow(){
     if(!src) return undefined;
     const out = await evalNode(src, l.id);
     highlight(n.id, viaLinkId);
-    return out ? out[l.from.key] : undefined;
+    const v = out ? out[l.from.key] : undefined;
+    /* 记「**解析后**」的值而不是流程里的原始参数：
+     * 引脚连线会在运行时把上游结果灌进来，只看节点 data 永远算不出这张图用了什么。 */
+    try {
+      let bag = runInputs.get(n.id);
+      if(!bag){ bag = {}; runInputs.set(n.id, bag); }
+      bag[key] = snapVal(v);
+      bag.__from = l.from.node;
+      /* 原值另存一份（只留资产类、每个节点最多 4 个）：
+       * 血缘要的是上游资产的**内容指纹**，被 snapVal 压过的值算不出来。 */
+      if(typeof v === 'string' && v.length >= 40 && /^(data:|blob:|desk:|https?:)/i.test(v)){
+        let raw = runRaw.get(n.id);
+        if(!raw){ raw = {}; runRaw.set(n.id, raw); }
+        const kn = Object.keys(raw).length;
+        if(kn < 4) raw[key] = v;
+      }
+    } catch(e){}
+    return v;
   }
 
   async function evalNode(n, viaLinkId){
@@ -1462,10 +1579,68 @@ async function runFlow(){
          状态、日志、错误归类。ctx 里给出节点运行真正需要的东西。 */
       const runner = nodeRunner(n.type);
       if(!runner) throw new Error('节点类型「' + n.type + '」没有实现（未注册到 node-defs.js）');
-      await runner({ n, input, paramIn, setStatus, log: bpLog, startedAt: nodeStarted });
+
+      const meta = (typeof nodeMeta === 'function')
+        ? nodeMeta(n.type)
+        : { cost: 0, determinism: 'structural', cacheable: false };
+      let fromCache = false;
+      let cacheKey = '';
+
+      /* 跨运行复用：只对花钱的节点做（cost > 0）。
+       * 键里必须含引擎与模型名 —— 同一句提示词在本地 ComfyUI 与云端 banana 上是两张完全不同的图。
+       * 少一个维度就会出现「参数不同却命中同一条」，而这种 bug 表面上一切正常，只是出来的是上次那张。 */
+      if(meta.cacheable && typeof cacheKeyFor === 'function'){
+        try {
+          const ins = {};
+          const dIn = (NODE_DEFS[n.type] || {}).inputs || [];
+          for(const k of dIn){
+            const v = await input(k);
+            if(v !== undefined && v !== null) ins[k] = keyVal(v);
+          }
+          cacheKey = cacheKeyFor(n.type, engineOf(n) + '|' + modelOf(n),
+            Object.assign({}, n.data || {}, ins));
+          if(cacheKey){
+            const hit = await cacheGet(cacheKey);
+            if(hit && hit.out){
+              n.out = (hit.out && typeof hit.out === 'object') ? Object.assign({}, hit.out) : hit.out;
+              fromCache = true;
+              runCacheHits++;
+              try { cacheTouch(cacheKey); } catch(e){}
+              bpLog('↺ ' + bpNodeLabel(n) + ' 复用上次产出（本次没花钱）', 'warn');
+            }
+          }
+        } catch(e){
+          cacheKey = '';       // 复用出问题就当没开，绝不让它挡住正常执行
+        }
+      }
+
+      if(!fromCache){
+        await runner({ n, input, paramIn, setStatus, log: bpLog, startedAt: nodeStarted });
+        if(cacheKey && meta.cacheable && typeof cachePut === 'function'){
+          try {
+            await cachePut(cacheKey, {
+              cap: n.type, engine: engineOf(n), model: modelOf(n),
+              determinism: meta.determinism, cost: meta.cost, out: n.out
+            });
+          } catch(e){}
+        }
+      }
+
       n.status = 'ok';
       setStatus(n, '完成', 'ok');
-      if(!((NODE_REGISTRY[n.type] || {}).quiet)) bpLog('✓ ' + bpNodeLabel(n) + ' · ' + (Date.now() - nodeStarted) + 'ms · ' + bpOutPreview(n.out), 'ok');
+      const nodeMs = Date.now() - nodeStarted;
+      if(!((NODE_REGISTRY[n.type] || {}).quiet)) bpLog('✓ ' + bpNodeLabel(n) + ' · ' + nodeMs + 'ms · ' + bpOutPreview(n.out), 'ok');
+
+      /* 节点级快照：参数 = 就地填的 + **解析进来的**（后者覆盖前者，那才是真正生效的值）。
+       * cost 记「这个节点本来要花多少」，命中缓存的也算进去 —— 账本要用它算省下的量。 */
+      runNodeLog.push({
+        id: n.id, type: n.type, title: bpNodeLabel(n), ok: true, ms: nodeMs,
+        model: modelOf(n), engine: engineOf(n),
+        determinism: meta.determinism, cost: Number(meta.cost) || 0,
+        cache: fromCache,
+        params: Object.assign({}, n.data || {}, runInputs.get(n.id) || {})
+      });
+      collectAssetEdges(n, meta);
       return n.out;
     } catch(err){
       // 手动停止不是失败：单独一种状态，不进失败计数
@@ -1479,6 +1654,16 @@ async function runFlow(){
       n.status = 'error';
       n.error = friendlyErr(err);
       setStatus(n, '失败', 'error');
+      try {
+        const meta = (typeof nodeMeta === 'function') ? nodeMeta(n.type) : { cost:0, determinism:'structural' };
+        runNodeLog.push({
+          id: n.id, type: n.type, title: bpNodeLabel(n), ok: false,
+          ms: Date.now() - nodeStarted, model: modelOf(n), engine: engineOf(n),
+          determinism: meta.determinism, cost: 0, cache: false,
+          params: Object.assign({}, n.data || {}, runInputs.get(n.id) || {}),
+          error: n.error
+        });
+      } catch(e){}
       if(!(err && err._bpLogged)) bpLog('✗ ' + bpNodeLabel(n) + ' 失败 · ' + n.error, 'error');
       throw err;
     }
@@ -1559,15 +1744,36 @@ async function runFlow(){
         : '没有「任务开始」节点，未执行任何步骤');
   }
 
+  /* 资产血缘：把这次产出的每个资产记一条边（带上级内容指纹）。
+   * 异步写，不 await —— 血缘是诊断信息，绝不能拖慢或弄坏运行收尾。 */
+  if(runEdges.length && typeof lineageAdd === 'function'){
+    runEdges.forEach(e => { try { lineageAdd(e); } catch(x){} });
+  }
+
   /* 运行遥测：记一条历史（自我迭代的数据地基）。
      只存概要，不存图片/模型内容；历史库不可用时静默跳过，绝不影响运行结果。 */
   if(typeof recordRun === 'function'){
     try {
       const firstErr = bp.nodes.find(n => n.status === 'error');
+      /* 三档判定：结构（校验过没过）+ 行为（有没有失败节点 / 有没有真的跑起来）+ 质量。
+       * 以前只有一个 ok 布尔，「跑完但一个节点都没激活」也算成功 —— 太粗，
+       * 导致「刚刚成功」这个触发条件不精确，后面所有自动化都建在沙子上。 */
+      let structuralOk = true;
+      try { if(typeof validateFlow === 'function') structuralOk = validateFlow(bp).errors.length === 0; } catch(e){}
+      const vres = (typeof verdictOf === 'function') ? verdictOf({
+        started: starts.length > 0,
+        structuralOk,
+        failedNodes: errs,
+        activated: activated.size,
+        stopped: wasStopped,
+        rating: 0,
+        retries: 0
+      }) : { verdict: '' };
       recordRun({
         at: Date.now(),
         flowId: bp.id,
         flowName: bp.name || '未命名工作流',
+        versionId: runVersionId,
         ok: !wasStopped && errs === 0 && starts.length > 0,
         stopped: wasStopped,
         ms: Date.now() - runStarted,
@@ -1576,7 +1782,11 @@ async function runFlow(){
         failed: errs,
         error: firstErr ? (bpNodeLabel(firstErr) + '：' + firstErr.error)
           : (!starts.length ? '没有「任务开始」节点，未执行任何步骤' : ''),
-        outs: typeof runOutsSummary === 'function' ? runOutsSummary(bp.lastRun) : []
+        outs: typeof runOutsSummary === 'function' ? runOutsSummary(bp.lastRun) : [],
+        verdict: vres.verdict || '',
+        nodeInputs: runNodeLog,
+        cacheHits: runCacheHits,
+        determinism: (typeof runDeterminismOf === 'function') ? runDeterminismOf(runNodeLog) : ''
       });
     } catch(e){ /* 遥测失败不影响运行 */ }
   }

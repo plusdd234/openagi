@@ -120,9 +120,37 @@ function idsOf(html) {
   }
 
   check(app.errs.length === 0, 'App 零报错', app.errs.slice(0, 2).join(' | ') || 'clean');
-  await app.p.close();
 
-  await browser.close();
+  /* === 4. 导出布局（纯逻辑）：固定正方形画布，格子铺满，偶数单格 === */
+  console.log('\n=== 4. 导出布局 ===');
+  const pure = await app.p.evaluate(() => ({
+    L4: multiview._pure.exportLayout(4, 2048, 0, 2),
+    L4g: multiview._pure.exportLayout(4, 2048, 16, 2),
+    L8: multiview._pure.exportLayout(8, 4096, 0, 4),
+    L1: multiview._pure.exportLayout(1, 4096, 0, 0),
+    LAuto: multiview._pure.exportLayout(6, 2048, 0, 0)
+  }));
+  check(pure.L4.cols === 2 && pure.L4.rows === 2 && pure.L4.cell === 1024 && pure.L4.w === 2048,
+    '四视图 2×2 · 2K 画布单格 1024', JSON.stringify(pure.L4));
+  check(pure.L4g.cell === 1016, '间距 16 时单格 1016（2×1016+16=2048 铺满）', String(pure.L4g.cell));
+  check(pure.L8.cols === 4 && pure.L8.rows === 2 && pure.L8.cell === 1024, '八视图 4×2 · 4K 画布', JSON.stringify(pure.L8));
+  check(pure.L1.cols === 1 && pure.L1.cell === 4096, '单视图 4K 用满整幅（渲染核单格上限已放宽到 4096）', JSON.stringify(pure.L1));
+  check(pure.LAuto.cols * pure.LAuto.rows >= 6 && pure.LAuto.cell % 2 === 0, '自动列数铺得下 + 单格保持偶数', JSON.stringify(pure.LAuto));
+
+  /* === 5. 导出条控件存在，可用态跟「有没有当前模型」一致 === */
+  const exUi = await app.p.evaluate(() => ({
+    missing: ['mvExSize', 'mvExGap', 'mvExInfo', 'mvExStats', 'mvExPreview', 'mvExColor', 'mvExDepth', 'mvExMask']
+      .filter(id => !document.getElementById(id)),
+    hasCur: !!multiview.state.cur,
+    disabled: ['mvExPreview', 'mvExColor', 'mvExDepth', 'mvExMask'].map(id => document.getElementById(id).disabled),
+    info: document.getElementById('mvExInfo').textContent
+  }));
+  check(exUi.missing.length === 0, '导出条 8 个控件都在两份壳里', exUi.missing.join(','));
+  check(exUi.disabled.every(d => d === !exUi.hasCur), '导出按钮可用态跟当前模型一致（App 自动选了模型 → 启用）',
+    JSON.stringify({ hasCur: exUi.hasCur, disabled: exUi.disabled }));
+  check(/画布 \d+×\d+/.test(exUi.info), '布局信息已算出（N视图 CxR · 画布 · 单格）', exUi.info);
+
+  await app.p.close();
   console.log('\n' + (fails ? '❌ 失败 ' + fails + ' 项' : '✅ 全部通过'));
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error('崩溃：', e); process.exit(1); });

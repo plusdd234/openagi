@@ -507,6 +507,30 @@
    *   labels     是否在每格左下角烧上视图名
    * @returns {Promise<{png, cols, rows, cell, gap, width, height, cells}>}
    */
+  /**
+   * 模型统计：顶点 / 三角面 / 是否带 UV。遍历一遍网格数出来，
+   * OBJ 的四边面在这里已经是三角化后的 mesh，所以三角面按几何数，不按原始 poly 数。
+   */
+  function modelStats(model) {
+    var verts = 0, tris = 0, uv = false, meshes = 0;
+    model.root.traverse(function (o) {
+      if (!o.isMesh || !o.geometry) return;
+      var g = o.geometry;
+      var pos = g.attributes && g.attributes.position;
+      if (!pos) return;
+      meshes++;
+      verts += pos.count;
+      tris += g.index ? g.index.count / 3 : pos.count / 3;
+      if (g.attributes.uv) uv = true;
+    });
+    return {
+      verts: verts,
+      tris: Math.round(tris),
+      uv: uv ? '有' : (meshes ? '无' : '—'),
+      meshes: meshes
+    };
+  }
+
   async function viewGrid(src, opts) {
     opts = opts || {};
     if (!ready()) throw new Error('three.js 未就绪');
@@ -520,7 +544,9 @@
 
     var model = await load(src);
 
-    var cell = Math.round(clampNum(Number(opts.cell) || 768, 128, 2048));
+    /* 单格上限放到 4096：4K 整图导出 2 列布局单格 ≈ 2040，1 视图 4K 会顶到 4096。
+     * 下面 totalW/H 的钳制已经守住 WebGL 纹理上限，这里不用再卡 2048。 */
+    var cell = Math.round(clampNum(Number(opts.cell) || 768, 128, 4096));
     var gap = Math.max(0, Math.round(Number(opts.gap) || 0));
     var cols = Math.round(Number(opts.cols) || 0);
     if (cols < 1) cols = Math.ceil(Math.sqrt(names.length));
@@ -588,6 +614,21 @@
       }, frameL);
     });
 
+    /* 输出通道：
+     *   color(默认) 正常上色；mask 白模剪影（黑底，喂 AI 的遮罩）；
+     *   depth 深度灰度（近白远黑，黑底，喂 ControlNet depth）。
+     * 深度/遮罩只看轮廓与前后关系，跟材质模式无关——统一用 overrideMaterial 盖掉，
+     * 线框对象直接隐藏（线不是表面，留在深度图里是脏数据）。 */
+    var pass = ['depth', 'mask'].indexOf(opts.pass) >= 0 ? opts.pass : 'color';
+    if (pass !== 'color') {
+      scene.traverse(function (o) {
+        if (o.isLine || o.isLineSegments || o.isLineLoop || o.isPoints) o.visible = false;
+      });
+      scene.overrideMaterial = pass === 'mask'
+        ? new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })
+        : new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide });
+    }
+
     var canvas = document.createElement('canvas');
     canvas.width = totalW;
     canvas.height = totalH;
@@ -595,10 +636,18 @@
     renderer.debug.checkShaderErrors = false;
     renderer.setPixelRatio(1);
     renderer.setSize(totalW, totalH, false);
-    renderer.setClearColor(
-      new THREE.Color(opts.bgColor || '#ffffff'),
-      opts.transparent ? 0 : (opts.bgOpacity == null ? 1 : clampNum(opts.bgOpacity, 0, 1))
-    );
+    if (pass === 'mask') {
+      renderer.setClearColor(new THREE.Color('#000000'), 1);   // 遮罩：黑底白模，不透明
+    } else if (pass === 'depth') {
+      /* 深度：透明清屏。MeshDepthMaterial 打包后的深度写在 RGBA 里，
+       * 背景保持 alpha=0，2D 落脚时按 alpha 区分「模型」和「空背景」。 */
+      renderer.setClearColor(new THREE.Color('#000000'), 0);
+    } else {
+      renderer.setClearColor(
+        new THREE.Color(opts.bgColor || '#ffffff'),
+        opts.transparent ? 0 : (opts.bgOpacity == null ? 1 : clampNum(opts.bgOpacity, 0, 1))
+      );
+    }
     renderer.setScissorTest(true);
     renderer.autoClear = false;                        // 关键：否则第二格会擦掉第一格
     renderer.clear(true, true, true);
@@ -618,9 +667,32 @@
     out.width = totalW;
     out.height = totalH;
     var ctx = out.getContext('2d');
+    if (pass === 'depth') {
+      /* 深度图：先铺黑底，再把打包深度解包成灰度（近白远黑）。
+       * 解包系数是 RGBADepthPacking 的标准式：d = dot(rgba/255, (1, 1/255, 1/65025, 1/16581375))。 */
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, totalW, totalH);
+    }
     ctx.drawImage(canvas, 0, 0);
 
-    if (opts.labels) {
+    if (pass === 'depth') {
+      try {
+        var im = ctx.getImageData(0, 0, totalW, totalH);
+        var d8 = im.data;
+        for (var p = 0; p < d8.length; p += 4) {
+          if (d8[p + 3] < 128) {          // 空背景 → 纯黑
+            d8[p] = 0; d8[p + 1] = 0; d8[p + 2] = 0; d8[p + 3] = 255;
+            continue;
+          }
+          var dv = (d8[p] + d8[p + 1] / 255 + d8[p + 2] / 65025 + d8[p + 3] / 16581375) / 255;
+          var gray = Math.round((1 - Math.min(1, Math.max(0, dv))) * 255);
+          d8[p] = gray; d8[p + 1] = gray; d8[p + 2] = gray; d8[p + 3] = 255;
+        }
+        ctx.putImageData(im, 0, 0);
+      } catch (e4) { /* getImageData 被污染时兜底：宁可给原样打包图也不抛错 */ }
+    }
+
+    if (opts.labels && pass === 'color') {
       var fs = Math.max(11, Math.round(cell * 0.042));
       var dark = opts.bgColor && !/^#(fff|ffffff)$/i.test(opts.bgColor) && !opts.transparent;
       ctx.font = '600 ' + fs + 'px system-ui,"Microsoft YaHei",sans-serif';
@@ -660,7 +732,9 @@
       png: png, cols: cols, rows: rows, cell: cell, gap: gap,
       width: totalW, height: totalH, cells: cells,
       quad: quadUsed,          // false = 这次画的是三角线框（glTF 或用户强制）
-      format: model.format || ''
+      format: model.format || '',
+      pass: pass,
+      stats: modelStats(model) // 顶点 / 三角面 / UV（导出面板的模型信息用）
     };
   }
 

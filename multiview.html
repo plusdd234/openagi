@@ -90,6 +90,30 @@
       </div>
 
     </section>
+
+    <!-- ================= 右：导出面板（竖排） ================= -->
+    <!-- 画布固定正方形 2K/4K，深度 / 遮罩供 AI 回流，与 AIGC工具包 口径一致 -->
+    <aside class="mv-export">
+      <div class="mv-ex-head">导出</div>
+      <div class="mv-ex-row">
+        <select class="mv-sel" id="mvExSize" title="导出画布（正方形）">
+          <option value="2048">2K · 2048</option>
+          <option value="4096">4K · 4096</option>
+        </select>
+        <select class="mv-sel" id="mvExGap" title="格间距">
+          <option value="0">无间距</option>
+          <option value="16">16 px</option>
+          <option value="32">32 px</option>
+          <option value="64">64 px</option>
+        </select>
+      </div>
+      <div class="mv-ex-info" id="mvExInfo"></div>
+      <div class="mv-ex-stats" id="mvExStats"></div>
+      <button type="button" class="btn sm primary" id="mvExPreview" disabled>预览导出结果</button>
+      <button type="button" class="btn sm" id="mvExColor" disabled>导出视图 PNG</button>
+      <button type="button" class="btn sm" id="mvExDepth" disabled>导出深度图</button>
+      <button type="button" class="btn sm" id="mvExMask" disabled>导出遮罩图</button>
+    </aside>
   </div>
 </div>
 

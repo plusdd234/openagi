@@ -643,3 +643,26 @@
     box-shadow: 0 10px 26px rgba(0,0,0,.28); pointer-events: none;
   }
 
+
+  /* 存成流程：只在「这一轮跑通了、且有可固化的步骤」时出现。
+     刻意做成一条细窄的提示条而不是弹窗 —— 它是筛选器，不是广告位：
+     用户点一次 × 就不再烦，硬推只会让人把整个功能当噪音。 */
+  .dchat-saveflow {
+    display: flex; align-items: center; gap: 10px;
+    margin: 0 18px 6px; padding: 7px 10px;
+    border: 1px solid rgba(217, 154, 18, .34); border-radius: 8px;
+    background: rgba(240, 180, 41, .07);
+    flex: 0 0 auto;
+  }
+  .dchat-saveflow.hidden { display: none; }
+  .dchat-saveflow .dcsf-text {
+    flex: 1 1 auto; min-width: 0; font-size: 11.5px; color: var(--gold-ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .dchat-saveflow .btn { flex: 0 0 auto; }
+  .dchat-saveflow .dcsf-x {
+    flex: 0 0 auto; width: 20px; height: 20px; padding: 0;
+    border: 0; border-radius: 5px; background: transparent;
+    color: #9aa1ab; font-size: 15px; line-height: 1; cursor: pointer;
+  }
+  .dchat-saveflow .dcsf-x:hover { background: rgba(0, 0, 0, .06); color: #5a6068; }

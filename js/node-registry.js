@@ -17,6 +17,60 @@ const NODE_NORMALIZERS = {};
 // 块级控件：不生成引脚、由专门的区块渲染
 const BLOCK_CTL = { paramList:1, filePick:1, taskPins:1, viewPins:1, branchPins:1, inPins:1 };
 
+/* ---------------------------------------------------------------
+ * 能力描述符：每个节点「多贵 / 多慢 / 能不能逐像素复现」
+ *
+ * 单独一张表，不往 22 段 registerNode 里各抄一份 —— 这张表是**唯一来源**，
+ * 节点定义想改个别字段就写 meta:{...} 覆盖（目前没人覆盖，先留着口子）。
+ *
+ * cost 用「相对单位 u」而不是钱：文本一次≈1u、出图一次≈30u、3D 一次≈300u。
+ *   不写死汇率的理由 —— 每个中转站和官方接口单价都不一样，写死必然过期，
+ *   反而让人以为算得准。要显示金额由调用方乘自己的汇率。
+ *
+ * determinism 三档，**整条链取最弱的一档**（`runDeterminismOf`）：
+ *   exact       同输入必同输出（纯计算 / 本地确定性渲染）
+ *   structural  结构一致、字面不同（LLM 文本；语义稳定但不是逐字相同）
+ *   none        无法逐像素复现（云端出图大多不给 seed）
+ * 这一档要在 UI 上**明说**，否则用户会以为重跑一定一模一样，然后翻车。
+ * -------------------------------------------------------------- */
+const CAP_META = {
+  // 输入 / 纯计算
+  text:            { cost: 0,   latency:'fast', determinism:'exact' },
+  numNode:         { cost: 0,   latency:'fast', determinism:'exact' },
+  boolNode:        { cost: 0,   latency:'fast', determinism:'exact' },
+  imageIn:         { cost: 0,   latency:'fast', determinism:'exact' },
+  modelIn:         { cost: 0,   latency:'fast', determinism:'exact' },
+  // 图像处理（本地）
+  imageCompress:   { cost: 0,   latency:'med',  determinism:'exact' },
+  imageSplit:      { cost: 0,   latency:'med',  determinism:'exact' },
+  // AI 能力
+  aiTask:          { cost: 1,   latency:'slow', determinism:'structural', unit:'次' },
+  smartBranch:     { cost: 1,   latency:'slow', determinism:'none',       unit:'次' },
+  imageGen:        { cost: 30,  latency:'slow', determinism:'none',       unit:'张' },
+  tripoImg:        { cost: 30,  latency:'slow', determinism:'none',       unit:'张' },
+  model3d:         { cost: 300, latency:'slow', determinism:'none',       unit:'个' },
+  tripoModel:      { cost: 300, latency:'slow', determinism:'none',       unit:'个' },
+  tripoModelMulti: { cost: 300, latency:'slow', determinism:'none',       unit:'个' },
+  modelViews:      { cost: 0,   latency:'med',  determinism:'exact',      unit:'张' },
+  // 流程控制
+  branch:          { cost: 0,   latency:'fast', determinism:'exact' },
+  start:           { cost: 0,   latency:'fast', determinism:'exact' },
+  end:             { cost: 0,   latency:'fast', determinism:'exact' },
+  result:          { cost: 0,   latency:'fast', determinism:'exact' },
+  varGet:          { cost: 0,   latency:'fast', determinism:'exact' },
+  varSet:          { cost: 0,   latency:'fast', determinism:'exact' }
+};
+const CAP_FALLBACK = { cost: 1, latency:'med', determinism:'structural', unit:'次' };
+
+/* 合并出最终描述符：总表 → 节点覆盖 → 兜底。
+ * cacheable 由 cost 派生：不花钱的节点缓存它没有意义，还会污染命中率统计。 */
+function capMetaOf(type, override){
+  const base = CAP_META[type] || CAP_FALLBACK;
+  const m = Object.assign({}, CAP_FALLBACK, base, override || {});
+  m.cacheable = Number(m.cost) > 0;
+  return m;
+}
+
 /* 注册一个节点。d 的字段：
  *   type / title / desc / dot / group / execIn / execOut / execOutFrom / pure
  *   inputs / outputs      固定数据引脚（key 名，类型查 PIN_META）
@@ -41,7 +95,8 @@ function registerNode(d){
     execIn: !!d.execIn,
     execOut: (d.execOut || []).slice(),
     execOutFrom: d.execOutFrom || '',
-    pure: !!d.pure
+    pure: !!d.pure,
+    meta: capMetaOf(d.type, d.meta)
   };
   NODE_PARAMS[d.type] = d.params || [];
   if(d.seed) NODE_SEEDS[d.type] = d.seed;
@@ -57,6 +112,10 @@ function registerNode(d){
 }
 
 function nodeDesc(type){ return NODE_REGISTRY[type] || null; }
+function nodeMeta(type){
+  const d = NODE_DEFS[type];
+  return (d && d.meta) || capMetaOf(type, null);
+}
 function nodeRunner(type){ return NODE_RUNNERS[type] || null; }
 function nodeNormalizer(type){ return NODE_NORMALIZERS[type] || null; }
 function seedNodeData(type){

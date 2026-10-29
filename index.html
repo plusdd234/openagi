@@ -271,6 +271,13 @@
           <span class="dchat-imgsrc" id="deskChatImg" title="当前生图来源（点一下去设置）"></span>
         </div>
         <div class="dchat-log" id="deskChatLog"></div>
+        <!-- 把这一轮探索压成流程的入口。只在「跑通了且有可固化步骤」时出现，
+             不做弹窗强推 —— 它是筛选器，不是广告位。 -->
+        <div class="dchat-saveflow hidden" id="deskChatSaveFlow">
+          <span class="dcsf-text" id="deskChatSaveFlowText"></span>
+          <button type="button" class="btn sm" id="btnChatSaveFlow">存成流程</button>
+          <button type="button" class="dcsf-x" id="btnChatSaveFlowX" aria-label="这次不存" title="这次不存">×</button>
+        </div>
         <div class="dchat-foot" id="deskChatFoot"></div>
       </div>
     </div>
@@ -499,6 +506,29 @@
               <button type="button" class="btn sm primary" id="mvRender">重新渲染</button>
             </div>
           </section>
+
+          <!-- 右：导出面板（竖排）。画布固定正方形 2K/4K，深度 / 遮罩供 AI 回流 -->
+          <aside class="mv-export">
+            <div class="mv-ex-head">导出</div>
+            <div class="mv-ex-row">
+              <select class="mv-sel" id="mvExSize" title="导出画布（正方形）">
+                <option value="2048">2K · 2048</option>
+                <option value="4096">4K · 4096</option>
+              </select>
+              <select class="mv-sel" id="mvExGap" title="格间距">
+                <option value="0">无间距</option>
+                <option value="16">16 px</option>
+                <option value="32">32 px</option>
+                <option value="64">64 px</option>
+              </select>
+            </div>
+            <div class="mv-ex-info" id="mvExInfo"></div>
+            <div class="mv-ex-stats" id="mvExStats"></div>
+            <button type="button" class="btn sm primary" id="mvExPreview" disabled>预览导出结果</button>
+            <button type="button" class="btn sm" id="mvExColor" disabled>导出视图 PNG</button>
+            <button type="button" class="btn sm" id="mvExDepth" disabled>导出深度图</button>
+            <button type="button" class="btn sm" id="mvExMask" disabled>导出遮罩图</button>
+          </aside>
 
         </div>
       </div>
@@ -1243,6 +1273,13 @@
 <script src="js/bench.js"></script>
 <script src="js/flow-versions.js"></script>
 <script src="js/flow-memory.js"></script>
+<!-- P3 基础设施：轨迹与对话落盘 / 资产血缘 / 跨运行复用 / 轨迹编译器
+     顺序不能调：都依赖 run-history 的库连接（runDbTx），trace-to-flow 还依赖
+     flow-contract + flow-validate + flow-gen 的 normalizeDag。 -->
+<script src="js/ops-trace.js"></script>
+<script src="js/lineage.js"></script>
+<script src="js/node-cache.js"></script>
+<script src="js/trace-to-flow.js"></script>
 <script src="js/desktop.js"></script>
 <script src="js/desk-image.js"></script>
 <script src="js/desk-search.js"></script>

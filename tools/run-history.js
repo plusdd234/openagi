@@ -137,7 +137,9 @@ const check = (name, ok, info) => {
   check('统计：评分分布', r4.st.up === 1 && r4.st.down === 1, r4.st.up + '/' + r4.st.down);
   check('统计：最近一条错误', /节点炸了/.test(r4.st.lastError), r4.st.lastError);
   check('统计：按流程筛选', r4.stF1.total === 2 && r4.stF1.successRate === 50, JSON.stringify(r4.stF1));
-  check('库内五个 store 都已建好', r4.stores.join(',') === 'bench,evolve,memory,runs,versions', r4.stores.join(','));
+  /* v4 起是 8 张表：runs / bench / evolve / versions / memory + traces / lineage / cache。
+     P3 的轨迹、血缘、复用缓存各占一张 —— 少一张对应功能会静默返回空数组。 */
+  check('库内八张 store 都已建好', r4.stores.join(',') === 'bench,cache,evolve,lineage,memory,runs,traces,versions', r4.stores.join(','));
 
   console.log('\n=== 5. 真实运行 → 遥测钩子 ===');
   const r5 = await page.evaluate(async () => {

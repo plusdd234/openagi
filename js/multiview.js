@@ -48,6 +48,11 @@
 
   var SIZES = [512, 768, 1024, 1536];
 
+  /* 导出面板：画布固定正方形（对齐参考实现的 2K/4K 口径），
+   * AI 生图回流时按同一尺寸出图才能逐像素对齐。 */
+  var EX_SIZES = [2048, 4096];
+  var EX_GAPS = [0, 16, 32, 64];
+
   var COLS = [{ k: 0, n: '自动' }, { k: 2, n: '2 列' }, { k: 3, n: '3 列' }, { k: 4, n: '4 列' }];
 
   /* 底色**固定透明**：这套图的用途是贴到别的底上（AI 出图参考、排版、贴图对齐），
@@ -62,7 +67,9 @@
     gap: 0,
     margin: 1.08,
     lineWidth: 1.4,
-    labels: true
+    labels: true,
+    exSize: 2048,
+    exGap: 0
   };
 
   var state = {
@@ -79,6 +86,8 @@
     margin: DEFAULTS.margin,
     lineWidth: DEFAULTS.lineWidth,
     labels: DEFAULTS.labels,
+    exSize: DEFAULTS.exSize,   // 导出画布 2048 / 4096（正方形）
+    exGap: DEFAULTS.exGap,     // 导出间距 0 / 16 / 32 / 64
     out: null,            // viewGrid 结果
     pick: -1,
     busy: '',
@@ -160,6 +169,8 @@
       if (typeof raw.margin === 'number' && raw.margin >= 1 && raw.margin <= 1.6) d.margin = raw.margin;
       if (typeof raw.lineWidth === 'number' && raw.lineWidth >= 0.4 && raw.lineWidth <= 6) d.lineWidth = raw.lineWidth;
       if (typeof raw.labels === 'boolean') d.labels = raw.labels;
+      if (EX_SIZES.indexOf(Number(raw.exSize)) >= 0) d.exSize = Number(raw.exSize);
+      if (EX_GAPS.indexOf(Number(raw.exGap)) >= 0) d.exGap = Number(raw.exGap);
     } catch (e) { /* 坏数据就整份用默认，别让窗口打不开 */ }
     return d;
   }
@@ -169,7 +180,8 @@
       localStorage.setItem(SET_KEY, JSON.stringify({
         views: state.views, mode: state.mode, wire: state.wire, cam: state.cam, cell: state.cell,
         cols: state.cols, gap: state.gap, margin: state.margin,
-        lineWidth: state.lineWidth, labels: state.labels
+        lineWidth: state.lineWidth, labels: state.labels,
+        exSize: state.exSize, exGap: state.exGap
       }));
     } catch (e) { /* 配额满了不该让 UI 崩 */ }
   }
@@ -185,6 +197,8 @@
     state.margin = d.margin;
     state.lineWidth = d.lineWidth;
     state.labels = d.labels;
+    state.exSize = d.exSize;
+    state.exGap = d.exGap;
   }
 
   /* ---------- 模型来源 ---------- */
@@ -330,10 +344,12 @@
         lineWidth: state.lineWidth
       });
       state.out = o;
+      state.stats = o.stats || null;
       state.pick = -1;
       state.error = '';
     } catch (e) {
       state.out = null;
+      state.stats = null;
       state.error = '渲染失败：' + friendly(e);
     }
     setBusy('');
@@ -407,6 +423,119 @@
     };
     img.onerror = function () { state.error = '裁剪失败：结果图读不出来'; paint(); };
     img.src = o.png;
+  }
+
+  /* ---------- 导出面板（对齐 AIGC工具包 的口径：固定画布 · 深度 · 遮罩） ---------- */
+
+  /**
+   * 导出布局（纯逻辑，测试直接调）：画布固定正方形，格子尽量铺满。
+   * cell = (size - gap*(cols-1)) / cols 向下取整并保持偶数（与渲染核口径一致），
+   * 画布永远 size×size —— AI 生图回流时按同一尺寸出图才能逐像素对齐。
+   */
+  function exportLayout(nViews, size, gap, colsOpt) {
+    nViews = Math.max(1, Math.min(16, Math.round(Number(nViews) || 1)));
+    size = EX_SIZES.indexOf(Number(size)) >= 0 ? Number(size) : 2048;
+    gap = EX_GAPS.indexOf(Number(gap)) >= 0 ? Number(gap) : 0;
+    var cols = Math.round(Number(colsOpt) || 0);
+    if (cols < 1) cols = autoCols(nViews);
+    cols = Math.min(cols, nViews);
+    var rows = Math.ceil(nViews / cols);
+    var cell = Math.floor((size - gap * (cols - 1)) / cols);
+    if (cell % 2) cell -= 1;
+    return { cols: cols, rows: rows, cell: cell, w: size, h: size };
+  }
+
+  function fmtN(n) {
+    return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  }
+
+  var EX_SUFFIX = { color: '', depth: '_depth', mask: '_mask' };
+  var EX_LABEL = { color: '视图', depth: '深度图', mask: '遮罩图' };
+
+  /* 导出渲染：深度/遮罩只看轮廓与前后关系，与材质模式无关（渲染核里被 overrideMaterial 盖掉）；
+   * 导出图一律不烧标签 —— 拿去当 AI 参考图时标签是脏像素。 */
+  async function exportPNG(pass) {
+    if (!state.cur || !state.cur.src) { say('先选一个模型'); return null; }
+    if (!window.Model3D || typeof Model3D.viewGrid !== 'function' || !Model3D.ready()) {
+      say('3D 渲染组件未就绪（three.js 没加载上）');
+      return null;
+    }
+    var L = exportLayout(state.views.length, state.exSize, state.exGap, state.cols);
+    setBusy('render');
+    try {
+      var o = await Model3D.viewGrid(state.cur.src, {
+        views: state.views.slice(),
+        cell: L.cell,
+        cols: L.cols,
+        gap: state.exGap,
+        cam: state.cam,
+        mode: pass === 'color' ? state.mode : 'solid',
+        wire: pass === 'color' ? state.wire : false,
+        transparent: pass === 'color',
+        labels: false,
+        margin: state.margin,
+        lineWidth: state.lineWidth,
+        pass: pass
+      });
+      setBusy('');
+      return o;
+    } catch (e) {
+      setBusy('');
+      say('导出失败：' + friendly(e));
+      return null;
+    }
+  }
+
+  async function downloadExport(pass) {
+    var o = await exportPNG(pass);
+    if (!o) return;
+    saveBlob(dataUrlToBlob(o.png), baseName() + '_' + o.cells.length + '视图' + EX_SUFFIX[pass] + '.png');
+    say('已导出' + EX_LABEL[pass] + ' · ' + o.width + '×' + o.height + (pass === 'depth' ? ' · 近白远黑' : pass === 'mask' ? ' · 黑底白模' : ''));
+  }
+
+  /* 预览导出结果：弹层里先看大图，确认了再下载。 */
+  var xlEl = null;
+  var xlCur = null;
+
+  function ensureOverlay() {
+    if (xlEl) return xlEl;
+    xlEl = document.createElement('div');
+    xlEl.className = 'mv-xl hidden';
+    xlEl.innerHTML =
+      '<div class="mv-xl-card" role="dialog" aria-label="导出预览">' +
+        '<div class="mv-xl-head"><span class="mv-xl-t">导出预览</span>' +
+          '<button type="button" class="mv-xl-x" aria-label="关闭">×</button></div>' +
+        '<div class="mv-xl-body"><img class="mv-xl-img" alt="导出预览" draggable="false"></div>' +
+        '<div class="mv-xl-foot"><span class="mv-xl-info"></span>' +
+          '<button type="button" class="btn sm primary mv-xl-dl">下载 PNG</button></div>' +
+      '</div>';
+    document.body.appendChild(xlEl);
+    xlEl.addEventListener('mousedown', function (ev) { if (ev.target === xlEl) closeExportOverlay(); });
+    xlEl.querySelector('.mv-xl-x').addEventListener('click', closeExportOverlay);
+    xlEl.querySelector('.mv-xl-dl').addEventListener('click', function () {
+      if (xlCur) saveBlob(dataUrlToBlob(xlCur.png), baseName() + '_' + xlCur.cells.length + '视图.png');
+    });
+    return xlEl;
+  }
+
+  function openExportOverlay(o) {
+    var el = ensureOverlay();
+    xlCur = o;
+    el.querySelector('.mv-xl-img').src = o.png;
+    el.querySelector('.mv-xl-info').textContent =
+      o.width + '×' + o.height + ' · ' + o.cells.length + ' 格 · 单格 ' + o.cell;
+    el.classList.remove('hidden');
+  }
+
+  function closeExportOverlay() {
+    if (xlEl) xlEl.classList.add('hidden');
+    xlCur = null;
+  }
+
+  async function previewExport() {
+    var o = await exportPNG('color');
+    if (!o) return;
+    openExportOverlay(o);
   }
 
   async function saveToLib() {
@@ -588,11 +717,43 @@
     box.classList.remove('hidden');
   }
 
+  /* 导出条：画布 / 间距选择、布局信息、模型统计、四个按钮的可用态。
+   * 只反映状态，不触发重渲 —— 导出画布跟屏幕画布是两套尺寸，改导出参数不用重渲。 */
+  function paintExport() {
+    var has = !!state.cur && !!state.cur.src && !state.busy;
+    ['mvExPreview', 'mvExColor', 'mvExDepth', 'mvExMask'].forEach(function (id) {
+      var b = $(id);
+      if (b) b.disabled = !has;
+    });
+    var sizeSel = $('mvExSize');
+    if (sizeSel && sizeSel.value !== String(state.exSize)) sizeSel.value = String(state.exSize);
+    var gapSel = $('mvExGap');
+    if (gapSel && gapSel.value !== String(state.exGap)) gapSel.value = String(state.exGap);
+
+    var info = $('mvExInfo');
+    if (info) {
+      if (!state.cur) info.textContent = '';
+      else {
+        var L = exportLayout(state.views.length, state.exSize, state.exGap, state.cols);
+        info.textContent = state.views.length + '视图 ' + L.cols + '×' + L.rows +
+          ' · 画布 ' + L.w + '×' + L.h + ' · 单格 ' + L.cell;
+      }
+    }
+    var st = $('mvExStats');
+    if (st) {
+      var s = state.stats;
+      st.textContent = s && s.meshes
+        ? '顶点 ' + fmtN(s.verts) + ' · 三角面 ' + fmtN(s.tris) + ' · UV ' + s.uv
+        : '';
+    }
+  }
+
   function paint() {
     paintModels();
     paintPresets();
     paintViews();
     paintInfo();
+    paintExport();
 
     var img = $('mvOut');
     var empty = $('mvEmpty');
@@ -738,6 +899,29 @@
       }
     });
 
+    /* 导出条：画布 / 间距改的是导出口径，不动屏幕画布，所以只 saveSet + 刷新信息，不重渲 */
+    var exSize = $('mvExSize');
+    if (exSize) exSize.addEventListener('change', function () {
+      state.exSize = EX_SIZES.indexOf(Number(exSize.value)) >= 0 ? Number(exSize.value) : 2048;
+      saveSet();
+      paintExport();
+    });
+    var exGap = $('mvExGap');
+    if (exGap) exGap.addEventListener('change', function () {
+      state.exGap = EX_GAPS.indexOf(Number(exGap.value)) >= 0 ? Number(exGap.value) : 0;
+      saveSet();
+      paintExport();
+    });
+
+    var exPreview = $('mvExPreview');
+    if (exPreview) exPreview.addEventListener('click', previewExport);
+    var exColor = $('mvExColor');
+    if (exColor) exColor.addEventListener('click', function () { downloadExport('color'); });
+    var exDepth = $('mvExDepth');
+    if (exDepth) exDepth.addEventListener('click', function () { downloadExport('depth'); });
+    var exMask = $('mvExMask');
+    if (exMask) exMask.addEventListener('click', function () { downloadExport('mask'); });
+
     var openLib = $('mvOpenLib');
     if (openLib) openLib.addEventListener('click', function () {
       if (typeof openLibrary === 'function') openLibrary('model');
@@ -780,6 +964,11 @@
     document.addEventListener('keydown', function (ev) {
       if (!state.open) return;
       if (ev.key !== 'Escape') return;
+      // 有导出预览弹层时先关它
+      if (xlEl && !xlEl.classList.contains('hidden')) {
+        closeExportOverlay();
+        return;
+      }
       // 有 3D 预览弹层时先关弹层，不要再把整个窗口也关掉
       if (window.Model3D && Model3D.closePreview && document.querySelector('.mv-pv-open')) {
         Model3D.closePreview();
@@ -889,6 +1078,6 @@
     render: render,
     state: state,
     /* 纯逻辑导出：测试直接调，不用碰 DOM */
-    _pure: { autoCols, fmtMB, viewName, countLabel }
+    _pure: { autoCols, fmtMB, viewName, countLabel, exportLayout, fmtN }
   };
 })();

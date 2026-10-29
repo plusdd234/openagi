@@ -1461,6 +1461,7 @@
       e.className = 'dchat-empty';
       e.textContent = '还没有对话。可以直接问，也可以说「画一只在雨里的猫」——会自动出图。';
       log.appendChild(e);
+      persistSoon();
       return;
     }
     msgs.forEach(m => {
@@ -1476,6 +1477,85 @@
       log.appendChild(row);
     });
     log.scrollTop = log.scrollHeight;
+    persistSoon();
+    refreshSaveFlowSoon();
+  }
+
+  /* ==================== 轨迹与「存成流程」 ====================
+   * 这一段的由来：以前对话内容一条都不落盘，窗口一关这次探索就没了 ——
+   * 于是「把这次存成流程」只能重新让模型凭空再生成一次，而那样会把真正调通的参数丢掉。
+   * 现在做两件事：
+   *   ① 每次能力调用记一条轨迹（解析后的参数，不是用户那句原话）；
+   *   ② 跑通了就把「存成流程」递到眼前 —— 它是筛选器不是广告位，点 × 就不再烦。 */
+
+  function traceCap(cap, o){
+    try {
+      if(typeof traceAppend !== 'function') return;
+      traceAppend(Object.assign({ cap: cap }, o || {}))
+        .then(() => refreshSaveFlowSoon())
+        .catch(() => {});
+    } catch(e){}
+  }
+
+  let persistTimer = 0;
+  let saveFlowTimer = 0;
+  let saveFlowDismissed = false;
+  let saveFlowBusy = false;
+
+  function persistSoon(){
+    if(persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      persistTimer = 0;
+      try { if(typeof chatSave === 'function') chatSave(msgs); } catch(e){}
+    }, 600);
+  }
+  function refreshSaveFlowSoon(){
+    if(saveFlowTimer) clearTimeout(saveFlowTimer);
+    saveFlowTimer = setTimeout(() => { saveFlowTimer = 0; refreshSaveFlow(); }, 300);
+  }
+
+  function refreshSaveFlow(){
+    const bar = el('deskChatSaveFlow');
+    const txt = el('deskChatSaveFlowText');
+    if(!bar || !txt) return;
+    if(saveFlowDismissed || typeof traceList !== 'function'){ bar.classList.add('hidden'); return; }
+    /* 判定先看「这一轮成没成」：有失败记录就还不到存的时候，
+     * 让用户先把结果弄对，再谈固化 —— 否则存下来的是一张废图的做法。 */
+    const v = (typeof chatVerdict === 'function') ? chatVerdict(msgs) : { verdict: '' };
+    if(v.verdict !== 'ok'){ bar.classList.add('hidden'); return; }
+    traceList().then(list => {
+      const sum = (typeof traceSummary === 'function') ? traceSummary(list) : { steps: 0 };
+      const hint = (typeof traceFlowHint === 'function') ? traceFlowHint(list, sum) : { worthy: false };
+      if(!hint.worthy){ bar.classList.add('hidden'); return; }
+      txt.textContent = hint.reason;
+      bar.classList.remove('hidden');
+    }).catch(() => bar.classList.add('hidden'));
+  }
+
+  function saveChatFlow(btn){
+    if(saveFlowBusy) return;
+    saveFlowBusy = true;
+    const label = btn ? btn.textContent : '';
+    if(btn){ btn.disabled = true; btn.textContent = '编译中…'; }
+    const done = () => {
+      saveFlowBusy = false;
+      if(btn){ btn.disabled = false; btn.textContent = label || '存成流程'; }
+    };
+    traceList().then(list => {
+      const res = flowFromTrace(list.events, {});
+      if(!res.ok){ deskToast('存成流程失败：' + res.error); return; }
+      /* 用户点这一下**就是确认**。和 flow-gen 同一条规矩：生成的流程绝不自动落盘。 */
+      const flow = installGeneratedFlow(res);
+      const bits = ['已存为「' + flow.name + '」'];
+      if(res.skipped && res.skipped.length){
+        bits.push(res.skipped.length + ' 个步骤没映射（' + res.skipped[0].cap + '）');
+      }
+      deskToast(bits.join(' · '));
+      saveFlowDismissed = true;
+      refreshSaveFlow();
+    }).catch(e => {
+      deskToast('存成流程失败：' + String((e && e.message) || e));
+    }).then(done, done);
   }
 
   /* ==================== 对话内生图 ====================
@@ -1770,6 +1850,17 @@
         m.tr = { via: tr.via || '', model: tr.model || '', reason: tr.reason || '' };   // 卡片上要说清「谁翻的 / 为什么没翻成」
       }
       lastImage = r.src;
+      /* 轨迹：记的是**真正送进引擎的那句**（可能是改写后的），不是用户原本那句话。
+       * 少了这条，「存成流程」就还原不出当时到底用了什么提示词。 */
+      traceCap('imageGen', {
+        ok: true,
+        ms: Number(m.ms) || 0,
+        model: (el('imgModel') && el('imgModel').value) || '',
+        engine: m.srcLabel || '',
+        inputs: { prompt: prompt, ref: m.ref || '', denoise: Number(m.denoise) || 0 },
+        outKind: 'image',
+        ref: r.src
+      });
       setDot('ok', '已出图 · ' + (m.srcLabel || ''));
       /* 在线接口给的是远程地址：后面「把这张再改改」「用作参考图」「保存到图库」
          都要本地能取到像素，后台先转成 dataURL 备好。显示用的 <img> 不动（同一张图）。 */
@@ -1784,6 +1875,13 @@
       if(token !== genSeq) return;
       m.phase = 'error';
       m.error = (typeof friendlyErr === 'function') ? friendlyErr(e) : String((e && e.message) || e);
+      /* 失败的尝试也记：它不会写进流程，但要让「存成流程」知道这一轮有过瑕疵，
+       * 别把一次侥幸成功当成稳定做法固化下来。 */
+      traceCap('imageGen', {
+        ok: false, ms: 0,
+        inputs: { prompt: prompt, ref: m.ref || '', denoise: Number(m.denoise) || 0 },
+        error: m.error
+      });
       setDot('err', '生图失败');
       deskToast('生图失败：' + String(m.error).slice(0, 80));
     }
@@ -2259,6 +2357,16 @@
     if(webSearchOn && typeof deskSearch !== 'undefined' && text){
       setDot('busy', '联网搜索…');
       pack = await deskSearch.run(text);
+      /* 搜索也进轨迹。它没有对应节点，所以不会写进流程，
+       * 但要出现在「没映射的步骤」里 —— 用户得知道存下来的流程少了哪一段。 */
+      traceCap('webSearch', {
+        ok: !!(pack && pack.ok),
+        ms: Number(pack && pack.ms) || 0,
+        engine: String((pack && pack.provider) || ''),
+        inputs: { query: text, count: Number(pack && pack.results && pack.results.length) || 0 },
+        outKind: 'web',
+        error: (pack && !pack.ok) ? String(pack.error || '') : ''
+      });
       if(pack && pack.ok){
         setDot('busy', pack.results.length ? ('搜到 ' + pack.results.length + ' 条 · 生成中…') : '没搜到结果 · 生成中…');
       }
@@ -2489,6 +2597,42 @@
        语义和别的 App 一样（关掉这个窗口，而不是「退回上一页」）。 */
     const close = el('btnChatWinClose');
     if(close) close.addEventListener('click', closePanel);
+
+    /* ---- 存成流程：按钮 + 上一次对话恢复 ---- */
+    const sfBtn = el('btnChatSaveFlow');
+    if(sfBtn) sfBtn.addEventListener('click', () => saveChatFlow(sfBtn));
+    const sfX = el('btnChatSaveFlowX');
+    if(sfX) sfX.addEventListener('click', () => {
+      saveFlowDismissed = true;
+      refreshSaveFlow();
+    });
+
+    /* 恢复上一次对话（含轨迹）。
+     * ?nostore=1 是测试模式：只禁写不禁读，但**对话恢复要跳过** ——
+     * 否则上一条用例留下的消息会让「空白态」断言全红（这个坑踩过一次）。 */
+    try {
+      const nostore = /[?&]nostore=1\b/.test(location.search);
+      if(!nostore && typeof chatLoad === 'function'){
+        chatLoad().then(r => {
+          if(!r || !Array.isArray(r.msgs) || !r.msgs.length) return;
+          if(msgs.length) return;              // 已经开聊了，别覆盖
+          r.msgs.forEach(m => {
+            if(!m || typeof m !== 'object') return;
+            /* 大图没入库（超过 260KB 的 data URL）：不要让它渲染成一张破图，
+             * 明确说「这张没存下来」，用户点重新生成即可。 */
+            if(m.imgDropped){
+              m.image = '';
+              m.phase = 'error';
+              m.error = '这张图太大，没能存进本地缓存（重新生成即可）';
+            }
+            msgs.push(m);
+            const n = Number(m.id);
+            if(isFinite(n) && n > msgSeq) msgSeq = n;
+          });
+          renderLog();
+        }).catch(() => {});
+      }
+    } catch(e){}
 
     /* 输入条跟着对话窗口的归属走（详见 mountInput 处的说明）：
        挂载 → 搬进对话窗口底部；放回 → 搬回桌面底部。 */

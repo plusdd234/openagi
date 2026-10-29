@@ -21,7 +21,7 @@
   --mv-gold-ink: var(--gold-ink, #3b2c05);
 
   display: grid;
-  grid-template-columns: 212px minmax(0, 1fr);
+  grid-template-columns: 212px minmax(0, 1fr) 218px;
   height: 100%;
   min-height: 0;
   background: #fff;
@@ -496,4 +496,163 @@
 
 @media (prefers-reduced-motion: reduce) {
   .mv-item, .mv-chip, .mv-seg-b, .mv-mini, .mv-pick, .mv-more > summary::before { transition: none !important; }
+}
+/* ============================================================
+   导出面板（右侧竖排）：画布 / 间距 / 布局信息 / 模型统计 / 四个导出按钮
+   —— 对齐 AIGC工具包 的导出面板；挂成第三列，预览图把中间舞台完全让出来
+   ============================================================ */
+.mv-export {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 10px 10px 12px;
+  border-left: 1px solid var(--mv-soft);
+  background: #fffdf6;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.mv-ex-head {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: #8b94a5;
+}
+.mv-ex-row {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mv-sel {
+  width: 100%;
+  height: 26px;
+  padding: 0 22px 0 8px;
+  border: 1px solid var(--mv-line);
+  border-radius: 7px;
+  background-color: #fff;
+  color: var(--mv-ink);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, #98a0ad 50%), linear-gradient(135deg, #98a0ad 50%, transparent 50%);
+  background-position: calc(100% - 13px) 11px, calc(100% - 9px) 11px;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+}
+.mv-sel:hover { border-color: var(--mv-gold); }
+.mv-ex-info,
+.mv-ex-stats {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8b94a5;
+  font-variant-numeric: tabular-nums;
+  white-space: normal;
+}
+.mv-ex-stats { color: #a29a80; }
+.mv-export .btn {
+  flex: 0 0 auto;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  /* 独立页里没有 app.css，基础外观写全，别指望继承 .btn */
+  border: 1px solid #d9dde3;
+  background: #fff;
+  color: #2a2f36;
+  cursor: pointer;
+  transition: border-color .12s, background .12s, color .12s;
+}
+.mv-export .btn:hover:not(:disabled) { border-color: #c3c9d3; background: #fafbfc; }
+.mv-export .btn:disabled { opacity: .45; cursor: not-allowed; }
+.mv-export .btn.primary {
+  background: linear-gradient(180deg, var(--mv-gold), var(--mv-gold-deep));
+  border-color: var(--mv-gold-deep);
+  color: var(--mv-gold-ink);
+  font-weight: 700;
+}
+
+/* 导出预览弹层 */
+.mv-xl {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(24, 26, 31, .58);
+}
+.mv-xl.hidden { display: none; }
+.mv-xl-card {
+  display: flex;
+  flex-direction: column;
+  max-width: min(1100px, 92vw);
+  max-height: 88vh;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .35);
+  overflow: hidden;
+}
+.mv-xl-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--mv-soft);
+}
+.mv-xl-t { font-size: 13px; font-weight: 600; color: var(--mv-ink); }
+.mv-xl-x {
+  width: 26px; height: 26px;
+  border: 0; border-radius: 7px;
+  background: transparent;
+  color: #8b94a5;
+  font-size: 17px; line-height: 1;
+  cursor: pointer;
+}
+.mv-xl-x:hover { background: #f1f2f5; color: var(--mv-ink); }
+.mv-xl-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 14px;
+  background:
+    conic-gradient(#f0f1f4 25%, #fff 0 50%, #f0f1f4 0 75%, #fff 0) 0 0/20px 20px;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mv-xl-img { max-width: 100%; max-height: 62vh; display: block; }
+.mv-xl-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--mv-soft);
+}
+.mv-xl-info { flex: 1 1 auto; font-size: 11.5px; color: #8b94a5; font-variant-numeric: tabular-nums; }
+
+/* 窄屏：三列放不下 → 导出面板折回底部横排 */
+@media (max-width: 900px) {
+  .mv-wrap { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .mv-side { border-right: 0; border-bottom: 1px solid var(--mv-soft); }
+  .mv-export {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px;
+    border-left: 0;
+    border-top: 1px solid var(--mv-soft);
+  }
+  .mv-ex-head { flex: 0 0 auto; }
+  .mv-ex-row { flex: 1 1 260px; flex-direction: row; }
+  .mv-sel { width: auto; flex: 1 1 110px; }
+  .mv-ex-info, .mv-ex-stats { flex: 1 1 100%; }
+  .mv-export .btn { width: auto; }
 }
