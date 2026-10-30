@@ -774,6 +774,11 @@
     try { pv.controls && pv.controls.dispose && pv.controls.dispose(); } catch (e) {}
     try { pv.renderer.dispose(); } catch (e) {}
     if (pv.overlay && pv.overlay.parentNode) pv.overlay.parentNode.removeChild(pv.overlay);
+    /* 宿主模式（app 内 .os-win 窗口）：藏窗口 + 清空宿主，renderer 不 dispose 会一直占 WebGL 上下文 */
+    if (pv.win) {
+      try { pv.win.classList.add('hidden'); } catch (e) {}
+    }
+    if (pv.host) pv.host.innerHTML = '';
     pv = null;
   }
 
@@ -782,20 +787,12 @@
     if (!ready()) throw new Error('three.js 未就绪');
     closePreview();
 
-    var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(6,7,10,.86);' +
-      'display:flex;align-items:center;justify-content:center;padding:24px;font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif;color:#e8eaf0;';
-
-    var panel = document.createElement('div');
-    panel.style.cssText = 'width:min(1100px,96vw);height:min(760px,92vh);background:#111318;border:1px solid #23262e;' +
-      'border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5);';
-
-    var head = document.createElement('div');
-    head.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #23262e;flex:0 0 auto;';
-    var title = document.createElement('div');
-    title.style.cssText = 'font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    title.textContent = opts.title || '3D 预览';
-    head.appendChild(title);
+    /* 宿主优先（2026-10-30）：工作台里有 #modelViewHost（3D 查看器 .os-win 窗口）就
+     * 装进窗口——和图片编辑器同一套窗口隐喻，不再全屏接管整个屏幕。
+     * 独立页（multiview.html 等）没有这个宿主，退回全屏遮罩；opts.host 可显式指定容器。 */
+    var hostEl = opts.host || document.getElementById('modelViewHost') || null;
+    var winEl = hostEl && hostEl.closest ? hostEl.closest('.os-win') : null;
+    var overlay = null, panel = null;
 
     var stage = document.createElement('div');
     stage.style.cssText = 'flex:1;position:relative;background:#0a0b0e;min-height:0;';
@@ -804,7 +801,8 @@
     stage.appendChild(canvas);
 
     var bar = document.createElement('div');
-    bar.style.cssText = 'flex:0 0 auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-top:1px solid #23262e;';
+    bar.className = 'mv3-bar';
+    bar.style.cssText = 'flex:0 0 auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-top:1px solid #23262e;background:#111318;';
 
     var hint = document.createElement('span');
     hint.style.cssText = 'color:#8b90a0;font-size:12px;margin-right:auto;';
@@ -819,14 +817,45 @@
       return b;
     }
 
-    var closeBtn = mkBtn('关闭', closePreview);
-    head.appendChild(closeBtn);
-    overlay.appendChild(panel);
-    panel.appendChild(head);
-    panel.appendChild(stage);
-    panel.appendChild(bar);
-    overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) closePreview(); });
-    document.body.appendChild(overlay);
+    if (hostEl) {
+      /* chrome:false —— 宿主自己带标题栏/关闭按钮（例如嵌在模型库 App 里），
+       * 这里就只管渲染本体，不去改外层窗口的标题和关闭行为。 */
+      hostEl.innerHTML = '';
+      hostEl.appendChild(stage);
+      hostEl.appendChild(bar);
+      if (opts.chrome !== false) {
+        var tEl = winEl && winEl.querySelector('.os-win-title');
+        if (tEl) tEl.textContent = opts.title || '3D 预览';
+        if (winEl) winEl.classList.remove('hidden');
+        /* onclick 覆盖赋值而不是 addEventListener：重复打开不会叠出一排旧监听 */
+        var xBtn = winEl && winEl.querySelector('.os-win-close');
+        if (xBtn) xBtn.onclick = closePreview;
+      }
+    } else {
+      overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(6,7,10,.86);' +
+        'display:flex;align-items:center;justify-content:center;padding:24px;font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif;color:#e8eaf0;';
+
+      panel = document.createElement('div');
+      panel.style.cssText = 'width:min(1100px,96vw);height:min(760px,92vh);background:#111318;border:1px solid #23262e;' +
+        'border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5);';
+
+      var head = document.createElement('div');
+      head.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #23262e;flex:0 0 auto;';
+      var title = document.createElement('div');
+      title.style.cssText = 'font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      title.textContent = opts.title || '3D 预览';
+      head.appendChild(title);
+
+      var closeBtn = mkBtn('关闭', closePreview);
+      head.appendChild(closeBtn);
+      overlay.appendChild(panel);
+      panel.appendChild(head);
+      panel.appendChild(stage);
+      panel.appendChild(bar);
+      overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) closePreview(); });
+      document.body.appendChild(overlay);
+    }
 
     hint.textContent = '正在加载模型…';
 
@@ -896,6 +925,277 @@
 
     bar.appendChild(mkBtn('实体 / 线框', function () { setMode(curMode === 'wire' ? 'material' : 'wire'); }));
 
+    /* 材质插槽面板：模型库「设置贴图」的入口（插槽列表 / 选图 / 导出 GLB） */
+    var slotUI = setupSlotPanel({
+      model: model, stage: stage, bar: bar, mkBtn: mkBtn, hint: hint, title: opts.title, assetId: opts.assetId,
+      /* 打开插槽面板时先退出 UV：面板是 3D 视口右侧的抽屉，两层叠着看不清 */
+      onPanelOpen: function () { if (uv && uv.on) uvClose(); }
+    });
+
+    /* ---------------- UV 视图（并入查看器内部） ----------------
+     * 以前 UV 是库窗口里另一层浅色浮层，和 3D 查看器是两套界面。这里把它并进来：
+     * 同一个视口里按「UV 查看」切过去，岛图 / 3D 岛图 / 编号 / 插槽隔离 / 分辨率 /
+     * 导出都在这一层，配色沿用 3D 视口的深色语言，不再跳窗口也不再换主题。
+     * 分析走 ModelTex（它会自己再 load 一次模型），首次进入 UV 才算，3D 不受影响。 */
+    var uvName = String(opts.title || '模型').replace(/\.(glb|gltf|obj|fbx|stl|ply|3mf|usdz)$/i, '');
+    var uv = {
+      on: false, layer: null, a: null, busy: false, err: '',
+      mode: 'atlas', part: 'all', labels: true, size: 1024,
+      atlas: null, preview: '', previewBusy: false, partIslands: []
+    };
+    var uvBtn = mkBtn('UV 查看', function () { uvToggle(); });
+    bar.appendChild(uvBtn);
+    /* 外层窗口（模型库）靠它知道现在是 UV 还是 3D，好把副标题换成对应的操作提示 */
+    var notifyUv = opts.onUvState;
+
+    function uvEsc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+      });
+    }
+    function uvColor(id) {
+      return 'hsl(' + ((id * 137.508) % 360).toFixed(1) + ',72%,58%)';
+    }
+    function ensureUvStyle() {
+      if (document.getElementById('mv3UvStyle')) return;
+      var st = document.createElement('style');
+      st.id = 'mv3UvStyle';
+      st.textContent = [
+        '.mv3-uv{position:absolute;inset:0;display:none;flex-direction:column;background:#0a0b0e;z-index:4;}',
+        '.mv3-uv.on{display:flex;}',
+        '.mv3-uv-head{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:9px 12px;border-bottom:1px solid #23262e;background:#111318;}',
+        '.mv3-uv-brand{display:flex;flex-direction:column;gap:1px;margin-right:auto;min-width:0;}',
+        '.mv3-uv-kicker{font-size:9.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#e88a00;}',
+        '.mv3-uv-name{font-size:13px;font-weight:600;color:#e8eaf0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40vw;}',
+        '.mv3-uv-sub{font-size:10.5px;color:#8b90a0;font-variant-numeric:tabular-nums;}',
+        '.mv3-uv-chip{padding:4px 10px;border-radius:7px;border:1px solid #2c303a;background:#191c22;color:#e8eaf0;font-size:12px;cursor:pointer;line-height:1.4;font-family:inherit;}',
+        '.mv3-uv-chip.on{border-color:#e88a00;background:#241c10;color:#ffb453;}',
+        '.mv3-uv-chip:disabled{opacity:.45;cursor:default;}',
+        '.mv3-uv-main{flex:1;min-height:0;display:flex;}',
+        '.mv3-uv-stage{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;padding:10px;position:relative;',
+          'background-color:#0a0b0e;',
+          'background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);',
+          'background-size:24px 24px;}',
+        '.mv3-uv-img{max-width:100%;max-height:100%;display:block;object-fit:contain;border-radius:4px;box-shadow:0 8px 24px rgba(0,0,0,.45);}',
+        '.mv3-uv-state{display:flex;align-items:center;gap:8px;font-size:12px;color:#c6ccd6;}',
+        '.mv3-uv-state.err{color:#ff9a90;max-width:90%;line-height:1.6;}',
+        '.mv3-uv-spin{width:14px;height:14px;border-radius:50%;flex:0 0 auto;border:2px solid rgba(255,255,255,.18);border-top-color:#e88a00;animation:mv3UvSpin .8s linear infinite;}',
+        '@keyframes mv3UvSpin{to{transform:rotate(360deg);}}',
+        '.mv3-uv-side{flex:0 0 208px;width:208px;display:flex;flex-direction:column;gap:12px;padding:12px;border-left:1px solid #23262e;background:#0d0f14;overflow-y:auto;color:#c6ccd6;}',
+        '.mv3-uv-sec{display:flex;flex-direction:column;gap:4px;}',
+        '.mv3-uv-h{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#8b90a0;}',
+        '.mv3-uv-kv{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:11.5px;color:#a8aeba;}',
+        '.mv3-uv-kv b{font-weight:600;color:#e8eaf0;font-variant-numeric:tabular-nums;}',
+        '.mv3-uv-island{display:flex;align-items:center;gap:7px;padding:4px 7px;border-radius:6px;background:#171a21;font-size:10.5px;color:#a8aeba;}',
+        '.mv3-uv-island b{color:#e8eaf0;font-variant-numeric:tabular-nums;}',
+        '.mv3-uv-island span{margin-left:auto;font-variant-numeric:tabular-nums;color:#8b90a0;}',
+        '.mv3-uv-dot{flex:0 0 auto;width:9px;height:9px;border-radius:3px;}',
+        '.mv3-uv-tip{margin-top:auto;font-size:10.5px;line-height:1.65;color:#8b90a0;}'
+      ].join('\n');
+      document.head.appendChild(st);
+    }
+    function ensureUvLayer() {
+      ensureUvStyle();
+      if (uv.layer) return uv.layer;
+      uv.layer = document.createElement('div');
+      uv.layer.className = 'mv3-uv';
+      stage.appendChild(uv.layer);
+      /* 一层铺在 stage 上，事件统一委托：重绘只改 innerHTML，不重复绑监听 */
+      uv.layer.addEventListener('click', function (e) {
+        var el = e.target.closest ? e.target.closest('[data-uv]') : null;
+        if (!el) return;
+        uvAct(el.getAttribute('data-uv'), el.getAttribute('data-v'));
+      });
+      return uv.layer;
+    }
+    function uvAct(act, val) {
+      if (act === 'back') { uvClose(); return; }
+      if (act === 'mode') {
+        if (uv.mode === val) return;
+        uv.mode = val;
+        uvRender();
+        if (val === '3d' && !uv.preview) uvPreview();
+      } else if (act === 'part') {
+        if (uv.part === val) return;
+        uv.part = val;
+        uvBuildAtlas(); uv.preview = ''; uvRender();
+        if (uv.mode === '3d') uvPreview();
+      } else if (act === 'labels') {
+        uv.labels = !uv.labels; uvBuildAtlas(); uv.preview = ''; uvRender();
+      } else if (act === 'size') {
+        uv.size = uv.size === 1024 ? 2048 : 1024; uvBuildAtlas(); uv.preview = ''; uvRender();
+      } else if (act === 'export') {
+        uvExport();
+      }
+    }
+    function uvAtlasCanvas(forPreview) {
+      var o = { labels: uv.labels };
+      if (uv.part !== 'all') o.parts = [Number(uv.part)];
+      if (forPreview) o.bg = '#ffffff';
+      return global.ModelTex.islandAtlas(uv.a, uv.size, o);
+    }
+    function uvBuildAtlas() {
+      uv.atlas = null;
+      if (!uv.a || !global.ModelTex) return;
+      try { uv.atlas = uvAtlasCanvas(false); }
+      catch (e) { uv.err = '生成 UV 岛图失败：' + ((e && e.message) || e); }
+    }
+    async function uvPreview() {
+      if (!uv.a || uv.previewBusy || !global.ModelTex) return;
+      uv.previewBusy = true;
+      uvRender();
+      try {
+        await new Promise(function (r) { setTimeout(r, 0); });   // 先让「渲染中」上屏
+        uv.preview = global.ModelTex.previewGrid(uv.a, uvAtlasCanvas(true), {
+          cell: 320, angles: [0, 35, 180], compare: false,
+          paintedLabel: uv.part === 'all' ? '岛图' : ('插槽 ' + (Number(uv.part) + 1)),
+          texLabel: 'UV 岛图'
+        });
+      } catch (e) {
+        uv.err = '渲染 3D 岛图失败：' + ((e && e.message) || e);
+      } finally {
+        uv.previewBusy = false;
+        uvRender();
+      }
+    }
+    function uvExport() {
+      if (!global.ModelTex || !global.ModelTex.download) return;
+      var base = uvName.replace(/[\\/:*?"<>|]/g, '_');
+      if (uv.mode === '3d' && uv.preview) global.ModelTex.download(base + '_3d_islands.png', uv.preview);
+      else if (uv.atlas) global.ModelTex.download(base + '_uv_' + uv.size + '.png', uv.atlas.toDataURL('image/png'));
+    }
+    function uvStatHtml() {
+      var a = uv.a;
+      if (!a) return '';
+      var tris = a.parts.reduce(function (n, p) { return n + p.tri; }, 0);
+      var num = uv.part === 'all' ? -1 : Number(uv.part);
+      var shown = uv.part === 'all' ? a.islands : a.islands.filter(function (o) {
+        return o.tris.some(function (r) { return r.part === num; });
+      });
+      var slotTris = uv.part === 'all' ? tris : a.parts[num].tri;
+      var kv = function (k, v) { return '<div class="mv3-uv-kv"><span>' + k + '</span><b>' + v + '</b></div>'; };
+      var rng = function (o) { return o.bbox[1].toFixed(1) + '–' + o.bbox[4].toFixed(1); };
+      return '<div class="mv3-uv-sec"><div class="mv3-uv-h">概览</div>' +
+          kv('UV 岛', uv.part === 'all' ? shown.length : (shown.length + ' / ' + a.islands.length)) +
+          kv('三角面', slotTris) +
+          kv('网格', a.parts.length) +
+          (a.parts.length > 1 ? kv('当前插槽', uv.part === 'all' ? '全部' : ('#' + (num + 1))) : '') +
+          kv('UV 图', uv.size + ' × ' + uv.size) +
+        '</div>' +
+        '<div class="mv3-uv-sec"><div class="mv3-uv-h">最大的岛</div>' +
+          shown.slice(0, 6).map(function (o) {
+            return '<div class="mv3-uv-island">' +
+              '<i class="mv3-uv-dot" style="background:' + uvColor(o.id) + '"></i>' +
+              '<b>#' + o.id + '</b>' +
+              '<span>' + o.tris.length + ' 面 · y ' + rng(o) + '</span>' +
+            '</div>';
+          }).join('') +
+        '</div>' +
+        '<div class="mv3-uv-tip">' + (a.parts.length > 1
+          ? '这个模型有 ' + a.parts.length + ' 个 UV 插槽，每个都占满 0–1 UV；切到单个插槽才能看清。'
+          : '岛编号可以直接写进「模型区域上色」的区域规则与细节规则，用来定位部位。') + '</div>';
+    }
+    function uvRender() {
+      if (!uv.layer) return;
+      var a = uv.a;
+      var sub = a
+        ? (a.islands.length + ' 个 UV 岛 · ' + a.parts.reduce(function (n, p) { return n + p.tri; }, 0) + ' 三角面')
+        : (uv.busy ? '读取模型中…' : '等待分析');
+      var chip = function (act, val, label, on, title) {
+        return '<button type="button" class="mv3-uv-chip' + (on ? ' on' : '') + '" data-uv="' + act + '" data-v="' + val + '"' +
+          (title ? ' title="' + uvEsc(title) + '"' : '') + '>' + label + '</button>';
+      };
+      var slots = (a && a.parts.length > 1)
+        ? chip('part', 'all', '全部', uv.part === 'all') +
+          a.parts.map(function (p, i) {
+            return chip('part', String(i), '插槽 ' + (i + 1), uv.part === String(i),
+              p.tri + ' 面 · ' + (uv.partIslands[i] || 0) + ' 个岛');
+          }).join('')
+        : '';
+      var stageHtml;
+      if (uv.err) stageHtml = '<div class="mv3-uv-state err">' + uvEsc(uv.err) + '</div>';
+      else if (uv.busy) stageHtml = '<div class="mv3-uv-state"><span class="mv3-uv-spin"></span>正在分析 UV 岛…</div>';
+      else if (!a) stageHtml = '<div class="mv3-uv-state">准备中…</div>';
+      else if (uv.mode === '3d') {
+        stageHtml = uv.preview
+          ? '<img class="mv3-uv-img" src="' + uv.preview + '" alt="3D 岛图">'
+          : '<div class="mv3-uv-state"><span class="mv3-uv-spin"></span>正在渲染 3D 岛图…</div>';
+      } else {
+        stageHtml = uv.atlas
+          ? '<img class="mv3-uv-img" src="' + uv.atlas.toDataURL('image/png') + '" alt="UV 岛图">'
+          : '<div class="mv3-uv-state">准备中…</div>';
+      }
+      uv.layer.innerHTML =
+        '<div class="mv3-uv-head">' +
+          '<div class="mv3-uv-brand">' +
+            '<span class="mv3-uv-kicker">UV 查看</span>' +
+            '<b class="mv3-uv-name" title="' + uvEsc(uvName) + '">' + uvEsc(uvName) + '</b>' +
+            '<span class="mv3-uv-sub">' + uvEsc(sub) + '</span>' +
+          '</div>' +
+          chip('mode', 'atlas', 'UV 岛图', uv.mode === 'atlas') +
+          chip('mode', '3d', '3D 岛图', uv.mode === '3d') +
+          slots +
+          chip('labels', '1', '编号', uv.labels, '在面积足够大的岛上标出编号') +
+          chip('size', '1', uv.size, false, '切换 UV 图分辨率') +
+          chip('export', '1', '导出 PNG', false) +
+          chip('back', '1', '返回 3D', false) +
+        '</div>' +
+        '<div class="mv3-uv-main">' +
+          '<div class="mv3-uv-stage">' + stageHtml + '</div>' +
+          '<aside class="mv3-uv-side">' + uvStatHtml() + '</aside>' +
+        '</div>';
+    }
+    function uvToggle() {
+      if (uv.on) uvClose();
+      else uvOpen();
+    }
+    async function uvOpen() {
+      ensureUvLayer();
+      uv.on = true;
+      uv.layer.classList.add('on');
+      /* UV 是完整的另一屏：底栏那几个 3D 专用按钮（线框 / 朝向 / 四视图）在这层没意义，
+       * 直接收起，回到 3D 时再出现；插槽抽屉也一样收起，免得两面叠在一起。 */
+      canvas.style.display = 'none';
+      bar.style.display = 'none';
+      if (slotUI && slotUI.hide) slotUI.hide();
+      uvBtn.textContent = '返回 3D';
+      if (typeof notifyUv === 'function') notifyUv(true);
+      if (!global.ModelTex) {
+        uv.err = 'UV 分析模块未就绪（modeltex.js 未加载）';
+        uvRender();
+        return;
+      }
+      if (!uv.a && !uv.busy) {
+        uv.busy = true; uv.err = '';
+        uvRender();
+        try {
+          uv.a = await global.ModelTex.analyze(src);
+          uv.partIslands = uv.a.parts.map(function (p, i) {
+            return uv.a.islands.filter(function (o) {
+              return o.tris.some(function (r) { return r.part === i; });
+            }).length;
+          });
+          uvBuildAtlas();
+        } catch (e) {
+          uv.err = 'UV 分析失败：' + ((e && e.message) || e);
+        } finally {
+          uv.busy = false;
+          uvRender();
+        }
+      } else {
+        uvRender();
+      }
+    }
+    function uvClose() {
+      uv.on = false;
+      if (uv.layer) uv.layer.classList.remove('on');
+      canvas.style.display = '';
+      bar.style.display = '';
+      uvBtn.textContent = 'UV 查看';
+      if (typeof notifyUv === 'function') notifyUv(false);
+      resize();
+    }
+
     ['前', '后', '左', '右', '顶', '轴测'].forEach(function (label, i) {
       bar.appendChild(mkBtn(label, function () {
         var d = model.radius * 3;
@@ -947,10 +1247,509 @@
       controls.update();
       renderer.render(scene, camera);
     }
-    pv = { overlay: overlay, renderer: renderer, controls: controls, raf: 0, ro: ro };
+    pv = { overlay: overlay, win: (hostEl && opts.chrome !== false) ? winEl : null, host: hostEl, renderer: renderer, controls: controls, raf: 0, ro: ro };
     tick();
 
+    /* 库里的「UV 查看」入口：直接以 UV 模式打开，不用先看 3D 再切 */
+    if (opts.uv) uvOpen();
+
     return true;
+  }
+
+  /* ---------------- 材质插槽：查看 + 设置贴图 + 导出 GLB ----------------
+   * 模型库「设置贴图」的入口（2026-10-30）：预览弹窗里列出模型全部材质插槽
+   * （按材质去重，一个材质可能被多个 mesh 共用），每个槽可以：
+   *   ① 从本机文件 / 图库选一张图 → 实时贴上（当场在视口里看到效果）；
+   *   ② 清除贴图；
+   *   ③ 整体导出 GLB（贴图内嵌）→ 存回模型库 / 下载。
+   *
+   * 为什么存 GLB 而不是 OBJ+MTL+PNG 三件套：
+   *   资产库一个资产就是一个文件，三件套拆成三个资产后文件名互不相干，
+   *   模型库双击预览走 OBJLoader（不带 MTL），看到的仍是灰模。
+   *   GLB 把贴图嵌进文件本身，导出即所见，任何查看器打开都带贴图。
+   *
+   * flipY 的坑：glTF 的 UV 按「纹理不翻转」设计（GLTFLoader 里 flipY=false），
+   * OBJ 走传统约定（flipY=true）。新贴图必须跟槽里已有贴图保持一致——
+   * 槽里没有贴图时按模型格式兜底，否则 GLB 模型贴图会上下颠倒。
+   */
+  function setupSlotPanel(deps) {
+    var model = deps.model, stage = deps.stage, bar = deps.bar;
+    var mkBtn = deps.mkBtn, hint = deps.hint;
+    var baseName = String(deps.title || 'model')
+      .replace(/\.(glb|gltf|obj|fbx|stl|ply|3mf|usdz)$/i, '')
+      .replace(/[\\/:*?"<>|]/g, '_') || 'model';
+
+    var panel = null, listEl = null;
+    var picker = null, pickerAlive = false;
+    var fileInput = null;
+
+    /* ---------------- 贴图持久化 ----------------
+     * 资产库里的模型只存几何，贴图是「查看器里的设置」，关掉窗口就没了。
+     * 这里把「模型资产 id → 材质槽 → 图片资产 id」记进 localStorage：
+     * 贴图本身落进资产库（assetPut kind:'image'），配置只存 id 不存 base64，
+     * 免得几张 2048 贴图把 5MB 的 localStorage 配额撑爆。
+     * 没有桌面桥（纯网页版）时无法落盘，退化为「本次会话内有效」。 */
+    var assetId = String(deps.assetId || '');
+    var TEX_KEY = 'openagi_model_tex_v1';
+
+    function readTexCfg() {
+      try {
+        var j = JSON.parse(localStorage.getItem(TEX_KEY) || '{}');
+        return (j && typeof j === 'object') ? j : {};
+      } catch (e) { return {}; }
+    }
+    function writeTexCfg(all) {
+      try { localStorage.setItem(TEX_KEY, JSON.stringify(all)); } catch (e) { }
+    }
+    /* 槽的稳定标识：优先材质名（OBJ 的 usemtl 名、glTF 材质名都稳定），
+     * 匿名材质退回遍历序号（模型文件不变，遍历顺序也不变）。 */
+    function slotKey(slot) {
+      if (slot.mat && slot.mat.name) return String(slot.mat.name);
+      var ss = collectSlots();
+      for (var i = 0; i < ss.length; i++) {
+        if (ss[i].mat === slot.mat) return 'slot' + i;
+      }
+      return 'slot0';
+    }
+    function slotCfg() {
+      if (!assetId) return null;
+      var all = readTexCfg();
+      var m = all[assetId];
+      return (m && typeof m === 'object') ? { all: all, map: m } : null;
+    }
+    function rememberSlot(slot, texId, name, flipY) {
+      if (!assetId || !texId) return;
+      var all = readTexCfg();
+      var m = (all[assetId] && typeof all[assetId] === 'object') ? all[assetId] : {};
+      m[slotKey(slot)] = { id: String(texId), name: String(name || ''), flipY: !!flipY };
+      all[assetId] = m;
+      writeTexCfg(all);
+    }
+    function forgetSlot(slot) {
+      if (!assetId) return;
+      var all = readTexCfg();
+      var m = all[assetId];
+      if (!m || typeof m !== 'object') return;
+      delete m[slotKey(slot)];
+      if (Object.keys(m).length) all[assetId] = m;
+      else delete all[assetId];
+      writeTexCfg(all);
+    }
+    /* 本机上传的贴图先进资产库拿到 id，再记映射。
+     * 图库选图已经有 id，直接复用，不重复存一份。 */
+    function saveUploadedTexture(slot, dataURL, name, flipY) {
+      if (!assetId) return;
+      var d = window.openagiDesktop;
+      if (!(d && typeof d.assetPut === 'function')) return;
+      d.assetPut({
+        kind: 'image', name: name || (baseName + '-贴图'), data: dataURL, source: '模型贴图'
+      }).then(function (res) {
+        var a = res && res.ok && res.asset;
+        if (!a || !a.id) return;
+        rememberSlot(slot, a.id, name, flipY);
+      }).catch(function () { });
+    }
+    /* 打开模型时贴回上次的贴图。资产被删掉时顺手清配置，避免每次都报一次错。 */
+    async function restoreTextures() {
+      var cfg = slotCfg();
+      if (!cfg) return;
+      var d = window.openagiDesktop;
+      if (!(d && typeof d.assetRead === 'function')) return;
+      var slots = collectSlots();
+      var okLoad = 0, dropped = 0;
+      for (var i = 0; i < slots.length; i++) {
+        var slot = slots[i];
+        var rec = cfg.map[slotKey(slot)];
+        if (!rec || !rec.id) continue;
+        try {
+          var r = await d.assetRead(rec.id);
+          if (!r || !r.ok) throw new Error((r && r.error) || '读取失败');
+          await applyTexture(slot, r.dataURL, rec.name, { texId: rec.id, flipY: rec.flipY, persist: false });
+          okLoad++;
+        } catch (e) {
+          delete cfg.map[slotKey(slot)];
+          dropped++;
+        }
+      }
+      if (dropped) {
+        if (Object.keys(cfg.map).length) cfg.all[assetId] = cfg.map;
+        else delete cfg.all[assetId];
+        writeTexCfg(cfg.all);
+      }
+      if (okLoad) refreshList();
+    }
+
+    /* 材质槽收集：按材质 uuid 去重，记录共用它的 mesh（取名 / 展示用） */
+    function collectSlots() {
+      var slots = [], seen = {};
+      model.root.traverse(function (o) {
+        if (!o.isMesh || !o.geometry || !o.geometry.attributes || !o.geometry.attributes.position) return;
+        var mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+        mats.forEach(function (m) {
+          if (!m) return;
+          var s = seen[m.uuid];
+          if (!s) { s = seen[m.uuid] = { mat: m, meshes: [] }; slots.push(s); }
+          s.meshes.push(o);
+        });
+      });
+      return slots;
+    }
+
+    function slotName(slot, i) {
+      var n = (slot.meshes[0] && slot.meshes[0].name) || slot.mat.name || ('插槽 ' + (i + 1));
+      return n;
+    }
+
+    /* 槽的贴图缩略图：没有贴图返回 null。glTF 贴图 flipY=false，缩略图要翻回来才不颠倒 */
+    function thumbOf(slot, size) {
+      var map = slot.mat.map;
+      var img = map && map.image;
+      if (!img || !img.width) return null;
+      var c = document.createElement('canvas');
+      c.width = c.height = size;
+      var ctx = c.getContext('2d');
+      if (map.flipY === false) {
+        ctx.translate(0, size); ctx.scale(1, -1);
+      }
+      ctx.drawImage(img, 0, 0, size, size);
+      return c;
+    }
+
+    function refreshList() {
+      if (!listEl) return;
+      listEl.innerHTML = '';
+      var slots = collectSlots();
+      if (!slots.length) {
+        var empty = document.createElement('div');
+        empty.style.cssText = 'color:#8b90a0;font-size:12px;line-height:1.6;';
+        empty.textContent = '模型里没有材质（纯几何）——OBJ 模型常见。仍可导出 GLB，但没地方贴图。';
+        listEl.appendChild(empty);
+        return;
+      }
+      slots.forEach(function (slot, i) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:10px;align-items:flex-start;background:#171a21;border:1px solid #23262e;border-radius:10px;padding:10px;';
+
+        var th = thumbOf(slot, 52);
+        var box = document.createElement('div');
+        box.style.cssText = 'flex:0 0 52px;height:52px;border-radius:8px;background:#0a0b0e;border:1px solid #23262e;overflow:hidden;display:flex;align-items:center;justify-content:center;';
+        if (th) box.appendChild(th);
+        else {
+          var no = document.createElement('span');
+          no.textContent = '无';
+          no.style.cssText = 'color:#5a5f70;font-size:11px;';
+          box.appendChild(no);
+        }
+        row.appendChild(box);
+
+        var info = document.createElement('div');
+        info.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;';
+        var nm = document.createElement('div');
+        nm.textContent = slotName(slot, i);
+        nm.title = nm.textContent;
+        nm.style.cssText = 'color:#e8eaf0;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        var meta = document.createElement('div');
+        var matType = (slot.mat.type || 'Material').replace('MeshStandardMaterial', 'PBR').replace('MeshPhongMaterial', 'Phong').replace('MeshBasicMaterial', 'Basic');
+        meta.textContent = matType + ' · ' + slot.meshes.length + ' 个网格 · ' + (slot.mat.map ? '已有贴图' : '无贴图');
+        meta.style.cssText = 'color:#8b90a0;font-size:11px;';
+        info.appendChild(nm); info.appendChild(meta);
+
+        var btns = document.createElement('div');
+        btns.style.cssText = 'display:flex;gap:6px;';
+        btns.appendChild(mkBtn('设置贴图', function () { openPicker(slot); }));
+        if (slot.mat.map) {
+          btns.appendChild(mkBtn('清除', function () {
+            slot.mat.map = null;
+            slot.mat.needsUpdate = true;
+            forgetSlot(slot);
+            refreshList();
+          }));
+        }
+        info.appendChild(btns);
+        row.appendChild(info);
+        listEl.appendChild(row);
+      });
+    }
+
+    function ensurePanel() {
+      if (panel) { panel.style.display = 'flex'; refreshList(); return panel; }
+      panel = document.createElement('div');
+      panel.style.cssText = 'position:absolute;top:0;right:0;bottom:0;width:340px;max-width:80%;background:rgba(13,15,20,.97);border-left:1px solid #23262e;display:flex;flex-direction:column;z-index:5;';
+
+      var head = document.createElement('div');
+      head.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #23262e;flex:0 0 auto;';
+      var t = document.createElement('div');
+      t.textContent = '材质插槽';
+      t.style.cssText = 'font-weight:600;flex:1;color:#e8eaf0;font-size:13px;';
+      var x = document.createElement('button');
+      x.textContent = '×';
+      x.style.cssText = 'border:0;background:transparent;color:#8b90a0;font-size:18px;cursor:pointer;line-height:1;padding:2px 6px;';
+      x.onclick = function () { panel.style.display = 'none'; };
+      head.appendChild(t); head.appendChild(x);
+
+      listEl = document.createElement('div');
+      listEl.style.cssText = 'flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:10px;min-height:0;';
+
+      var foot = document.createElement('div');
+      foot.style.cssText = 'flex:0 0 auto;padding:10px 12px;border-top:1px solid #23262e;display:flex;gap:8px;flex-wrap:wrap;';
+      var saveBtn = mkBtn('导出 GLB 存入模型库', function () { saveGLB(saveBtn); });
+      var dlBtn = mkBtn('下载 GLB', function () { downloadGLB(dlBtn); });
+      foot.appendChild(saveBtn); foot.appendChild(dlBtn);
+      var tip = document.createElement('div');
+      tip.textContent = 'GLB 内嵌贴图，导出后双击打开就是带贴图的状态';
+      tip.style.cssText = 'color:#8b90a0;font-size:11px;flex-basis:100%;';
+      foot.appendChild(tip);
+
+      panel.appendChild(head); panel.appendChild(listEl); panel.appendChild(foot);
+      stage.appendChild(panel);
+      refreshList();
+      return panel;
+    }
+
+    /* 本机文件选择（input 复用，选同一个文件也能再触发 onchange） */
+    function ensureFileInput() {
+      if (fileInput) return fileInput;
+      fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = 'image/png,image/jpeg,image/webp';
+      fileInput.style.display = 'none';
+      document.body.appendChild(fileInput);
+      return fileInput;
+    }
+
+    function loadImg(src) {
+      return new Promise(function (res, rej) {
+        var img = new Image();
+        img.onload = function () { res(img); };
+        img.onerror = function () { rej(new Error('贴图图片解码失败')); };
+        img.src = src;
+      });
+    }
+
+    /* 应用贴图：flipY 跟槽里已有贴图保持一致（GLTF=false / OBJ=true）；
+     * sRGBEncoding 与 glTF 的 baseColorTexture 一致，不然贴图看起来发灰。 */
+    async function applyTexture(slot, dataURL, name, opt) {
+      opt = opt || {};
+      var img = await loadImg(dataURL);
+      var tex = new THREE.Texture(img);
+      tex.needsUpdate = true;
+      tex.encoding = THREE.sRGBEncoding;
+      /* 兜底按模型格式给约定值：OBJ 的 UV 与 Blender 一致（v 向上），走 flipY=true；
+       * glTF 的 UV 原点在左上，GLTFLoader 用的是 flipY=false。 */
+      tex.flipY = (typeof opt.flipY === 'boolean') ? opt.flipY
+        : (slot.mat.map ? slot.mat.map.flipY : (model.format === 'obj'));
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.anisotropy = 4;
+      if (name) tex.name = name;
+      slot.mat.map = tex;
+      slot.mat.needsUpdate = true;
+      /* 持久化：图库来的图已经有资产 id，本机上传的先存成图片资产再记 */
+      if (opt.persist !== false) {
+        if (opt.texId) rememberSlot(slot, opt.texId, name, tex.flipY);
+        else saveUploadedTexture(slot, dataURL, name, tex.flipY);
+      }
+      refreshList();
+    }
+
+    /* ---------------- 贴图选择器（面板内二级层） ---------------- */
+    function closePicker() {
+      pickerAlive = false;
+      if (picker && picker.parentNode) picker.parentNode.removeChild(picker);
+      picker = null;
+    }
+
+    function openPicker(slot) {
+      closePicker();
+      pickerAlive = true;
+      picker = document.createElement('div');
+      picker.style.cssText = 'position:absolute;inset:0;background:rgba(13,15,20,.98);z-index:6;display:flex;flex-direction:column;';
+
+      var head = document.createElement('div');
+      head.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #23262e;flex:0 0 auto;';
+      var t = document.createElement('div');
+      t.textContent = '设置贴图';
+      t.style.cssText = 'font-weight:600;flex:1;color:#e8eaf0;font-size:13px;';
+      var cancelB = document.createElement('button');
+      cancelB.textContent = '取消';
+      cancelB.style.cssText = 'padding:5px 10px;border-radius:8px;border:1px solid #2c303a;background:#191c22;color:#e8eaf0;cursor:pointer;font-size:12px;';
+      cancelB.onclick = closePicker;
+      head.appendChild(t); head.appendChild(cancelB);
+
+      var btnRow = document.createElement('div');
+      btnRow.style.cssText = 'padding:10px 12px;display:flex;gap:8px;flex:0 0 auto;';
+      var upBtn = mkBtn('本机文件…', function () {
+        var fi = ensureFileInput();
+        fi.onchange = function () {
+          var f = fi.files && fi.files[0];
+          if (!f) return;
+          var rd = new FileReader();
+          rd.onload = async function () {
+            closePicker();
+            try { await applyTexture(slot, rd.result, f.name); }
+            catch (e) { hint.textContent = '贴图失败：' + ((e && e.message) || e); }
+          };
+          rd.readAsDataURL(f);
+          fi.value = '';
+        };
+        fi.click();
+      });
+      var libBtn = mkBtn('从图库选择', function () { showGallery(); });
+      btnRow.appendChild(upBtn); btnRow.appendChild(libBtn);
+
+      var body = document.createElement('div');
+      body.style.cssText = 'flex:1;overflow-y:auto;padding:0 12px 12px;min-height:0;';
+
+      picker.appendChild(head); picker.appendChild(btnRow); picker.appendChild(body);
+      panel.appendChild(picker);
+
+      function showGallery() {
+        upBtn.disabled = libBtn.disabled = true;
+        body.innerHTML = '';
+        var d = window.openagiDesktop;
+        if (!(d && typeof d.assetList === 'function')) {
+          body.textContent = '网页版没有资产库，用「本机文件」上传贴图';
+          body.style.cssText += 'color:#8b90a0;font-size:12px;padding:12px;';
+          return;
+        }
+        body.textContent = '读取图库…';
+        d.assetList().then(function (l) {
+          if (!pickerAlive) return;
+          var imgs = (l.assets || []).filter(function (a) { return a.kind === 'image' && !a.missing; });
+          if (!imgs.length) {
+            body.textContent = '图库里还没有图片';
+            body.style.cssText += 'color:#8b90a0;font-size:12px;padding:12px;';
+            return;
+          }
+          body.innerHTML = '';
+          body.style.cssText += 'display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;align-content:start;';
+          /* 缩略图逐张补：assetRead 拉的是整图，一次全拉会把内存打爆。
+           * 先摆名字卡片占位，再按顺序读、谁先到谁先显示；关掉面板就停。 */
+          imgs.slice(0, 120).forEach(function (a) {
+            var card = document.createElement('div');
+            card.title = a.name;
+            card.style.cssText = 'aspect-ratio:1;border-radius:8px;background:#171a21;border:1px solid #23262e;overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;';
+            var label = document.createElement('span');
+            label.textContent = String(a.ext || '').toUpperCase() || '?';
+            label.style.cssText = 'color:#5a5f70;font-size:10px;';
+            card.appendChild(label);
+            card.onclick = async function () {
+              try {
+                var r = await d.assetRead(a.id);
+                if (!r || !r.ok) throw new Error((r && r.error) || '读取失败');
+                closePicker();
+                await applyTexture(slot, r.dataURL, a.name, { texId: a.id });
+              } catch (e) {
+                label.textContent = '失败';
+                label.style.color = '#e05252';
+              }
+            };
+            body.appendChild(card);
+            d.assetRead(a.id).then(function (r) {
+              if (!pickerAlive || !r || !r.ok) return;
+              var img = document.createElement('img');
+              img.src = r.dataURL;
+              img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+              card.innerHTML = '';
+              card.appendChild(img);
+            }).catch(function () { });
+          });
+          var more = imgs.length - 120;
+          if (more > 0) {
+            var note = document.createElement('div');
+            note.textContent = '还有 ' + more + ' 张未显示（搜索/整理请去图库 App）';
+            note.style.cssText = 'grid-column:1/-1;color:#8b90a0;font-size:11px;padding:4px;';
+            body.appendChild(note);
+          }
+        }).catch(function (e) {
+          if (pickerAlive) body.textContent = '读取图库失败：' + ((e && e.message) || e);
+        });
+      }
+    }
+
+    /* ---------------- GLB 导出 ---------------- */
+    function exportGLBBuffer() {
+      if (!THREE.GLTFExporter) throw new Error('GLTFExporter 未加载（vendor/GLTFExporter.js）');
+      var exp = new THREE.GLTFExporter();
+      return new Promise(function (res, rej) {
+        exp.parse(model.root, res, rej, { binary: true });
+      }).then(function (r) {
+        if (!(r instanceof ArrayBuffer)) throw new Error('GLB 导出结果异常');
+        return r;
+      });
+    }
+
+    function abToDataURL(buf) {
+      var u8 = new Uint8Array(buf), s = '', CH = 8192;
+      for (var i = 0; i < u8.length; i += CH) s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + CH, u8.length)));
+      return 'data:model/gltf-binary;base64,' + btoa(s);
+    }
+
+    function downloadDataURL(name, url) {
+      var a = document.createElement('a');
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+
+    async function saveGLB(btn) {
+      var old = btn.textContent;
+      btn.disabled = true; btn.textContent = '导出中…';
+      hint.textContent = '正在导出 GLB…';
+      try {
+        var buf = await exportGLBBuffer();
+        var url = abToDataURL(buf);
+        var d = window.openagiDesktop;
+        if (!(d && typeof d.assetPut === 'function')) {
+          downloadDataURL(baseName + '_贴图.glb', url);
+          hint.textContent = '浏览器里存不进模型库，已改为下载 GLB';
+          return;
+        }
+        var r = await d.assetPut({
+          kind: 'model', ext: 'glb',
+          name: baseName + '_贴图.glb',
+          data: url, source: 'texture'
+        });
+        if (!(r && r.ok && r.asset && r.asset.id)) throw new Error((r && r.message) || '入库失败');
+        /* 缩略图顺手存一张：模型库磁贴直接显示带贴图的样子（失败不影响入库） */
+        try {
+          var th = await renderThumb(url, { size: 256 });
+          await d.assetThumbSave(r.asset.id, th.dataURL);
+        } catch (e) { }
+        hint.textContent = '已存入模型库：「' + baseName + '_贴图.glb」';
+      } catch (e) {
+        hint.textContent = '导出失败：' + ((e && e.message) || e);
+        hint.style.color = '#e05252';
+      } finally {
+        btn.disabled = false; btn.textContent = old;
+      }
+    }
+
+    async function downloadGLB(btn) {
+      var old = btn.textContent;
+      btn.disabled = true; btn.textContent = '导出中…';
+      try {
+        var buf = await exportGLBBuffer();
+        downloadDataURL(baseName + '_贴图.glb', abToDataURL(buf));
+        hint.textContent = 'GLB 已开始下载';
+      } catch (e) {
+        hint.textContent = '导出失败：' + ((e && e.message) || e);
+        hint.style.color = '#e05252';
+      } finally {
+        btn.disabled = false; btn.textContent = old;
+      }
+    }
+
+    bar.appendChild(mkBtn('材质插槽', function () {
+      if (typeof deps.onPanelOpen === 'function') deps.onPanelOpen();
+      ensurePanel();
+    }));
+
+    /* 模型加载完就把上次的贴图贴回去（异步，加载不阻塞视口） */
+    restoreTextures();
+
+    /* 给 UV 视图用：切过去之前把抽屉收掉 */
+    return {
+      hide: function () { closePicker(); if (panel) panel.style.display = 'none'; }
+    };
   }
 
   /* ---------------- 缩略图 ----------------

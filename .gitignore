@@ -62,7 +62,10 @@ gh_repo.json
 tools/*.out.txt
 tools/.*.js
 # vendor 下是第三方模型卡与二进制，不是本项目源码
-vendor/
+# 注意用 /* 而不是 /：目录级忽略连 !取反 一起失效，文件级的例外就永远不生效
+vendor/*
+# 例外：GLTFExporter 是本项目自维护的 UMD 包装（r149 无 UMD 版，生成方式见 tools/_mkgltfexporter.js）
+!vendor/GLTFExporter.js
 
 # ===== 工作流存储备份（含用户数据，勿提交） =====
 plugins/relay/openagi-store.backup/
@@ -90,3 +93,35 @@ tmp-*
 
 # ===== 调试草稿 =====
 tools/_dbg*.js
+tools/_uvbox*
+tools/_svgtex*
+tools/_body*
+tools/_islands.json
+tools/_head.png
+tools/_ref.jpg
+tools/_usermsgs.txt
+tools/_verify_asset*
+tools/_mtnode*
+tools/_reg*.txt
+tools/_brush*
+tools/_probe2*
+tools/_ai_*
+tools/_stage_view.png
+tools/_probe3*
+tools/_islands2.json
+tools/_paint_full*
+tools/_paint_strokes*
+tools/_final_*
+tools/_mat_out.glb
+tools/_mat.html
+tools/_uvdump.js
+tools/_uvzoom.png
+tools/_facezoom.png
+tools/_islands_full.json
+tools/_mat_view*.png
+tools/_paint_map.png
+tools/_paint_paint.png
+tools/_paint_tex.png
+tools/_paint_out/
+tools/_ref_full.jpg
+tools/_slot*.png

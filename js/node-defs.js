@@ -308,6 +308,32 @@ registerNode({
 });
 
 registerNode({
+  type:'textureSvg', title:'SVG 贴图绘制', dot:'tex', group:'3D 任务',
+  desc:'把 AI 生成的 SVG（按 UV 坐标定位）光栅化成贴图，用于给 3D 模型上色。矢量无限清晰，不依赖参考图——AI 能精确说「在胸口画金五角星」；想要画到指定部位，先由「模型转四视图」+ UV pass 提供 UV 布局图。本节点只产出贴图，配到模型上由「贴图导出资产」节点完成',
+  execIn:true, execOut:['exec'],
+  inputs:['text'], outputs:['image'],
+  params:[
+    { key:'svg', label:'SVG（兜底）', ctl:'textarea', ph:'直接粘贴 SVG；连了「文本」引脚则优先用引脚。viewBox 设为 0 0 size size，按纹理像素坐标落笔' },
+    { key:'size', label:'贴图尺寸', ctl:'select', default:1024, options:[[512,'512'],[1024,'1024（推荐）'],[2048,'2048']] },
+    { key:'bg', label:'底色', ctl:'text', ph:'贴图底色，如 #222；留空透明' },
+    { tip:'AI 用 SVG 原语（rect / circle / path / text…）直接画贴图，比投影照片更可控、更清晰。把「模型转四视图」的 UV 布局图给它，它就知道每面在哪。' }
+  ],
+  seed: () => ({ data:{ svg:'', size:1024, bg:'' }, params:null }),
+  run: async ({ n, input, paramIn, setStatus, log }) => {
+    let svg = await input('text');
+    if(!svg) svg = String(await paramIn('svg') || '');
+    if(!svg) throw new Error('缺少 SVG 输入');
+    const size = Number(await paramIn('size')) || 1024;
+    const bg = String(await paramIn('bg') || '').trim();
+    if(!window.SvgTex) throw new Error('svgtex.js 未加载');
+    const canvas = await window.SvgTex.rasterize(window.SvgTex.doc(svg, size, { bg }), size);
+    n.out.image = canvas.toDataURL('image/png');
+    log('· SVG 已光栅化为 ' + size + '×' + size + ' 贴图', 'warn');
+  },
+  validate: (n, c) => (c.linked('text') || (n.data && n.data.svg)) ? [] : [{ code:'W-REQ', message:'「SVG 贴图绘制」缺少 SVG 输入（文本引脚或参数）' }]
+});
+
+registerNode({
   type:'tripoImg', title:'Tripo 网页生图', dot:'gen', group:'图像任务',
   desc:'通过 Tripo 网页账号文生图 / 图生图，最多可传 3 张参考图。异步节点：开始出口在任务启动时触发，完成出口在拿到图片后才触发',
   asyncExec:true, execIn:true, execOut:['exec','done'],
@@ -497,6 +523,297 @@ registerNode({
     n.out.text = '多视图生成完成 · ' + used + ' 张参考图 · ' + (r.file || '模型已下载') + (r.size ? ' · ' + (r.size / 1024).toFixed(0) + ' KB' : '');
   },
   validate: (n, c) => ['front','left','right','back'].some(k => c.linked(k)) ? [] : [{ code:'W-REQ', message:'「Tripo 网页多视图生成」至少需要连接一张参考图（前 / 左 / 右 / 后）' }]
+});
+
+/* ============================ 模型贴图（经验固化 2026-10-30） ============================ */
+
+registerNode({
+  type:'modelIslands', title:'模型 UV 岛分析', dot:'tex', group:'3D 任务',
+  desc:'把模型按共享 UV 边切成「UV 岛」，输出岛色块图（可带编号）与岛元数据 JSON（质心 / 包围盒 / UV 面积 / UV 包围盒）。写上色规则前先跑这个——部位判定全靠元数据，一个大岛跨多个部位时质心会误导，先看图再定规则',
+  execIn:true, execOut:['exec'],
+  inputs:['model'], outputs:['image','text'],
+  params:[
+    { key:'size', label:'贴图尺寸', ctl:'select', default:1024, options:[[512,'512'],[1024,'1024（推荐）'],[2048,'2048']] },
+    { key:'labels', label:'岛编号标注', ctl:'select', default:'on', options:[['on','图上标编号（可寻址）'],['off','只出色块']] },
+    { key:'topN', label:'元数据条数', ctl:'number', type:'int', min:10, max:200, step:10, default:60, unit:'条（按 UV 面积降序）' },
+    { tip:'文本输出的元数据直接喂给「分析任务」，让它对照参考图写出「模型区域上色」的规则 JSON；uvBBox 是归一化 UV 坐标，可用来写细节规则或 SVG 落笔位置。' }
+  ],
+  seed: () => ({ data:{ size:1024, labels:'on', topN:60 }, params:null }),
+  run: async ({ n, input, paramIn, log }) => {
+    const model = await input('model');
+    if(!model) throw new Error('缺少 3D 模型输入');
+    if(!window.ModelTex) throw new Error('modeltex.js 未加载');
+    const size = Number(await paramIn('size')) || 1024;
+    const labels = String(await paramIn('labels') || 'on') !== 'off';
+    const topN = Math.max(10, Math.min(200, Math.trunc(Number(await paramIn('topN')) || 0)) || 60);
+    const a = await ModelTex.analyze(model);
+    const atlas = ModelTex.islandAtlas(a, size, { labels });
+    n.out.image = ModelTex.previewGrid(a, atlas, {
+      compare:false, paintedLabel:'岛图', angles:[0, 35, 180],
+      texLabel:'岛色块图（数字 = 岛编号）', cell:400
+    });
+    n.out.text = JSON.stringify({
+      islands: a.islands.length,
+      triangles: a.parts.reduce((s, p) => s + p.tri, 0),
+      bounds: {
+        min: [a.box.min.x, a.box.min.y, a.box.min.z].map(v => +v.toFixed(2)),
+        max: [a.box.max.x, a.box.max.y, a.box.max.z].map(v => +v.toFixed(2))
+      },
+      top: a.islands.slice(0, topN).map(o => ({
+        id: o.id, tris: o.tris.length, area: +o.area.toFixed(4),
+        centroid: o.centroid.map(v => +v.toFixed(2)), bbox: o.bbox.map(v => +v.toFixed(2)),
+        uvBBox: o.uvBBox.map(v => +v.toFixed(4))
+      }))
+    });
+    log('· 共 ' + a.islands.length + ' 个 UV 岛 · 元数据输出前 ' + topN + ' 条' + (labels ? ' · 图上已标编号' : ''), 'warn');
+  },
+  validate: (n, c) => c.linked('model') ? [] : [{ code:'W-REQ', message:'「模型 UV 岛分析」缺少 3D 模型（可连线）' }]
+});
+
+registerNode({
+  type:'modelColorize', title:'模型区域上色', dot:'tex', group:'3D 任务',
+  desc:'按「区域规则」给模型上色：规则是 JSON 数组（部位名 + 颜色 + 位置条件），按顺序首个命中生效，未命中用底色。判定粒度可选「整岛」或「逐三角形」（逐三角可解决大 UV 岛横跨多部位）；还可叠加「细节规则」逐 texel 落笔（宝石、蕾丝、金边这类 3D 条件细节）。规则可用「模型 UV 岛分析」的元数据让 AI 生成——AI 出规则（创作期），确定性上色重放（执行期）。输出上色前后对比图 + UV 贴图',
+  execIn:true, execOut:['exec'],
+  inputs:['model','text'], outputs:['image','texture','text'],
+  params:[
+    { key:'matchBy', label:'判定粒度', ctl:'select', default:'island', options:[['island','整岛（默认）'],['triangle','逐三角形（跨部位大岛更准）']] },
+    { key:'rules', label:'区域规则（兜底）', ctl:'textarea', ph:'JSON 数组；连了「文本」引脚则优先用引脚。例：[{"name":"头发","color":"#8fd2e6","yMin":91}]' },
+    { key:'detail', label:'细节规则（兜底）', ctl:'textarea', ph:'JSON 数组，逐 texel 覆盖底色。例：[{"name":"宝石","color":"#b53a30","yMin":77.6,"yMax":80.4,"zMin":28}]' },
+    { key:'base', label:'底色', ctl:'text', ph:'未命中规则的岛用这个颜色，默认 #f4f7fb' },
+    { key:'size', label:'贴图尺寸', ctl:'select', default:1024, options:[[512,'512'],[1024,'1024（推荐）'],[2048,'2048']] },
+    { key:'compare', label:'对比图', ctl:'select', default:'on', options:[['on','上排原始 / 下排上色'],['off','只出上色']] },
+    { tip:'条件字段（都是可选项，模型的自身坐标单位）：yMin/yMax 质心高度 · xAbsMin/xAbsMax 质心 |X|（左右对称部位用）· zMin/zMax 质心深度 · areaMin/areaMax UV 面积 · trisMin 三角数下限 · ring:true 抓扁环（光环/腰带圈，Y 厚<4% 高且 XZ 宽>5% 高）。逐三角形模式下面积/扁环/三角数条件仍按所属岛判定，位置条件按三角形判定——粒度一变条件语义也变，切到逐三角后要按新边界重调规则，别直接套整岛预设。' },
+    { tip:'细节规则同样吃上面的位置字段，但按每个 texel 的 3D 坐标判定，可加 wave:{axis:"x"|"z", freq, amp} 让上边界起伏（蕾丝/花边）。文本引脚也可给对象 { rules:[…], detail:[…], base:"#…", matchBy:"triangle" }。' },
+    { tip:'默认规则按蓝发少女模型调好（Y 0–100）：光环金 / 脚手肤色 / 裤袜淡紫 / 袖口腰封黑 / 脸肤 / 头发青蓝 / 宝石红 / 胸饰金 / 裙摆藏青。换模型先跑「模型 UV 岛分析」再改。' }
+  ],
+  seed: () => ({ data:{ matchBy:'island', detail:'', rules: JSON.stringify([
+    { name:'光环', color:'#e6c45c', ring:true, yMax:22 },
+    { name:'脚', color:'#f3d8c6', yMax:6 },
+    { name:'裤袜', color:'#b6a4d6', yMax:34, areaMin:0.02 },
+    { name:'手', color:'#f3d8c6', xAbsMin:35 },
+    { name:'袖口', color:'#1c2130', xAbsMin:30 },
+    { name:'袖子', color:'#f4f7fb', xAbsMin:16, xAbsMax:30, yMin:58 },
+    { name:'脸', color:'#f3d8c6', yMin:91, xAbsMax:2.6, zMin:24 },
+    { name:'头发', color:'#8fd2e6', yMin:91 },
+    { name:'宝石', color:'#b53a30', yMin:83, yMax:90, zMin:25, xAbsMax:4 },
+    { name:'胸饰', color:'#e6c45c', yMin:77, yMax:91, zMin:21, xAbsMax:13 },
+    { name:'裙摆', color:'#2c3a63', yMax:66 },
+    { name:'腰封', color:'#1c2130', yMax:70 }
+  ]), base:'#f4f7fb', size:1024, compare:'on' }, params:null }),
+  run: async ({ n, input, paramIn, log }) => {
+    const model = await input('model');
+    if(!model) throw new Error('缺少 3D 模型输入');
+    if(!window.ModelTex) throw new Error('modeltex.js 未加载');
+    let rulesSrc = await input('text');
+    if(rulesSrc === undefined || rulesSrc === null || String(rulesSrc).trim() === ''){
+      rulesSrc = await paramIn('rules');
+    }
+    const base = String(await paramIn('base') || '').trim() || '#f4f7fb';
+    const size = Number(await paramIn('size')) || 1024;
+    const compare = String(await paramIn('compare') || 'on') !== 'off';
+    let matchBy = String(await paramIn('matchBy') || 'island') === 'triangle' ? 'triangle' : 'island';
+    let detail = [];
+    const dtxt = String(await paramIn('detail') || '').trim();
+    if(dtxt){
+      try { detail = JSON.parse(dtxt); } catch(e){ throw new Error('细节规则不是合法 JSON：' + e.message); }
+      if(!Array.isArray(detail)) throw new Error('细节规则需要是数组');
+    }
+    let rules = null;
+    const txt = String(rulesSrc || '').trim();
+    if(txt){
+      let j;
+      try { j = JSON.parse(txt); } catch(e){ throw new Error('区域规则不是合法 JSON：' + e.message); }
+      rules = Array.isArray(j) ? j : (Array.isArray(j.rules) ? j.rules : null);
+      if(!rules) throw new Error('区域规则需要是数组，或 { rules:[…], base:"#…", detail:[…], matchBy:"…" } 对象');
+      rules.forEach((r, i) => { if(!r || !r.color) throw new Error('第 ' + (i + 1) + ' 条规则缺少 color'); });
+      if(!Array.isArray(j)){
+        if(j.base) base = String(j.base);
+        if(Array.isArray(j.detail) && !dtxt) detail = j.detail;
+        if(j.matchBy === 'triangle') matchBy = 'triangle';
+      }
+    }
+    detail.forEach((r, i) => { if(!r || !r.color) throw new Error('第 ' + (i + 1) + ' 条细节规则缺少 color'); });
+    const a = await ModelTex.analyze(model);
+    const painted = ModelTex.paint(a, rules, base, size, { matchBy, detail });
+    n.out.texture = painted.canvas.toDataURL('image/png');
+    n.out.image = ModelTex.previewGrid(a, painted.canvas, {
+      compare, cell:400, angles:[0, 35, 180], texLabel:'UV 贴图 ' + size + '×' + size
+    });
+    n.out.text = JSON.stringify({
+      islands: a.islands.length, matchBy,
+      regions: painted.counts, detail: painted.detail ? painted.detail.counts : {}, base
+    });
+    const reg = Object.keys(painted.counts).map(k => k + '×' + painted.counts[k]).join(' · ');
+    const det = painted.detail ? Object.keys(painted.detail.counts).map(k => k + '×' + painted.detail.counts[k]).join(' · ') : '';
+    log('· ' + (rules ? rules.length + ' 条规则' : '无规则（整模底色）') + ' · ' + (matchBy === 'triangle' ? '逐三角' : '整岛') +
+      ' · ' + reg + (det ? ' · 细节 ' + det : ''), 'warn');
+  },
+  validate: (n, c) => {
+    const out = [];
+    if(!c.linked('model')) out.push({ code:'W-REQ', message:'「模型区域上色」缺少 3D 模型（可连线）' });
+    if(!c.linked('text') && !String((n.data && n.data.rules) || '').trim()){
+      out.push({ code:'W-REQ', message:'「模型区域上色」没有规则（文本引脚或规则参数至少有一个，否则整模只剩底色）' });
+    }
+    return out;
+  }
+});
+
+registerNode({
+  type:'modelTextureSet', title:'贴图导出资产', dot:'tex', group:'3D 任务',
+  desc:'把贴图配到模型上，导出可直接加载的 OBJ + MTL + PNG 三件套（同目录放置即可在任何查看器 / 引擎加载）。OBJ 文本由网格实时写出，OBJ / GLB / glTF 输入通吃；「模型」引脚输出带贴图引用的 OBJ，下游按模型渲染外形',
+  execIn:true, execOut:['exec'],
+  inputs:['model','texture'], outputs:['obj','mtl','texture','text'],
+  params:[
+    { key:'download', label:'自动下载', ctl:'select', default:'off', options:[['off','关闭'],['on','下载三件套到本地']] },
+    { tip:'大模型（数万顶点）导出的 OBJ 会有几十 MB，三件套走「模型 / 材质 / 贴图」三个引脚接「结果输出」或存盘。' }
+  ],
+  seed: () => ({ data:{ download:'off' }, params:null }),
+  run: async ({ n, input, paramIn, log }) => {
+    const model = await input('model');
+    const tex = await input('texture');
+    if(!model) throw new Error('缺少 3D 模型输入');
+    if(!tex) throw new Error('缺少贴图输入（接「模型区域上色」或「SVG 贴图绘制」的贴图）');
+    if(!window.ModelTex) throw new Error('modeltex.js 未加载');
+    const a = await ModelTex.analyze(model);
+    const t = ModelTex.objTrio(a);
+    n.out.obj = ModelTex.toDataURL(t.objText);
+    n.out.mtl = ModelTex.toDataURL(t.mtlText);
+    n.out.texture = tex;
+    const kb = Math.round(t.objText.length / 1024);
+    n.out.text = '三件套已生成 · body.obj ' + kb + ' KB + body.mtl + texture.png（MTL 引用 texture.png，三个文件同目录放置）· '
+      + a.parts.length + ' 个网格 · ' + a.islands.length + ' 岛';
+    log('· OBJ 文本 ' + kb + ' KB · 贴图来自上游', 'warn');
+    if(String(await paramIn('download') || 'off') === 'on'){
+      ModelTex.download('body.obj', t.objText, 'text/plain');
+      ModelTex.download('body.mtl', t.mtlText, 'text/plain');
+      ModelTex.download('texture.png', tex);
+      log('· 已触发浏览器下载 3 个文件', 'warn');
+    }
+  },
+  validate: (n, c) => (c.linked('model') && c.linked('texture'))
+    ? [] : [{ code:'W-REQ', message:'「贴图导出资产」需要模型与贴图各连一条（贴图来自上色 / SVG 绘制节点）' }]
+});
+
+registerNode({
+  type:'modelStage', title:'模型取景摆拍', dot:'tex', group:'3D 任务',
+  desc:'把模型按「模型笔刷上色」的相机公式渲染一张正面取景图，并输出视口元数据（view 尺寸 / 相机参数 / 笔画 JSON 格式说明）。给分析任务用：取景图 + 元数据喂给模型，模型看着图出笔画坐标——坐标与笔刷视口像素级对齐。底图引脚可接「模型区域上色」的贴图，让 AI 看着已铺大色的模型出修边笔画',
+  execIn:true, execOut:['exec'],
+  inputs:['model','texture'], outputs:['image','text'],
+  params:[
+    { key:'view', label:'视口边长', ctl:'number', type:'int', min:256, max:1024, step:16, default:720, unit:'px' },
+    { key:'az', label:'方位角', ctl:'number', type:'float', min:-360, max:360, step:5, default:0, unit:'°' },
+    { key:'el', label:'仰角', ctl:'number', type:'float', min:-89, max:89, step:1, default:4, unit:'°' },
+    { tip:'输出的 text 是 JSON：{view,fov,camera:{az,el,dist},center,radius,height,islands(top120 岛元数据),screen(岛id→像素映射),hint}。图上黄字是岛编号，screen 让 AI 零投影计算直接拿到部位像素坐标；hint 里带笔画格式说明，分析任务的提示词让它「原样遵守 hint」即可。' }
+  ],
+  seed: () => ({ data:{ view:720, az:0, el:4 }, params:null }),
+  validate: (n, c) => c.linked('model') ? [] : [{ code:'W-REQ', message:'「模型取景摆拍」需要连一个 3D 模型' }],
+  run: async ({ n, input, paramIn, log }) => {
+    const model = await input('model');
+    if(!model) throw new Error('缺少 3D 模型输入');
+    if(!window.ModelTex || !window.TexBrush) throw new Error('modeltex.js / texbrush.js 未加载');
+    const a = await ModelTex.analyze(model);
+    const baseSrc = await input('texture');
+    const base = baseSrc ? await TexBrush.loadImage(baseSrc) : null;
+    const r = await TexBrush.stage({
+      a, base, size: 1024,
+      view: Number(await paramIn('view')) || 720,
+      az: Number(await paramIn('az')) || 0,
+      el: await paramIn('el') === '' || await paramIn('el') == null ? 4 : Number(await paramIn('el'))
+    });
+    n.out.image = r.image;
+    n.out.text = JSON.stringify(r.meta);
+    log('· 取景 ' + r.meta.view + '×' + r.meta.view + ' · az ' + r.meta.camera.az + '° el ' + r.meta.camera.el + '° · dist ' + r.meta.camera.dist, 'warn');
+  }
+});
+
+registerNode({
+  type:'modelPaint', title:'模型笔刷上色', dot:'tex', group:'3D 任务',
+  desc:'交互式 3D 笔刷：视口里直接在模型表面画，收笔即烘进 UV 贴图（屏空间草稿层 + 投影烘焙，自动遮挡剔除、跨 UV 岛）。运行时弹「笔刷上色」视口：左键画 · 右键转视角 · 滚轮缩放 · Ctrl+Z 撤销 · 擦除只擦笔画层。也支持「笔画回放」：把笔画 JSON 数组接到文本引脚（或填参数）即可确定性重放——AI 看渲染图后出 [{"cam":{"az":0,"el":0},"pts":[[x,y],…],"color":"#e0533f","radius":24,"hardness":0.7}]，坐标是视口像素（左上原点，view 大小会随统计输出）。底图可接「模型区域上色」的贴图：先铺大色、笔刷修细节。产出贴图接「贴图导出资产」',
+  execIn:true, execOut:['exec'],
+  inputs:['model','texture','text'], outputs:['texture','image','text'],
+  params:[
+    { key:'mode', label:'运行方式', ctl:'select', default:'interactive', options:[['interactive','弹笔刷视口（人工画）'],['strokes','笔画回放（确定性）']] },
+    { key:'strokes', label:'笔画 JSON（兜底）', ctl:'textarea', ph:'连了「文本」引脚则优先用引脚。例：[{"cam":{"az":0,"el":0},"pts":[[360,300],[364,300]],"color":"#e0533f","radius":24}]' },
+    { key:'color', label:'默认颜色', ctl:'text', ph:'#e0533f' },
+    { key:'radius', label:'默认半径', ctl:'number', type:'int', min:2, max:120, step:1, default:24, unit:'px' },
+    { key:'hardness', label:'默认硬度', ctl:'number', type:'float', min:0, max:1, step:0.05, default:0.7 },
+    { key:'size', label:'贴图尺寸', ctl:'select', default:1024, options:[[512,'512'],[1024,'1024（推荐）'],[2048,'2048']] },
+    { tip:'视口是正方形，笔画坐标按「统计文本里输出的 view 大小」换算；az=0 正对模型正面、el 向上为正（缺省 4，与「模型取景摆拍」一致）、dist 缺省自动取。底图引脚可接「模型区域上色」或「SVG 贴图绘制」的贴图，笔刷在其上叠加。' }
+  ],
+  seed: () => ({ data:{ mode:'interactive', strokes:'', color:'#e0533f', radius:24, hardness:0.7, size:1024 }, params:null }),
+  run: async ({ n, input, paramIn, log }) => {
+    const model = await input('model');
+    if(!model) throw new Error('缺少 3D 模型输入');
+    if(!window.ModelTex) throw new Error('modeltex.js 未加载');
+    if(!window.TexBrush) throw new Error('texbrush.js 未加载');
+    const size = Number(await paramIn('size')) || 1024;
+    const a = await ModelTex.analyze(model);
+    const baseSrc = await input('texture');
+    const base = baseSrc ? await TexBrush.loadImage(baseSrc) : null;
+
+    let strokeSrc = await input('text');
+    if(strokeSrc === undefined || strokeSrc === null || String(strokeSrc).trim() === ''){
+      strokeSrc = await paramIn('strokes');
+    }
+    const mode = String(await paramIn('mode') || 'interactive');
+    const stxt = String(strokeSrc || '').trim();
+
+    if(mode === 'strokes' || stxt){
+      if(!stxt) throw new Error('笔画回放模式需要笔画 JSON（文本引脚或参数）');
+      let list;
+      try { list = JSON.parse(stxt); } catch(e){ throw new Error('笔画 JSON 不合法：' + e.message); }
+      if(!Array.isArray(list)) throw new Error('笔画需要是数组');
+      const host = document.createElement('div');   // 离屏挂载：渲染器不进文档也能跑
+      const ctl = TexBrush.mount(host, {
+        a, size, view: 720,
+        base,
+        baseColor: '#f4f7fb',
+        color: await paramIn('color'),
+        radius: await paramIn('radius'),
+        hardness: await paramIn('hardness')
+      });
+      let stats;
+      try {
+        stats = await ctl.applyStrokes(list);
+      } catch (e) {
+        ctl.dispose();
+        throw e;
+      }
+      n.out.texture = ctl.exportPNG();
+      n.out.image = ModelTex.previewGrid(a, ctl.viewCanvas, {
+        compare:false, paintedLabel:'笔刷上色', angles:[0, 35, 180],
+        texLabel:'UV 贴图 ' + size + '×' + size, cell:400
+      });
+      n.out.text = JSON.stringify({ strokes: stats.strokes, view: stats.view, textureSize: stats.size });
+      ctl.dispose();
+      log('· 回放 ' + stats.strokes + ' 笔 · 视口 ' + stats.view[0] + '×' + stats.view[1] + ' · 贴图 ' + size, 'warn');
+    } else {
+      if(!window.TexBrush.openInteractive || !document.getElementById('paintBackdrop')){
+        throw new Error('当前环境没有笔刷视口（交互模式只在应用内可用）——接笔画 JSON 走确定性回放，或把「运行方式」切到笔画回放');
+      }
+      const r = await TexBrush.openInteractive({
+        a, size, view: 720, base,
+        color: await paramIn('color'),
+        radius: await paramIn('radius'),
+        hardness: await paramIn('hardness')
+      });
+      n.out.texture = r.texture;
+      n.out.image = ModelTex.previewGrid(a, await TexBrush.loadImage(r.texture), {
+        compare:false, paintedLabel:'笔刷上色', angles:[0, 35, 180],
+        texLabel:'UV 贴图 ' + size + '×' + size, cell:400
+      });
+      n.out.text = JSON.stringify({ strokes: r.strokes, view: [720, 720], textureSize: size });
+      log('· 人工绘制 ' + r.strokes + ' 笔 · 贴图已交回流程', 'warn');
+    }
+  },
+  validate: (n, c) => {
+    const out = [];
+    if(!c.linked('model')) out.push({ code:'W-REQ', message:'「模型笔刷上色」缺少 3D 模型（可连线）' });
+    if(!c.linked('text') && !String((n.data && n.data.strokes) || '').trim() && String((n.data && n.data.mode) || 'interactive') === 'strokes'){
+      out.push({ code:'W-REQ', message:'「模型笔刷上色」笔画回放模式需要笔画 JSON（文本引脚或参数）' });
+    }
+    return out;
+  }
 });
 
 /* ============================ 逻辑 ============================ */

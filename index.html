@@ -209,6 +209,19 @@
         </div>
       </div>
     </div>
+    <!-- 3D 模型查看器：模型库双击模型打开。嵌在 .os-win 窗口里（和图片编辑器同一套
+         窗口隐喻），Model3D.openPreview 检测到 #modelViewHost 就往这里装，独立页没有
+         这个宿主时退回全屏遮罩。 -->
+    <div class="os-win modelview hidden" id="modelViewWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title" id="modelViewTitle">3D 预览</div>
+        <button class="os-win-close" id="btnModelViewClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body">
+        <div class="mv3-host" id="modelViewHost"></div>
+      </div>
+    </div>
     <div class="os-win lib hidden" id="libWin">
       <div class="os-win-bar">
         <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -778,6 +791,54 @@
   </section>
 </main>
 
+<div class="modal-backdrop hidden" id="paintBackdrop">
+  <div class="settings paint-modal" role="dialog" aria-modal="true" aria-labelledby="paintTitle">
+    <div class="settings-head">
+      <div>
+        <div class="settings-title" id="paintTitle">笔刷上色</div>
+        <div class="settings-sub">左键画 · 右键转视角 · 滚轮缩放 · Ctrl+Z 撤销 · 收笔即烘进 UV 贴图</div>
+      </div>
+      <button class="icon-btn" id="paintClose" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="paint-body">
+      <div class="paint-stage" id="paintHost"></div>
+      <div class="paint-tools">
+        <div class="field">
+          <label for="paintColor">颜色</label>
+          <input type="color" id="paintColor" value="#e0533f">
+        </div>
+        <div class="field">
+          <label for="paintRadius">半径 <span id="paintRadiusVal">24</span> px</label>
+          <input type="range" id="paintRadius" min="2" max="120" step="1" value="24">
+        </div>
+        <div class="field">
+          <label for="paintHard">硬度 <span id="paintHardVal">70%</span></label>
+          <input type="range" id="paintHard" min="0" max="100" step="5" value="70">
+        </div>
+        <div class="field">
+          <label for="paintMode">模式</label>
+          <select id="paintMode">
+            <option value="paint">绘制</option>
+            <option value="erase">擦除（露出底图）</option>
+          </select>
+        </div>
+        <button class="btn sm ghost" id="paintUndo" type="button">撤销</button>
+        <div class="paint-tex">
+          <canvas id="paintTexMini" width="200" height="200"></canvas>
+          <span>UV 贴图</span>
+        </div>
+      </div>
+    </div>
+    <div class="settings-foot">
+      <span class="gen-hint">擦除只擦笔画层、不伤底图；「完成」把贴图交回流程</span>
+      <div class="gen-btns">
+        <button class="btn sm ghost" id="paintCancel" type="button">取消</button>
+        <button class="btn sm primary" id="paintDone" type="button">完成</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="settingsBackdrop">
   <section class="settings2" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
     <header class="set-head">
@@ -1279,7 +1340,12 @@
 <script src="vendor/GLTFLoader.js"></script>
 <script src="vendor/OBJLoader.js"></script>
 <script src="vendor/OrbitControls.js"></script>
+<script src="vendor/GLTFExporter.js"></script>
 <script src="js/model3d.js"></script>
+<script src="js/svgtex.js"></script>
+<script src="js/texpaint.js"></script>
+<script src="js/modeltex.js"></script>
+<script src="js/texbrush.js"></script>
 
 <script src="js/config.js"></script>
 <script src="js/blob-store.js"></script>

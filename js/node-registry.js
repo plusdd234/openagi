@@ -53,6 +53,13 @@ const CAP_META = {
   tripoModel:      { cost: 300, latency:'slow', determinism:'none',       unit:'个' },
   tripoModelMulti: { cost: 300, latency:'slow', determinism:'none',       unit:'个' },
   modelViews:      { cost: 0,   latency:'med',  determinism:'exact',      unit:'张' },
+  // 模型贴图（本地确定性：分岛 / 填色 / 导出都是纯计算）
+  textureSvg:      { cost: 0,   latency:'fast', determinism:'exact' },
+  modelIslands:    { cost: 0,   latency:'med',  determinism:'exact' },
+  modelColorize:   { cost: 0,   latency:'med',  determinism:'exact' },
+  modelTextureSet: { cost: 0,   latency:'med',  determinism:'exact' },
+  modelStage:      { cost: 0,   latency:'fast', determinism:'exact',      unit:'张' },
+  modelPaint:      { cost: 0,   latency:'med',  determinism:'exact', unit:'笔' },
   // 流程控制
   branch:          { cost: 0,   latency:'fast', determinism:'exact' },
   start:           { cost: 0,   latency:'fast', determinism:'exact' },

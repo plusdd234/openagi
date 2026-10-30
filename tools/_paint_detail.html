@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>少女身体 · 贴图续画</title>
+<style>html,body{margin:0;background:#16181c;}</style>
+</head>
+<body>
+<script src="/vendor/three.min.js"></script>
+<script src="/vendor/GLTFLoader.js"></script>
+<script src="/vendor/OBJLoader.js"></script>
+<script src="/js/model3d.js"></script>
+<script src="/js/modeltex.js"></script>
+<script>
+(async function () {
+  'use strict';
+  const O = window.__OPTS || {};
+  const MODEL = O.model || '/assets/models/mvu6nqhf-c24e23e7.obj';
+  const SIZE = Number(O.size) || 1024;
+
+  function done(patch){ Object.assign(window, patch); window.__done = true; }
+
+  try {
+    if (!window.ModelTex) throw new Error('modeltex.js 未加载');
+    const a = await ModelTex.analyze(MODEL);
+
+    /* ---------- 岛元数据表 + UV 质心 ---------- */
+    function uvCentroidOf(o){
+      let sx = 0, sy = 0, n = 0;
+      o.tris.forEach(ref => {
+        const part = a.parts[ref.part];
+        const vi = (t, k) => part.idx ? part.idx.getX(t * 3 + k) : t * 3 + k;
+        for (let k = 0; k < 3; k++) { const v = vi(ref.t, k); sx += part.uv.getX(v); sy += part.uv.getY(v); n++; }
+      });
+      return [sx / n, sy / n];
+    }
+    const table = a.islands.map(o => ({
+      id: o.id, tris: o.tris.length, area: +o.area.toFixed(5),
+      centroid: o.centroid.map(v => +v.toFixed(2)),
+      bbox: o.bbox.map(v => +v.toFixed(2)),
+      uv: uvCentroidOf(o).map(v => +v.toFixed(4))
+    }));
+
+    /* ---------- 岛 ID 图（每岛一色 + 编号） ---------- */
+    function islandAtlas(){
+      const cv = document.createElement('canvas'); cv.width = SIZE; cv.height = SIZE;
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#20242b'; ctx.fillRect(0, 0, SIZE, SIZE);
+      const uvC = table;
+      a.islands.forEach(o => {
+        const t = table[o.id];
+        const col = 'hsl(' + ((o.id * 137.508) % 360).toFixed(1) + ',68%,55%)';
+        o.tris.forEach(ref => {
+          const part = a.parts[ref.part];
+          const vi = (tt, k) => part.idx ? part.idx.getX(tt * 3 + k) : tt * 3 + k;
+          ctx.fillStyle = col; ctx.beginPath();
+          for (let k = 0; k < 3; k++) {
+            const v = vi(ref.t, k);
+            const x = part.uv.getX(v) * SIZE, y = (1 - part.uv.getY(v)) * SIZE;
+            if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          }
+          ctx.closePath(); ctx.fill();
+        });
+      });
+      ctx.font = '600 13px system-ui,"Microsoft YaHei",sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      uvC.forEach(t => {
+        if (t.area < 0.0008) return;
+        const x = t.uv[0] * SIZE, y = (1 - t.uv[1]) * SIZE;
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+        ctx.strokeText(t.id, x, y);
+        ctx.fillStyle = '#fff'; ctx.fillText(t.id, x, y);
+      });
+      return cv;
+    }
+
+    /* ---------- 离屏渲染 ---------- */
+    let _rd = null;
+    function renderer(cell){
+      if (!_rd) {
+        _rd = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+        _rd.setPixelRatio(1);
+        _rd.domElement.style.display = 'none';
+        document.body.appendChild(_rd.domElement);
+      }
+      _rd.setSize(cell, cell, false);
+      return _rd;
+    }
+    function shot(map, deg, cell, opt){
+      opt = opt || {};
+      const rd = renderer(cell);
+      const scene = new THREE.Scene();
+      const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, side: THREE.DoubleSide });
+      if (map) { mat.map = (map.isTexture) ? map : new THREE.CanvasTexture(map); mat.map.anisotropy = 4; mat.needsUpdate = true; }
+      const clone = a.root.clone(true);
+      clone.traverse(o => { if (o.isMesh) o.material = mat; });
+      scene.add(clone);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+      const l1 = new THREE.DirectionalLight(0xffffff, 0.5); l1.position.set(2, 4, 5); scene.add(l1);
+      const l2 = new THREE.DirectionalLight(0xffffff, 0.25); l2.position.set(-3, 2, -4); scene.add(l2);
+      const fov = 35;
+      const center = new THREE.Vector3(a.center.x, opt.centerY == null ? a.center.y : opt.centerY, a.center.z);
+      const radius = opt.radius || a.radius;
+      const cam = new THREE.PerspectiveCamera(fov, 1, radius / 100, radius * 60);
+      const dist = radius / Math.tan(fov * Math.PI / 360) * (opt.fit || 1.15);
+      const ang = deg * Math.PI / 180;
+      cam.position.set(center.x + Math.sin(ang) * dist, center.y + (opt.lift || 0), center.z + Math.cos(ang) * dist);
+      cam.lookAt(center);
+      cam.updateMatrixWorld(true);
+      rd.setClearColor(new THREE.Color('#16181c'), 1);
+      rd.clear(true, true, true);
+      rd.render(scene, cam);
+      const c = document.createElement('canvas'); c.width = cell; c.height = cell;
+      c.getContext('2d').drawImage(rd.domElement, 0, 0);
+      return c;
+    }
+
+    function grid(cells, cols, cell){
+      const gap = 8;
+      cell = cell || 400;
+      const out = document.createElement('canvas');
+      out.width = cols * (cell + gap) - gap;
+      out.height = Math.ceil(cells.length / cols) * (cell + gap) - gap;
+      const ctx = out.getContext('2d');
+      ctx.fillStyle = '#16181c'; ctx.fillRect(0, 0, out.width, out.height);
+      cells.forEach((c, i) => {
+        const cx = (i % cols) * (cell + gap), cy = Math.floor(i / cols) * (cell + gap);
+        ctx.drawImage(c.img, cx, cy, cell, cell);
+        ctx.fillStyle = 'rgba(0,0,0,0.62)'; ctx.fillRect(cx, cy, cell, 26);
+        ctx.fillStyle = '#e6e8ea'; ctx.font = '500 14px system-ui,"Microsoft YaHei",sans-serif';
+        ctx.textBaseline = 'middle'; ctx.fillText(c.label, cx + 8, cy + 14);
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
+        ctx.strokeRect(cx + 0.5, cy + 0.5, cell - 1, cell - 1);
+      });
+      return out;
+    }
+
+    if (O.mode === 'map') {
+      const atlas = islandAtlas();
+      const cells = [];
+      [0, 35, 180].forEach(d => cells.push({ img: shot(null, d, 420), label: '原始 · ' + d + '°' }));
+      cells.push({ img: shot(atlas, 0, 420), label: '岛 ID · 正视' });
+      cells.push({ img: shot(atlas, 35, 420), label: '岛 ID · 35°' });
+      cells.push({ img: atlas, label: '岛 ID 图（数字=编号，SIZE ' + SIZE + '）' });
+      cells.push({ img: shot(null, 0, 420, { centerY: 94, radius: 9, fit: 1.0 }), label: '头部特写（正视）' });
+      cells.push({ img: shot(null, 35, 420, { centerY: 94, radius: 9, fit: 1.0 }), label: '头部特写（35°）' });
+      cells.push({ img: shot(null, 180, 420, { centerY: 94, radius: 9, fit: 1.0 }), label: '头部特写（背面）' });
+      done({ __previewPng: grid(cells, 3, 420).toDataURL('image/png'), __table: table });
+      return;
+    }
+
+    const RULES = [
+      { name:'光环', color:'#e6c45c', ring:true, yMax:22 },
+      { name:'脚', color:'#f3d8c6', yMax:6 },
+      { name:'裤袜', color:'#b6a4d6', yMax:34, areaMin:0.02 },
+      { name:'手', color:'#f3d8c6', xAbsMin:35 },
+      { name:'袖口', color:'#1c2130', xAbsMin:30 },
+      { name:'袖子', color:'#f4f7fb', xAbsMin:16, xAbsMax:30, yMin:58 },
+      { name:'宝石', color:'#b53a30', yMin:83, yMax:90, zMin:25, xAbsMax:4 },
+      { name:'胸饰', color:'#e6c45c', yMin:77, yMax:91, zMin:21, xAbsMax:13 },
+      { name:'裙摆', color:'#2c3a63', yMax:66 },
+      { name:'腰封', color:'#1c2130', yMax:70 }
+    ];
+
+    /* ---------- 细节层：按 3D 位置逐 texel 落笔（覆盖底色层） ---------- */
+    function detailColor(P){
+      const x = P.x, y = P.y, z = P.z, ax = Math.abs(x);
+      /* 红宝石：领口 / 胸甲正中 */
+      if (ax < 1.0 && y > 88.4 && y < 91.6 && z > 26.5) return '#b53a30';
+      if (ax < 1.5 && y > 77.6 && y < 80.4 && z > 28) return '#b53a30';
+      /* 蓝宝石：胸饰横向两枚 */
+      if (ax > 2.2 && ax < 4.8 && y > 77.4 && y < 79.8 && z > 28) return '#2f7fc4';
+      /* 金色浮雕（胸甲凸起区） */
+      if (y > 74 && y < 88 && z > 33.2 && ax < 12) return '#e0b84e';
+      /* 黑色胸下束带 */
+      if (y > 74.6 && y < 80.4 && ax < 12) return '#1c2130';
+      /* 束带上下金边 */
+      if (ax < 12 && ((y >= 80.4 && y < 81.3) || (y > 73.7 && y <= 74.6))) return '#e0b84e';
+      /* 裤袜蕾丝花边：锯齿顶边 */
+      if (y > 31.0 && y < 34.2 && ax < 12.5) {
+        const ang = Math.atan2(z - 16, ax - 4.3);
+        const top = 33.4 + 0.28 * Math.cos(ang * 7);
+        if (y < top) return '#1c2130';
+      }
+      return null;
+    }
+
+    function detailPass(a, canvas, size){
+      const ctx = canvas.getContext('2d');
+      const img = ctx.getImageData(0, 0, size, size);
+      const data = img.data;
+      const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), P = new THREE.Vector3();
+      let hits = 0;
+      a.parts.forEach(part => {
+        const uv = part.uv, pos = part.pos, idx = part.idx, mw = part.mw;
+        const vi = (t, k) => idx ? idx.getX(t * 3 + k) : t * 3 + k;
+        const wp = (v, out) => { out.set(pos.getX(v), pos.getY(v), pos.getZ(v)); out.applyMatrix4(mw); return out; };
+        for (let t = 0; t < part.tri; t++) {
+          const v0 = vi(t, 0), v1 = vi(t, 1), v2 = vi(t, 2);
+          const x0 = uv.getX(v0) * size, y0 = (1 - uv.getY(v0)) * size;
+          const x1 = uv.getX(v1) * size, y1 = (1 - uv.getY(v1)) * size;
+          const x2 = uv.getX(v2) * size, y2 = (1 - uv.getY(v2)) * size;
+          let mnx = Math.floor(Math.min(x0, x1, x2)), mxx = Math.ceil(Math.max(x0, x1, x2));
+          let mny = Math.floor(Math.min(y0, y1, y2)), mxy = Math.ceil(Math.max(y0, y1, y2));
+          if (mxx < 0 || mnx >= size || mxy < 0 || mny >= size) continue;
+          if (mxx - mnx < 1 && mxy - mny < 1) continue;
+          if (mnx < 0) mnx = 0; if (mny < 0) mny = 0;
+          if (mxx > size) mxx = size; if (mxy > size) mxy = size;
+          const den = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2);
+          if (Math.abs(den) < 1e-9) continue;
+          wp(v0, A); wp(v1, B); wp(v2, C);
+          for (let py = mny; py < mxy; py++) {
+            const fy = py + 0.5;
+            for (let px = mnx; px < mxx; px++) {
+              const fx = px + 0.5;
+              const l0 = ((y1 - y2) * (fx - x2) + (x2 - x1) * (fy - y2)) / den;
+              const l1 = ((y2 - y0) * (fx - x2) + (x0 - x2) * (fy - y2)) / den;
+              const l2 = 1 - l0 - l1;
+              if (l0 < -0.001 || l1 < -0.001 || l2 < -0.001) continue;
+              P.set(A.x * l0 + B.x * l1 + C.x * l2, A.y * l0 + B.y * l1 + C.y * l2, A.z * l0 + B.z * l1 + C.z * l2);
+              const col = detailColor(P);
+              if (!col) continue;
+              const i = (py * size + px) * 4;
+              const rgb = (col === '#1c2130') ? [28, 33, 48] : (col === '#b53a30') ? [181, 58, 48] : (col === '#2f7fc4') ? [47, 127, 196] : [224, 184, 78];
+              data[i] = rgb[0]; data[i + 1] = rgb[1]; data[i + 2] = rgb[2]; data[i + 3] = 255;
+              hits++;
+            }
+          }
+        }
+      });
+      ctx.putImageData(img, 0, 0);
+      return hits;
+    }
+
+    if (O.mode === 'paint') {
+      /* 走产品代码路径：逐三角判定 + 细节规则逐 texel 落笔 */
+      const DET = [
+        { name:'领口红宝石', color:'#b53a30', yMin:88.4, yMax:91.6, xAbsMax:1, zMin:26.5 },
+        { name:'胸饰红宝石', color:'#b53a30', yMin:77.6, yMax:80.4, xAbsMax:1.5, zMin:28 },
+        { name:'蓝宝石', color:'#2f7fc4', yMin:77.4, yMax:79.8, xAbsMin:2.2, xAbsMax:4.8, zMin:28 },
+        { name:'金色浮雕', color:'#e0b84e', yMin:74, yMax:88, xAbsMax:12, zMin:33.2 },
+        { name:'黑色束带', color:'#1c2130', yMin:74.6, yMax:80.4, xAbsMax:12 },
+        { name:'束带上金边', color:'#e0b84e', yMin:80.4, yMax:81.3, xAbsMax:12 },
+        { name:'束带下金边', color:'#e0b84e', yMin:73.7, yMax:74.6, xAbsMax:12 },
+        { name:'裤袜蕾丝', color:'#1c2130', yMin:31, yMax:34, xAbsMax:12.5, wave:{ axis:'x', freq:7, amp:0.28 } }
+      ];
+      const baseCv = ModelTex.paint(a, RULES, '#f4f7fb', SIZE).canvas;
+      const baseCopy = document.createElement('canvas');
+      baseCopy.width = SIZE; baseCopy.height = SIZE;
+      baseCopy.getContext('2d').drawImage(baseCv, 0, 0);
+      const painted = ModelTex.paint(a, RULES, '#f4f7fb', SIZE, { matchBy:'island', detail: DET });
+      const hits = painted.detail ? painted.detail.hits : 0;
+      const baseCv2 = painted.canvas;
+      window.__counts = painted.counts;
+      window.__detail = painted.detail ? painted.detail.counts : {};
+
+      const cells = [
+        { img: shot(baseCopy, 0, 420), label: '底色层 · 整岛 · 正视' },
+        { img: shot(baseCopy, 35, 420), label: '底色层 · 整岛 · 35°' },
+        { img: shot(baseCopy, 180, 420), label: '底色层 · 整岛 · 背面' },
+        { img: shot(baseCv2, 0, 420), label: 'P0 · 整岛+细节 · 正视' },
+        { img: shot(baseCv2, 35, 420), label: 'P0 · 整岛+细节 · 35°' },
+        { img: shot(baseCv2, 180, 420), label: 'P0 · 整岛+细节 · 背面' },
+        { img: shot(baseCv2, 0, 420, { centerY: 78, radius: 13, fit: 1.05 }), label: '胸饰 / 束带特写' },
+        { img: shot(baseCv2, 0, 420, { centerY: 30, radius: 15, fit: 1.05 }), label: '裤袜蕾丝特写' },
+        { img: baseCv2, label: '贴图 ' + SIZE + '²（细节命中 ' + hits + ' texel）' }
+      ];
+      const trio = ModelTex.objTrio(a);
+      done({
+        __previewPng: grid(cells, 3, 420).toDataURL('image/png'),
+        __texPng: baseCv2.toDataURL('image/png'),
+        __table: table,
+        __trio: { obj: ModelTex.toDataURL(trio.objText), mtl: ModelTex.toDataURL(trio.mtlText) },
+        __hits: hits
+      });
+      return;
+    }
+
+    done({ __table: table, __previewPng: grid([{ img: shot(null, 0, 420), label: '原始' }], 1, 420).toDataURL('image/png') });
+  } catch (e) {
+    done({ __err: (e && e.message) || String(e) });
+  }
+})();
+</script>
+</body>
+</html>

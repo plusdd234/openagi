@@ -30,11 +30,15 @@ $('btnStoreWinClose').addEventListener('click', () => deskCloseWin($('storeWin')
 $('btnComfyWinClose').addEventListener('click', () => deskCloseWin($('comfyWin')));
 $('btnLibWinClose').addEventListener('click', () => deskCloseWin($('libWin')));
 $('btnImgEditClose').addEventListener('click', () => $('imgEditWin').classList.add('hidden'));
+/* 3D 查看器的销毁逻辑（dispose renderer / 停 raf / 清宿主）全在 Model3D.closePreview 里，
+ * 这里必须走它而不是直接加 hidden——只藏窗口的话渲染循环还在跑，WebGL 上下文会一直占着 */
+$('btnModelViewClose').addEventListener('click', () => { if (window.Model3D) Model3D.closePreview(); });
 $('btnDeskNewFlow').addEventListener('click', createFlow);
 document.addEventListener('keydown', e => {
   if(e.key !== 'Escape') return;
   if($('settingsBackdrop').classList.contains('hidden')){
     if(!$('imgEditWin').classList.contains('hidden')) $('imgEditWin').classList.add('hidden');
+    else if(!$('modelViewWin').classList.contains('hidden')) { if(window.Model3D) Model3D.closePreview(); }
     else if(!$('libWin').classList.contains('hidden')) deskCloseWin($('libWin'));
     else if(!$('comfyWin').classList.contains('hidden')) deskCloseWin($('comfyWin'));
     else if(!$('storeWin').classList.contains('hidden')) deskCloseWin($('storeWin'));

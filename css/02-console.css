@@ -112,6 +112,13 @@
   .ie-sec { display: flex; flex-direction: column; gap: 7px; }
   .ie-h { font-size: 11px; font-weight: 600; color: #6a7488; letter-spacing: .3px; }
   .ie-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  /* ---- 3D 模型查看器（模型库双击打开；Model3D.openPreview 往 #modelViewHost 里装） ----
+   * 视口本体是暗色的（模型看体积要暗底），窗口壳沿用 .os-win。 */
+  .os-win.modelview { width: min(1080px, 94vw); height: min(720px, 86vh); }
+  .os-win.modelview .os-win-body { padding: 0; overflow: hidden; display: flex; flex-direction: column; background: #0a0b0e; }
+  .mv3-host { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .mv3-host .mv3-bar { background: #111318; }
   .ie-row { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #5a6068; }
   .ie-row > span { flex: 0 0 44px; }
   .ie-row > input[type=range] { flex: 1; min-width: 0; accent-color: #e88a00; }
@@ -281,4 +288,50 @@
     box-shadow: 0 10px 24px rgba(201,52,42,.28);
   }
   .lib-trashcan.hot svg { color: #c9342a; }
+
+  /* 卡片磁贴上的 UV 快捷入口：悬停才露出来，不干扰网格本身 */
+  .lib-thumb-act {
+    position: absolute; right: 6px; bottom: 6px; z-index: 2;
+    height: 20px; padding: 0 8px; font-size: 10px; font-weight: 700; letter-spacing: .06em;
+    color: #3a4048; background: rgba(255,255,255,.93); border: 1px solid #dfe2e7;
+    border-radius: 6px; cursor: pointer; opacity: 0;
+    transition: opacity .12s, border-color .12s, color .12s;
+  }
+  .lib-card:hover .lib-thumb-act { opacity: 1; }
+  .lib-thumb-act:hover { border-color: #e88a00; color: #a35f00; }
+  .lib-thumb-act:focus-visible { opacity: 1; outline: 2px solid #e88a00; outline-offset: 1px; }
+
+  /* ---- 模型查看（3D / UV 同一个视口）：浅色外壳 + 深色画布，沿用库的卡片/胶囊语言 ---- */
+  .lib-mv {
+    position: absolute; left: 0; right: 0; bottom: 0; top: 40px; z-index: 78;
+    display: flex; padding: 14px; background: #f7f8fa;
+  }
+  .lib-mv.hidden { display: none; }
+  /* App 页里标题栏隐藏，浮层要顶到 window 顶端 */
+  .dapp-host .lib-mv { top: 0; }
+  .lib-mv-host { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #0a0b0e; }
+  .lib-mv-err { margin: auto; padding: 16px; font-size: 12px; color: #ff9a90; }
+  .lib-uv-panel {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
+    background: #fff; border: 1px solid #dfe3e9; border-radius: 12px;
+    box-shadow: 0 16px 40px rgba(20,30,50,.14);
+  }
+  .lib-uv-head {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+    padding: 9px 10px 9px 16px; border-bottom: 1px solid #eef0f4;
+  }
+  .lib-uv-headmain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .lib-uv-kicker {
+    font-size: 9.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+    color: #a35f00;
+  }
+  .lib-uv-name {
+    font-size: 13px; font-weight: 600; color: #1f2328;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .lib-uv-sub { font-size: 10.5px; color: #8a9098; font-variant-numeric: tabular-nums; }
+  .lib-uv-acts { display: flex; align-items: center; gap: 6px; }
+  @media (max-width: 720px) {
+    .lib-uv-head { flex-wrap: wrap; }
+  }
 

@@ -317,6 +317,14 @@ function libEnsureChrome(){
     });
     win.appendChild(bar);
   }
+  /* 关库窗口时把内嵌的 3D 视口一起收掉：不然 WebGL 上下文和渲染循环会留在后台 */
+  if(!win.dataset.libViewClose){
+    win.dataset.libViewClose = '1';
+    const btn = $('btnLibWinClose');
+    if(btn) btn.addEventListener('click', () => {
+      if(libMv.open) libMvClose();
+    });
+  }
 }
 
 function libOverTrash(e){
@@ -466,7 +474,9 @@ function libBindGestures(){
   body.addEventListener('dragstart', e => e.preventDefault());
   // Esc 随时中止进行中的框选/拖拽（和 blur、pointercancel 一样走统一清理出口）
   document.addEventListener('keydown', e => {
-    if(e.key === 'Escape' && libGesture) libGestureAbort();
+    if(e.key !== 'Escape') return;
+    if(libGesture){ libGestureAbort(); return; }
+    if(libMv.open){ libMvClose(); return; }
   });
   libBodyBound = true;
 }
@@ -545,6 +555,116 @@ async function libLoadThumb(id, holder){
   }
 }
 
+/* ---------- UV 查看（并入 3D 查看器） ----------
+ * UV 不再是独立浮层：打开模型后点视口底栏的「UV 查看」即可切过去，
+ * 岛图 / 3D 岛图 / 插槽隔离 / 编号 / 分辨率 / 导出都在同一个深色视口里，
+ * 与材质插槽面板共用一套界面语言。libUvOpen 只负责把资产读出来交给查看器。 */
+async function libUvOpen(id){
+  const asset = libState.assets.find(x => x.id === id);
+  const d = libDesk();
+  if(!asset || !d) return;
+  let r;
+  try{ r = await d.assetRead(id); }catch(e){ r = null; }
+  if(!r || !r.ok || !r.dataURL){
+    libState.error = '打不开「' + asset.name + '」：' + ((r && r.error) || '文件缺失');
+    libPaint();
+    return;
+  }
+  await libMvOpen(r.dataURL, asset.name, id, { uv: true });
+}
+function libUvClose(){
+  if(libMv.open) libMvClose();
+}
+
+/* ---------- 3D 查看（app 内嵌，不再单开窗口） ----------
+ * 双击模型时在库窗口里铺一层深色视口；渲染本体交给 Model3D.openPreview
+ * （chrome:false），标题栏 / 关闭按钮归这里管。UV 查看是视口内的一种模式。 */
+const libMv = { open: false, name: '', id: '', sub: '' };
+const LIB_MV_SUB = {
+  d3: '拖拽旋转 · 滚轮缩放 · 右键平移',
+  uv: 'UV 岛图 · 3D 岛图 · 插槽隔离 · 编号'
+};
+
+/* 只改副标题，不重建面板——重建会把 #libMvHost 里的 3D 视口连根拔掉 */
+function libMvSubText(t){
+  const el = $('libMv');
+  const s = el && el.querySelector('.lib-uv-sub');
+  if(s) s.textContent = t;
+}
+
+function libMvEnsure(){
+  const win = $('libWin');
+  if(!win) return null;
+  let el = $('libMv');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'libMv';
+    el.className = 'lib-mv hidden';
+    win.appendChild(el);
+  }
+  return el;
+}
+function libMvRender(){
+  const el = $('libMv');
+  if(!el) return;
+  el.classList.toggle('hidden', !libMv.open);
+  if(!libMv.open){ el.innerHTML = ''; return; }
+  el.innerHTML =
+    '<div class="lib-uv-panel">' +
+      '<div class="lib-uv-head">' +
+        '<div class="lib-uv-headmain">' +
+          '<span class="lib-uv-kicker">模型查看</span>' +
+          '<b class="lib-uv-name" title="' + libEsc(libMv.name) + '">' + libEsc(libMv.name) + '</b>' +
+          '<span class="lib-uv-sub">' + libEsc(libMv.sub || LIB_MV_SUB.d3) + '</span>' +
+        '</div>' +
+        '<div class="lib-uv-acts">' +
+          '<button type="button" class="os-win-close" data-mv-act="close" aria-label="关闭 3D 查看" title="关闭">×</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="lib-mv-host" id="libMvHost"></div>' +
+    '</div>';
+  const x = el.querySelector('[data-mv-act="close"]');
+  if(x) x.addEventListener('click', libMvClose);
+}
+async function libMvOpen(src, name, assetId, opts){
+  if(typeof Model3D === 'undefined' || typeof Model3D.openPreview !== 'function'){
+    libState.error = '3D 查看器未就绪';
+    libPaint();
+    return;
+  }
+  libMvEnsure();
+  libMv.open = true;
+  libMv.name = name || '3D 模型';
+  libMv.id = assetId || '';
+  libMv.sub = (opts && opts.uv) ? LIB_MV_SUB.uv : LIB_MV_SUB.d3;
+  libMvRender();
+  const host = $('libMvHost');
+  try{
+    /* assetId 是贴图持久化的钥匙：模型打开时按它回读上次设置的贴图；
+     * opts.uv 让视口直接以 UV 模式打开（库里的「UV 查看」入口走这条路） */
+    await Model3D.openPreview(src, {
+      title: name, host: host, chrome: false, assetId: libMv.id,
+      uv: !!(opts && opts.uv),
+      /* 视口里切换 UV / 3D 时同步外层副标题 */
+      onUvState: function(on){ libMvSubText(on ? LIB_MV_SUB.uv : LIB_MV_SUB.d3); }
+    });
+  }catch(e){
+    // 加载失败时 openPreview 已经把原因写在视口提示里，这里只兜底不整体崩掉
+    if(host && !host.children.length){
+      host.innerHTML = '<div class="lib-mv-err">加载失败：' + libEsc((e && e.message) || e) + '</div>';
+    }
+  }
+}
+function libMvClose(){
+  if(!libMv.open) return;
+  libMv.open = false;
+  libMv.name = '';
+  libMv.id = '';
+  libMv.sub = '';
+  try{ if(typeof Model3D !== 'undefined') Model3D.closePreview(); }catch(e){}
+  libMvRender();
+}
+
 /* 双击打开资产：3D 进查看器，图片进编辑器。
  * 这是 Content Browser 最核心的手感——资产不只是"能看到"，还得"能进去看"。 */
 async function libOpenAsset(id){
@@ -562,12 +682,7 @@ async function libOpenAsset(id){
     return;
   }
   if(a.kind === 'model'){
-    if(typeof Model3D !== 'undefined' && typeof Model3D.openPreview === 'function'){
-      Model3D.openPreview(r.dataURL, { title: a.name });
-    }else{
-      libState.error = '3D 查看器未就绪';
-      libPaint();
-    }
+    libMvOpen(r.dataURL, a.name, a.id);
     return;
   }
   if(typeof openImageEditor === 'function'){
@@ -607,7 +722,10 @@ function libCard(a){
      * （data-lib-3d 在真实 DOM 里读不到 dataset.lib3d），会静默退回图片分支，
      * 把 obj 原文件当成图片塞进 <img>——磁贴变成破图标。用纯字母最稳。 */
     thumb = '<div class="lib-thumb model" data-lib-thumb="' + libEsc(a.id) + '" data-lib-kind="model">' +
-      '<span class="lib-ext">' + libEsc(String(a.ext || '').toUpperCase()) + '</span></div>';
+      '<span class="lib-ext">' + libEsc(String(a.ext || '').toUpperCase()) + '</span>' +
+      '<button type="button" class="lib-thumb-act" data-lib-uv="' + libEsc(a.id) +
+        '" title="查看 UV 岛分布">UV</button>' +
+      '</div>';
   }
 
   const refHtml = (libState.kind === 'image' && refs)
@@ -667,6 +785,9 @@ function libPaint(){
       '<input class="lib-search" type="search" placeholder="搜索名称…" data-lib-q value="' + libEsc(libState.q) + '">' +
       '<div class="lib-sorts">' + chips + '</div>' +
       '<div class="lib-acts">' +
+        (libState.kind === 'model'
+          ? '<button type="button" class="btn sm" data-lib-act="uv" title="选中一个模型后查看它的 UV 岛分布">UV 查看</button>'
+          : '') +
         '<button type="button" class="btn sm" data-lib-act="import">导入</button>' +
         '<button type="button" class="btn sm" data-lib-act="reconcile" title="磁盘是真相：补回外部放进去的文件、清掉已消失的记录">核对磁盘</button>' +
         '<button type="button" class="btn sm" data-lib-act="empty">清空回收站</button>' +
@@ -694,9 +815,13 @@ function libPaint(){
   // 双击打开：3D 进查看器、图片进编辑器
   box.querySelectorAll('.lib-card').forEach(el => {
     el.addEventListener('dblclick', e => {
-      if(e.target && e.target.tagName === 'INPUT') return;
+      if(e.target && (e.target.tagName === 'INPUT' || e.target.closest('.lib-thumb-act'))) return;
       libOpenAsset(el.dataset.libId);
     });
+  });
+  // 卡片上的 UV 快捷入口（不用先选中，看到就能点）
+  box.querySelectorAll('[data-lib-uv]').forEach(b => {
+    b.addEventListener('click', e => { e.stopPropagation(); libUvOpen(b.dataset.libUv); });
   });
   const qEl = box.querySelector('[data-lib-q]');
   if(qEl){
@@ -708,6 +833,14 @@ function libPaint(){
       if(a === 'import') libImport();
       else if(a === 'reconcile') libReconcile();
       else if(a === 'empty') libEmptyTrash();
+      else if(a === 'uv'){
+        if(libState.sel.size !== 1){
+          libState.note = '先在网格里选中一个模型，再点「UV 查看」（也可以直接点磁贴右下角的 UV）';
+          libPaint();
+          return;
+        }
+        libUvOpen(Array.from(libState.sel)[0]);
+      }
       else if(a === 'export') libExportSelected();
       else if(a === 'remove') libRemoveSelected();
       else if(a === 'clearsel'){ libState.sel.clear(); libPaint(); }
@@ -736,6 +869,7 @@ async function openLibrary(kind){
   libState.q = '';
   libState.note = '';
   libState.error = '';
+  if(libMv.open) libMvClose();
   /* 统一走 App 页翻页（deskMountApp 定义在 desktop.js）；拿不到时退回弹窗 */
   if(typeof deskMountApp === 'function'){
     const isModel = libState.kind === 'model';
@@ -814,5 +948,5 @@ async function renderAssetsPane(){
 }
 
 if(typeof module !== 'undefined' && module.exports){
-  module.exports = { LIB_KINDS, libState, libScanRefs, libPaint, openLibrary, libFmt, libForgetThumb, libOpenAsset, renderAssetsPane };
+  module.exports = { LIB_KINDS, libState, libScanRefs, libPaint, openLibrary, libFmt, libForgetThumb, libOpenAsset, renderAssetsPane, libUvOpen, libUvClose };
 }
