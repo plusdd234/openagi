@@ -342,11 +342,12 @@ registerNode({
     { key:'prompt', label:'prompt', ctl:'textarea', ph:'提示词（未连线时使用）' },
     { key:'timeout', label:'超时', ctl:'number', type:'int', min:10, max:900, step:10, unit:'秒', default:240 },
     { key:'mode', label:'模式', ctl:'select', default:'auto', options:[['auto','自动（有参考图走图生图）'],['text','文生图'],['image','图生图']] },
-    { key:'ratio', label:'比例', ctl:'select', default:'auto', options:[['auto','自动'],['1:1','1:1'],['16:9','16:9'],['9:16','9:16'],['4:3','4:3'],['3:4','3:4']] },
+    { key:'ratio', label:'比例', ctl:'select', default:'1:1', options:[['1:1','1:1（默认）'],['16:9','16:9'],['9:16','9:16'],['4:3','4:3'],['3:4','3:4'],['auto','自动（跟随页面当前设置）']] },
     { tip:'使用 Tripo 网页账号；运行时先自动切到文生图 / 图生图面板，参考图引脚可接图像。' },
-    { tip:'最多可接 3 张参考图：图像 / 参考图2 / 参考图3，按引脚顺序一起上传；只接一张时与原来一致。' }
+    { tip:'最多可接 3 张参考图：图像 / 参考图2 / 参考图3，按引脚顺序一起上传；只接一张时与原来一致。' },
+    { tip:'比例默认 1:1，出图尺寸可复现；图生图想保留参考图原始比例时选「自动」。' }
   ],
-  seed: () => ({ data:{ prompt:'', timeout:240, ratio:'auto', mode:'auto' }, params:null }),
+  seed: () => ({ data:{ prompt:'', timeout:240, ratio:'1:1', mode:'auto' }, params:null }),
   run: async ({ n, input, paramIn }) => {
     const p = ((await input('prompt')) || n.data.prompt || '').trim();
     if(!p) throw new Error('缺少提示词');

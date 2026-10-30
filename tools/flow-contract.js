@@ -68,7 +68,7 @@ const check = (name, ok, info) => {
   });
   check('aiTask 默认超时 300 秒', r2.aiTimeout === 300, String(r2.aiTimeout));
   check('aiTask 默认 1 进 1 出引脚', r2.aiIn === 1 && r2.aiOut === 1, r2.aiIn + '/' + r2.aiOut);
-  check('tripoImg 默认超时 240 / auto 模式 / auto 比例', r2.triTimeout === 240 && r2.triMode === 'auto' && r2.triRatio === 'auto');
+  check('tripoImg 默认超时 240 / auto 模式 / 1:1 比例', r2.triTimeout === 240 && r2.triMode === 'auto' && r2.triRatio === '1:1', String(r2.triRatio));
   check('start 带空参数表', r2.startParams === 0);
   check('modelViews 默认 8 个参数引脚', r2.mvParams === 8, String(r2.mvParams));
   check('imageSplit 默认 2 个视图', r2.splitViews === 2, String(r2.splitViews));

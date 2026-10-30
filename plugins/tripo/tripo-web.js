@@ -565,18 +565,94 @@ async function attachReferences(page, files, opts = {}) {
   return { ok: written >= list.length, uploaded, state: st };
 }
 
+/* 比例：把文本/属性里的比例抽成 token 集合（"1 : 1"、"方形 1:1"、"1:1（方形）" 都算 1:1）
+   严格 innerText 相等会把本来存在的选项判成没找到，然后静默保持页面默认尺寸。 */
+function ratioTokens(v) {
+  const out = [];
+  const s = String(v == null ? '' : v).replace(/[：]/g, ':').replace(/[×＊]/g, 'x');
+  const re = /(\d{1,2}(?:\.\d+)?)\s*[:xX／\/]\s*(\d{1,2}(?:\.\d+)?)/g;
+  let m;
+  while ((m = re.exec(s))) out.push(m[1] + ':' + m[2]);
+  return out;
+}
+
+function normRatio(v) {
+  const t = ratioTokens(v);
+  return t.length ? t[0] : '';
+}
+
+async function ratioCandidates(page) {
+  const els = await page.$$('button, [role="button"], [role="option"], [role="radio"], [role="menuitemradio"], [class*="ratio"], [class*="aspect"], [class*="size"]');
+  const hits = [];
+  for (const el of els) {
+    const meta = await el.evaluate(e => ({
+      text: (e.innerText || '').trim(),
+      hint: [e.getAttribute('title'), e.getAttribute('aria-label'), e.getAttribute('data-value'), e.getAttribute('alt')]
+        .filter(Boolean).join(' '),
+    })).catch(() => null);
+    if (!meta) continue;
+    const tokens = ratioTokens(meta.text + ' ' + meta.hint);
+    if (!tokens.length) continue;
+    if (!(await el.isVisible().catch(() => false))) continue;
+    const box = await el.boundingBox().catch(() => null);
+    if (!box || box.width < 8 || box.height < 8) continue;
+    hits.push({ el, tokens, area: box.width * box.height });
+  }
+  return hits;
+}
+
+// 兜底：比例常常收在下拉里，先点开「比例 / 尺寸」触发器。返回触发器句柄（失败时用来原路点回去）
+async function openRatioMenu(page) {
+  const els = await page.$$('button, [role="button"], [role="combobox"], [class*="select"], [class*="dropdown"], [class*="trigger"]');
+  let best = null;
+  for (const el of els) {
+    const info = await el.evaluate(e => ({
+      text: (e.innerText || '').trim(),
+      hint: [e.getAttribute('title'), e.getAttribute('aria-label'), e.getAttribute('data-value')].filter(Boolean).join(' '),
+    })).catch(() => null);
+    if (!info) continue;
+    if (!/比例|尺寸|画面比例|aspect|ratio/i.test(info.text + ' ' + info.hint)) continue;
+    if (!(await el.isVisible().catch(() => false))) continue;
+    const box = await el.boundingBox().catch(() => null);
+    if (!box || box.width < 8 || box.height < 8) continue;
+    const area = box.width * box.height;
+    if (!best || area < best.area) best = { el, area };
+  }
+  if (!best) return null;
+  await best.el.click({ timeout: 3000 }).catch(() => {});
+  await sleep(250);
+  return best.el;
+}
+
 async function selectRatio(page, ratio) {
   if (!ratio || ratio === 'auto') return false;
-  const els = await page.$$('button, [role="button"], [class*="ratio"], [class*="aspect"], [class*="size"]');
-  for (const el of els) {
-    const text = ((await el.innerText().catch(() => '')) || '').trim();
-    if (text !== ratio) continue;
-    if (!(await el.isVisible().catch(() => false))) continue;
-    await el.click({ timeout: 3000 }).catch(() => {});
-    await sleep(300);
-    return true;
+  const want = normRatio(ratio);
+  if (!want) return false;
+
+  const pick = async () => {
+    const hits = (await ratioCandidates(page)).filter(h => h.tokens.includes(want));
+    hits.sort((a, b) => a.area - b.area);   // 面积最小的才是比例胶囊，不是包住整排比例的容器
+    return hits[0] || null;
+  };
+
+  let hit = await pick();
+  let trigger = null;
+  if (!hit) {
+    trigger = await openRatioMenu(page);
+    if (trigger) { await sleep(300); hit = await pick(); }
   }
-  return false;
+  if (!hit) {
+    // 没命中就把弹层原路收回去，免得它盖住提示词输入框
+    if (trigger) {
+      await trigger.click({ timeout: 2000 }).catch(() => {});
+      await sleep(150);
+      await page.keyboard.press('Escape').catch(() => {});
+    }
+    return false;
+  }
+  await hit.el.click({ timeout: 3000 }).catch(() => {});
+  await sleep(300);
+  return true;
 }
 
 // ---------- 页面元素探测 ----------
@@ -1036,7 +1112,9 @@ async function runOnce(context, page, prompt, opts = {}) {
 
   if (opts.ratio && opts.ratio !== 'auto') {
     const ok = await selectRatio(page, opts.ratio);
-    log(ok ? `已选择比例 ${opts.ratio}` : `未找到比例 ${opts.ratio} 的选项，保持页面默认`);
+    log(ok
+      ? `已选择比例 ${opts.ratio}`
+      : `未找到比例 ${opts.ratio} 的选项（该面板可能不提供比例，或选项文案不同），保持页面默认；按「probe」可查看页面结构`);
   }
 
   const input = await findPromptInput(page);
@@ -1776,7 +1854,7 @@ async function startServer() {
 // 导出核心函数供单测使用（plugins/tripo/tests/ 下以 mock 页面验证多文件写入等逻辑）
 module.exports = {
   attachReference, attachReferences, visibleImageSrcs, resolveImageFile,
-  clickTextEl, selectRatio, findPromptInput, findGenerateButton,
+  clickTextEl, selectRatio, ratioTokens, normRatio, findPromptInput, findGenerateButton,
   openTopologyPanel, pickTopologyType, setFaceCount, closeTopologyPanel,
   countImageInputs, setMultiViewMode, attachMultiView, pickGenerateCount,
   clearReferences,

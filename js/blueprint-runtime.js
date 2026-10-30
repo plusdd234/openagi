@@ -914,7 +914,8 @@ async function wfTripoWebImage(prompt, images, opts){
         prompt,
         image: list[0] || '',
         images: list,
-        ratio: o.ratio && o.ratio !== 'auto' ? o.ratio : '',
+        // 比例：默认 1:1（可复现），显式传 'auto' 才跟随页面当前设置
+        ratio: o.ratio === 'auto' ? '' : (o.ratio || '1:1'),
         mode: o.mode === 'text' || o.mode === 'image' ? o.mode : '',
         timeoutSec
       }),

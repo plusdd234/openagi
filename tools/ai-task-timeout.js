@@ -55,7 +55,7 @@ const check = (ok, name, extra) => {
   check(fb.declared === 300, '分析任务声明缺省超时为 300 秒', String(fb.declared));
   check(fb.fallbackTimeout === 300, '节点无 timeout 字段时回退到声明缺省值', String(fb.fallbackTimeout));
   check(fb.withFieldTimeout === 300, '新建节点的 timeout 即为缺省值', String(fb.withFieldTimeout));
-  check(fb.fallbackRatio === 'auto' && fb.fallbackMode === 'auto', '其他参数也能回退缺省值', fb.fallbackRatio + '/' + fb.fallbackMode);
+  check(fb.fallbackRatio === '1:1' && fb.fallbackMode === 'auto', '其他参数也能回退缺省值', fb.fallbackRatio + '/' + fb.fallbackMode);
   check(fb.unknownKey === undefined, '未声明的参数返回 undefined', String(fb.unknownKey));
 
   /* ---------- 2/3. 首段等待与错误分型 ---------- */
