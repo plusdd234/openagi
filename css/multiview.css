@@ -21,7 +21,7 @@
   --mv-gold-ink: var(--gold-ink, #3b2c05);
 
   display: grid;
-  grid-template-columns: 212px minmax(0, 1fr) 218px;
+  grid-template-columns: 200px minmax(0, 1fr) 232px;
   height: 100%;
   min-height: 0;
   background: #fff;
@@ -279,6 +279,18 @@
   font-variant-numeric: tabular-nums;
 }
 .mv-field input[type="checkbox"] { accent-color: var(--mv-gold-deep); }
+/* 颜色选择器在「精细」这一条里只是个 26px 的小色块：原生控件默认宽度会把整行挤散 */
+.mv-field input[type="color"] {
+  width: 26px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #d8dde6;
+  border-radius: 5px;
+  background: #fff;
+  cursor: pointer;
+}
+.mv-field input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+.mv-field input[type="color"]::-webkit-color-swatch { border: none; border-radius: 3px; }
 
 /* 工具栏里的勾选项（「线框」这类）：要跟旁边 22px 高的分段按钮对齐，
  * 直接复用 .mv-field 会因为字号/间距不同而上下错半行。 */
@@ -507,7 +519,6 @@
   gap: 8px;
   min-height: 0;
   padding: 10px 10px 12px;
-  border-left: 1px solid var(--mv-soft);
   background: #fffdf6;
   overflow-y: auto;
   overflow-x: hidden;
@@ -656,3 +667,236 @@
   .mv-ex-info, .mv-ex-stats { flex: 1 1 100%; }
   .mv-export .btn { width: auto; }
 }
+
+/* ---------------- 右栏：图层（PS 式列表） ---------------- */
+
+/* 图层在上、导出在下，共用一列：这样「上层盖下层」的列表挨着舞台，
+ * 调一个效果不用在工具栏里找勾选框。 */
+.mv-right {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--mv-soft);
+  background: #fbfcfd;
+}
+
+.mv-layers {
+  /* 按内容撑开（8 行 ≈ 240px），不跟导出抢高度；层多了自己滚 */
+  flex: 0 0 auto;
+  max-height: 62%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-bottom: 1px solid var(--mv-soft);
+}
+
+.mv-ly-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: #8b94a5;
+}
+.mv-ly-hint {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: #b7bfcc;
+}
+
+.mv-ly-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 6px 8px;
+}
+
+/* 一行 = 一层。列表从上到下是「上层盖下层」，跟 PS 的直觉一致。 */
+.mv-ly-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: #7a8393;
+  cursor: pointer;
+  user-select: none;
+}
+.mv-ly-item:hover { background: #eef1f5; }
+.mv-ly-item.is-on { color: #2f3745; }
+.mv-ly-item.is-sel {
+  background: #fff8e6;
+  border-color: rgba(240, 180, 41, .55);
+  color: #7a5200;
+}
+
+/* 眼睛：亮着是实心金点，关掉是空心圈。纯 CSS 就够，不用图标字体 */
+.mv-ly-eye {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  padding: 0;
+  border: 1.4px solid #c6ccd8;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.mv-ly-eye:hover { border-color: var(--mv-gold); }
+.mv-ly-item.is-on .mv-ly-eye {
+  border-color: var(--mv-gold-deep);
+  background: radial-gradient(circle at 50% 42%, #ffd869 0 38%, #efb02a 40% 100%);
+}
+
+.mv-ly-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 右边的小标：这层是 3D 几何还是 2D 后处理。顺序为什么不能拖，看它就懂 */
+.mv-ly-tag {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: #c3cad6;
+}
+.mv-ly-item.is-on .mv-ly-tag { color: #d9a53f; }
+
+/* 固定位（后期处理层）：不能拖，所以画一个小锁标说明它是钉住的 */
+.mv-ly-lock {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: #8b93a1;
+  border: 1px solid #3a4150;
+  border-radius: 3px;
+  padding: 0 3px;
+  line-height: 1.4;
+}
+.mv-ly-item.is-on .mv-ly-lock { color: #d9a53f; border-color: #6b5626; }
+
+/* 眼睛真正驱动的是这些 input：state 只有一条写入口，图层只是换了张脸 */
+.mv-hidden-checks { display: none; }
+
+/* 拖拽换序：拖动中的行淡出，落点画一条金线（同组之间才允许，跨组浏览器会给禁止光标） */
+.mv-ly-item.is-dragging { opacity: .35; }
+.mv-ly-item.is-drop-before { box-shadow: inset 0 2px 0 var(--mv-gold); }
+.mv-ly-item.is-drop-after { box-shadow: inset 0 -2px 0 var(--mv-gold); }
+
+/* ---------------- 图层属性面板（每层一块，展开在行下面） ---------------- */
+
+/* 控件池：所有层参数的 .mv-field 平时躺在这里，被展开的那一层才搬进自己的面板。
+ * 用 display:none 而不是 visibility —— 它们不该占位，也不该被 tab 到。 */
+.mv-prop-pool { display: none; }
+
+/* 展开的那一行往下长出一块「这个图层自己的属性」，跟 PS 的图层效果同一形态：
+ * 左边一道金边表示归属（离行最近的那条线），面板不跟下一层抢视觉。 */
+.mv-ly-props {
+  margin: 0 2px 5px 9px;
+  padding: 8px 8px 7px 10px;
+  border-left: 2px solid rgba(240, 180, 41, .5);
+  background: #fffdf6;
+  border-radius: 0 7px 7px 0;
+}
+
+/* 一句话说清这层是干嘛的。参数只有三个滑条、没有这句，过两天就忘了
+ * 「深度差」和「深度范围」有什么区别。 */
+.mv-ly-desc {
+  margin-bottom: 7px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #8e97a6;
+}
+
+.mv-ly-fields { display: flex; flex-direction: column; gap: 6px; }
+.mv-ly-fields .mv-field { font-size: 10.5px; gap: 5px; }
+/* 右栏只有 232px：滑条必须让出剩余宽度，写死 88px 会把「角度粗细」挤成两行 */
+.mv-ly-fields .mv-field input[type="range"] { width: auto; flex: 1 1 60px; min-width: 40px; }
+.mv-ly-fields .mv-field b { min-width: 30px; text-align: right; }
+.mv-ly-fields .mv-field > span { flex: 0 0 auto; white-space: nowrap; }
+/* 没有数值参数的层（标签 / UV 描边 / 外轮廓 / 线框）：说一句而不是摊开一块空白 */
+.mv-ly-fields:empty::after {
+  content: '这一层没有可调参数，只有开 / 关';
+  font-size: 10px;
+  color: #b7bfcc;
+}
+
+/* 展开箭头：朝下 = 可展开，展开后转 180°。只在有参数的层上出现 */
+.mv-ly-caret {
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  margin-left: 1px;
+  border-left: 3.5px solid transparent;
+  border-right: 3.5px solid transparent;
+  border-top: 4px solid #c3cad6;
+  transition: transform .14s, border-top-color .14s;
+}
+.mv-ly-item:hover .mv-ly-caret { border-top-color: var(--mv-gold); }
+.mv-ly-item.is-open .mv-ly-caret {
+  transform: rotate(180deg);
+  border-top-color: var(--mv-gold-deep);
+}
+/* 展开时整行也亮一点，看得出「下面这块属于它」 */
+.mv-ly-item.is-open { background: #fff8e6; }
+
+/* 层关着的时候，面板里给一条就地打开的入口。
+ * 不禁用控件：先把参数调好再开，是更常见的顺序。 */
+.mv-ly-off-hint {
+  width: 100%;
+  margin: 0 0 7px;
+  padding: 5px 7px;
+  border: 1px dashed #e2c477;
+  border-radius: 6px;
+  background: #fffaea;
+  font: inherit;
+  font-size: 10.5px;
+  color: #a3781a;
+  text-align: left;
+  cursor: pointer;
+}
+.mv-ly-off-hint:hover { background: #fff3d2; border-style: solid; }
+
+/* 颜色行没有滑条顶着，色块往右靠，跟上面几行的数值列对齐 */
+.mv-ly-fields .mv-field input[type="color"] { margin-left: auto; }
+
+/* 窄屏：右栏折到最下面一行，边框要跟着换边（上面那道分隔线代替左侧竖线） */
+@media (max-width: 900px) {
+  .mv-right { border-left: 0; border-top: 1px solid var(--mv-soft); }
+  .mv-layers { max-height: none; }
+}
+
+/* 行上的不透明度小标（只有 <100% 才出现）：满不透明是绝大多数情况，
+ * 每行都挂个 100% 只是噪音。 */
+.mv-ly-op-badge {
+  flex: 0 0 auto;
+  margin-right: 1px;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #b98f35;
+  font-variant-numeric: tabular-nums;
+}
+.mv-ly-op-badge[hidden] { display: none; }
+
+/* 不透明度那一行跟下面的层参数对齐：字号一致、跟参数区隔开一点 */
+.mv-ly-props .mv-field { font-size: 10.5px; }
+.mv-ly-props .mv-field.mv-op {
+  margin-bottom: 7px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed rgba(226, 196, 119, .45);
+}
+.mv-op-range { width: auto; flex: 1 1 60px; min-width: 40px; accent-color: var(--mv-gold-deep); }
+.mv-op-val { min-width: 32px; text-align: right; font-weight: 600; color: #3d4657; }

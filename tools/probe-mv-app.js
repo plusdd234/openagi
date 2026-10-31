@@ -56,6 +56,17 @@ function quadCube() {
   page.on('pageerror', e => errors.push(String(e && e.message)));
   await page.goto(pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1', { waitUntil: 'load' });
   await page.waitForTimeout(900);
+  /* ⚠ 必须**写死一份设置**再测：这个探针断言的是「默认状态」（线框开、纯色、透明底），
+   * 但 App 会把上次的设置存进 localStorage（hf_mv_set），而且 js/config.js 的 hydrate
+   * 还会从服务端 store 把这份设置**灌回** localStorage —— 光删 localStorage 没用，
+   * reload 之后那份存档又回来了（机器上只要有人手点过设置，读到的就是它）。
+   * 所以这里直接写一份确定值。 */
+  await page.evaluate(() => {
+    localStorage.setItem('hf_mv_set', JSON.stringify({
+      views: ['front'], mode: 'solid', wire: true, cell: 1536, labels: false,
+      bg: false, bgColor: '#ffffff', uvIsland: false, outline: false
+    }));
+  });
 
   console.log('\n=== 1. 打开 App 并载入样例 ===');
   await page.evaluate(() => multiview.open());

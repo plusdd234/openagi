@@ -482,7 +482,6 @@
               <div class="mv-row">
                 <span class="mv-lab">模式</span>
                 <div class="mv-seg" id="mvModes"></div>
-                <label class="mv-check" title="在当前模式的面之上叠加线框；OBJ 走四边面"><input type="checkbox" id="mvWire"><span>线框</span></label>
                 <span class="mv-lab">相机</span>
                 <div class="mv-seg" id="mvCams"></div>
                 <span class="mv-lab">单格</span>
@@ -491,13 +490,12 @@
             </div>
 
             <details class="mv-more" id="mvMore">
-              <summary>精细</summary>
+              <summary title="画布级参数：列数、间距、留白、线宽——它们不属于任何一层">画布</summary>
               <div class="mv-more-body">
                 <div class="mv-field"><span>列数</span><div class="mv-seg" id="mvCols"></div></div>
                 <div class="mv-field"><span>间距</span><input type="range" id="mvGap" min="0" max="48" step="2"><b id="mvGapV">0</b></div>
                 <div class="mv-field"><span>留白</span><input type="range" id="mvMargin" min="100" max="160" step="2"><b id="mvMarginV">108</b></div>
                 <div class="mv-field"><span>线宽</span><input type="range" id="mvLineW" min="4" max="60" step="2"><b id="mvLineWV">14</b></div>
-                <label class="mv-field"><input type="checkbox" id="mvLabels"><span>视图标签</span></label>
               </div>
             </details>
 
@@ -521,6 +519,39 @@
           </section>
 
           <!-- 右：导出面板（竖排）。画布固定正方形 2K/4K，深度 / 遮罩供 AI 回流 -->
+      <aside class="mv-right">
+        <div class="mv-layers">
+          <div class="mv-ly-head">图层<span class="mv-ly-hint" title="点一行展开它自己的属性面板；拖动可以任意换序，3D 和 2D 之间也能互换">点行调属性 · 随便拖</span></div>
+          <div class="mv-ly-list" id="mvLayerList"></div>
+        </div>
+        <!-- 图层的眼睛驱动这些 input；留在这里是为了「state 只有一条写入口」 -->
+        <div class="mv-hidden-checks">
+  <input type="checkbox" id="mvWire">
+  <input type="checkbox" id="mvAngleWire">
+  <input type="checkbox" id="mvUvEdge">
+  <input type="checkbox" id="mvUvIsland">
+  <input type="checkbox" id="mvOutline">
+  <input type="checkbox" id="mvDepthEdge">
+  <input type="checkbox" id="mvDepthGray">
+  <input type="checkbox" id="mvLabels">
+  <input type="checkbox" id="mvBg">
+  <input type="checkbox" id="mvGrade">
+        </div>
+        <!-- 层参数的控件都住在这里，被选中/展开的那一层才搬进它自己的面板。
+             不另建一套 input：id 仍是 FIELDS 认的那一个，写入口只有一条。 -->
+        <div class="mv-prop-pool" id="mvPropPool">
+      <div class="mv-field"><span>背景色</span><input type="color" id="mvBgColor" value="#ffffff"></div>
+      <div class="mv-field"><span>折角</span><input type="range" id="mvWireAngle" min="0" max="90" step="1"><b id="mvWireAngleV">30°</b></div>
+      <div class="mv-field" title="角度线框的整体粗细（相对「线宽」的倍率）。只想让结构线更醒目、又不想把普通线框一起加粗时用它"><span>角度粗细</span><input type="range" id="mvCreaseWidth" min="20" max="300" step="10"><b id="mvCreaseWidthV">1.0×</b></div>
+      <div class="mv-field" title="随折角的粗细梯度：0% 所有结构线等宽；100% 折得越狠越粗（90° 硬边最粗，刚过阈值的平缓边约 1/4 宽）"><span>随角度</span><input type="range" id="mvCreaseTaper" min="0" max="100" step="5"><b id="mvCreaseTaperV">50%</b></div>
+      <div class="mv-field" title="角度线框的颜色：换个颜色才分得清「哪几条是结构线、哪几条是普通线框」"><span>角度线色</span><input type="color" id="mvCreaseColor" value="#2b2b2b"></div>
+      <div class="mv-field" title="相邻像素的深度差阈值（占整个视锥深度的百分比）：往左描得更多，往右只留最强的边。分辨率变了会自动补偿，换单格尺寸不用重调"><span>深度差</span><input type="range" id="mvDepthThresh" min="0" max="100" step="1"><b id="mvDepthThreshV">1.1%</b></div>
+      <div class="mv-field" title="深度灰的映射窗口：100% 用模型完整的前后跨度，调小只保留靠近相机的一段（远处压成黑）。模型前后差得小、灰图看不出一层一层时，把它调小"><span>深度范围</span><input type="range" id="mvDepthGrayRange" min="10" max="100" step="5"><b id="mvDepthGrayRangeV">100%</b></div>
+      <div class="mv-field" title="「无限远」的颜色：背景（没有表面）和格间距都填它。默认黑，跟「近白远黑」接得上；改成白就得到反过来的那一版（近黑远白）"><span>远景色</span><input type="color" id="mvDepthGrayBg" value="#000000"></div>
+      <div class="mv-field" title="饱和度：0 是黑白，100% 是原样，200% 是色彩更艳。后期处理层调的是最终输出图像"><span>饱和度</span><input type="range" id="mvGradeSat" min="0" max="200" step="5"><b id="mvGradeSatV">100%</b></div>
+      <div class="mv-field" title="对比度：100% 是原样，往上更硬朗、往下更灰雾"><span>对比度</span><input type="range" id="mvGradeContrast" min="0" max="200" step="5"><b id="mvGradeContrastV">100%</b></div>
+      <div class="mv-field" title="亮度：正值提亮、负值压暗，范围 ±100"><span>亮度</span><input type="range" id="mvGradeBright" min="-100" max="100" step="5"><b id="mvGradeBrightV">0</b></div>
+        </div>
           <aside class="mv-export">
             <div class="mv-ex-head">导出</div>
             <div class="mv-ex-row">
@@ -542,6 +573,7 @@
             <button type="button" class="btn sm" id="mvExDepth" disabled>导出深度图</button>
             <button type="button" class="btn sm" id="mvExMask" disabled>导出遮罩图</button>
           </aside>
+      </aside>
 
         </div>
       </div>

@@ -125,3 +125,13 @@ tools/_paint_tex.png
 tools/_paint_out/
 tools/_ref_full.jpg
 tools/_slot*.png
+
+# ===== 一次性排查产物（tools/_* 通配，2026-11-01 起） =====
+# 之前是逐个文件枚举（下面 40 多条），新产物不断漏网（本次就有 145MB 的
+# tools/_out + _glbtex_out + _glbview_out 被 git 看见）。
+# 规则：tools/ 下**下划线开头**的一律是一次性产物，不入库；
+# 真正要长期维护的脚本一律用不带下划线的名字（如 tools/tracer.js）。
+# ⚠ 例外：tools/_demo_spec.json 是 tools/ref-model-supervise.js 的默认输入
+# （参考图建模的规格示例），是真数据，要跟着脚本一起入库 → 末尾取反放行。
+tools/_*
+!tools/_demo_spec.json
