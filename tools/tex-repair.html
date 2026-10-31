@@ -1,0 +1,236 @@
+<!doctype html><meta charset="utf-8">
+<script src="/vendor/three.min.js"></script>
+<script src="/vendor/GLTFLoader.js"></script>
+<script src="/vendor/GLTFExporter.js"></script>
+<script>
+/* 贴图黑块修复页（一次性工具，产物由 tools/glb-tex-repair.js 落盘）
+ *
+ * 为什么只修「厚实近黑连通块」：
+ *   睫毛、衣服黑边、发丝阴影都是近黑，但它们**又薄又小**；参考图投影污染进来的是
+ *   **一块实心黑**（外轮廓外的像素被投到脸上）。按「面积 + 实心度」筛，才既修到污染又不伤睫毛。
+ * 填充用多尺度 push-pull（先降采样把周围颜色推下去，再逐级拉回来插值）：
+ *   皮肤是低频的，这样补出来看不出块；比「取最近非黑像素」自然得多（后者会留下硬边）。
+ */
+(async () => {
+  const q = new URLSearchParams(location.search);
+  const file = '/' + String(q.get('file') || '').replace(/^\/+/, '');
+  const S = 2048;                 // 贴图工作分辨率
+  const DARK_LUM = 26;            // 近黑阈值
+  const MIN_AREA = 900;           // 小于这个面积的连通块当睫毛/发丝，不动（@2048）
+  const MIN_SOLID = 0.35;         // 实心度（面积 / 外接框面积）低于此当细线条，不动
+  const GROW = 2;                 // 遮罩外扩，盖住黑块的抗锯齿边
+  const SHIFT = +q.get('shift') || 0;   // 垂直平移（像素），用于试不同的 UV 对齐
+
+  const gltf = await new THREE.GLTFLoader().loadAsync(file);
+  const report = { file, S, textures: [] };
+
+  /* ---------- push-pull 填洞 ---------- */
+  function inpaint(rgba, unknown, W, H) {
+    // 金字塔：每级存 归一化颜色 r,g,b 与 权重
+    const levels = [];
+    let w = W, h = H;
+    let cur = { w, h, r: new Float32Array(W * H), g: new Float32Array(W * H), b: new Float32Array(W * H), wt: new Float32Array(W * H) };
+    for (let i = 0; i < W * H; i++) {
+      const known = !unknown[i];
+      cur.r[i] = known ? rgba[i * 4] : 0;
+      cur.g[i] = known ? rgba[i * 4 + 1] : 0;
+      cur.b[i] = known ? rgba[i * 4 + 2] : 0;
+      cur.wt[i] = known ? 1 : 0;
+    }
+    levels.push(cur);
+    // push：2x2 平均（按权重），直到最小边 < 4
+    while (levels[levels.length - 1].w > 4 && levels[levels.length - 1].h > 4) {
+      const f = levels[levels.length - 1];
+      const nw = Math.max(1, f.w >> 1), nh = Math.max(1, f.h >> 1);
+      const n = { w: nw, h: nh, r: new Float32Array(nw * nh), g: new Float32Array(nw * nh), b: new Float32Array(nw * nh), wt: new Float32Array(nw * nh) };
+      for (let y = 0; y < nh; y++) for (let x = 0; x < nw; x++) {
+        let r = 0, g = 0, b = 0, wt = 0;
+        for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
+          const sx = Math.min(f.w - 1, x * 2 + dx), sy = Math.min(f.h - 1, y * 2 + dy);
+          const si = sy * f.w + sx;
+          const w2 = f.wt[si];
+          if (!w2) continue;
+          r += f.r[si] * w2; g += f.g[si] * w2; b += f.b[si] * w2; wt += w2;
+        }
+        const i2 = y * nw + x;
+        if (wt > 0) { n.r[i2] = r / wt; n.g[i2] = g / wt; n.b[i2] = b / wt; }
+        n.wt[i2] = wt;
+      }
+      levels.push(n);
+    }
+    // pull：从最粗一级往回，未知像素按双线性取上级颜色
+    const sample = (L, x, y) => {
+      const fx = Math.min(L.w - 1, Math.max(0, x)), fy = Math.min(L.h - 1, Math.max(0, y));
+      const x0 = Math.floor(fx), y0 = Math.floor(fy);
+      const x1 = Math.min(L.w - 1, x0 + 1), y1 = Math.min(L.h - 1, y0 + 1);
+      const tx = fx - x0, ty = fy - y0;
+      const at = (xx, yy) => {
+        const i = yy * L.w + xx;
+        if (L.wt[i] > 0) return [L.r[i], L.g[i], L.b[i], 1];
+        return null;
+      };
+      const pts = [at(x0, y0), at(x1, y0), at(x0, y1), at(x1, y1)];
+      const wts = [(1 - tx) * (1 - ty), tx * (1 - ty), (1 - tx) * ty, tx * ty];
+      let r = 0, g = 0, b = 0, wsum = 0;
+      pts.forEach((p, k) => { if (p && wts[k] > 0) { r += p[0] * wts[k]; g += p[1] * wts[k]; b += p[2] * wts[k]; wsum += wts[k]; } });
+      return wsum > 0 ? [r / wsum, g / wsum, b / wsum] : null;
+    };
+    for (let L = levels.length - 2; L >= 0; L--) {
+      const f = levels[L], c = levels[L + 1];
+      for (let y = 0; y < f.h; y++) for (let x = 0; x < f.w; x++) {
+        const i = y * f.w + x;
+        if (f.wt[i] > 0) continue;
+        const s = sample(c, (x + 0.5) / 2 - 0.5, (y + 0.5) / 2 - 0.5);
+        if (!s) continue;
+        f.r[i] = s[0]; f.g[i] = s[1]; f.b[i] = s[2];
+        f.wt[i] = 1e-6;   // 标记为已填（权重保持非零，供更细一级取样）
+      }
+    }
+    const top = levels[0];
+    const out = new Uint8ClampedArray(rgba);
+    for (let i = 0; i < W * H; i++) {
+      if (!unknown[i]) continue;
+      out[i * 4] = top.r[i]; out[i * 4 + 1] = top.g[i]; out[i * 4 + 2] = top.b[i];
+    }
+    return out;
+  }
+
+  const jobs = [];
+  gltf.scene.traverse(o => { if (o.isMesh && o.geometry.attributes.uv && o.material && o.material.map) jobs.push(o); });
+
+  for (const mesh of jobs) {
+    const geo = mesh.geometry, uv = geo.attributes.uv;
+    const src = mesh.material.map.image;
+    const W = src.width || S, H = src.height || S;
+    const U = Math.min(S, Math.max(W, H));      // 统一到 S 处理（同比例缩放）
+
+    // 贴图重采样到 U×U
+    const tc = document.createElement('canvas'); tc.width = tc.height = U;
+    const tcx = tc.getContext('2d');
+    tcx.drawImage(src, 0, 0, U, U);
+    const imgData = tcx.getImageData(0, 0, U, U);
+    const d = imgData.data;
+
+    // UV 遮罩
+    const mc = document.createElement('canvas'); mc.width = mc.height = U;
+    const mctx = mc.getContext('2d');
+    mctx.fillStyle = '#000'; mctx.fillRect(0, 0, U, U);
+    mctx.fillStyle = '#fff'; mctx.beginPath();
+    const vc = geo.attributes.position.count;
+    for (let t = 0; t + 2 < vc; t += 3) {
+      for (let k = 0; k < 3; k++) {
+        const u = uv.getX(t + k) * U;
+        const v = (1 - uv.getY(t + k)) * U + SHIFT;
+        if (k === 0) mctx.moveTo(u, v); else mctx.lineTo(u, v);
+      }
+      mctx.closePath();
+    }
+    mctx.fill();
+    const mask = mctx.getImageData(0, 0, U, U).data;
+
+    // 近黑连通块（4 邻域，带面积与外接框）
+    const dark = new Uint8Array(U * U);
+    for (let i = 0; i < U * U; i++) {
+      if (mask[i * 4] < 128) continue;
+      const lum = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114;
+      if (lum < DARK_LUM) dark[i] = 1;
+    }
+    const unknown = new Uint8Array(U * U);
+    const seen = new Uint8Array(U * U);
+    const comps = [];
+    for (let start = 0; start < U * U; start++) {
+      if (!dark[start] || seen[start]) continue;
+      const stack = [start]; seen[start] = 1;
+      let area = 0, minX = U, minY = U, maxX = 0, maxY = 0;
+      const px = [];
+      while (stack.length) {
+        const i = stack.pop(); area++; px.push(i);
+        const x = i % U, y = (i - x) / U;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (x > 0 && dark[i - 1] && !seen[i - 1]) { seen[i - 1] = 1; stack.push(i - 1); }
+        if (x < U - 1 && dark[i + 1] && !seen[i + 1]) { seen[i + 1] = 1; stack.push(i + 1); }
+        if (y > 0 && dark[i - U] && !seen[i - U]) { seen[i - U] = 1; stack.push(i - U); }
+        if (y < U - 1 && dark[i + U] && !seen[i + U]) { seen[i + U] = 1; stack.push(i + U); }
+      }
+      let sumLum = 0, maxLum = 0;
+      for (const i of px) { const l = d[i*4]*0.299 + d[i*4+1]*0.587 + d[i*4+2]*0.114; sumLum += l; if (l > maxLum) maxLum = l; }
+      const solid = area / Math.max(1, (maxX - minX + 1) * (maxY - minY + 1));
+      comps.push({ area, solid, meanLum: +(sumLum / area).toFixed(1), bbox: [minX, minY, maxX, maxY], px });
+    }
+    /* 只按「面积+实心度」筛会漏：被阈值切碎的残块实心度低（0.3 上下）却是同一片污染。
+       所以先用高置信块做种子，再把种子附近的暗块一起并进来（种子间距离 < GROW_REGION）。
+       睫毛离污染区很远，不会被并进来——这比「放宽实心度」安全得多。 */
+    const seeds = comps.filter(c => c.area >= MIN_AREA && c.solid >= MIN_SOLID);
+    const GAP = 32;
+    const gapOf = (a, b) => {
+      const dx = Math.max(0, Math.max(a[0] - b[2], b[0] - a[2]));
+      const dy = Math.max(0, Math.max(a[1] - b[3], b[1] - a[3]));
+      return Math.hypot(dx, dy);
+    };
+    const targets = seeds.slice();
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const c of comps) {
+        if (targets.includes(c)) continue;
+        if (c.area < 120) continue;
+        if (targets.some(t => gapOf(t.bbox, c.bbox) <= GAP)) { targets.push(c); grew = true; }
+      }
+    }
+    // 外扩被修块的遮罩
+    for (const c of targets) {
+      for (const i of c.px) {
+        const x = i % U, y = (i - x) / U;
+        for (let dy = -GROW; dy <= GROW; dy++) for (let dx = -GROW; dx <= GROW; dx++) {
+          const xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= U || yy >= U) continue;
+          if (mask[(yy * U + xx) * 4] < 128) continue;
+          unknown[yy * U + xx] = 1;
+        }
+      }
+    }
+    let fixed = 0;
+    for (let i = 0; i < U * U; i++) if (unknown[i]) fixed++;
+    report.textures.push({
+      mesh: mesh.name, texSize: U,
+      components: comps.length,
+      repairedComponents: targets.map(c => ({ area: c.area, solid: +c.solid.toFixed(2), meanLum: c.meanLum, bbox: c.bbox })),
+      repairedPx: fixed,
+      skippedSmall: comps.filter(c => !targets.includes(c)).map(c => ({area:c.area,solid:+c.solid.toFixed(2),meanLum:c.meanLum,bbox:c.bbox})).sort((a,b)=>b.area-a.area).slice(0, 8),
+    });
+
+    if (fixed) {
+      const out = inpaint(d, unknown, U, U);
+      // 修完再把原图「非被修区域」的细节贴回去（push-pull 只补了低频，这里保留原像素）
+      const outImg = new ImageData(U, U);
+      for (let i = 0; i < U * U; i++) {
+        const i4 = i * 4;
+        if (unknown[i]) { outImg.data[i4] = out[i4]; outImg.data[i4 + 1] = out[i4 + 1]; outImg.data[i4 + 2] = out[i4 + 2]; }
+        else { outImg.data[i4] = d[i4]; outImg.data[i4 + 1] = d[i4 + 1]; outImg.data[i4 + 2] = d[i4 + 2]; }
+        outImg.data[i4 + 3] = 255;
+      }
+      const oc = document.createElement('canvas'); oc.width = oc.height = U;
+      oc.getContext('2d').putImageData(outImg, 0, 0);
+      const tex = new THREE.CanvasTexture(oc);
+      tex.flipY = false;
+      tex.encoding = THREE.sRGBEncoding;
+      tex.needsUpdate = true;
+      mesh.material.map = tex;
+      mesh.material.needsUpdate = true;
+    }
+  }
+
+  // 导出 GLB
+  const exporter = new THREE.GLTFExporter();
+  const glb = await new Promise((res, rej) => exporter.parse(gltf.scene, res, rej, { binary: true }));
+  let bin = '';
+  const bytes = new Uint8Array(glb);
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  report.glbBase64 = btoa(bin);
+  report.glbBytes = bytes.length;
+  window.__out = report;
+  window.__done = true;
+})();
+</script>

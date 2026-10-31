@@ -2729,6 +2729,38 @@
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 
+  /* 模型库 →「发到 AI 对话」：把结构参考 / 着色参考当附件带进来。
+   * 为什么走事件而不是模型库直接调：atts 是对话的私有状态，模型库不该伸手进来改；
+   * 事件是唯一不越界的接缝，而且对话没开也能收（openPanel 顺手把它挂起来）。 */
+  window.addEventListener('openagi:model-refs', function (e) {
+    const d = (e && e.detail) || {};
+    const refs = d.refs || {};
+    const list = [refs.structure, refs.color].filter(Boolean);
+    if (!list.length) return;
+    openPanel();
+    const added = [];
+    list.forEach(function (r) {
+      if (!r || !r.dataURL) return;
+      /* 同一张图重复点两次不叠两份附件；但结构 / 着色是两张不同的图时才两件都要 */
+      if (atts.indexOf(r.dataURL) >= 0) return;
+      atts.push(r.dataURL);
+      added.push(r);
+    });
+    renderAtts();
+    const input = el('deskAiText');
+    if (added.length && input && !input.value.trim()) {
+      /* 按实际带了哪几张写提示：只有着色参考时不能说「第一张是结构参考」 */
+      const parts = [];
+      const hasStruct = added.some(function (r) { return r === refs.structure; });
+      const hasColor = added.some(function (r) { return r === refs.color; });
+      if (hasStruct) parts.push('结构参考（按它的形体、比例、剪影来做）');
+      if (hasColor) parts.push('着色参考（配色、贴图、材质按它）');
+      input.value = '附件里给了' + parts.join('和') + '。模型：' + (d.modelName || d.modelId || '未命名') + '。';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    deskToast(added.length ? ('已带入 ' + added.length + ' 张参考图') : '这两张参考图已经在附件里了');
+  });
+
   // 给测试与其它模块用
   window.deskChat = {
     send: send,

@@ -335,3 +335,131 @@
     .lib-uv-head { flex-wrap: wrap; }
   }
 
+
+  /* ---- 预览材质开关（3D 视口工具条）----
+   * 视口是深色的，所以这组胶囊单独用深色语言，不跟库的浅色胶囊混。
+   * 状态只有两档：.on 是当前生效的那一档，其余是待选。 */
+  .mv3-presets {
+    display: flex; gap: 2px; padding: 2px; border-radius: 9px;
+    background: #0d0f14; border: 1px solid #23262e;
+  }
+  .mv3-preset {
+    padding: 5px 10px; border: 0; border-radius: 7px; background: transparent;
+    color: #a8aeba; font: 12px/1.4 inherit; cursor: pointer; white-space: nowrap;
+    transition: background .12s, color .12s;
+  }
+  .mv3-preset:hover { background: #171a21; color: #e8eaf0; }
+  .mv3-preset.on { background: #241c10; color: #ffb453; box-shadow: inset 0 0 0 1px #e88a00; }
+  /* 模型已经配了参考图：按钮带绿边，扫一眼就知道哪些模型喂过 AI */
+  .mv3-has-ref { border-color: #2f6d4a !important; color: #7ee0a8 !important; }
+
+  /* ---- 深度描边弹层（贴在视口右上角）----
+   * 层级 3：高于画布（auto），低于 UV 视图（4）——切到 UV 时自然被盖住，不用手动隐藏。
+   * 深色语言跟工具条一致（视口是黑底，浅色胶囊在这里会显得像另一个界面）。 */
+  .mv3-dout {
+    position: absolute; top: 10px; right: 10px; z-index: 3; width: 208px;
+    display: none; flex-direction: column; gap: 8px; padding: 10px 11px;
+    background: rgba(17,19,24,.96); border: 1px solid #23262e; border-radius: 10px;
+    box-shadow: 0 14px 32px rgba(0,0,0,.5); color: #e8eaf0;
+  }
+  .mv3-dout.on { display: flex; }
+  .mv3-dout-h {
+    font-size: 9.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+    color: #e88a00;
+  }
+  .mv3-dout-row { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: #a8aeba; }
+  .mv3-dout-row span { flex: 0 0 30px; }
+  .mv3-dout-row input { flex: 1; min-width: 0; height: 16px; accent-color: #e88a00; cursor: pointer; }
+  .mv3-dout-row b { flex: 0 0 26px; text-align: right; font-variant-numeric: tabular-nums; color: #e8eaf0; }
+  .mv3-dout-tip { font-size: 10.5px; line-height: 1.55; color: #8b90a0; }
+
+  /* ---- 参考图抽屉（贴在 3D 视口右侧，深色）---- */
+  .mref-drawer {
+    position: absolute; top: 10px; right: 10px; bottom: 10px; width: 272px; z-index: 6;
+    display: flex; flex-direction: column; gap: 10px; padding: 12px;
+    background: rgba(17,19,24,.97); border: 1px solid #23262e; border-radius: 12px;
+    box-shadow: 0 18px 44px rgba(0,0,0,.55); color: #e8eaf0;
+  }
+  .mref-head { display: flex; align-items: flex-start; gap: 8px; }
+  .mref-title { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .mref-title b { font-size: 13px; }
+  .mref-title span { font-size: 10.5px; color: #8b90a0; }
+  .mref-x {
+    width: 22px; height: 22px; flex: 0 0 auto; border-radius: 6px; cursor: pointer;
+    border: 1px solid #2c303a; background: #191c22; color: #a8aeba; font-size: 14px; line-height: 1;
+  }
+  .mref-x:hover { border-color: #e88a00; color: #ffb453; }
+  .mref-body { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }
+  .mref-slot {
+    position: relative; display: grid; grid-template-columns: 64px 1fr; gap: 8px;
+    padding: 8px; border-radius: 10px; background: #171a21; border: 1px solid #23262e;
+  }
+  .mref-slot.has { border-color: #2a3440; background: #191d26; }
+  .mref-slot.busy { opacity: .55; pointer-events: none; }
+  .mref-thumb {
+    grid-row: span 2; width: 64px; height: 64px; border-radius: 8px; overflow: hidden;
+    background: #0d0f14; display: flex; align-items: center; justify-content: center;
+  }
+  .mref-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .mref-ph { font-size: 22px; color: #39404c; }
+  .mref-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .mref-info b { font-size: 12px; color: #e8eaf0; }
+  .mref-info span { font-size: 10px; color: #8b90a0; }
+  .mref-acts { display: flex; gap: 6px; align-self: end; }
+  .mref-acts button {
+    padding: 3px 9px; font-size: 11px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #2c303a; background: #191c22; color: #c6ccd6;
+  }
+  .mref-acts button:hover { border-color: #e88a00; color: #ffb453; }
+  .mref-note { font-size: 10.5px; line-height: 1.7; color: #8b90a0; padding: 2px 2px 0; }
+  .mref-foot { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
+  .mref-go {
+    padding: 8px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;
+    border: 1px solid #e88a00; background: #241c10; color: #ffb453;
+  }
+  .mref-go:hover { background: #2e2413; }
+  .mref-go:disabled {
+    opacity: .45; cursor: default; border-color: #2c303a; background: #191c22; color: #6b7280;
+  }
+  .mref-err { font-size: 10.5px; line-height: 1.6; color: #ff9a90; }
+
+  /* ---- 库界面观感（卡片 / 空态 / 滚动条）----
+   * 只动「手感」不动信息层级：卡片抬起来一点、缩略图轻微推近、模型卡底色更接近
+   * 内容浏览器（UE 那种浅灰渐变），让 3D 和图片两类卡在一屏里不打架。 */
+  .os-win.lib { width: min(1040px, 95vw); }
+  .lib-grid { gap: 12px; grid-template-columns: repeat(auto-fill, minmax(146px, 1fr)); }
+  .lib-card {
+    padding: 8px; gap: 5px; border-radius: 12px;
+    transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease;
+  }
+  .lib-card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(20,30,50,.10); }
+  .lib-card.on:hover { transform: none; }
+  .lib-thumb { border-radius: 9px; }
+  .lib-thumb img { transition: transform .28s ease; }
+  .lib-card:hover .lib-thumb img { transform: scale(1.035); }
+  .lib-thumb.model {
+    background: linear-gradient(150deg, #fbfcfe 0%, #eef1f6 55%, #e3e7ee 100%);
+    box-shadow: inset 0 0 0 1px rgba(20,30,50,.05);
+  }
+  .lib-name { font-size: 12px; font-weight: 500; }
+  .lib-refbadge {
+    padding: 1px 6px; border-radius: 999px; font-size: 9.5px; font-weight: 600;
+    color: #1f6b45; background: #e8f6ee; border: 1px solid #bfe4d1;
+  }
+  .lib-empty { border-radius: 12px; background: linear-gradient(180deg, #fcfcfd, #f7f8fa); }
+  #libBody::-webkit-scrollbar { width: 9px; }
+  #libBody::-webkit-scrollbar-thumb { background: #d8dce3; border-radius: 999px; }
+  #libBody::-webkit-scrollbar-thumb:hover { background: #c3c9d2; }
+
+  /* 磁贴右下角现在有一组按钮（参考 / UV），包一层 flex 一起浮现，
+   * 单个按钮不再各自绝对定位，否则两个按钮会叠在同一个角上。 */
+  .lib-thumb-acts {
+    position: absolute; right: 6px; bottom: 6px; z-index: 2;
+    display: flex; gap: 4px; opacity: 0; transition: opacity .12s;
+  }
+  .lib-card:hover .lib-thumb-acts, .lib-card.on .lib-thumb-acts { opacity: 1; }
+  .lib-thumb-acts .lib-thumb-act { position: static; opacity: 1; }
+  .lib-thumb-acts .lib-thumb-act[data-lib-ref] {
+    color: #1f6b45; background: rgba(240,251,245,.95); border-color: #bfe4d1;
+  }
+  .lib-thumb-acts .lib-thumb-act[data-lib-ref]:hover { border-color: #1f8a4c; color: #14603a; }

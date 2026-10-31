@@ -54,6 +54,8 @@ const PIN_META = {
   mtl:    { label:'材质 MTL', type:'string' },
   hint:   { label:'补充', type:'string' },
   prompt: { label:'提示词', type:'string' },
+  spec:   { label:'建模规格', type:'string' },
+  svg:    { label:'SVG 分区', type:'string' },
   text:   { label:'文本', type:'string' },
   model:  { label:'模型', type:'model' },
   bool:   { label:'布尔', type:'bool' },

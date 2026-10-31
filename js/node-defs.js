@@ -529,6 +529,135 @@ registerNode({
 /* ============================ 模型贴图（经验固化 2026-10-30） ============================ */
 
 registerNode({
+  type:'traceRegions', title:'参考图描边（轮廓 100% 吻合）', dot:'tex', group:'3D 任务',
+  desc:'直接在参考图上描出闭合轮廓：外轮廓由像素决定，内孔（腿间、发梢间）单独扣掉；输出带标签的闭合曲面，并给出回栅格化的吻合度',
+  execIn:true, execOut:['exec'],
+  inputs:['image'], outputs:['model','text'],
+  params:[
+    { key:'mode', label:'底色模式', ctl:'select', default:'light', options:[['light','浅底线稿 / 原画（按亮度）'],['alpha','透明底渲染图（按 alpha）']] },
+    { key:'threshold', label:'背景阈值', ctl:'number', type:'int', min:0, max:255, step:1, unit:'亮度高于它算背景', default:238 },
+    { key:'fillInterior', label:'内部处理', ctl:'select', default:'fill', options:[['fill','线稿：内部白底算图形（填实）'],['keep','平涂：内部白色当空洞（保留）']] },
+    { key:'minArea', label:'最小面积', ctl:'number', type:'int', min:50, max:200000, step:50, unit:'像素（小于它当噪点丢掉）', default:400 },
+    { key:'simplify', label:'抽稀容差', ctl:'number', type:'float', min:0, max:8, step:0.1, unit:'像素（0=逐像素，越大越少点）', default:0.9 },
+    { key:'height', label:'整图高度', ctl:'number', type:'float', min:0.1, max:4, step:0.05, unit:'米', default:1.6 },
+    { key:'labels', label:'标签', ctl:'text', ph:'逗号分隔，按面积从大到小对应：头发,身体,裙摆；留空则「区域1/2/3」' },
+    { tip:'吻合度写在输出的 text 里（IoU）：描边→回填成图→与原图比。想更贴就减小「抽稀容差」，代价是点数变多。' }
+  ],
+  seed: () => ({ data:{ mode:'light', threshold:238, fillInterior:'fill', minArea:400, simplify:0.9, height:1.6, labels:'' }, params:null }),
+  run: async ({ n, input, paramIn, log }) => {
+    const src = await input('image');
+    if(!src) throw new Error('缺少参考图（把图像连到「图像」引脚）');
+    if(!window.Tracer) throw new Error('描边内核未加载（js/tracer.js）');
+
+    const mode = String(await paramIn('mode') || 'light');
+    const threshold = Math.max(0, Math.min(255, Number(await paramIn('threshold')) || 238));
+    const fillInterior = String(await paramIn('fillInterior') || 'fill') !== 'keep';
+    const minArea = Math.max(20, Number(await paramIn('minArea')) || 400);
+    const simplify = Math.max(0, Number(await paramIn('simplify')) || 0);
+    const height = Number(await paramIn('height')) || 1.6;
+    const labelsRaw = String((await paramIn('labels')) || n.data.labels || '').trim();
+    const labels = labelsRaw ? labelsRaw.split(/[,，]/).map(s => s.trim()).filter(Boolean) : null;
+
+    const r = await Tracer.fromDataURL(src, { mode, threshold, fillInterior, minArea, simplify, height, labels });
+    n.out.model = r.dataURL;
+    n.out.text = '描边 ' + r.regions.length + ' 块 · ' + r.info.points + ' 点 · 内孔 ' + r.info.holes +
+      ' 个 · ' + r.stats.tris + ' 面\n吻合度 IoU ' + r.fit.iou + '（描边回填 vs 原图）\n' +
+      r.regions.map(x => '· ' + x.id + ' → ' + x.label + ' · ' + x.area2d + 'm² · ' + x.points + ' 点 · 内孔 ' + x.holes).join('\n');
+    log('· 描边 ' + r.regions.length + ' 块 · IoU ' + r.fit.iou, r.fit.iou >= 0.98 ? 'ok' : 'warn');
+    if(r.fit.iou < 0.98) log('  ! 吻合度不足 98%：把「抽稀容差」调小，或检查「背景阈值」是否把浅色衣服当成了背景', 'warn');
+  },
+  validate: (n, c) => c.linked('image') ? [] : [{ code:'W-REQ', message:'「参考图描边」缺少参考图（把图像连到「图像」引脚）' }]
+});
+
+registerNode({
+  type:'svgRegions', title:'原画分区（SVG 闭合曲线）', dot:'tex', group:'3D 任务',
+  desc:'把原画上的每块部件画成闭合 SVG 路径，转成带标签的闭合曲面；标签是后面按部位做 2D 控制的入口',
+  execIn:true, execOut:['exec'],
+  inputs:['svg'], outputs:['model','text'],
+  params:[
+    { key:'svg', label:'SVG（兜底）', ctl:'textarea', ph:'<svg viewBox="0 0 512 1024"><path id="hair" data-label="头发" d="M…Z"/></svg>；连了「SVG」引脚则优先用引脚' },
+    { key:'labels', label:'标签覆盖（可选）', ctl:'textarea', ph:'JSON：{"hair":{"label":"头发","color":"#d8d3e6"}}；不填则用路径自身的 data-label / data-fill' },
+    { key:'height', label:'整图高度', ctl:'number', type:'float', min:0.1, max:4, step:0.05, unit:'米（viewBox 高度映射到这个尺寸）', default:1.6 },
+    { key:'adjust', label:'2D 控制（按标签）', ctl:'textarea', ph:'JSON：{"头发":{"dx":0.02,"dy":-0.05,"s":1.1,"rot":3},"左腿":{"hide":true}}；键可以用标签也可以用餐格 id，dx/dy 单位米' },
+    { tip:'路径必须闭合（结尾 Z）：开口轮廓三角化会出破面，这里会直接报错并指出是哪一条。' },
+    { tip:'输出的 text 是标签清单（id / 标签 / 面积 / 包围盒），后续按标签做位移、缩放、挤出都靠它。' }
+  ],
+  seed: () => ({ data:{ svg:'', labels:'', height:1.6, adjust:'' }, params:null }),
+  run: async ({ n, input, paramIn, log }) => {
+    const text = String((await input('svg')) || n.data.svg || '').trim();
+    if(!text) throw new Error('缺少 SVG（在参数里贴，或把 SVG 文本连到「SVG」引脚）');
+    if(!window.SvgShapes) throw new Error('SVG 分区块未加载（js/svgshapes.js）');
+
+    let labels = null;
+    const rawLabels = String((await paramIn('labels')) || n.data.labels || '').trim();
+    if(rawLabels){
+      try{ labels = JSON.parse(rawLabels); }
+      catch(e){ throw new Error('标签覆盖不是合法 JSON：' + ((e && e.message) || e)); }
+    }
+    let adjust = null;
+    const rawAdjust = String((await paramIn('adjust')) || n.data.adjust || '').trim();
+    if(rawAdjust){
+      try{ adjust = JSON.parse(rawAdjust); }
+      catch(e){ throw new Error('2D 控制不是合法 JSON：' + ((e && e.message) || e)); }
+    }
+    const height = Number(await paramIn('height')) || 1.6;
+
+    const r = await SvgShapes.buildGLB(text, { labels, height, adjust });
+    n.out.model = r.dataURL;
+
+    const list = r.regions.map(x => x.label + '(' + x.id + ') ' + x.area2d + 'm²');
+    n.out.text = '分区 ' + r.regions.length + ' 块 · ' + r.stats.meshes + ' 网格 · ' + r.stats.tris + ' 面 · ' +
+      '整图 ' + (r.viewBox[2] + '×' + r.viewBox[3]) + ' → 高 ' + height + 'm\n' +
+      '标签清单：\n' + r.regions.map(x => '· ' + x.id + ' → ' + x.label + ' · ' + x.color + ' · ' + x.area2d + 'm²').join('\n');
+    log('· 分区 ' + r.regions.length + ' 块：' + list.join(' / '), 'ok');
+    (r.warnings || []).forEach(w => log('  ! ' + w, 'warn'));
+  },
+  validate: (n, c) => (c.linked('svg') || String(n.data.svg || '').trim())
+    ? []
+    : [{ code:'W-REQ', message:'「原画分区」缺少 SVG：贴一段闭合路径，或把上游的 SVG 文本连到「SVG」引脚' }]
+});
+
+registerNode({
+  type:'modelBuild', title:'参数化建模', dot:'model', group:'3D 任务',
+  desc:'按规格 JSON 直接搭出模型（基础体 + 位移旋转 + 镜像 + 阵列），全部在本机用 three.js 完成，不调用任何外部建模服务',
+  execIn:true, execOut:['exec'],
+  inputs:['spec'], outputs:['model','text'],
+  params:[
+    { key:'spec', label:'规格 JSON（兜底）', ctl:'textarea', ph:'{"height":1.6,"parts":[{"shape":"sphere","size":[0.11,0.13,0.12],"pos":[0,1.47,0]}]}；连了「规格」引脚则优先用引脚' },
+    { key:'height', label:'目标身高', ctl:'number', type:'float', min:0, max:30, step:0.05, unit:'米，0 = 按规格', default:0 },
+    { tip:'规格里的 height 是硬约束：模型会被等比缩放到这个高度并落到地面，四视图 / 取景不会跑偏。' },
+    { tip:'规格哪里写错（未知 shape、尺寸非正数）会直接报错并指出第几个部件，不会悄悄少建一个。' }
+  ],
+  seed: () => ({ data:{ spec:'', height:0 }, params:null }),
+  run: async ({ n, input, paramIn, log }) => {
+    const text = String((await input('spec')) || n.data.spec || '').trim();
+    if(!text) throw new Error('缺少建模规格（在参数里填 JSON，或把 AI 的规格输出连到「规格」引脚）');
+    if(!window.Modeler) throw new Error('建模内核未加载（js/modeler.js）');
+
+    /* 先用一次解析拿到 spec，再按节点上的「目标身高」覆盖 —— 身高是一条硬约束，
+     * 不该让它在 AI 的 JSON 里被随手写错。 */
+    let spec = null;
+    try{ spec = JSON.parse(text); }catch(e){ spec = null; }
+    if(!spec && typeof extractJson === 'function') spec = extractJson(text);
+    if(!spec) throw new Error('规格不是合法 JSON（需要一段形如 {"parts":[…]} 的对象）');
+
+    const hOverride = Number(await paramIn('height')) || 0;
+    if(hOverride > 0) spec.height = hOverride;
+
+    const r = await Modeler.build(spec);
+    n.out.model = r.dataURL;
+    const warn = (r.warnings || []).length ? ' · 提醒 ' + r.warnings.length + ' 条' : '';
+    n.out.text = '已建模：' + r.parts + ' 个部件 · ' + r.stats.meshes + ' 网格 · ' + r.stats.tris + ' 面 · ' +
+      '尺寸 ' + r.size.join(' × ') + ' 米' + warn;
+    log('· ' + n.out.text, warn ? 'warn' : 'ok');
+    (r.warnings || []).forEach(w => log('  ! ' + w, 'warn'));
+  },
+  validate: (n, c) => (c.linked('spec') || String(n.data.spec || '').trim())
+    ? []
+    : [{ code:'W-REQ', message:'「参数化建模」缺少规格：填 JSON 或把 AI 的输出连到「规格」引脚' }]
+});
+
+registerNode({
   type:'modelIslands', title:'模型 UV 岛分析', dot:'tex', group:'3D 任务',
   desc:'把模型按共享 UV 边切成「UV 岛」，输出岛色块图（可带编号）与岛元数据 JSON（质心 / 包围盒 / UV 面积 / UV 包围盒）。写上色规则前先跑这个——部位判定全靠元数据，一个大岛跨多个部位时质心会误导，先看图再定规则',
   execIn:true, execOut:['exec'],

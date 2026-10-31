@@ -1,0 +1,376 @@
+{
+ "name": "参考图人形 v1",
+ "height": 1.58,
+ "parts": [
+  {
+   "id": "head",
+   "shape": "sphere",
+   "size": [
+    0.098,
+    0.115,
+    0.105
+   ],
+   "pos": [
+    0,
+    1.455,
+    0
+   ],
+   "color": "#f6dfd2"
+  },
+  {
+   "id": "neck",
+   "shape": "cylinder",
+   "size": [
+    0.035,
+    0.09,
+    0.04
+   ],
+   "pos": [
+    0,
+    1.355,
+    0
+   ],
+   "color": "#f3d8c9"
+  },
+  {
+   "id": "ear",
+   "shape": "sphere",
+   "size": [
+    0.022,
+    0.03,
+    0.014
+   ],
+   "pos": [
+    0.098,
+    1.45,
+    -0.005
+   ],
+   "mirror": "x",
+   "color": "#f0d2c2"
+  },
+  {
+   "id": "hairCap",
+   "shape": "sphere",
+   "size": [
+    0.112,
+    0.12,
+    0.118
+   ],
+   "pos": [
+    0,
+    1.468,
+    -0.012
+   ],
+   "color": "#cfc9dd"
+  },
+  {
+   "id": "hairTail",
+   "shape": "capsule",
+   "size": [
+    0.045,
+    0.62,
+    0.045
+   ],
+   "pos": [
+    0.085,
+    1.08,
+    -0.05
+   ],
+   "rot": [
+    0,
+    0,
+    6
+   ],
+   "mirror": "x",
+   "color": "#d8d3e6"
+  },
+  {
+   "id": "hairBack",
+   "shape": "capsule",
+   "size": [
+    0.07,
+    0.54,
+    0.05
+   ],
+   "pos": [
+    0,
+    1.06,
+    -0.09
+   ],
+   "color": "#cbc5db"
+  },
+  {
+   "id": "fringe",
+   "shape": "sphere",
+   "size": [
+    0.1,
+    0.055,
+    0.05
+   ],
+   "pos": [
+    0,
+    1.508,
+    0.062
+   ],
+   "color": "#ded9ea"
+  },
+  {
+   "id": "chest",
+   "shape": "capsule",
+   "size": [
+    0.115,
+    0.2,
+    0.085
+   ],
+   "pos": [
+    0,
+    1.22,
+    0
+   ],
+   "color": "#fbffff"
+  },
+  {
+   "id": "waist",
+   "shape": "cylinder",
+   "size": [
+    0.093,
+    0.1,
+    0.088
+   ],
+   "pos": [
+    0,
+    1.09,
+    0
+   ],
+   "color": "#fbffff"
+  },
+  {
+   "id": "skirt",
+   "shape": "cone",
+   "size": [
+    0.165,
+    0.2,
+    0.15
+   ],
+   "pos": [
+    0,
+    0.95,
+    0
+   ],
+   "color": "#ffffff"
+  },
+  {
+   "id": "belt",
+   "shape": "torus",
+   "size": [
+    0.098,
+    0.012,
+    0
+   ],
+   "pos": [
+    0,
+    1.14,
+    0
+   ],
+   "rot": [
+    90,
+    0,
+    0
+   ],
+   "color": "#2b2f3a"
+  },
+  {
+   "id": "collar",
+   "shape": "cylinder",
+   "size": [
+    0.062,
+    0.045,
+    0.058
+   ],
+   "pos": [
+    0,
+    1.335,
+    0
+   ],
+   "color": "#2b2f3a"
+  },
+  {
+   "id": "upperArm",
+   "shape": "capsule",
+   "size": [
+    0.045,
+    0.2,
+    0.045
+   ],
+   "pos": [
+    0.155,
+    1.2,
+    0
+   ],
+   "rot": [
+    0,
+    0,
+    -8
+   ],
+   "mirror": "x",
+   "color": "#ffffff"
+  },
+  {
+   "id": "foreArm",
+   "shape": "capsule",
+   "size": [
+    0.038,
+    0.19,
+    0.038
+   ],
+   "pos": [
+    0.185,
+    1,
+    0.01
+   ],
+   "rot": [
+    0,
+    0,
+    -4
+   ],
+   "mirror": "x",
+   "color": "#f7fbff"
+  },
+  {
+   "id": "cuff",
+   "shape": "cylinder",
+   "size": [
+    0.042,
+    0.035,
+    0.042
+   ],
+   "pos": [
+    0.196,
+    0.895,
+    0.012
+   ],
+   "mirror": "x",
+   "color": "#c9a24a"
+  },
+  {
+   "id": "hand",
+   "shape": "sphere",
+   "size": [
+    0.03,
+    0.042,
+    0.022
+   ],
+   "pos": [
+    0.198,
+    0.845,
+    0.015
+   ],
+   "mirror": "x",
+   "color": "#f6dfd2"
+  },
+  {
+   "id": "thigh",
+   "shape": "capsule",
+   "size": [
+    0.058,
+    0.3,
+    0.058
+   ],
+   "pos": [
+    0.062,
+    0.75,
+    0
+   ],
+   "mirror": "x",
+   "color": "#fdfeff"
+  },
+  {
+   "id": "calf",
+   "shape": "capsule",
+   "size": [
+    0.048,
+    0.28,
+    0.048
+   ],
+   "pos": [
+    0.062,
+    0.44,
+    0
+   ],
+   "mirror": "x",
+   "color": "#fdfeff"
+  },
+  {
+   "id": "boot",
+   "shape": "capsule",
+   "size": [
+    0.055,
+    0.13,
+    0.055
+   ],
+   "pos": [
+    0.062,
+    0.2,
+    0.005
+   ],
+   "mirror": "x",
+   "color": "#ffffff"
+  },
+  {
+   "id": "bootSole",
+   "shape": "box",
+   "size": [
+    0.062,
+    0.03,
+    0.115
+   ],
+   "pos": [
+    0.062,
+    0.03,
+    0.02
+   ],
+   "mirror": "x",
+   "color": "#e8ecf3"
+  },
+  {
+   "id": "micArm",
+   "shape": "torus",
+   "size": [
+    0.05,
+    0.006,
+    0
+   ],
+   "pos": [
+    0.1,
+    1.44,
+    0.03
+   ],
+   "rot": [
+    90,
+    0,
+    20
+   ],
+   "color": "#20242c"
+  },
+  {
+   "id": "micTip",
+   "shape": "cylinder",
+   "size": [
+    0.011,
+    0.03,
+    0.011
+   ],
+   "pos": [
+    0.118,
+    1.415,
+    0.055
+   ],
+   "rot": [
+    70,
+    0,
+    0
+   ],
+   "color": "#20242c"
+  }
+ ]
+}

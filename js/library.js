@@ -514,7 +514,17 @@ function libQueue(fn){
 
 async function libLoadThumb(id, holder){
   if(!id || !holder) return;
-  const put = url => { holder.innerHTML = '<img alt="" src="' + url + '" draggable="false">'; };
+  /* 只替换图片本身，不要整体重写 innerHTML ——
+   * 3D 磁贴上还挂着「参考 / UV」两个快捷按钮，整块重写会把它们一起冲掉
+   * （缩略图是异步回来，用户看到图的那一瞬间按钮就消失了）。 */
+  const put = url => {
+    const keep = holder.querySelector('.lib-thumb-acts');
+    holder.innerHTML = '';
+    const img = document.createElement('img');
+    img.alt = ''; img.src = url; img.draggable = false;
+    holder.appendChild(img);
+    if(keep) holder.appendChild(keep);
+  };
   if(libThumbCache.has(id)){ put(libThumbCache.get(id)); return; }
   const d = libDesk();
   if(!d) return;
@@ -574,6 +584,22 @@ async function libUvOpen(id){
 }
 function libUvClose(){
   if(libMv.open) libMvClose();
+}
+
+/* 卡片「参考」入口：打开 3D 视口，再把参考图抽屉拉出来。
+ * ⚠ libOpenAsset 里的 libMvOpen 是「发出去不等」的（openPreview 要加载模型，很慢），
+ *   所以这里不能 await 完就立刻调 openRefs——那时视口还没建好，refOpener 还是空。
+ *   用 openRefs() 的返回值当信号轮询：拿到 true 就说明抽屉已经开了。 */
+async function libRefOpen(id){
+  await libOpenAsset(id);
+  const t0 = Date.now();
+  (function poke(){
+    let done = false;
+    try{ done = !!(window.Model3D && Model3D.openRefs && Model3D.openRefs()); }catch(e){ done = false; }
+    if(done) return;
+    if(Date.now() - t0 > 20000) return;     // 加载失败就别一直轮询
+    setTimeout(poke, 150);
+  })();
 }
 
 /* ---------- 3D 查看（app 内嵌，不再单开窗口） ----------
@@ -723,8 +749,12 @@ function libCard(a){
      * 把 obj 原文件当成图片塞进 <img>——磁贴变成破图标。用纯字母最稳。 */
     thumb = '<div class="lib-thumb model" data-lib-thumb="' + libEsc(a.id) + '" data-lib-kind="model">' +
       '<span class="lib-ext">' + libEsc(String(a.ext || '').toUpperCase()) + '</span>' +
-      '<button type="button" class="lib-thumb-act" data-lib-uv="' + libEsc(a.id) +
-        '" title="查看 UV 岛分布">UV</button>' +
+      '<span class="lib-thumb-acts">' +
+        '<button type="button" class="lib-thumb-act" data-lib-ref="' + libEsc(a.id) +
+          '" title="打开模型并配置结构 / 着色参考图">参考</button>' +
+        '<button type="button" class="lib-thumb-act" data-lib-uv="' + libEsc(a.id) +
+          '" title="查看 UV 岛分布">UV</button>' +
+      '</span>' +
       '</div>';
   }
 
@@ -732,13 +762,29 @@ function libCard(a){
     ? '<span class="lib-ref" title="' + libEsc(where) + '">' + refs + ' 处在用</span>'
     : '';
 
+  /* 模型卡上的参考图小标：结构 / 着色有没有配过，一眼能看出来。
+   * 直接读 ModelRefs 的索引（localStorage 里只有几十字节），不额外请求资产库。 */
+  let refBadge = '';
+  if(libState.kind === 'model' && typeof ModelRefs !== 'undefined' && ModelRefs.get){
+    try{
+      const rr = ModelRefs.get(a.id) || {};
+      const bits = [];
+      if(rr.struct) bits.push('结构');
+      if(rr.color) bits.push('着色');
+      if(bits.length){
+        refBadge = '<span class="lib-refbadge" title="已配' + libEsc(bits.join(' / ')) + '参考图">' +
+          libEsc(bits.join(' · ')) + '</span>';
+      }
+    }catch(e){}
+  }
+
   return '<div class="lib-card' + sel + miss + '" data-lib-id="' + libEsc(a.id) + '" title="双击打开" draggable="false">' +
     '<label class="lib-check"><input type="checkbox" data-lib-sel="' + libEsc(a.id) + '"' +
       (on ? ' checked' : '') + '></label>' +
     thumb +
     '<div class="lib-name" title="' + libEsc(a.name) + '">' + libEsc(a.name) + '</div>' +
     '<div class="lib-meta">' + libFmt(a.size) + (a.missing ? ' · <b class="lib-bad">文件丢失</b>' : '') + '</div>' +
-    '<div class="lib-meta2">' + refHtml + '<span>' + libFmtTime(a.created) + '</span></div>' +
+    '<div class="lib-meta2">' + refHtml + refBadge + '<span>' + libFmtTime(a.created) + '</span></div>' +
   '</div>';
 }
 
@@ -822,6 +868,10 @@ function libPaint(){
   // 卡片上的 UV 快捷入口（不用先选中，看到就能点）
   box.querySelectorAll('[data-lib-uv]').forEach(b => {
     b.addEventListener('click', e => { e.stopPropagation(); libUvOpen(b.dataset.libUv); });
+  });
+  // 卡片上的「参考」：打开 3D 视口并直接把参考图抽屉拉出来（两步并一步）
+  box.querySelectorAll('[data-lib-ref]').forEach(b => {
+    b.addEventListener('click', e => { e.stopPropagation(); libRefOpen(b.dataset.libRef); });
   });
   const qEl = box.querySelector('[data-lib-q]');
   if(qEl){
