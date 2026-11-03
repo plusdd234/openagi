@@ -70,8 +70,16 @@
     if (!window.Model3D) throw new Error('model3d.js 未加载');
     if (!Model3D.ready()) throw new Error('3D 组件未就绪（缺少 three.js）');
     const m = await Model3D.load(src);
+    return analyzeRoot(m.root);
+  }
+
+  /* 直接对「已经加载好」的模型分岛：预览视口里拾取 UV 岛不必再加载一份模型，
+   * 也就能用 root 的遍历顺序把射线命中的网格直接对回 parts。
+   * 调用前 root 的 matrixWorld 要是最新的（预览每帧都在渲染，一般已经满足）。 */
+  function analyzeRoot(root) {
+    if (!window.Model3D) throw new Error('model3d.js 未加载');
     const meshes = [];
-    m.root.traverse(o => { if (o.isMesh && o.geometry && o.geometry.attributes.position) meshes.push(o); });
+    root.traverse(o => { if (o.isMesh && o.geometry && o.geometry.attributes.position) meshes.push(o); });
     if (!meshes.length) throw new Error('模型里没有网格');
 
     const parts = meshes.map(o => {
@@ -168,7 +176,7 @@
     const center = box.getCenter(new THREE.Vector3());
 
     return {
-      root: m.root, parts, islands: islandsRaw, triIsland,
+      root: root, parts, islands: islandsRaw, triIsland,
       box, center, h: Math.max(size.y, 1e-6), radius: Math.max(size.length() / 2, 1e-6)
     };
   }
@@ -355,15 +363,19 @@
 
   /* ---------------- 岛图：每岛一色 + 编号标注（给 AI / 细节规则寻址用） ---------------- */
 
-  /* opts: { labels:true, bg:'#20242b', parts:[0] }
+  /* opts: { labels:true, bg:'#20242b', parts:[0], candidates:[...] }
    * parts 用于「插槽隔离」：一个模型可能有多个 mesh，各自占满 0–1 UV 空间，
-   * 叠在一张图上就互相遮挡；只看某个插槽时只画属于它的三角形。 */
+   * 叠在一张图上就互相遮挡；只看某个插槽时只画属于它的三角形。
+   * candidates 用于「AI 拆件」：只给这批岛编号上色，其余岛压成暗灰——
+   * 真实角色模型动辄上千个碎岛，全部编号会挤成一片黑，AI 也读不出编号。 */
   function islandAtlas(a, size, opts) {
     size = size || 1024;
     opts = opts || {};
     const only = Array.isArray(opts.parts) ? new Set(opts.parts) : null;
+    const cand = Array.isArray(opts.candidates) ? new Set(opts.candidates.map(Number)) : null;
     const inPart = ref => !only || only.has(ref.part);
     const islandIn = o => !only || o.tris.some(inPart);
+    const isCand = o => !cand || cand.has(o.id);
     const cv = document.createElement('canvas');
     cv.width = size; cv.height = size;
     const ctx = cv.getContext('2d');
@@ -371,7 +383,11 @@
     ctx.fillRect(0, 0, size, size);
     a.islands.forEach(o => {
       if(!islandIn(o)) return;
-      const color = 'hsl(' + ((o.id * 137.508) % 360).toFixed(1) + ',72%,58%)';
+      /* 非候选岛压暗：它们仍要画（不然 UV 图会一块块空着，AI 会误以为那里没东西），
+       * 但必须和候选岛拉开距离——差一个色阶就够，AI 只看「亮的那几块」。 */
+      const color = isCand(o)
+        ? 'hsl(' + ((o.id * 137.508) % 360).toFixed(1) + ',72%,58%)'
+        : '#3a404a';
       o.tris.forEach(ref => { if(inPart(ref)) fillTri(ctx, a.parts[ref.part], ref.t, color, size); });
     });
     if (opts.labels !== false) {
@@ -380,7 +396,8 @@
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       a.islands.forEach(o => {
         if(!islandIn(o)) return;
-        if (o.area * size * size < 900) return;         // 太小的岛标不下，靠颜色区分
+        if (cand && !isCand(o)) return;                  // 候选模式下只标注候选岛
+        if (o.area * size * size < (cand ? 300 : 900)) return;   // 太小的岛标不下，靠颜色区分
         const b = o.uvBBox;
         const x = (b[0] + b[2]) / 2 * size, y = (1 - (b[1] + b[3]) / 2) * size;
         ctx.lineWidth = 3 * k; ctx.strokeStyle = 'rgba(0,0,0,0.85)';
@@ -516,5 +533,5 @@
     document.body.appendChild(a); a.click(); a.remove();
   }
 
-  window.ModelTex = { analyze, paint, paintDetail, islandAtlas, previewGrid, objTrio, toDataURL, download, matchRule };
+  window.ModelTex = { analyze, analyzeRoot, paint, paintDetail, islandAtlas, previewGrid, objTrio, toDataURL, download, matchRule };
 })();

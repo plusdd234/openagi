@@ -10,7 +10,7 @@
  *      它们是 listen-on-require，而且服务崩了不该带走整个窗口。
  *   3) 内容包（index.html / css / js / vendor）单独热更新，程序本体更新留给 P2 的安装包链路。
  */
-const { app, BrowserWindow, protocol, ipcMain, Menu, shell, dialog, utilityProcess } = require('electron');
+const { app, BrowserWindow, protocol, ipcMain, Menu, shell, dialog, utilityProcess, clipboard, nativeImage } = require('electron');
 const fs = require('fs');
 const fsp = fs.promises;
 const os = require('os');
@@ -640,6 +640,13 @@ async function createWindow(){
     }
   }, 3000);
   win.on('closed', () => { clearTimeout(showFallback); mainWin = null; });
+  /* 全屏状态统一从主进程回推：F11 / 菜单 / 界面按钮 / 系统手势都走这里，
+   * 渲染层只负责把按钮图标换成「全屏 / 退出全屏」，不自己记状态。 */
+  const pushFullscreen = on => {
+    try{ if(!win.isDestroyed()) win.webContents.send('win:fullscreen', !!on); }catch(e){}
+  };
+  win.on('enter-full-screen', () => pushFullscreen(true));
+  win.on('leave-full-screen', () => pushFullscreen(false));
   await win.loadURL(CONTENT_ORIGIN + '/index.html?' + qs);
 
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
@@ -907,6 +914,36 @@ if(!gotLock){
     tripo: pluginPorts.tripo || 8790,
     runtime: pluginPorts.runtime || 8794
   }));
+
+  /* 应用级全屏：桌面版走原生 setFullScreen，而不是让渲染层 requestFullscreen。
+   * 为什么不让 HTML 全屏接管整页：菜单里的 F11（role togglefullscreen）改的是
+   * 原生全屏状态，两条通道各改各的，按钮点亮了但窗口其实没全屏（或反过来）。
+   * 这里统一到主进程：按钮、F11、窗口事件三处改的是同一个 isFullScreen()。 */
+  ipcMain.handle('win:fullscreen-toggle', e => {
+    const w = BrowserWindow.fromWebContents(e.sender);
+    if(!w || w.isDestroyed()) return false;
+    const to = !w.isFullScreen();
+    w.setFullScreen(to);
+    return to;
+  });
+  ipcMain.handle('win:fullscreen-get', e => {
+    const w = BrowserWindow.fromWebContents(e.sender);
+    return !!(w && !w.isDestroyed() && w.isFullScreen());
+  });
+
+  /* 工作流节点图像「右键 → 复制」：渲染层转好 PNG dataURL 再交给这里，
+   * 避开 Chromium 在 Electron 里对图片异步剪贴板支持不完整的问题。 */
+  ipcMain.handle('clipboard:write-image', (_e, dataUrl) => {
+    try{
+      if(typeof dataUrl !== 'string' || !/^data:image\//i.test(dataUrl)) return false;
+      const img = nativeImage.createFromDataURL(dataUrl);
+      if(img.isEmpty()) return false;
+      clipboard.writeImage(img);
+      return true;
+    }catch(err){
+      return false;
+    }
+  });
 
   ipcMain.handle('ollama:detect', () => ollamaInstalled());
 

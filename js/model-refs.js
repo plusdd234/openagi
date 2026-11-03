@@ -224,6 +224,8 @@
           detail: { modelId: modelId, modelName: modelName, refs: refs }
         }));
         el.remove();
+        /* 同样要通知宿主「这一页关了」：否则右侧 dock 会留一条空白边 */
+        if(typeof opts.onClose === 'function') opts.onClose();
       }
     });
 

@@ -5,6 +5,17 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('openagiDesktop', {
   versions: () => ipcRenderer.invoke('app:versions'),
+  /* 应用级全屏：所有入口（界面按钮 / 菜单 F11 / 主进程事件）共用同一份状态，
+   * 渲染层只订阅结果。窗口级的 HTML 全屏（.os-win 铺满屏幕）不走这里。 */
+  toggleWindowFullscreen: () => ipcRenderer.invoke('win:fullscreen-toggle'),
+  windowIsFullscreen: () => ipcRenderer.invoke('win:fullscreen-get'),
+  onWindowFullscreen: cb => {
+    if(typeof cb !== 'function') return;
+    ipcRenderer.on('win:fullscreen', (_e, on) => cb(!!on));
+  },
+  /* 工作流节点里的图像「右键 → 复制」：浏览器 Async Clipboard 对图片支持不稳定，
+   * 桌面模式直接交给主进程写系统剪贴板。 */
+  copyImage: dataUrl => ipcRenderer.invoke('clipboard:write-image', dataUrl),
   // 真实显卡列表 / 显存 / 内存：渲染进程的 WebGPU 只看得到核显，拿不到独显
   hardware: () => ipcRenderer.invoke('hw:probe'),
   ollamaDetect: () => ipcRenderer.invoke('ollama:detect'),

@@ -22,20 +22,29 @@
 <!-- 多视图的样式单独一份：它同时给桌面 App 和 multiview.html（独立工具页）用，
      塞进 10-deskui 那边就引不到了 -->
 <link rel="stylesheet" href="css/multiview.css">
+<!-- 建模 App（MVP-0）的深色工作台样式：只作用于 .os-win.modeldesk -->
+<link rel="stylesheet" href="css/12-modeldesk.css">
 <!-- 设置面板的样式：新壳 .settings2 + 总览状态卡。旧 .settings.xp 那 133 行已随拆分删除 -->
 <link rel="stylesheet" href="css/settings.css">
 </head>
 <body>
 
 <header class="appbar">
-  <div class="brand" id="brandHome" title="返回工作流">
-    <div class="logo" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-        <path d="M16.6 5.9A7.6 7.6 0 1 0 19.7 12.2"/>
-        <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>
-      </svg>
+  <div class="appbar-left">
+    <!-- 返回主页：App 页是「翻过去」的一页，没有自己的标题栏了，回桌面只留这一个入口。
+         桌面上本来就在主页，所以按钮只在 App 页显示（desk-shell.js 切 .show）。 -->
+    <button class="icon-btn appbar-home" id="btnDeskHome" aria-label="返回主页" title="返回主页">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.4 12 4l8 6.4"/><path d="M6.2 9.6V20h11.6V9.6"/><path d="M10 20v-5.2h4V20"/></svg>
+    </button>
+    <div class="brand" id="brandHome" title="返回工作流">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M16.6 5.9A7.6 7.6 0 1 0 19.7 12.2"/>
+          <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>
+        </svg>
+      </div>
+      <div class="brand-name">The seed</div>
     </div>
-    <div class="brand-name">The seed</div>
   </div>
   <div class="appbar-right">
     <!-- 语言 / 图像 / 3D 三个胶囊已撤掉：输入条上已经有模型选择器，同一件事显示两遍
@@ -45,6 +54,12 @@
          会去刷引擎状态），只是 setChip 找不到元素就静默跳过。 -->
     <button class="status-chip off" id="stASSET" data-tab="assets" title="资产：图库与模型库">
       <span class="cfg-dot"></span><span class="sc-label">资产</span><span class="sc-value">—</span>
+    </button>
+    <button class="icon-btn" id="btnAppFull" aria-label="全屏" title="全屏（F11）">
+      <!-- 两个图标叠在同一个按钮里，进入/退出只切 display，不重建节点：
+           桌面版状态由主进程回推（F11 / 菜单 / 这里三处同源） -->
+      <svg id="appFullIcoExpand" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5A1.5 1.5 0 0 1 18.5 20H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/></svg>
+      <svg id="appFullIcoExit" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none"><path d="M9 4v5H4M15 4v5h5M20 15h-5v5M4 15h5v5"/></svg>
     </button>
     <button class="icon-btn" id="btnSettings" aria-label="设置" title="模型与接口设置">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -105,7 +120,7 @@
             </svg>
           </button>
           <!-- 原生 select 只当值容器（列表仍由它持有，测试与其他模块照旧读 .value / .options），
-               露在外面的是自绘的 .dai-pick 按钮，弹层 .dai-menu 由 desk-chat.js 挂到 body。 -->
+               露在外面的是自绘的 .dai-pick 按钮，弹层 .dai-menu 由 desk-chat-core.js 挂到 body。 -->
           <select class="dai-native" id="deskAiCtx" aria-hidden="true" tabindex="-1"></select>
           <button type="button" class="dai-pick" id="deskAiCtxBtn" title="选择对话上下文" aria-haspopup="listbox" aria-expanded="false">
             <svg class="dai-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5h7M4 12h11M4 17.5h5"/><path d="m15 15.5 2.4 2.4L21 14"/></svg>
@@ -156,28 +171,12 @@
     </div>
       </div>
       <!-- 第二页已移除：AI 对话现在是桌面上的一个普通 App（和其他 App 走同一套
-           .desk-page-3 + .dapp-head + .dapp-back 翻页），不再有独立的对话页。 -->
+           .desk-page-3 翻页），不再有独立的对话页。 -->
       <!-- 第三页：App。所有 App 都翻到这一页里显示，不再浮成弹窗。
            内容由 deskMountApp() 把对应的 .os-win 节点搬进 #deskAppHost；
-           灰底圆角画布留在窗口后面，和第一页的图标画布是同一块「底板」。 -->
+           灰底圆角画布留在窗口后面，和第一页的图标画布是同一块「底板」。
+           页头（返回 <<< + 应用名）已删：返回入口统一收到顶栏 The seed 左侧的首页图标。 -->
       <div class="desk-page desk-page-3" id="deskPageApps" aria-label="应用页">
-        <div class="dapp-head">
-          <!-- 返回按钮在左（和界面名称换了位置）：三枚 chevron 拼成 <<<，
-               悬停时依次向左游动，一眼能认出「退回去」 -->
-          <button type="button" class="dapp-back" id="deskAppBack" aria-label="回到桌面" title="回到桌面（Esc）">
-            <svg class="dapp-back-ico" viewBox="0 0 28 24" fill="none" stroke="currentColor"
-                 stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path class="dab-ch dab-1" d="M9.2 6.9 4.6 12l4.6 5.1"/>
-              <path class="dab-ch dab-2" d="M15.4 6.9 10.8 12l4.6 5.1"/>
-              <path class="dab-ch dab-3" d="M21.6 6.9 17 12l4.6 5.1"/>
-            </svg>
-          </button>
-          <span class="dapp-div" aria-hidden="true"></span>
-          <div class="dapp-titles">
-            <span class="dapp-title" id="deskAppTitle">应用</span>
-            <span class="dapp-sub" id="deskAppSub" hidden></span>
-          </div>
-        </div>
         <div class="dapp-canvas" id="deskAppCanvas">
           <div class="dapp-host" id="deskAppHost"></div>
           <!-- 骨架：翻页先跑、内容后到，这层用合成器动画（transform/opacity）顶住，
@@ -265,9 +264,100 @@
         <div class="mc-kinds" id="mcKinds"></div>
       </div>
     </div>
-    <!-- AI 对话 App：和其他 App 一样是 .os-win，搬进 #deskAppHost 后由 .dapp-head 顶替标题栏。
+    <!-- 裸聊 App：无 system、无上下文、无历史，每轮只发这一句。
+         单独成 App 而不是给对话条加开关——它的用途是「基准线」：
+         混在主链路里会带上 IMG_SYS / contextText / 全量历史，测出的差值就不干净了。
+         界面里的气泡只是本地显示，从不回传，见 js/bare-chat.js。 -->
+    <div class="os-win bare hidden" id="bareWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title">裸聊</div>
+        <button class="os-win-close" id="btnBareWinClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body">
+        <div class="bchat-meta" id="bareMeta"></div>
+        <div class="dchat-log" id="bareLog"></div>
+        <div class="bchat-bar" id="bareBar">
+          <textarea class="bchat-text" id="bareText" rows="1" placeholder="只发这一句，不带任何上下文…（Enter 发送，Shift+Enter 换行）"></textarea>
+          <button type="button" class="bchat-tplbtn" id="bareTplBtn" title="展开为 OpenAI 兼容的请求体（可编辑）">{ }</button>
+          <button type="button" class="dai-send" id="bareSend" title="发送（Enter）">Send</button>
+        </div>
+        <!-- OpenAI 兼容模板：把这一句展开成可直接编辑的请求体。
+             messages 里有什么就发什么，system 可自行加；model 可覆盖本次模型。 -->
+        <div class="bchat-tpl hidden" id="bareTpl">
+          <div class="bchat-tpl-head">
+            <span>OpenAI 兼容请求体（可编辑后直接发送）</span>
+            <button type="button" class="bchat-tpl-back" id="bareTplBack">收起</button>
+          </div>
+          <textarea class="bchat-tpl-text" id="bareTplText" spellcheck="false" wrap="off"></textarea>
+          <div class="bchat-tpl-foot">
+            <span class="bchat-tpl-note" id="bareTplNote">temperature 0.3 / stream true 由运行时固定</span>
+            <button type="button" class="dai-send" id="bareTplSend">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 图像转 SVG：本地工具 + function calling。
+         图片只发一次，SVG 草稿留在本地（js/svg-tools.js），模型只拿到摘要。 -->
+    <div class="os-win isvg hidden" id="img2svgWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title">图像转 SVG</div>
+        <button class="os-win-close" id="btnImg2SvgClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body isvg-body">
+        <div class="isvg-meta" id="img2svgMeta"></div>
+        <div class="isvg-src">
+          <button type="button" class="btn sm" id="img2svgPick">选择图片</button>
+          <img class="isvg-thumb hidden" id="img2svgThumb" alt="">
+          <div class="isvg-srcinfo" id="img2svgSrcInfo">未选择图片（也可以把图拖进窗口）</div>
+          <button type="button" class="btn sm isvg-clear hidden" id="img2svgClear">清除</button>
+          <input type="file" id="img2svgFile" accept="image/*" hidden>
+        </div>
+        <!-- 画布与图层面板并排：横屏时画布吃满剩余高度，面板跟着变高；
+             执行日志收成底部一条，不和画布抢纵向空间。 -->
+        <div class="isvg-work">
+          <!-- 实时画布：AI 每次写路径后立刻重绘，SVG 直接盖在原图上看「正在画什么」。
+               状态条常驻左上角：阶段 / 轮次 / 当前工具 / 分数 / 用时。 -->
+          <div class="isvg-stage" id="img2svgStage">
+            <div class="isvg-stage-status">
+              <span class="isvg-stage-badge idle" id="img2svgStageBadge">待开始</span>
+              <span class="isvg-stage-round" id="img2svgStageRound">—</span>
+              <span class="isvg-stage-tool" id="img2svgStageTool">选一张图，按 Send 开始</span>
+              <span class="isvg-stage-score hidden" id="img2svgStageScore"></span>
+              <span class="isvg-stage-time hidden" id="img2svgStageTime">00:00</span>
+            </div>
+            <div class="isvg-stage-stack">
+              <img class="isvg-stage-src" id="img2svgStageSrc" alt="">
+              <img class="isvg-stage-svg" id="img2svgStageSvg" alt="">
+              <div class="isvg-stage-empty" id="img2svgStageEmpty">选一张图，按 Send 开始</div>
+            </div>
+          </div>
+          <!-- 图层面板：四层可见性 / 隔离预览 / 每层统计 / 导出 / 消融。
+               内容全部由 img2svg-app.js 的 refreshLayers 生成，这里只放骨架。 -->
+          <aside class="isvg-layers" id="img2svgLayers">
+            <div class="isvg-layers-head">
+              <span class="isvg-layers-title">图层</span>
+              <button type="button" class="isvg-layers-toggle" id="img2svgUndo"
+                      disabled title="撤销上一次工具写入（每次调用一步）">撤销</button>
+              <button type="button" class="isvg-layers-toggle" id="img2svgLayersToggle"
+                      aria-pressed="false" title="收起 / 展开图层面板">收起</button>
+            </div>
+            <div class="isvg-layers-body" id="img2svgLayersBody"></div>
+          </aside>
+        </div>
+        <div class="dchat-log isvg-log" id="img2svgLog"></div>
+        <div class="bchat-bar" id="img2svgBar">
+          <textarea class="bchat-text" id="img2svgText" rows="1" placeholder="描述要求（可留空），Enter 发送，Shift+Enter 换行"></textarea>
+          <button type="button" class="dai-send" id="img2svgSend" title="发送（Enter）">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI 对话 App：和其他 App 一样是 .os-win，搬进 #deskAppHost 后保留自己的窗口标题栏。
          原来它是独立的第二页（.desk-page-2），翻页动效和返回按钮都跟别的 App 不一致，
-         这次统一成 App。 -->
+         后来统一成 App；页头（返回 <<< + 应用名）已删，返回入口统一收到顶栏 The seed 左侧。 -->
     <div class="os-win chat hidden" id="chatWin">
       <div class="os-win-bar">
         <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -276,8 +366,7 @@
       </div>
       <div class="os-win-body">
         <!-- 模型 / 上下文 / 生图来源：原来是第二页页头的一排角标。
-             现在页头让位给 .dapp-head（统一返回按钮），这三个角标挪到对话区顶部，
-             视觉上仍是一眼可扫的信息条。 -->
+             页头删掉后，这三个角标留在对话区顶部——视觉上仍是一眼可扫的信息条。 -->
         <div class="dchat-meta">
           <span class="dchat-model" id="deskChatModel"></span>
           <span class="dchat-ctx" id="deskChatCtx" title="当前对话上下文"></span>
@@ -367,6 +456,18 @@
         </div>
         <!-- 浏览器里打开（没有 Electron 媒体库）时的降级入口：只能临时播内存里的文件 -->
         <input type="file" id="plFile" class="hidden" multiple accept="video/*,audio/*">
+      </div>
+    </div>
+
+    <!-- 建模：网格资产工作站（MVP-1）。窗口常驻，内容由 js/model-desk.js 铺开。 -->
+    <div class="os-win modeldesk hidden" id="modelDeskWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title">建模</div>
+        <button class="os-win-close" id="btnModelDeskClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body">
+        <div id="modelDeskHost" class="md-host"></div>
       </div>
     </div>
 
@@ -484,7 +585,7 @@
                 <div class="mv-seg" id="mvModes"></div>
                 <span class="mv-lab">相机</span>
                 <div class="mv-seg" id="mvCams"></div>
-                <span class="mv-lab">单格</span>
+                <span class="mv-lab">画布</span>
                 <div class="mv-seg" id="mvSizes"></div>
               </div>
             </div>
@@ -493,24 +594,28 @@
               <summary title="画布级参数：列数、间距、留白、线宽——它们不属于任何一层">画布</summary>
               <div class="mv-more-body">
                 <div class="mv-field"><span>列数</span><div class="mv-seg" id="mvCols"></div></div>
+                <div class="mv-field"><span>铺满</span><div class="mv-seg" id="mvCompacts"></div></div>
                 <div class="mv-field"><span>间距</span><input type="range" id="mvGap" min="0" max="48" step="2"><b id="mvGapV">0</b></div>
                 <div class="mv-field"><span>留白</span><input type="range" id="mvMargin" min="100" max="160" step="2"><b id="mvMarginV">108</b></div>
                 <div class="mv-field"><span>线宽</span><input type="range" id="mvLineW" min="4" max="60" step="2"><b id="mvLineWV">14</b></div>
               </div>
             </details>
 
-            <div class="mv-stage" id="mvStage">
-              <div class="mv-empty" id="mvEmpty">
-                <div class="mv-empty-t">左边选一个模型，或拖一个 glb / obj 进来</div>
-                <div class="mv-empty-s">OBJ 的四边形面按原始拓扑画线框，不会出现三角化的对角线。</div>
+            <div class="mv-stage-wrap" id="mvStageHost">
+              <div class="mv-stage" id="mvStage">
+                <div class="mv-empty" id="mvEmpty">
+                  <div class="mv-empty-t">左边选一个模型，或拖一个 glb / obj 进来</div>
+                  <div class="mv-empty-s">OBJ 的四边形面按原始拓扑画线框，不会出现三角化的对角线。</div>
+                </div>
+                <img id="mvOut" alt="多视图结果" draggable="false" class="hidden">
+                <div class="mv-pick hidden" id="mvPick"></div>
               </div>
-              <img id="mvOut" alt="多视图结果" draggable="false" class="hidden">
-              <div class="mv-pick hidden" id="mvPick"></div>
             </div>
 
             <div class="mv-bar">
               <span class="mv-info" id="mvInfo"></span>
               <button type="button" class="btn sm" id="mvPreview">3D 预览</button>
+              <button type="button" class="btn sm" id="mvSplit" disabled>AI 拆件</button>
               <button type="button" class="btn sm" id="mvSaveLib">存入图库</button>
               <button type="button" class="btn sm" id="mvDlCell" disabled>下载这格</button>
               <button type="button" class="btn sm" id="mvDlAll" disabled>下载整图</button>
@@ -555,7 +660,7 @@
           <aside class="mv-export">
             <div class="mv-ex-head">导出</div>
             <div class="mv-ex-row">
-              <select class="mv-sel" id="mvExSize" title="导出画布（正方形）">
+              <select class="mv-sel" id="mvExSize" title="画布尺寸（正方形）· 预览与导出一致">
                 <option value="2048">2K · 2048</option>
                 <option value="4096">4K · 4096</option>
               </select>
@@ -574,6 +679,43 @@
             <button type="button" class="btn sm" id="mvExMask" disabled>导出遮罩图</button>
           </aside>
       </aside>
+
+          <!-- AI 拆件弹层：遮住整个 .mv-wrap。里面的控件 id 与 multiview.html 必须完全一致 -->
+          <div class="mv-split hidden" id="mvSplitPanel">
+            <div class="mv-split-card">
+              <div class="mv-split-head">
+                <span class="mv-split-title">AI 拆件</span>
+                <span class="mv-split-sub" id="mvSplitSub"></span>
+                <button type="button" class="mv-split-x" id="mvSplitClose" aria-label="关闭">×</button>
+              </div>
+              <div class="mv-split-body">
+                <div class="mv-split-row">
+                  <span class="mv-split-lab">分成</span>
+                  <input type="text" id="mvSplitParts" class="mv-split-in" placeholder="面部和脖子、头发和头饰、身体">
+                  <span class="mv-split-lab">候选岛</span>
+                  <input type="range" id="mvSplitMax" min="20" max="240" step="10" value="120">
+                  <b id="mvSplitMaxV">120</b>
+                  <button type="button" class="btn sm primary" id="mvSplitRun">开始拆件</button>
+                </div>
+                <div class="mv-split-note" id="mvSplitInfo"></div>
+                <div class="mv-split-imgs">
+                  <div class="mv-split-pane">
+                    <span class="mv-split-cap">候选 UV 岛（编号给 AI 寻址）</span>
+                    <img id="mvSplitAtlas" alt="候选 UV 岛图" class="hidden">
+                  </div>
+                  <div class="mv-split-pane">
+                    <span class="mv-split-cap">拆件结果（颜色对应部件）</span>
+                    <img id="mvSplitViews" alt="拆件结果预览" class="hidden">
+                  </div>
+                </div>
+                <div class="mv-split-list" id="mvSplitList"></div>
+                <div class="mv-split-foot">
+                  <button type="button" class="btn sm" id="mvSplitDlGlb" disabled>下载整件 GLB</button>
+                  <button type="button" class="btn sm" id="mvSplitSaveLib" disabled>存入模型库</button>
+                </div>
+              </div>
+            </div>
+          </div>
 
         </div>
       </div>
@@ -1371,16 +1513,43 @@
 <script src="vendor/three.min.js"></script>
 <script src="vendor/GLTFLoader.js"></script>
 <script src="vendor/OBJLoader.js"></script>
+<script src="vendor/fflate.js"></script>
+<script src="vendor/NURBSUtils.js"></script>
+<script src="vendor/NURBSCurve.js"></script>
+<script src="vendor/FBXLoader.js"></script>
 <script src="vendor/OrbitControls.js"></script>
 <script src="vendor/GLTFExporter.js"></script>
 <script src="js/model3d.js"></script>
+<script src="js/m3d-slots.js"></script>
+<script src="js/m3d-preview.js"></script>
 <script src="js/svgtex.js"></script>
 <script src="js/texpaint.js"></script>
 <script src="js/modeltex.js"></script>
+<script src="js/model-split.js"></script>
 <script src="js/uvpack.js"></script>
 <script src="js/texbrush.js"></script>
 <script src="js/model-refs.js"></script>
 <script src="js/modeler.js"></script>
+<!-- 建模 App（MVP-1）的依赖序，只能向下依赖，不能乱：
+     基础体工厂 modeler → v1 文档 model-document → GLB 元数据 seed-glb-meta
+     → 网格内核 seed-mesh-core → 求值缓存 seed-evaluator（M1 空壳）
+     → 场景文档 v2 seed-model-scene（v1 烘焙要用到 Modeler / SeedDocument）
+     → 拾取内核 seed-selection → 命令注册表 seed-commands → 工具会话 seed-tools
+     → 吸附 seed-snap → 显示开关 seed-view-flags → 拓扑算子 seed-operators
+     → 变换手柄 model-transform-gizmo → 外壳 model-desk -->
+<script src="js/model-document.js"></script>
+<script src="js/seed-glb-meta.js"></script>
+<script src="js/seed-mesh-core.js"></script>
+<script src="js/seed-evaluator.js"></script>
+<script src="js/seed-model-scene.js"></script>
+<script src="js/seed-selection.js"></script>
+<script src="js/seed-commands.js"></script>
+<script src="js/seed-tools.js"></script>
+<script src="js/seed-snap.js"></script>
+<script src="js/seed-view-flags.js"></script>
+<script src="js/seed-operators.js"></script>
+<script src="js/model-transform-gizmo.js"></script>
+<script src="js/model-desk.js"></script>
 <script src="js/silhouette.js"></script>
 <script src="js/svgshapes.js"></script>
 <script src="js/tracer.js"></script>
@@ -1422,15 +1591,34 @@
 <script src="js/lineage.js"></script>
 <script src="js/node-cache.js"></script>
 <script src="js/trace-to-flow.js"></script>
-<script src="js/desktop.js"></script>
+<script src="js/desk-shell.js"></script>
+<script src="js/flow-canvas.js"></script>
+<script src="js/flow-node-view.js"></script>
 <script src="js/desk-image.js"></script>
 <script src="js/desk-search.js"></script>
-<script src="js/desk-chat.js"></script>
+<script src="js/desk-chat-core.js"></script>
+<script src="js/desk-chat-log.js"></script>
+<script src="js/desk-chat-gen.js"></script>
+<script src="js/desk-chat-send.js"></script>
+<script src="js/bare-chat.js"></script>
 <script src="js/player.js"></script>
 <script src="js/dev-card.js"></script>
+<!-- 多视图 App：按依赖顺序加载（详见 js/multiview.js 顶部模块表） -->
+<script src="js/mv-core.js"></script>
+<script src="js/mv-layers.js"></script>
+<script src="js/mv-state.js"></script>
+<script src="js/mv-models.js"></script>
+<script src="js/mv-render.js"></script>
+<script src="js/mv-layer-panel.js"></script>
+<script src="js/mv-panels.js"></script>
+<script src="js/mv-bind.js"></script>
 <script src="js/multiview.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/blueprint-runtime.js"></script>
+<script src="js/svg-tools.js"></script>
+<script src="js/svg-fixtures.js"></script>
+<script src="js/tool-loop.js"></script>
+<script src="js/img2svg-app.js"></script>
 <script src="js/flow-gen-panel.js"></script>
 <script src="js/flow-evolve-panel.js"></script>
 <script src="js/memory-panel.js"></script>

@@ -1,0 +1,917 @@
+/* ============================================================
+ * app.css 拆分 · 12-modeldesk
+ * 建模 App 外壳：按 Maya 2024 的布局重画
+ * 菜单条 / 状态行 / 工具架 / 主区（工具条 + 大纲 + 视口 + 右侧）/ 命令行。
+ * 只作用在 .os-win.modeldesk 里，别让这些灰色面板污染别的 App。
+ *
+ * ⚠ 这份文件是按**原始行号连续切片**出来的，各文件之间靠 index.html 的
+ *   <link> 顺序维持层叠关系。加新样式请放进对应 App 的文件，不要在这里
+ *   随手追加；也别在 08 之前写「最终样式」（会被 08 覆盖）。
+ * ============================================================ */
+.os-win.modeldesk .os-win-body {
+  padding: 0;
+  display: flex;
+  overflow: hidden;
+}
+.md-host { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; }
+
+.md-app {
+  --md-bg: #242424;
+  --md-panel: #3a3a3a;
+  --md-panel-hi: #444444;
+  --md-line: #1b1b1b;
+  --md-line-soft: #2e2e2e;
+  --md-txt: #d6d6d6;
+  --md-dim: #a4a4a4;
+  --md-mute: #868686;
+  --md-field: #2b2b2b;
+  --md-field-line: #1d1d1d;
+  --md-on: #4f6a84;
+  --md-on-line: #394e61;
+  --md-accent: #c98f35;
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  background: var(--md-bg); color: var(--md-txt);
+  font: 11.5px/1.35 "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  overflow: hidden; user-select: none;
+}
+
+/* ---------- 1. 菜单条 ---------- */
+.md-menu {
+  flex: 0 0 25px; height: 25px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 8px;
+  background: linear-gradient(180deg, #404040 0%, #363636 100%);
+  border-bottom: 1px solid var(--md-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
+  min-width: 0;
+}
+.md-menu-brand { display: flex; align-items: baseline; gap: 5px; flex: 0 0 auto; padding-right: 6px; }
+.md-menu-brand b { font-size: 11.5px; font-weight: 700; color: #ededed; letter-spacing: .02em; }
+.md-menu-brand span { font-size: 10px; color: #9a9a9a; }
+.md-menu-items { display: flex; align-items: center; gap: 1px; min-width: 0; overflow: hidden; }
+.md-mitem {
+  height: 19px; padding: 0 7px; flex: 0 0 auto;
+  border: 1px solid transparent; border-radius: 2px;
+  background: transparent; color: #d2d2d2;
+  font: inherit; font-size: 11px; cursor: pointer;
+  white-space: nowrap;
+}
+.md-mitem:hover { background: #4b4b4b; border-color: #565656; }
+.md-menu-right { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
+.md-workspace { font-size: 10px; color: #9c9c9c; white-space: nowrap; }
+.md-name {
+  max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11.5px; font-weight: 600; color: #efefef;
+}
+.md-ver {
+  font-size: 9px; letter-spacing: .08em; color: #a9a9a9;
+  border: 1px solid #545454; border-radius: 2px;
+  padding: 1px 4px; white-space: nowrap;
+}
+
+/* ---------- 2. 状态行（工具 / 坐标 / 吸附 + 文档动作） ---------- */
+.md-toolbar {
+  flex: 0 0 28px; height: 28px;
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 8px;
+  background: #333333;
+  border-bottom: 1px solid var(--md-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+  overflow: hidden;
+}
+.md-tb-left, .md-tb-right { display: flex; align-items: center; gap: 3px; min-width: 0; }
+.md-tb-right { margin-left: auto; }
+.md-sep {
+  flex: 0 0 1px; width: 1px; height: 16px; margin: 0 4px;
+  background: #232323; box-shadow: 1px 0 0 #4a4a4a;
+}
+.md-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; flex: 0 0 auto;
+  color: #b9b9b9; font-size: 12px; line-height: 1;
+  border: 1px solid transparent; border-radius: 2px;
+}
+.md-chip {
+  height: 20px; padding: 0 8px; flex: 0 0 auto;
+  border: 1px solid #252525; border-top-color: #4d4d4d; border-radius: 3px;
+  background: #3d3d3d; color: #d4d4d4;
+  font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
+}
+.md-chip:hover { background: #4a4a4a; color: #f0f0f0; }
+.md-chip.on { background: var(--md-on); border-color: var(--md-on-line); border-top-color: #66839f; color: #fff; }
+.md-act {
+  height: 20px; padding: 0 8px; flex: 0 0 auto;
+  border: 1px solid #252525; border-top-color: #4d4d4d; border-radius: 3px;
+  background: #3d3d3d; color: #d4d4d4;
+  font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
+}
+.md-act:hover { background: #4a4a4a; color: #fff; }
+.md-act:disabled { opacity: .4; cursor: default; background: #3d3d3d; color: #bdbdbd; }
+.md-act.primary { background: #4f6a84; border-color: #394e61; border-top-color: #6d8aa5; color: #fff; }
+.md-act.primary:hover { background: #5b7897; }
+.md-tbst { font-size: 10px; color: #8f8f8f; padding: 0 3px; white-space: nowrap; flex: 0 0 auto; }
+
+/* ---------- 3. 工具架 ---------- */
+.md-shelf {
+  flex: 0 0 58px; height: 58px;
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 3px 7px 4px;
+  background: linear-gradient(180deg, #3e3e3e 0%, #353535 100%);
+  border-bottom: 1px solid var(--md-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  overflow: hidden;
+}
+.md-shelf-tabs { display: flex; align-items: center; gap: 2px; height: 19px; overflow: hidden; }
+.md-stab {
+  font-size: 10.5px; color: #9d9d9d; padding: 0 9px;
+  height: 19px; line-height: 18px;
+  border: 1px solid transparent; border-radius: 3px; white-space: nowrap;
+}
+.md-stab.on {
+  background: #4a4a4a; border-color: #262626; border-top-color: #5c5c5c;
+  color: #f0f0f0; box-shadow: 0 1px 0 rgba(0,0,0,.25);
+}
+.md-shelf-grid { display: flex; align-items: center; gap: 3px; height: 30px; overflow: hidden; }
+.md-sico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 25px; height: 27px; flex: 0 0 auto;
+  border: 1px solid transparent; border-radius: 3px;
+  color: #c9c9c9; font-size: 14px; line-height: 1;
+  cursor: default; opacity: .88;
+}
+.md-sico { color: var(--c, #c9c9c9); }
+.md-sico svg { width: 17px; height: 17px; display: block; }
+.md-sico:hover { background: #4a4a4a; border-color: #262626; opacity: 1; }
+
+/* ---------- 4. 主区 ---------- */
+.md-main { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; background: var(--md-bg); }
+
+/* 4.1 最左竖排窄工具条 */
+.md-strip {
+  flex: 0 0 34px; min-height: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 5px 0;
+  background: #333333; border-right: 1px solid var(--md-line);
+  overflow: hidden;
+}
+.md-smic {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; flex: 0 0 auto;
+  border: 1px solid transparent; border-radius: 3px;
+  color: #bcbcbc; font-size: 13px; line-height: 1; cursor: default;
+}
+.md-smic:hover { background: #454545; border-color: #292929; color: #efefef; }
+
+/* 4.2 大纲视图 */
+.md-outline {
+  flex: 0 0 210px; min-width: 0;
+  display: flex; flex-direction: column;
+  background: var(--md-panel); border-right: 1px solid var(--md-line);
+}
+.md-panel-h {
+  flex: 0 0 22px; height: 22px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 8px;
+  background: linear-gradient(180deg, var(--md-panel-hi) 0%, #383838 100%);
+  border-bottom: 1px solid var(--md-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  font-size: 11px; color: #dedede;
+}
+.md-panel-h em {
+  margin-left: auto; font-style: normal; font-size: 9.5px; color: #9a9a9a; white-space: nowrap;
+}
+.md-otabs, .md-tb-tabs {
+  flex: 0 0 20px; height: 20px;
+  display: flex; align-items: center; gap: 2px;
+  padding: 0 5px;
+  background: #363636; border-bottom: 1px solid #262626;
+}
+.md-otab {
+  font-size: 10px; color: #a1a1a1; padding: 0 7px;
+  height: 17px; line-height: 16px;
+  border: 1px solid transparent; border-radius: 2px; white-space: nowrap;
+}
+.md-otab.on { background: #494949; border-color: #282828; color: #ececec; }
+.md-osearch { flex: 0 0 auto; padding: 4px 6px; border-bottom: 1px solid #2d2d2d; }
+/* 01-base 的 input[type=text] 也是 (0,1,1)，且带 34px 高、9px 圆角、白底；
+ * 这里必须挂到 .md-app 上提高一级，否则命令行的白框会盖住窗底。 */
+.md-app .md-osearch input, .md-app .md-row1 input, .md-app .md-cmd {
+  height: 20px; width: 100%; min-width: 0;
+  padding: 0 6px;
+  border: 1px solid var(--md-field-line); border-top-color: #161616;
+  border-radius: 3px; background: var(--md-field);
+  color: #e3e3e3; font: inherit; font-size: 10.5px; outline: none;
+}
+.md-app .md-osearch input::placeholder, .md-app .md-cmd::placeholder { color: #7c7c7c; }
+.md-app .md-osearch input:focus, .md-app .md-row1 input:focus, .md-app .md-cmd:focus { border-color: #6f88a0; }
+.md-tree { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 3px 2px; }
+.md-hint {
+  flex: 0 0 auto; padding: 6px 8px;
+  border-top: 1px solid #2d2d2d;
+  font-size: 9.5px; line-height: 1.5; color: #8a8a8a;
+}
+.md-part-row {
+  width: 100%; height: 19px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 6px; margin: 0;
+  border: 1px solid transparent; border-radius: 2px;
+  background: transparent; color: #d2d2d2;
+  font: inherit; font-size: 10.5px; text-align: left; cursor: pointer;
+}
+.md-part-row:hover:enabled { background: #464646; }
+.md-part-row.sel { background: var(--md-on); border-color: var(--md-on-line); color: #fff; }
+.md-part-row:disabled { color: #9c9c9c; cursor: default; }
+.md-part-row i { flex: 0 0 auto; }
+.md-ficon {
+  width: 11px; height: 9px; border-radius: 1px;
+  background: linear-gradient(180deg, #c3a252 0%, #a0823a 100%);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.28);
+}
+.md-vicon {
+  position: relative; width: 11px; height: 9px; border-radius: 2px;
+  background: linear-gradient(180deg, #9db3c7 0%, #6c8094 100%);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.3);
+}
+.md-vicon::after {
+  content: ''; position: absolute; left: 3.5px; top: 2px;
+  width: 4px; height: 4px; border-radius: 50%;
+  background: #2f3d49;
+}
+.md-nicon {
+  width: 9px; height: 9px; border-radius: 1px;
+  background: linear-gradient(180deg, #8fb2d6 0%, #5d80a6 100%);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.3);
+}
+.md-part-id { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-part-shape { flex: 0 0 auto; font-size: 9px; color: #8a8a8a; }
+.md-part-row.sel .md-part-shape, .md-part-row.sel em { color: #dbe6f1; }
+.md-part-row em { font-style: normal; font-size: 9px; color: #8a8a8a; flex: 0 0 auto; }
+/* B2b：隐藏的对象行整体压暗（不是 disabled —— 还能点它激活、再按 H 显示） */
+.md-part-row.off { opacity: .48; }
+.md-part-row.off .md-part-id { text-decoration: line-through; text-decoration-color: #8a8a8a; }
+
+/* 4.3 视口（标题行 + 画布） */
+.md-center {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  background: #242424;
+}
+.md-vpbar {
+  flex: 0 0 26px; height: 26px;
+  display: flex; align-items: center; gap: 1px;
+  padding: 0 6px;
+  background: linear-gradient(180deg, #404040 0%, #363636 100%);
+  border-bottom: 1px solid var(--md-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  overflow: hidden;
+}
+.md-vplabel { font-size: 10px; color: #c4c4c4; padding: 0 4px; white-space: nowrap; flex: 0 0 auto; }
+/* 视口标题行的「着色」下拉：真控件，状态与视口同步 */
+.md-vpsel {
+  height: 18px; flex: 0 0 auto;
+  margin: 0 3px 0 0; padding: 0 2px;
+  background: var(--md-field); color: #d8d8d8;
+  border: 1px solid var(--md-field-line); border-radius: 2px;
+  font: inherit; font-size: 9.5px; line-height: 16px;
+  cursor: pointer;
+}
+.md-vpsel:focus { outline: 1px solid var(--md-on-line); outline-offset: -1px; }
+.md-vpi {
+  width: 20px; height: 20px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 2px;
+  background: transparent; color: #b7b7b7;
+  font: inherit; font-size: 11px; line-height: 1; padding: 0; cursor: default;
+}
+button.md-vpi { cursor: pointer; }
+.md-vpi:hover { background: #4a4a4a; border-color: #292929; color: #eee; }
+button.md-vpi.on { background: var(--md-on); border-color: var(--md-on-line); color: #fff; }
+.md-vpnum { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.md-numb {
+  min-width: 34px; height: 18px; line-height: 16px;
+  text-align: center; font-size: 10px; color: #d8d8d8;
+  background: var(--md-field); border: 1px solid var(--md-field-line); border-radius: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.md-vpnum i { font-style: normal; font-size: 9px; color: #8f8f8f; }
+.md-vpstyle {
+  height: 18px; display: inline-flex; align-items: center; gap: 5px;
+  margin-left: 4px; padding: 0 6px; flex: 0 0 auto;
+  background: var(--md-field); border: 1px solid var(--md-field-line); border-radius: 2px;
+  font-size: 9.5px; color: #cfcfcf; white-space: nowrap;
+}
+.md-vpstyle i { font-style: normal; font-size: 8px; color: #8f8f8f; }
+
+.md-stage {
+  position: relative; flex: 1 1 auto; min-height: 0;
+  background: linear-gradient(180deg, #63666a 0%, #56595d 58%, #4c4e51 100%);
+  overflow: hidden;
+}
+#mdCanvas { display: block; width: 100%; height: 100%; outline: none; }
+
+/* 视图立方体：右上角一块独立小画布，用 WebGL 画真立方体。
+ * 旧的 DOM 拼面只能摆「顶 / 前 / 右」三个 clip-path 菱形，相机一转就露馅，
+ * 也没有近大远小的立体感；真立方体的六个面 + 透视投影才能跟着模型一起转。
+ * 画布透明底（自己的 renderer），整块 92px 接指针：拖 = 环绕，点面 = 切正视图。 */
+.md-cube {
+  position: absolute; top: 12px; right: 14px;
+  width: 92px; height: 92px;
+  border-radius: 8px; overflow: hidden;
+  background: rgba(20, 22, 25, .62);
+  border: 1px solid rgba(0, 0, 0, .4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 2px 8px rgba(0, 0, 0, .28);
+  cursor: grab; touch-action: none;
+  opacity: .92;
+}
+.md-cube:hover { opacity: 1; }
+.md-cube.drag { cursor: grabbing; }
+.md-cube canvas { display: block; width: 100%; height: 100%; }
+
+/* 四视图分屏覆盖层：只画分隔线和标签，3D 由同一个 renderer 的 scissor 分屏渲染 */
+.md-quad { position: absolute; inset: 0; display: none; pointer-events: none; }
+.md-stage.quad .md-quad { display: block; }
+.md-stage.quad .md-cube { display: none; }
+.md-quad-v {
+  position: absolute; left: 50%; top: 0; bottom: 0; width: 1px;
+  margin-left: -.5px; background: rgba(0,0,0,.5);
+  box-shadow: 1px 0 0 rgba(255,255,255,.08);
+}
+.md-quad-h {
+  position: absolute; top: 50%; left: 0; right: 0; height: 1px;
+  margin-top: -.5px; background: rgba(0,0,0,.5);
+  box-shadow: 0 1px 0 rgba(255,255,255,.08);
+}
+.md-quad-l {
+  position: absolute; padding: 2px 6px;
+  font-size: 9px; line-height: 1.2; color: #e8e8e8;
+  background: rgba(24,24,24,.55);
+  border: 1px solid rgba(0,0,0,.35); border-radius: 2px;
+}
+.md-quad-l.tl { left: 8px; top: 7px; }
+.md-quad-l.tr { right: 8px; top: 7px; }
+.md-quad-l.bl { left: 8px; bottom: 7px; }
+.md-quad-l.br { right: 8px; bottom: 7px; }
+/* V7：激活格的角标高亮（四视图可导航后，用户需要知道键盘/鼠标此刻作用在哪一格） */
+.md-quad-l.on {
+  color: #fff;
+  background: var(--md-on, #4f6a84);
+  border-color: rgba(196, 214, 232, .85);
+  box-shadow: 0 0 0 1px rgba(120, 160, 200, .45), 0 1px 4px rgba(0, 0, 0, .35);
+}
+/* 最大化：该格相机全屏，分隔线与四个标签都收起来 */
+.md-stage.quad-max .md-quad-v,
+.md-stage.quad-max .md-quad-h,
+.md-stage.quad-max .md-quad-l { display: none; }
+
+.md-hud {
+  position: absolute; left: 10px; bottom: 10px; max-width: 76%;
+  display: flex; flex-wrap: wrap; gap: 4px 10px;
+  padding: 4px 8px; border-radius: 3px;
+  background: rgba(32,32,32,.62); border: 1px solid rgba(0,0,0,.35);
+  color: #dcdcdc; font-size: 9.5px; line-height: 1.5;
+  pointer-events: none;
+}
+.md-hud b { color: #fff; font-weight: 600; }
+
+/* 4.4 右侧：建模工具箱 + 属性编辑器 / 通道盒 */
+.md-right {
+  flex: 0 0 300px; min-width: 0;
+  display: flex; flex-direction: column;
+  background: var(--md-panel); border-left: 1px solid var(--md-line);
+}
+.md-tb { flex: 0 0 auto; display: flex; flex-direction: column; border-bottom: 1px solid var(--md-line); }
+.md-tb-body { padding: 3px 0 5px; }
+.md-tb-h {
+  height: 18px; display: flex; align-items: center;
+  padding: 0 8px; margin-top: 2px;
+  font-size: 10px; color: #c6c6c6;
+  border-top: 1px solid #2d2d2d; border-bottom: 1px solid #2a2a2a;
+  background: #353535;
+}
+.md-tb-h:first-child { margin-top: 0; border-top: 0; }
+.md-tb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 4px 6px 2px; }
+.md-tbtn {
+  height: 21px; display: flex; align-items: center; gap: 5px;
+  padding: 0 6px;
+  border: 1px solid #272727; border-top-color: #4c4c4c; border-radius: 2px;
+  background: #3f3f3f; color: #cfcfcf;
+  font-size: 10px; white-space: nowrap; overflow: hidden; cursor: default;
+}
+.md-tbtn:hover { background: #484848; color: #eee; }
+.md-tbtn i { width: 8px; height: 8px; border-radius: 1px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px rgba(0,0,0,.35); }
+
+/* 工具箱（Blender 式折叠分组 + 行按钮 + 软选择曲线） */
+.md-tb-list { padding: 3px 6px 7px; }
+.md-sec2 {
+  margin-top: 4px; overflow: hidden;
+  border: 1px solid #2a2a2a; border-radius: 2px;
+  background: #3a3a3a;
+}
+.md-sec2:first-child { margin-top: 0; }
+.md-sec2-h {
+  width: 100%; height: 21px;
+  display: flex; align-items: center; gap: 5px;
+  padding: 0 6px;
+  border: 0; border-bottom: 1px solid #2a2a2a;
+  background: linear-gradient(180deg, #484848 0%, #3d3d3d 100%);
+  color: #dedede; font: inherit; font-size: 10px; text-align: left; cursor: pointer;
+}
+.md-sec2-h:hover { background: linear-gradient(180deg, #505050 0%, #454545 100%); }
+.md-sec2-arrow { font-size: 8px; color: #9d9d9d; transform: rotate(90deg); transition: transform .12s; }
+.md-sec2:not(.open) .md-sec2-arrow { transform: rotate(0deg); }
+.md-sec2:not(.open) .md-sec2-h { border-bottom: 0; }
+.md-sec2:not(.open) .md-sec2-b { display: none; }
+.md-sec2-h em {
+  margin-left: auto; font-style: normal; font-size: 9px; color: #8f8f8f;
+}
+.md-sec2-h em.on { color: #e0a13a; }
+.md-sec2-b { padding: 5px 6px 6px; }
+.md-op-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+.md-op {
+  height: 27px; min-width: 0;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 7px;
+  border: 1px solid #272727; border-top-color: #4d4d4d; border-radius: 2px;
+  background: linear-gradient(180deg, #454545 0%, #3b3b3b 100%);
+  color: #d8d8d8; font: inherit; font-size: 10px; text-align: left; cursor: pointer;
+  white-space: nowrap; overflow: hidden;
+}
+.md-op:hover { background: linear-gradient(180deg, #505050 0%, #454545 100%); color: #fff; border-top-color: #5a5a5a; }
+.md-op:active { background: #363636; }
+.md-op.on { border-color: #4a7ea5; background: linear-gradient(180deg, #4a7ea5 0%, #3c6b8f 100%); color: #fff; }
+.md-op-i { flex: 0 0 18px; width: 18px; height: 18px; color: #b9c2cc; }
+.md-op-i svg { width: 18px; height: 18px; display: block; }
+.md-op:hover .md-op-i { color: #e8b06a; }
+.md-op-lb { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+.md-switch {
+  display: flex; align-items: center; gap: 6px;
+  height: 22px; margin-bottom: 4px;
+  font-size: 10px; color: #cfcfcf; cursor: pointer; user-select: none;
+}
+.md-switch input { position: absolute; opacity: 0; pointer-events: none; }
+.md-switch i {
+  width: 12px; height: 12px; flex: 0 0 auto;
+  border: 1px solid #565656; border-radius: 2px;
+  background: #2f2f2f; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25);
+}
+.md-switch input:checked + i {
+  border-color: #d9922f;
+  background: #d9922f;
+  box-shadow: inset 0 0 0 2px #2f2f2f;
+}
+.md-switch input:checked ~ span { color: #f0f0f0; }
+.md-soft-row {
+  display: grid; grid-template-columns: 26px 1fr 74px; align-items: center; gap: 5px;
+  margin-bottom: 5px;
+}
+.md-soft-lb { font-size: 10px; color: #ababab; }
+.md-soft-sel, .md-soft-num {
+  height: 19px; min-width: 0;
+  border: 1px solid #282828; border-radius: 2px;
+  background: #303030; color: #e4e4e4;
+  font: inherit; font-size: 10px; padding: 0 4px;
+}
+.md-soft-num { text-align: right; font-variant-numeric: tabular-nums; }
+.md-soft-sel:focus, .md-soft-num:focus { outline: 1px solid #5b87ad; outline-offset: 0; }
+.md-curve-wrap {
+  border: 1px solid #252525; border-radius: 2px;
+  background: #2b2b2b; overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
+}
+.md-curve-wrap canvas { display: block; width: 100%; height: 54px; touch-action: none; cursor: crosshair; }
+.md-soft-reset {
+  width: 100%; height: 21px; margin-top: 5px;
+  border: 1px solid #282828; border-top-color: #4c4c4c; border-radius: 2px;
+  background: #3f3f3f; color: #d0d0d0;
+  font: inherit; font-size: 10px; cursor: pointer;
+}
+.md-soft-reset:hover { background: #4a4a4a; color: #fff; }
+
+.md-props { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.md-ptabs {
+  flex: 0 0 23px; height: 23px;
+  display: flex; align-items: flex-end; gap: 3px;
+  padding: 0 5px;
+  background: #303030; border-bottom: 1px solid var(--md-line);
+}
+.md-ptab {
+  height: 21px; padding: 0 10px;
+  border: 1px solid #282828; border-bottom: 0; border-radius: 3px 3px 0 0;
+  background: #383838; color: #a8a8a8;
+  font: inherit; font-size: 10px; cursor: pointer; white-space: nowrap;
+}
+.md-ptab:hover { color: #e0e0e0; }
+.md-ptab.on {
+  background: linear-gradient(180deg, #4c4c4c 0%, #424242 100%);
+  border-color: #212121; border-top-color: #5d5d5d; color: #f0f0f0;
+}
+.md-pbody { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 7px 7px 16px; }
+
+/* ---------- 5. 属性编辑器 / 通道盒内容 ---------- */
+.md-sec {
+  margin: 0 0 7px;
+  border: 1px solid #262626; border-radius: 2px;
+  background: #3d3d3d; overflow: hidden;
+}
+.md-h2 {
+  height: 19px; display: flex; align-items: center; gap: 5px;
+  padding: 0 7px;
+  font-size: 10px; color: #dedede; font-weight: 400;
+  background: linear-gradient(180deg, #464646 0%, #3b3b3b 100%);
+  border-bottom: 1px solid #262626;
+}
+.md-h2::before { content: '▾'; font-size: 8px; color: #9a9a9a; }
+.md-sec-b { padding: 6px 7px 7px; }
+.md-ch-list { padding: 0; }
+.md-ch {
+  display: flex; align-items: center; gap: 8px;
+  height: 20px; padding: 0 7px;
+  border-bottom: 1px solid #343434;
+  font-size: 10px;
+}
+.md-ch:last-child { border-bottom: 0; }
+.md-ch span { flex: 1 1 auto; min-width: 0; color: #ababab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-ch em {
+  flex: 0 0 auto; min-width: 70px; max-width: 60%;
+  padding: 1px 6px; text-align: right;
+  font-style: normal; font-size: 10px; color: #e6e6e6;
+  background: var(--md-field); border: 1px solid var(--md-field-line); border-radius: 2px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.md-row1 {
+  display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 7px;
+  margin-bottom: 6px;
+}
+.md-row1 span { font-size: 10px; color: #ababab; }
+.md-note { margin-top: 4px; font-size: 9.5px; line-height: 1.55; color: #969696; }
+.md-note b { color: #d8d8d8; font-weight: 600; }
+.md-warn { color: #ffad99; margin-left: 6px; }
+.md-slot {
+  display: flex; align-items: center; gap: 7px;
+  padding: 3px 0; font-size: 10px; color: #d2d2d2;
+}
+.md-slot i { width: 8px; height: 8px; border-radius: 1px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px rgba(0,0,0,.3); }
+.md-wide {
+  width: 100%; height: 22px; margin-top: 8px;
+  border: 1px solid #282828; border-top-color: #4f4f4f; border-radius: 2px;
+  background: #3f3f3f; color: #d5d5d5;
+  font: inherit; font-size: 10px; cursor: pointer;
+}
+.md-wide:hover { background: #4b4b4b; color: #fff; }
+
+/* ---------- 6. 覆盖层（四视图 / 材质槽 / 打开列表） ---------- */
+.md-overlay { position: absolute; inset: 0; display: none; z-index: 6; padding: 14px; background: rgba(24,24,24,.82); }
+.md-overlay.on { display: flex; }
+.md-ov {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  width: 100%; max-width: 1180px; margin: 0 auto;
+  border: 1px solid #1b1b1b; border-radius: 3px;
+  background: #333333; overflow: hidden;
+  box-shadow: 0 12px 30px rgba(0,0,0,.4);
+}
+.md-ov-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  height: 26px; padding: 0 8px;
+  background: linear-gradient(180deg, #444444 0%, #3a3a3a 100%);
+  border-bottom: 1px solid #1b1b1b;
+  color: #efefef; font-size: 11px;
+}
+.md-ov-head b { font-size: 11.5px; font-weight: 600; }
+.md-ov-sub { font-size: 9.5px; color: #9a9a9a; }
+.md-ov-x {
+  margin-left: auto; width: 20px; height: 20px; flex: 0 0 auto; padding: 0;
+  border: 1px solid #282828; border-top-color: #4f4f4f; border-radius: 2px;
+  background: #3f3f3f; color: #cfcfcf; font-size: 13px; line-height: 1; cursor: pointer;
+}
+.md-ov-x:hover { background: #4b4b4b; color: #fff; }
+.md-ov-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; background: #2b2b2b; }
+.md-quad-img { display: block; margin: auto; max-width: 100%; max-height: 100%; object-fit: contain; }
+.md-list { display: grid; gap: 4px; padding: 8px; width: 100%; overflow: auto; align-content: start; }
+.md-asset {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid #262626; border-radius: 2px;
+  background: #3a3a3a; color: #dddddd;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.md-asset:hover { border-color: #6f88a0; background: #424242; }
+.md-asset b { font-size: 11px; font-weight: 600; }
+.md-asset span { font-size: 9.5px; color: #8f8f8f; margin-left: auto; }
+.md-tex-host { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; position: relative; }
+
+/* ---------- 7. 命令行（底部） ---------- */
+.md-cmdrow {
+  flex: 0 0 26px; height: 26px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 8px;
+  background: #333333; border-top: 1px solid var(--md-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+}
+.md-cmd-l { flex: 0 0 auto; font-size: 9.5px; color: #8f8f8f; }
+.md-cmd { flex: 0 0 300px; width: 300px; height: 19px; }
+.md-status {
+  flex: 1 1 auto; min-width: 0;
+  text-align: right; font-size: 10px; color: #b4b4b4;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.md-status.err { color: #ff9b8a; }
+
+/* ---------- 7.5 内容浏览器（底部 dock） ----------
+ * 收起时只留 26px 的页签，展开后是资产卡片网格（固定高度，不挤压视口）。
+ * 页签行与命令行同高，视觉上都属于窗底那条状态区。 */
+.md-dock {
+  flex: 0 0 26px;
+  display: flex; flex-direction: column;
+  background: #333333;
+  border-top: 1px solid var(--md-line);
+  overflow: hidden;
+}
+.md-dock.on { flex-basis: 198px; }
+.md-dock-tabs {
+  flex: 0 0 26px; height: 26px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 8px;
+  background: linear-gradient(180deg, #3c3c3c 0%, #333333 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+  border-bottom: 1px solid #2a2a2a;
+}
+.md-dock-tab {
+  height: 19px; padding: 0 9px; flex: 0 0 auto;
+  border: 1px solid transparent; border-radius: 2px;
+  background: transparent; color: #cfcfcf;
+  font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
+}
+.md-dock-tab:hover { background: #454545; color: #fff; }
+.md-dock-tab.on {
+  background: #4a4a4a; border-color: #262626; border-top-color: #5c5c5c; color: #fff;
+}
+.md-dock-tab i {
+  font-style: normal; font-size: 9px; color: #9a9a9a;
+  margin-left: 6px; display: inline-block;
+}
+.md-dock.on .md-dock-tab i { transform: rotate(180deg); }
+.md-dock-sub { font-size: 9.5px; color: #8f8f8f; white-space: nowrap; }
+.md-dock-acts { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.md-dock:not(.on) .md-dock-acts { display: none; }
+.md-dock-mini {
+  height: 19px; padding: 0 8px; flex: 0 0 auto;
+  border: 1px solid #252525; border-top-color: #4d4d4d; border-radius: 3px;
+  background: #3d3d3d; color: #d4d4d4;
+  font: inherit; font-size: 10px; cursor: pointer; white-space: nowrap;
+}
+.md-dock-mini:hover { background: #4a4a4a; color: #fff; }
+.md-dock-body { flex: 1 1 auto; min-height: 0; overflow: auto; background: #2b2b2b; }
+.md-cb-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 6px; padding: 8px;
+}
+.md-cb-card {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 6px;
+  border: 1px solid #262626; border-radius: 3px;
+  background: #353535;
+}
+.md-cb-card:hover { border-color: #4f6a84; background: #3a3a3a; }
+.md-cb-thumb {
+  flex: 0 0 46px; width: 46px; height: 46px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid #242424; border-radius: 2px; overflow: hidden;
+  background: radial-gradient(circle at 50% 35%, #4a5663 0%, #2e3339 75%);
+}
+.md-cb-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.md-cb-thumb span { font-size: 9px; letter-spacing: .08em; color: #a9bccd; font-weight: 700; }
+.md-cb-meta { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.md-cb-meta b {
+  font-size: 10.5px; font-weight: 600; color: #e3e3e3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.md-cb-meta span { font-size: 9px; color: #8f8f8f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md-cb-acts { flex: 0 0 auto; display: flex; flex-direction: column; gap: 3px; }
+.md-cb-btn {
+  height: 20px; padding: 0 8px;
+  border: 1px solid #252525; border-top-color: #4d4d4d; border-radius: 3px;
+  background: #3d3d3d; color: #d4d4d4;
+  font: inherit; font-size: 10px; cursor: pointer; white-space: nowrap;
+}
+.md-cb-btn:hover { background: #4a4a4a; color: #fff; }
+.md-cb-btn.primary { background: #4f6a84; border-color: #394e61; border-top-color: #6d8aa5; color: #fff; }
+.md-cb-btn.primary:hover { background: #5b7897; }
+.md-cb-tag { padding: 3px 6px; font-size: 9px; color: #8f8f8f; border: 1px dashed #4a4a4a; border-radius: 3px; white-space: nowrap; }
+.md-cb-empty { padding: 18px 12px; text-align: center; font-size: 10.5px; line-height: 1.6; color: #9a9a9a; }
+.md-cb-empty.err { color: #ff9b8a; }
+
+/* ---------- 8. 窄窗口退让 ---------- */
+@media (max-width: 1120px) {
+  .md-outline { flex-basis: 178px; }
+  .md-right { flex-basis: 282px; }
+  .md-menu-right .md-workspace { display: none; }
+}
+@media (max-width: 960px) {
+  .md-right { flex-basis: 260px; }
+  .md-ver { display: none; }
+}
+
+/* ---------- 9. 基础体面板（M5） ----------
+ * Shelf 的前几个图标从 span 改成 button，这里把它们调回和 span 完全一致的外观；
+ * 参数面板走覆盖层，配色沿用 .md-ov 的深灰，不另起一套变量。 */
+.md-shelf-grid button.md-sico {
+  background: none; border: 1px solid transparent; padding: 0;
+  font: inherit; cursor: pointer;
+}
+.md-shelf-grid button.md-sico:hover { border-color: #262626; }
+.md-shelf-grid button.md-sico:active { background: #3c3c3c; }
+
+.md-prim { display: grid; gap: 11px; padding: 12px 14px; width: 100%; align-content: start; }
+.md-prim-tabs { display: flex; flex-wrap: wrap; gap: 5px; }
+.md-prim-tab {
+  font: inherit; font-size: 10.5px; line-height: 1;
+  padding: 5px 10px; border-radius: 3px;
+  border: 1px solid #262626; border-top-color: #4f4f4f;
+  background: #3a3a3a; color: #cfcfcf; cursor: pointer;
+}
+.md-prim-tab:hover { background: #454545; color: #fff; }
+.md-prim-tab.on { background: #b98a4c; border-color: #8a6636; border-top-color: #d8a15a; color: #1d1a15; font-weight: 600; }
+.md-prim-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1fr); gap: 8px; align-items: end; }
+.md-pf { display: grid; gap: 4px; min-width: 0; }
+.md-pf span { font-size: 9.5px; color: #a9a9a9; }
+.md-pf input {
+  height: 21px; width: 100%; min-width: 0; padding: 0 6px;
+  border: 1px solid var(--md-field-line); border-top-color: #161616;
+  border-radius: 3px; background: var(--md-field);
+  color: #e3e3e3; font: inherit; font-size: 10.5px; outline: none;
+}
+.md-pf input:focus { border-color: #6f88a0; }
+.md-pf input:disabled { opacity: .3; }
+.md-prim .md-note { margin: 0; }
+.md-prim-go { margin-top: 2px; height: 24px; }
+
+/* 基础体面板是小表单，不该铺满整个视口：居中、限宽、上沿对齐 */
+.md-overlay.prim { justify-content: center; align-items: flex-start; padding-top: 34px; }
+.md-overlay.prim .md-ov { flex: 0 0 auto; width: auto; min-width: 420px; max-width: 560px; }
+.md-overlay.prim .md-ov-body { flex: 0 0 auto; }
+.md-prim-go { height: 25px; font-size: 10.5px; }
+
+/* ---------- 10. 左侧工具条（Maya 那一列的还原） ---------- */
+.md-strip { gap: 1px; padding: 4px 0; }
+.md-tool {
+  width: 28px; height: 28px; flex: 0 0 auto; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 3px;
+  background: none; color: #c3c3c3; cursor: pointer;
+}
+.md-tool svg { width: 19px; height: 19px; display: block; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.md-tool:hover { background: #454545; border-color: #292929; color: #fff; }
+.md-tool.on { background: #4a7ea5; border-color: #3a6588; color: #f4f9ff; }
+.md-tool-sep { width: 18px; height: 1px; margin: 3px 0; background: #4a4a4a; }
+
+/* ---------- 11. 手势覆盖层（框选 / 套索 / 画笔圈） ---------- */
+.md-gest { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+.md-gest-box {
+  position: absolute; display: none;
+  border: 1px dashed #8fc7e8; background: rgba(143,199,232,.10);
+}
+.md-gest-lasso { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
+.md-gest-lasso polyline { fill: rgba(143,199,232,.10); stroke: #8fc7e8; stroke-width: 1; stroke-dasharray: 4 3; }
+.md-gest-brush {
+  position: absolute; display: none;
+  border: 1.5px solid #8fc7e8; border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.35);
+}
+.md-gest.on .md-gest-box { display: block; }
+.md-gest.lasso .md-gest-lasso { display: block; }
+.md-gest.knife .md-gest-lasso polyline { fill: none; stroke: #e0a13a; stroke-width: 2; stroke-dasharray: none; }
+.md-part-row.multi { background: #3f4650; box-shadow: inset 2px 0 0 #4a7ea5; }
+
+/* ---------- 12. 建模工具箱：组件模式条（对象 / 顶点 / 边 / 面 / UV 岛） ---------- */
+.md-tb-tabs .md-otab {
+  background: none; border: 0; padding: 0 8px; font: inherit; cursor: pointer;
+}
+.md-modebar {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 8px 7px 6px;
+  border-bottom: 1px solid #2d2d2d;
+}
+.md-mode {
+  width: 30px; height: 27px; flex: 0 0 auto; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 3px;
+  background: none; color: #c0c0c0; cursor: pointer;
+}
+.md-mode svg { width: 21px; height: 21px; display: block; }
+.md-mode:hover { background: #454545; border-color: #292929; color: #fff; }
+.md-mode.on { background: #4a7ea5; border-color: #3a6588; color: #f4f9ff; }
+.md-mode-hint {
+  padding: 2px 9px 6px;
+  font-size: 9.5px; color: #9a9a9a;
+  border-bottom: 1px solid #2d2d2d;
+}
+
+/* ---------- 13. 热盒（按住空格弹出，Maya marking menu 的还原） ---------- */
+.md-hb {
+  position: fixed; z-index: 60; width: 484px; height: 484px;
+  display: none;
+  grid-template-columns: 1fr 118px 1fr;
+  /* 中间行要给 6 项的工具/编辑区留够高度，否则最后两项会被 overflow 裁掉（踩过） */
+  grid-template-rows: 1fr 1.35fr 1fr;
+  gap: 8px;
+}
+.md-hb.on { display: grid; }
+.md-hb-zone {
+  min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  padding: 5px 6px 6px; overflow: hidden;
+  background: rgba(26, 27, 30, .95);
+  border: 1px solid #3b3c42; border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .5);
+}
+.md-hb-zone b {
+  font-size: 9.5px; font-weight: 600; color: #8f959c;
+  letter-spacing: .04em; padding: 0 2px 2px;
+}
+/* 一行 = [图标] 名字 [快捷键] [□ 选项]。方框是独立按钮，点它进参数面板。 */
+.md-hb-row { display: flex; align-items: center; gap: 2px; border-radius: 4px; }
+.md-hb-row:hover { background: #3a3c42; }
+.md-hb-run {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: 5px;
+  padding: 1px 4px; line-height: 1.6;
+  background: transparent; border: 0; border-radius: 4px;
+  font: inherit; font-size: 11px; color: #d8dbe0; text-align: left; cursor: pointer;
+}
+.md-hb-run span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md-hb-run em { margin-left: auto; font-style: normal; font-size: 9.5px; color: #7f858c; }
+.md-hb-ico { width: 13px; height: 13px; flex: 0 0 auto; display: inline-flex; color: #9aa0a6; }
+.md-hb-ico svg { width: 13px; height: 13px; display: block; }
+.md-hb-opt {
+  width: 14px; height: 14px; flex: 0 0 auto; padding: 0;
+  border: 1px solid #6d737a; border-radius: 2px; background: transparent;
+  color: #9aa0a6; font-size: 9px; line-height: 1; cursor: pointer;
+}
+.md-hb-opt:hover { background: #4a7ea5; border-color: #4a7ea5; color: #fff; }
+.md-hb-row.on .md-hb-run { color: #9fd0f0; }
+.md-hb-row.on .md-hb-run em { color: #7fa8c4; }
+.md-hb-row.off .md-hb-run { color: #8b9097; cursor: not-allowed; }
+.md-hb-row.off .md-hb-ico { opacity: .7; }
+
+/* ---------- 14. 工具参数面板（Maya 的 option box） ---------- */
+.md-hbp {
+  position: fixed; z-index: 70; width: 244px;
+  background: #26272a; border: 1px solid #3b3c42; border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .55);
+  color: #d8dbe0; font-size: 11px;
+}
+.md-hbp-h {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 9px; border-radius: 8px 8px 0 0;
+  background: linear-gradient(180deg, #3a3b40 0%, #313237 100%);
+  border-bottom: 1px solid #222;
+}
+.md-hbp-h b { font-size: 11.5px; font-weight: 600; }
+.md-hbp-h button {
+  width: 18px; height: 18px; padding: 0; cursor: pointer;
+  border: 1px solid #2b2b2b; border-top-color: #4f4f4f; border-radius: 3px;
+  background: #3f4046; color: #cfd3d8; font-size: 12px; line-height: 1;
+}
+.md-hbp-b { padding: 8px 9px; display: grid; gap: 6px; }
+.md-hbp-row { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 8px; }
+.md-hbp-row span { color: #a8adb3; font-size: 10.5px; }
+.md-hbp-row input {
+  height: 20px; width: 100%; padding: 0 6px;
+  background: #1f2023; border: 1px solid #3a3b40; border-radius: 3px;
+  color: #e3e6e9; font: inherit; font-size: 10.5px; outline: none;
+}
+.md-hbp-row input:focus { border-color: #6f88a0; }
+.md-hbp-row input:disabled { opacity: .45; }
+.md-hbp-note { font-size: 9.5px; line-height: 1.5; color: #8b9097; }
+.md-hbp-f { padding: 0 9px 9px; }
+.md-hbp-apply {
+  width: 100%; height: 22px; cursor: pointer;
+  border: 1px solid #3a6588; border-radius: 3px;
+  background: #4a7ea5; color: #fff; font: inherit; font-size: 10.5px;
+}
+.md-hbp-apply:hover { background: #558cb5; }
+.md-hbp-apply:disabled { background: #3a3b40; border-color: #2b2b2c; color: #777; cursor: not-allowed; }
+.md-hb-zone.off { opacity: .72; }
+.md-hb-zone button.off { color: #8b9097; cursor: not-allowed; }
+.md-hb-zone button.off i { color: #6f747a; }
+.md-hb-zone button.off.hover,
+.md-hb-zone button.off:hover { background: #3a3c42; color: #cfd3d8; }
+/* 用显式行列代替 grid-template-areas：区域名少写一个，整块就会被自动排到别处（踩过） */
+.md-hb-n { grid-area: 1 / 2 / 2 / 3; }
+.md-hb-s { grid-area: 3 / 2 / 4 / 3; }
+.md-hb-w { grid-area: 2 / 1 / 3 / 2; }
+.md-hb-e { grid-area: 2 / 3 / 3 / 4; }
+.md-hb-core { grid-area: 2 / 2 / 3 / 3; }
+.md-hb-core {
+  /* 中间行比列高，圆必须自己锁成正方形，否则 border-radius:50% 会画成椭圆 */
+  width: 112px; height: 112px; align-self: center; justify-self: center;
+  border-radius: 50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  background: rgba(26, 27, 30, .95); border: 1px solid #3b3c42;
+  color: #cfd3d8; font-size: 10.5px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .5);
+}
+.md-hb-core i { font-style: normal; font-size: 9px; color: #7f858c; }

@@ -1,7 +1,7 @@
 /* 节点契约与 DAG 规范（P0 · 自主搭建基础设施第一层）
  *
  * 这个模块是「给人看的 UI 声明」到「给机器/LLM 看的契约」之间的一座桥：
- *   - seedNodeData：节点默认值的唯一来源（desktop.js 的 newNode 也调它，杜绝两处硬编码漂移）
+ *   - seedNodeData：节点默认值的唯一来源（flow-canvas.js 的 newNode 也调它，杜绝两处硬编码漂移）
  *   - nodeContract / dagSpec：把 NODE_DEFS / NODE_PARAMS / PIN_META 整理成 LLM 可消费的描述
  *   - pinTypeOf / pinDirOf / pinExists：不依赖 DOM 与全局 bp 的引脚解析（校验器与生成器共用）
  *   - extractJson / autoLayout：生成器的解析与布局兜底
@@ -11,7 +11,7 @@
 
 /* 旧「IF 条件判断」已并入「分析任务」：转成「文本 → 布尔」的分析任务。
    指令会补一句「只输出 true / false」，保证下游「条件分支」拿到的仍是布尔值。
-   迁移（desktop.js）与生成器（flow-gen.js）共用这一份形状，避免两处写歪。 */
+   迁移（flow-canvas.js）与生成器（flow-gen.js）共用这一份形状，避免两处写歪。 */
 function conditionToTaskData(data, inId, outId){
   const old = String((data && data.instruction) || '').trim();
   return {

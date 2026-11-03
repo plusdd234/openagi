@@ -920,7 +920,7 @@ async function openLibrary(kind){
   libState.note = '';
   libState.error = '';
   if(libMv.open) libMvClose();
-  /* 统一走 App 页翻页（deskMountApp 定义在 desktop.js）；拿不到时退回弹窗 */
+  /* 统一走 App 页翻页（deskMountApp 定义在 desk-shell.js）；拿不到时退回弹窗 */
   if(typeof deskMountApp === 'function'){
     const isModel = libState.kind === 'model';
     deskMountApp(win, isModel ? '模型库' : '图库', isModel ? '本机模型文件' : '生成结果与素材');

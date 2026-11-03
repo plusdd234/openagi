@@ -319,6 +319,26 @@
   }
 
   /* build(spec) → { dataURL, stats, height, report } */
+  /* 单件几何（M5 基础体面板用）：走同一张 SHAPES 表，别在面板里再抄一份
+   * 「球体三个半径 / 圆柱段数」的语义。返回的 BufferGeometry 由调用方负责 dispose。
+   * 曲线/曲面（tube / lathe / loft）需要各自的控制点数据，不算基础体，这里明确拒绝。 */
+  function geometryOf(shape, size, seg) {
+    if (typeof THREE === 'undefined') throw new Error('three.js 未就绪');
+    var key = String(shape || '').toLowerCase();
+    var def = SHAPES[key];
+    if (!def) throw new Error('不认识的 shape：' + shape);
+    if (def.curve) throw new Error(key + ' 需要曲线/截面数据，不是基础体');
+    var s = vec3(size, [0.1, 0.1, 0.1]);
+    var n = Math.max(6, Math.min(64, Math.round(num(seg, DEFAULT_SEG))));
+    var geo = def.geo(s, n);
+    if (def.unit) {
+      if (key === 'sphere') geo.scale(s[0], s[1], s[2]);
+    } else {
+      geo.computeVertexNormals();
+    }
+    return geo;
+  }
+
   async function build(spec) {
     if (typeof THREE === 'undefined') throw new Error('three.js 未就绪');
     var cmp = compile(spec);
@@ -342,6 +362,21 @@
     };
   }
 
+  /* buildGroup(spec) → {group, report}
+   * 编辑窗口要的是「活的网格」，不是导出的 GLB 字节：参数面板每改一次就重新
+   * 导出/解析一遍 GLB，既慢又平白多一层缓存。几何仍然由 assemble 产出，
+   * 所以和 build() 是同一份确定性执行，不会出现「编辑里看到的和导出后不一样」。 */
+  function buildGroup(spec) {
+    if (typeof THREE === 'undefined') throw new Error('three.js 未就绪');
+    var cmp = compile(spec);
+    if (!cmp.ok) {
+      var err = new Error('建模规格有误：' + cmp.errors.join('；'));
+      err.compile = cmp;
+      throw err;
+    }
+    return { group: assemble(cmp), report: cmp };
+  }
+
   /* 从 AI 文本里抠规格再建：支持的围栏 / 前后夹杂说明都吃 */
   async function buildFromText(text) {
     var spec = (typeof extractJson === 'function') ? extractJson(text) : null;
@@ -359,7 +394,9 @@
     SHAPES: Object.keys(SHAPES),
     DEFAULT_SEG: DEFAULT_SEG,
     compile: compile,
+    geometryOf: geometryOf,
     build: build,
+    buildGroup: buildGroup,
     buildFromText: buildFromText,
     /* 给节点 / AI 提示词用的规格说明（单一真源：改这里，提示词和校验一起变） */
     schemaHelp: function () {

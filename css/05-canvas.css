@@ -182,6 +182,20 @@
   .var-menu button:hover { background: #2a323c; color: #fff; }
   .var-menu button span { font-size: 8.5px; color: #7f8794; }
 
+  /* 节点图像右键菜单（复制到剪贴板）：fixed 定位，不受画布缩放影响 */
+  .img-menu {
+    position: fixed; z-index: 999; min-width: 150px; padding: 5px;
+    border-radius: 8px; background: #1d232b; border: 1px solid #38414e;
+    box-shadow: 0 20px 40px -18px #000, 0 1px 0 rgba(255,255,255,.05) inset;
+  }
+  .img-menu button {
+    display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 6px 7px;
+    border: none; border-radius: 5px; background: none; color: #e2e7ee;
+    font-family: inherit; font-size: 10.5px; text-align: left; cursor: pointer;
+  }
+  .img-menu button:hover { background: #2a323c; color: #fff; }
+  .img-menu button span { font-size: 8.5px; color: #7f8794; }
+
   /* 画布：网格随平移缩放一起走（background-position/size 由编辑引擎同步） */
   .bp-canvas {
     position: relative; flex: 1; overflow: hidden; touch-action: none; cursor: default;

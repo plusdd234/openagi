@@ -447,7 +447,7 @@ async function cfCancelInstall(){
 async function openComfyApp(){
   const win = $('comfyWin');
   if(!win) return false;
-  /* 统一走 App 页翻页（deskMountApp 定义在 desktop.js）；拿不到时退回弹窗 */
+  /* 统一走 App 页翻页（deskMountApp 定义在 desk-shell.js）；拿不到时退回弹窗 */
   if(typeof deskMountApp === 'function') deskMountApp(win, '本地生图', 'ComfyUI 引擎');
   else win.classList.remove('hidden');
   cfBindProgress();
@@ -460,7 +460,7 @@ async function openComfyApp(){
 }
 
 /* 启动时静默探一次，让工作台图标上的状态点从一开始就是准的。
- * 延迟执行：desktop.js 在本文件之后加载，refreshDeskStates 那时才存在； */
+ * 延迟执行：desk-shell.js 在本文件之后加载，refreshDeskStates 那时才存在； */
 setTimeout(() => {
   if(!cfDesk()) return;
   cfDetect(true).then(() => {

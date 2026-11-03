@@ -5,7 +5,7 @@
  * 与各分发表；引脚解析只有这一份实现（schema），编辑器、校验器、生成器都调它。
  *
  * 依赖：blueprint-core.js 的 NODE_DEFS / NODE_PARAMS / NODE_LIB（空容器）、PIN_META、uid。
- * 纯逻辑、零 DOM（渲染由 desktop.js 调 pinsForRender 拿数据自己画）。
+ * 纯逻辑、零 DOM（渲染由 flow-node-view.js 调 pinsForRender 拿数据自己画）。
  */
 
 const NODE_REGISTRY = {};

@@ -9,7 +9,7 @@
  *   - 规范化时用 seedNodeData 补齐默认值，保证生成节点与手工添加的节点完全同形
  */
 
-// 参数值按类型收敛（与 desktop.js 的 paramValue / coerceVar 口径一致）
+// 参数值按类型收敛（与 flow-node-view.js 的 paramValue / coerceVar 口径一致）
 function coerceByType(type, v){
   if(type === 'int') return Math.trunc(Number(v) || 0);
   if(type === 'float') return Number(v) || 0;

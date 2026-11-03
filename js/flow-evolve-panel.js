@@ -221,7 +221,7 @@ async function vexTrial(variantFlow, v){
   const trial = JSON.parse(JSON.stringify(variantFlow));
   trial.id = 'trial_' + (v && v.id ? v.id : 'v') + '_' + Date.now();
   trial.name = '试跑 · ' + ((v && v.name) || '变体');
-  trial.__noSave = true;              // desktop.js 的 saveFlowNow 会跳过它
+  trial.__noSave = true;              // flow-canvas.js 的 saveFlowNow 会跳过它
   bp = trial;
   if(window.Editor) Editor.reset();
   $('bpName').value = trial.name;

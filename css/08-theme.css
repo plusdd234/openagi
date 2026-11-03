@@ -185,6 +185,13 @@
   .var-menu button { color: #1f2328; }
   .var-menu button:hover { background: #f2f3f5; color: #1f2328; }
   .var-menu button span { color: #8a9098; }
+  .img-menu {
+    background: #fff; border-color: #e3e6ea;
+    box-shadow: 0 16px 36px rgba(20,30,50,.16), 0 1px 2px rgba(20,30,50,.05);
+  }
+  .img-menu button { color: #1f2328; }
+  .img-menu button:hover { background: #f2f3f5; color: #1f2328; }
+  .img-menu button span { color: #8a9098; }
 
   /* 画布与连线 */
   .bp-canvas {

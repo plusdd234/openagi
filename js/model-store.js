@@ -476,7 +476,7 @@ async function renderModelStore(hw){
 async function openModelStore(){
   const win = $('storeWin');
   if(!win) return;
-  /* 统一走 App 页翻页（deskMountApp 定义在 desktop.js）；拿不到时退回弹窗 */
+  /* 统一走 App 页翻页（deskMountApp 定义在 desk-shell.js）；拿不到时退回弹窗 */
   if(typeof deskMountApp === 'function') deskMountApp(win, '模型商店', '安装 / 删除本地模型');
   else win.classList.remove('hidden');
   if(!msState.hw) msPaintStore();      // 先出骨架，别让窗口空白等探测

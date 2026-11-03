@@ -406,11 +406,9 @@
     .desk-wall.desk-boot .desk-canvas,
     .desk-wall.desk-boot .desk-app,
     .desk-wall.desk-boot .desk-page-1 > .desk-ai-wrap,
-    .dapp-head,
     .bp-bar, .bp-side, .bp-bar-in, .bp-side-in,
     .sk-bar > i, .sk-row::after, .sk-card::after,
     .dgen-skel::after, .dgen-spin,
     .cd-toast { animation: none !important; transition: none !important; }
-    .dab-ch, .dapp-back, .dapp-back::after { transition: none !important; }
     #blueprintView.view-in, #homeView.view-in { box-shadow: none; }
   }

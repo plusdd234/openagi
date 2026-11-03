@@ -590,7 +590,7 @@
     state.open = false;
     const win = $('playerWin');
     if(!win) return;
-    /* 走 desktop.js 的统一关闭入口：正显示在 App 页里的走翻页返回，
+    /* 走 desk-shell.js 的统一关闭入口：正显示在 App 页里的走翻页返回，
      * 否则只隐藏。自己判 parentElement 会在「刚点开就被关掉」那一瞬判错。 */
     if(typeof deskCloseWin === 'function') deskCloseWin(win);
     else win.classList.add('hidden');

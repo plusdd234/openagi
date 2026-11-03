@@ -40,7 +40,7 @@
     ready:   { text: '已就绪', tone: 'ok' },
     failed:  { text: '未启动', tone: 'wait' }
   };
-  const WARM_KEY = 'hf_desk_model';   // 与 desk-chat.js 同一个键
+  const WARM_KEY = 'hf_desk_model';   // 与 desk-chat-core.js 同一个键
   const WARMED_KEY = 'hf_desk_warmed'; // 同一模型不重复预热（同一会话内）
 
   const state = { ollama: 'idle', comfy: 'idle', note: '', ollamaNote: '', comfyNote: '', run: false, done: false, at: 0 };
@@ -280,7 +280,7 @@
     }
     /* 引擎状态之外还要盯一件独立的事：对话里换了本地模型。
      * 换了模型 = 新的权重要读进显存 = 不预热就会在用户提问那一刻冷加载
-     * = 又一次四五秒的干等。desk-chat.js 在模型变更时会调这里。 */
+     * = 又一次四五秒的干等。desk-chat-send.js 在模型变更时会调这里。 */
     window.addEventListener('hf-desk-model-changed', onModelChanged);
   }
 

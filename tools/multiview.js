@@ -638,7 +638,12 @@ function idsOf(html) {
     L4g: multiview._pure.exportLayout(4, 2048, 16, 2),
     L8: multiview._pure.exportLayout(8, 4096, 0, 4),
     L1: multiview._pure.exportLayout(1, 4096, 0, 0),
-    LAuto: multiview._pure.exportLayout(6, 2048, 0, 0)
+    LAuto: multiview._pure.exportLayout(6, 2048, 0, 0),
+    /* 一键紧凑：矩形格铺满正方形画布 */
+    L2c: multiview._pure.exportLayout(2, 4096, 0, 2, true),
+    L3c: multiview._pure.exportLayout(3, 4096, 0, 0, true),
+    L4c: multiview._pure.exportLayout(4, 2048, 0, 2, true),
+    L2cg: multiview._pure.exportLayout(2, 4096, 32, 2, true)
   }));
   check(pure.L4.cols === 2 && pure.L4.rows === 2 && pure.L4.cell === 1024 && pure.L4.w === 2048,
     '四视图 2×2 · 2K 画布单格 1024', JSON.stringify(pure.L4));
@@ -646,6 +651,56 @@ function idsOf(html) {
   check(pure.L8.cols === 4 && pure.L8.rows === 2 && pure.L8.cell === 1024, '八视图 4×2 · 4K 画布', JSON.stringify(pure.L8));
   check(pure.L1.cols === 1 && pure.L1.cell === 4096, '单视图 4K 用满整幅（渲染核单格上限已放宽到 4096）', JSON.stringify(pure.L1));
   check(pure.LAuto.cols * pure.LAuto.rows >= 6 && pure.LAuto.cell % 2 === 0, '自动列数铺得下 + 单格保持偶数', JSON.stringify(pure.LAuto));
+  check(pure.L2c.cellW === 2048 && pure.L2c.cellH === 4096 && pure.L2c.compact === true,
+    '紧凑 2 视图：单格 2048×4096，网格铺满 4K 画布', JSON.stringify(pure.L2c));
+  check(pure.L3c.cols === 3 && pure.L3c.cellW === 1364 && pure.L3c.cellH === 4096,
+    '紧凑 3 视图：单格 1364×4096', JSON.stringify(pure.L3c));
+  check(pure.L4c.cellW === 1024 && pure.L4c.cellH === 1024, '紧凑 2×2 仍是正方形格（不变形）',
+    JSON.stringify(pure.L4c));
+  check(pure.L2cg.cellW * 2 + 32 === 4096 && pure.L2cg.cellH === 4096,
+    '紧凑 + 间距 32 仍然铺满 4K', JSON.stringify(pure.L2cg));
+
+  /* === 4.1 一键紧凑按钮：状态、持久化、参数 === */
+  console.log('\n=== 4.1 一键紧凑 ===');
+  const cmp = await app.p.evaluate(async () => {
+    const host = document.getElementById('mvCompacts');
+    const btns = [...host.querySelectorAll('[data-mv-val]')];
+    const real = Model3D.viewGrid;
+    let seen = null;
+    Model3D.viewGrid = function (src, o) {
+      seen = JSON.parse(JSON.stringify(o || {}));
+      return Promise.resolve({ png: '', cols: 2, rows: 1, cell: 1, cellW: 1, cellH: 1, gap: 0, width: 1, height: 1, cells: [], quad: true });
+    };
+    const before = { state: !!multiview.state.compact, buttons: btns.length };
+    const viewsBefore = multiview.state.views.slice();
+    multiview.state.views = ['front', 'back'];      // 2 视图才能测出「矩形格」
+    multiview.state.exSize = 4096;                  // 4K 才能测出 2048×4096
+    const b1 = btns.find(x => x.dataset.mvVal === '1');
+    if (b1) b1.click();
+    try { await multiview.render(); } catch (e) { /* 只看参数 */ }
+    const out = {
+      before,
+      state: !!multiview.state.compact,
+      seen,
+      on: !!b1 && b1.classList.contains('is-on')
+    };
+    /* 复原：不重渲（多视图的默认 4 视图是 2×2，紧凑与否像素一致） */
+    multiview.state.compact = false;
+    multiview.state.views = viewsBefore;
+    multiview.state.exSize = 2048;
+    MV.saveSet();
+    btns.forEach(x => x.classList.toggle('is-on', x.dataset.mvVal === '0'));
+    Model3D.viewGrid = real;
+    return out;
+  });
+  check(cmp.before.buttons === 2, '「标准 / 一键紧凑」两个按钮都在', String(cmp.before.buttons));
+  check(cmp.before.state === false, '默认不是紧凑');
+  check(cmp.state === true && cmp.on, '点一下 → state.compact=true 且按钮高亮');
+  check(cmp.seen && cmp.seen.cellW !== cmp.seen.cellH,
+    '渲染核收到的单格是矩形（cellW ≠ cellH）', cmp.seen ? (cmp.seen.cellW + '×' + cmp.seen.cellH) : 'none');
+  check(cmp.seen && cmp.seen.cellW === 2048 && cmp.seen.cellH === 4096,
+    '2 视图 4K 紧凑 → 传入 2048×4096', cmp.seen ? (cmp.seen.cellW + '×' + cmp.seen.cellH) : 'none');
+  check(cmp.seen && cmp.seen.cell === 2048, '旧参数 cell 仍等于宽（兼容老调用方）', String(cmp.seen && cmp.seen.cell));
 
   /* === 3.12 背景层 + 后期处理层（始终最顶） === */
   console.log('\n=== 3.12 背景层 / 后期处理层 ===');

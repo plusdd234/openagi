@@ -119,7 +119,7 @@ function clearFlowDelete(id){
   if (!id) return;
   if (deletedFlowIds.delete(id)) persistDeletedIds();
 }
-// 迁移调用已移到 js/bind.js 开头：migrateAiTaskNodes 定义在更晚加载的 js/desktop.js，
+// 迁移调用已移到 js/bind.js 开头：migrateAiTaskNodes 定义在更晚加载的 js/flow-canvas.js，
 // 此处直接调用会因跨 script 不再提升而抛 ReferenceError。
 let bp = null;
 let bpPan = { x: 40, y: 50 };

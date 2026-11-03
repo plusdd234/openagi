@@ -104,8 +104,14 @@ js/
   blueprint-core.js     画布数据模型
   blueprint-runtime.js  执行引擎
   editor.js             视图手势
-  desktop.js            桌面与 App 外壳
-  desk-chat.js          AI 对话
+  desk-shell.js         桌面与 App 外壳（图标 / 翻页 / 窗口挂载）
+  flow-canvas.js        流程画布（坐标 / 连线 / 存档）
+  flow-node-view.js     节点 DOM（参数控件 / 引脚 / 渲染）
+  desk-chat-core.js     AI 对话：状态 / 模型清单 / 自绘下拉 / 配置
+  desk-chat-log.js      AI 对话：上下文 / 附件 / 消息渲染与持久化
+  desk-chat-gen.js      AI 对话：对话内生图
+  desk-chat-send.js     AI 对话：输入模式 / 发送 / init
+  bare-chat.js          裸聊 App：无 system / 无上下文 / 无历史（基准线）
   desk-image.js         生图纯逻辑（意图 / 改写 / 来源分支）
   provider.js           多引擎生图
 electron/

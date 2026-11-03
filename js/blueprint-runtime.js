@@ -620,6 +620,20 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
   firstTimer = setTimeout(() => abortWith('first'), firstWaitMs);
   hard = setTimeout(() => abortWith('limit'), limitMs || 600000);
 
+  /* 工具调用：只在调用方显式传 opts.tools 时启用（默认不传，既有链路一个字节都不变）。
+     带工具时返回值改成 { text, toolCalls, finishReason }，见函数末尾。 */
+  const wantTools = !!(opts && Array.isArray(opts.tools) && opts.tools.length);
+  const body = Object.assign({
+    model,
+    messages: (sys ? [{ role:'system', content: sys }] : []).concat(messages),
+    temperature: .3,
+    stream: true
+  }, thinkingRequestBody());
+  if(wantTools){
+    body.tools = opts.tools;
+    body.tool_choice = opts.toolChoice || 'auto';
+  }
+
   const req = apiRequest(base + '/chat/completions', {
     method: 'POST',
     headers: {
@@ -627,12 +641,7 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
       'Content-Type': 'application/json',
       'Accept': 'text/event-stream'
     },
-    body: JSON.stringify(Object.assign({
-      model,
-      messages: (sys ? [{ role:'system', content: sys }] : []).concat(messages),
-      temperature: .3,
-      stream: true
-    }, thinkingRequestBody()))
+    body: JSON.stringify(body)
   });
 
   // 建立连接的瞬时失败可安全重试：此时还没收到任何响应内容，
@@ -686,8 +695,13 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
       const text = sp.answer.trim();
       const think = (readReasoning(msg) + sp.reasoning).trim();
       if(think){ gotReasoning = true; rsn = think; }
-      if(!text) throw new Error('模型没有返回内容');
-      if(onDelta) onDelta(text, text, { phase:'answer', reasoning: rsn });
+      const calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+      if(!text && !calls.length) throw new Error('模型没有返回内容');
+      if(text && onDelta) onDelta(text, text, { phase:'answer', reasoning: rsn });
+      if(wantTools){
+        if(opts.onToolCalls) opts.onToolCalls(calls);
+        return { text: text, toolCalls: calls, finishReason: (data.choices && data.choices[0] && data.choices[0].finish_reason) || '' };
+      }
       return text;
     }
 
@@ -698,6 +712,24 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
     let doneFlag = false;
     let inThink = false;          // 内联 <think> 块跨越多个分片，需要记忆状态
     let pending = '';             // 疑似半个标签的尾巴，等下一片再判断
+    let callsAcc = [];            // 流式 function calling：按 index 拼 id / name / arguments
+    let finishReason = '';
+    /* 分片里的 tool_calls 只有片段：id 通常首片给全，name 可能分片，arguments 一律是增量字符串。
+       同一个 index 累加，最后按出现顺序还原成完整调用。 */
+    const mergeToolDeltas = list => {
+      list.forEach((tc, i) => {
+        if(!tc || typeof tc !== 'object') return;
+        const idx = typeof tc.index === 'number' ? tc.index : i;
+        if(!callsAcc[idx]) callsAcc[idx] = { id:'', type:'function', function:{ name:'', arguments:'' } };
+        const t = callsAcc[idx];
+        if(tc.id) t.id = String(tc.id);
+        if(tc.type) t.type = String(tc.type);
+        const fn = tc.function || {};
+        if(typeof fn.name === 'string' && fn.name) t.function.name += fn.name;
+        if(typeof fn.arguments === 'string') t.function.arguments += fn.arguments;
+        else if(fn.arguments && typeof fn.arguments === 'object') t.function.arguments = JSON.stringify(fn.arguments);
+      });
+    };
     const notify = phase => { if(onDelta) onDelta(acc, '', { phase, reasoning: rsn }); };
     const addContent = t => {
       if(!t) return;
@@ -752,7 +784,9 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
       if(payload === '[DONE]'){ doneFlag = true; return; }
       try{
         const j = JSON.parse(payload);
-        const d = j.choices && j.choices[0] && (j.choices[0].delta || j.choices[0].message || {});
+        const ch = j.choices && j.choices[0];
+        if(ch && ch.finish_reason) finishReason = String(ch.finish_reason);
+        const d = ch && (ch.delta || ch.message || {});
         const piece = d && typeof d.content === 'string' ? d.content : '';
         // 思考内容：R1 / Qwen3 这类模型会先推一大段推理，此时正文一个字都还没有
         const think = readReasoning(d);
@@ -763,6 +797,12 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
           waitingFirst = false;
           clearTimeout(firstTimer);
           notify('thinking');
+        }
+        /* 工具调用片段同样是「上游在工作」：清首段计时器，否则只调工具的轮次会被误判超时。 */
+        if(d && Array.isArray(d.tool_calls) && d.tool_calls.length){
+          waitingFirst = false;
+          clearTimeout(firstTimer);
+          mergeToolDeltas(d.tool_calls);
         }
         if(piece) feed(piece);
       }catch(_){ /* 跳过非 JSON 行 */ }
@@ -785,7 +825,14 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
     if(pending){ const rest = pending; pending = ''; addContent(rest); }   // 结尾没等来标签，那它就只是普通文本
 
     const text = acc.trim();
-    if(!text) throw new Error('模型没有返回内容');
+    const calls = callsAcc.filter(Boolean).map(c => ({
+      id: c.id || ('call_' + Math.random().toString(36).slice(2, 8)),
+      type: c.type || 'function',
+      function: { name: c.function.name, arguments: c.function.arguments || '{}' }
+    }));
+    if(!text && !calls.length) throw new Error('模型没有返回内容');
+    if(opts && typeof opts.onToolCalls === 'function') opts.onToolCalls(calls);
+    if(wantTools) return { text: text, toolCalls: calls, finishReason: finishReason };
     return text;
   }catch(e){
     if(e && e.name === 'AbortError'){
@@ -1601,7 +1648,7 @@ async function runFlow(){
   /* ---- 运行级采集（P3）：这一层是「重放」和「成本账本」的唯一数据来源 ---- */
   const runId = 'run' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
   let runVersionId = '';           // 这次跑的是哪一版快照
-  let runCacheHits = 0;            // 跨运行复用了几个节点
+  const runCacheHits = 0;          // 跨运行复用已暂时移除，账本字段保留但恒为 0
   const runNodeLog = [];           // 节点级快照（实际模型 / 解析后参数 / 成本 / 确定性）
   const runInputs = new Map();     // nodeId -> { 引脚: 解析后的值 }，由 resolveInput 记
   const runRaw = new Map();        // nodeId -> { 引脚: 原值 }，只留资产类（算血缘用）
@@ -1643,18 +1690,6 @@ async function runFlow(){
       }
     } catch(e){}
     return '';
-  };
-
-  /* 缓存键用的值归一。**不能用 snapVal**：它把任何 data: 都压成「<内联数据 NNNB>」，
-   * 于是两张字节数相同的不同参考图会算出同一个键 —— 出来的是上次那张图，且毫无报错。
-   * 这里改成短值原样、长值取指纹，既区分得开又不把 5MB 塞进哈希函数。 */
-  const keyVal = v => {
-    if(v === undefined || v === null) return v;
-    if(typeof v === 'number' || typeof v === 'boolean') return v;
-    if(typeof v !== 'string'){ try { return JSON.stringify(v).slice(0, 400); } catch(e){ return '[对象]'; } }
-    if(v.length <= 2048) return v;
-    const h = (typeof fnv1a === 'function') ? fnv1a(v, 2166136261).toString(36) : String(v.length);
-    return '#h' + h + ':' + v.length;
   };
 
   /* 产出边：哪些节点产出了可以被追溯的资产。
@@ -1797,57 +1832,24 @@ async function runFlow(){
       const meta = (typeof nodeMeta === 'function')
         ? nodeMeta(n.type)
         : { cost: 0, determinism: 'structural', cacheable: false };
-      let fromCache = false;
-      let cacheKey = '';
 
-      /* 跨运行复用：只对花钱的节点做（cost > 0）。
-       * 键里必须含引擎与模型名 —— 同一句提示词在本地 ComfyUI 与云端 banana 上是两张完全不同的图。
-       * 少一个维度就会出现「参数不同却命中同一条」，而这种 bug 表面上一切正常，只是出来的是上次那张。 */
-      if(meta.cacheable && typeof cacheKeyFor === 'function'){
-        try {
-          const ins = {};
-          const dIn = (NODE_DEFS[n.type] || {}).inputs || [];
-          for(const k of dIn){
-            const v = await input(k);
-            if(v !== undefined && v !== null) ins[k] = keyVal(v);
-          }
-          cacheKey = cacheKeyFor(n.type, engineOf(n) + '|' + modelOf(n),
-            Object.assign({}, n.data || {}, ins));
-          if(cacheKey){
-            const hit = await cacheGet(cacheKey);
-            if(hit && hit.out){
-              n.out = (hit.out && typeof hit.out === 'object') ? Object.assign({}, hit.out) : hit.out;
-              fromCache = true;
-              runCacheHits++;
-              try { cacheTouch(cacheKey); } catch(e){}
-              bpLog('↺ ' + bpNodeLabel(n) + ' 复用上次产出（本次没花钱）', 'warn');
-            }
-          }
-        } catch(e){
-          cacheKey = '';       // 复用出问题就当没开，绝不让它挡住正常执行
-        }
-      }
+      /* 跨运行复用暂时移除（2026-11-02）：原逻辑按
+       * 「能力 + 引擎|模型 + 节点参数(n.data) + 解析后的数据输入」算 key，
+       * 库里同 key 的产出直接塞回 n.out、跳过 runner —— 同参数的节点
+       * （包括两个配置相同的节点）会被整段跳过，用户编排的步骤就看不到真实执行。
+       * 恢复时把 node-cache.js 的 cacheKeyFor / cacheGet / cacheTouch / cachePut 接回这里，
+       * 并把下面 runNodeLog 里的 cache 字段改回 fromCache。 */
 
-      if(!fromCache){
-        /* 异步节点的「开始」出口：任务真正启动时立即触发下游，不等结果。
-         * 需要拿到结果才动的节点必须接「完成」出口（done）——那才是
-         * 「网页生图结束、图片到手后才激活」的执行线。 */
-        const dDef = NODE_DEFS[n.type] || {};
-        if(dDef.asyncExec && !startFired.has(n.id)){
-          startFired.add(n.id);
-          bpLog('↷ ' + bpNodeLabel(n) + ' 任务启动（触发「开始」出口）');
-          try { await followExec(n, n.out, visited || new Set([n.id]), 'exec'); } catch(e){}
-        }
-        await runner({ n, input, paramIn, setStatus, log: bpLog, startedAt: nodeStarted });
-        if(cacheKey && meta.cacheable && typeof cachePut === 'function'){
-          try {
-            await cachePut(cacheKey, {
-              cap: n.type, engine: engineOf(n), model: modelOf(n),
-              determinism: meta.determinism, cost: meta.cost, out: n.out
-            });
-          } catch(e){}
-        }
+      /* 异步节点的「开始」出口：任务真正启动时立即触发下游，不等结果。
+       * 需要拿到结果才动的节点必须接「完成」出口（done）——那才是
+       * 「网页生图结束、图片到手后才激活」的执行线。 */
+      const dDef = NODE_DEFS[n.type] || {};
+      if(dDef.asyncExec && !startFired.has(n.id)){
+        startFired.add(n.id);
+        bpLog('↷ ' + bpNodeLabel(n) + ' 任务启动（触发「开始」出口）');
+        try { await followExec(n, n.out, visited || new Set([n.id]), 'exec'); } catch(e){}
       }
+      await runner({ n, input, paramIn, setStatus, log: bpLog, startedAt: nodeStarted });
 
       n.status = 'ok';
       setStatus(n, '完成', 'ok');
@@ -1860,7 +1862,7 @@ async function runFlow(){
         id: n.id, type: n.type, title: bpNodeLabel(n), ok: true, ms: nodeMs,
         model: modelOf(n), engine: engineOf(n),
         determinism: meta.determinism, cost: Number(meta.cost) || 0,
-        cache: fromCache,
+        cache: false,
         params: Object.assign({}, n.data || {}, runInputs.get(n.id) || {})
       });
       collectAssetEdges(n, meta);

@@ -54,7 +54,7 @@
           <div class="mv-seg" id="mvModes"></div>
           <span class="mv-lab">相机</span>
           <div class="mv-seg" id="mvCams"></div>
-          <span class="mv-lab">单格</span>
+          <span class="mv-lab">画布</span>
           <div class="mv-seg" id="mvSizes"></div>
         </div>
       </div>
@@ -63,24 +63,28 @@
         <summary title="画布级参数：列数、间距、留白、线宽——它们不属于任何一层">画布</summary>
         <div class="mv-more-body">
           <div class="mv-field"><span>列数</span><div class="mv-seg" id="mvCols"></div></div>
+          <div class="mv-field"><span>铺满</span><div class="mv-seg" id="mvCompacts"></div></div>
           <div class="mv-field"><span>间距</span><input type="range" id="mvGap" min="0" max="48" step="2"><b id="mvGapV">0</b></div>
           <div class="mv-field"><span>留白</span><input type="range" id="mvMargin" min="100" max="160" step="2"><b id="mvMarginV">108</b></div>
           <div class="mv-field"><span>线宽</span><input type="range" id="mvLineW" min="4" max="60" step="2"><b id="mvLineWV">14</b></div>
         </div>
       </details>
 
-      <div class="mv-stage" id="mvStage">
-        <div class="mv-empty" id="mvEmpty">
-          <div class="mv-empty-t">把 glb / obj 拖进来</div>
-          <div class="mv-empty-s">也可以点左上「＋ 文件」。obj 的四边形面会按原始拓扑画线框，不会出现三角化的对角线。</div>
+      <div class="mv-stage-wrap" id="mvStageHost">
+        <div class="mv-stage" id="mvStage">
+          <div class="mv-empty" id="mvEmpty">
+            <div class="mv-empty-t">把 glb / obj 拖进来</div>
+            <div class="mv-empty-s">也可以点左上「＋ 文件」。obj 的四边形面会按原始拓扑画线框，不会出现三角化的对角线。</div>
+          </div>
+          <img id="mvOut" alt="多视图结果" draggable="false" class="hidden">
+          <div class="mv-pick hidden" id="mvPick"></div>
         </div>
-        <img id="mvOut" alt="多视图结果" draggable="false" class="hidden">
-        <div class="mv-pick hidden" id="mvPick"></div>
       </div>
 
       <div class="mv-bar">
         <span class="mv-info" id="mvInfo"></span>
         <button type="button" class="btn sm" id="mvPreview">3D 预览</button>
+        <button type="button" class="btn sm" id="mvSplit" disabled>AI 拆件</button>
         <button type="button" class="btn sm" id="mvSaveLib">存入图库</button>
         <button type="button" class="btn sm" id="mvDlCell" disabled>下载这格</button>
         <button type="button" class="btn sm" id="mvDlAll" disabled>下载整图</button>
@@ -127,7 +131,7 @@
     <aside class="mv-export">
       <div class="mv-ex-head">导出</div>
       <div class="mv-ex-row">
-        <select class="mv-sel" id="mvExSize" title="导出画布（正方形）">
+        <select class="mv-sel" id="mvExSize" title="画布尺寸（正方形）· 预览与导出一致">
           <option value="2048">2K · 2048</option>
           <option value="4096">4K · 4096</option>
         </select>
@@ -146,6 +150,43 @@
       <button type="button" class="btn sm" id="mvExMask" disabled>导出遮罩图</button>
     </aside>
       </aside>
+
+      <!-- AI 拆件弹层：遮住整个 .mv-wrap。里面的控件 id 与 index.html 必须完全一致 -->
+      <div class="mv-split hidden" id="mvSplitPanel">
+        <div class="mv-split-card">
+          <div class="mv-split-head">
+            <span class="mv-split-title">AI 拆件</span>
+            <span class="mv-split-sub" id="mvSplitSub"></span>
+            <button type="button" class="mv-split-x" id="mvSplitClose" aria-label="关闭">×</button>
+          </div>
+          <div class="mv-split-body">
+            <div class="mv-split-row">
+              <span class="mv-split-lab">分成</span>
+              <input type="text" id="mvSplitParts" class="mv-split-in" placeholder="面部和脖子、头发和头饰、身体">
+              <span class="mv-split-lab">候选岛</span>
+              <input type="range" id="mvSplitMax" min="20" max="240" step="10" value="120">
+              <b id="mvSplitMaxV">120</b>
+              <button type="button" class="btn sm primary" id="mvSplitRun">开始拆件</button>
+            </div>
+            <div class="mv-split-note" id="mvSplitInfo"></div>
+            <div class="mv-split-imgs">
+              <div class="mv-split-pane">
+                <span class="mv-split-cap">候选 UV 岛（编号给 AI 寻址）</span>
+                <img id="mvSplitAtlas" alt="候选 UV 岛图" class="hidden">
+              </div>
+              <div class="mv-split-pane">
+                <span class="mv-split-cap">拆件结果（颜色对应部件）</span>
+                <img id="mvSplitViews" alt="拆件结果预览" class="hidden">
+              </div>
+            </div>
+            <div class="mv-split-list" id="mvSplitList"></div>
+            <div class="mv-split-foot">
+              <button type="button" class="btn sm" id="mvSplitDlGlb" disabled>下载整件 GLB</button>
+              <button type="button" class="btn sm" id="mvSplitSaveLib" disabled>存入模型库</button>
+            </div>
+          </div>
+        </div>
+      </div>
   </div>
 </div>
 
@@ -154,8 +195,22 @@
 <script src="vendor/GLTFLoader.js"></script>
 <script src="vendor/OBJLoader.js"></script>
 <script src="vendor/OrbitControls.js"></script>
+<script src="vendor/GLTFExporter.js"></script>
 <script src="js/model3d.js"></script>
+<script src="js/m3d-slots.js"></script>
+<script src="js/m3d-preview.js"></script>
+<script src="js/modeltex.js"></script>
+<!-- 多视图 App：按依赖顺序加载（详见 js/multiview.js 顶部模块表） -->
+<script src="js/mv-core.js"></script>
+<script src="js/mv-layers.js"></script>
+<script src="js/mv-state.js"></script>
+<script src="js/mv-models.js"></script>
+<script src="js/mv-render.js"></script>
+<script src="js/mv-layer-panel.js"></script>
+<script src="js/mv-panels.js"></script>
+<script src="js/mv-bind.js"></script>
 <script src="js/multiview.js"></script>
+<script src="js/model-split.js"></script>
 <script>
   (function () {
     function boot() {

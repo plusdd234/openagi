@@ -2,7 +2,7 @@
  * 原 index.html 5445-5622 行
  * 由解耦脚本机械切分，内容与顺序保持原样
  */
-// 旧版节点迁移：必须在所有模块加载完成后执行（migrateAiTaskNodes / taskPin 定义在 js/desktop.js）
+// 旧版节点迁移：必须在所有模块加载完成后执行（migrateAiTaskNodes / taskPin 定义在 js/flow-canvas.js）
 FLOWS.forEach(migrateAiTaskNodes);
 const _legacyMigratedAll = FLOWS.reduce((sum, f) =>
   sum + migrateLegacyBranches(f) + migrateLegacyCondition(f), 0);   // aiBranch → smartBranch；condition → aiTask
