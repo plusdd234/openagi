@@ -50,6 +50,10 @@
        * 每顶点一份就表达不了接缝，UV 岛无从判定。显示几何暂时不读它（那需要按 UV 拆顶点），
        * 它现在只服务两件事：UV 岛选取、以及将来的贴图 / UV 视图。 */
       uvs: [],
+      /* UV 缝：边一旦标了 seam，uvIslands 不再沿它合并面（即使两端 UV 连续）。
+       * key = 两端顶点 ID 的规范组合（min + '_' + max），用对象当集合，值恒为 1。
+       * 它只影响 UV 岛判定，不改拓扑；撤销 / 指纹 / 落盘都要带上它。 */
+      uvSeams: Object.create(null),
       /* 缓存：不参与序列化 */
       version: 0,
       _geometry: null,
@@ -178,7 +182,7 @@
       for (var k = 0; k < nv; k++) {
         var c0 = s0 + k, c1 = s0 + ((k + 1) % nv);
         var va = mesh.faceIndices[c0], vb = mesh.faceIndices[c1];
-        var key = (va < vb ? va + '_' + vb : vb + '_' + va);
+        var key = seamKey(mesh, va, vb);
         var rec = {
           f: f,
           uA: va < vb ? mesh.uvs[c0 * 2] : mesh.uvs[c1 * 2],
@@ -190,6 +194,8 @@
       }
     }
     Object.keys(byEdge).forEach(function (key) {
+      /* 缝：这条边两侧的 UV 就算完全一致，也不许并成一个岛 */
+      if (mesh.uvSeams && mesh.uvSeams[key]) return;
       var list = byEdge[key];
       if (list.length < 2) return;
       for (var a = 1; a < list.length; a++) {
@@ -214,6 +220,39 @@
     return out;
   }
 
+  /* ---------------- UV 缝 ----------------
+   * 缝不是拓扑：它只是「这条边两侧的面不许并岛」的标记。
+   * 所以加缝不会动顶点 / 面 / UV，撤销代价只有几条字符串。 */
+  function seamKey(mesh, ia, ib) {
+    var a = mesh && mesh.vertexIds ? mesh.vertexIds[ia] : ia;
+    var b = mesh && mesh.vertexIds ? mesh.vertexIds[ib] : ib;
+    if (a == null) a = ia;
+    if (b == null) b = ib;
+    return a < b ? a + '_' + b : b + '_' + a;
+  }
+  function hasSeam(mesh, ia, ib) {
+    return !!(mesh && mesh.uvSeams && mesh.uvSeams[seamKey(mesh, ia, ib)]);
+  }
+  /* 返回是否真的改变了（调用方据此统计新增缝数）；不 bump，由命令层统一 bump */
+  function setSeam(mesh, ia, ib, on) {
+    if (!mesh || ia == null || ib == null) return false;
+    mesh.uvSeams = mesh.uvSeams || Object.create(null);
+    var key = seamKey(mesh, ia, ib);
+    var prev = !!mesh.uvSeams[key];
+    if (on) mesh.uvSeams[key] = 1;
+    else delete mesh.uvSeams[key];
+    return prev !== !!on;
+  }
+  function clearSeams(mesh) {
+    if (!mesh) return 0;
+    var n = Object.keys(mesh.uvSeams || {}).length;
+    mesh.uvSeams = Object.create(null);
+    return n;
+  }
+  function seamCount(mesh) {
+    return (mesh && mesh.uvSeams) ? Object.keys(mesh.uvSeams).length : 0;
+  }
+
   /* 版本号：任何写操作后手动 bump；显示缓存、边表都靠它失效 */
   function bump(mesh) {
     mesh.version = (mesh.version || 0) + 1;
@@ -225,15 +264,16 @@
    *   **绝不原地改旧 mesh** —— 先 clone 一份再动，动完 bump。
    *   原地改会让「内容指纹」指向被改过的同一份数据，撤销 / 历史去重直接失真。
    *
-   * rawIndices：faceIndices 的**原始副本**（三角形下标）。fromBufferGeometry 里
-   *   mergeQuads 合并四边形时会改写 faceIndices，但 uvs 仍按原始三角面角存放
-   *   （见 ensureUV/uvIslands：角号 = faceOffsets 下标，对应原始三角面角序列）。
-   *   算子要改拓扑（挤出 / 内插 / 删面）时，必须同时改 rawIndices 和 uvs，
-   *   否则两者长度脱节、UV 岛判定直接崩。 */
+   * rawIndices：**UV 角号**（与 uvs 平行：uvs 按面角存放，角号 = faceOffsets 下标）。
+   *   刚导入时一个角就是它自己，所以补一份恒等序列；算子改拓扑后，这里记的是
+   *   「新角继承了哪个旧角」，-1 = 没有来源（新面，UV 补 0）。
+   *   ⚠ 不能塞 faceIndices 的副本 —— 那是顶点号，拿去索引 uvs 会整只模型乱采样。 */
   function ensureRawIndices(mesh) {
     if (!mesh) return null;
     if (!mesh.rawIndices || mesh.rawIndices.length !== mesh.faceIndices.length) {
-      mesh.rawIndices = mesh.faceIndices.slice();
+      var n = mesh.faceIndices.length;
+      mesh.rawIndices = new Array(n);
+      for (var i = 0; i < n; i++) mesh.rawIndices[i] = i;
     }
     return mesh.rawIndices;
   }
@@ -257,7 +297,7 @@
         mesh.uvs[c * 2] = 0;
         mesh.uvs[c * 2 + 1] = 0;
       } else {
-        raw[c] = src;
+        raw[c] = c;
         mesh.uvs[c * 2] = mesh.uvs[src * 2] || 0;
         mesh.uvs[c * 2 + 1] = mesh.uvs[src * 2 + 1] || 0;
       }
@@ -719,6 +759,26 @@
     var groups = [];
     var runSlot = -1, runStart = 0, runCount = 0;
 
+    /* 索引几何里一个顶点只能挂一组 UV，而 UV 缝两侧的面角 UV 不同（导入时按位置焊接
+     * 过，同一个顶点被多个面共用）。不拆的话 UV 会被压成同一个值，贴图采样全落在一个
+     * texel 上 —— 表现为整只模型一个纯色块。这里按 (顶点, UV) 拆成渲染顶点。 */
+    var hasUv = !!(mesh.uvs && mesh.uvs.length === mesh.faceIndices.length * 2);
+    var posOut = posArr, uvOut = null, uvMap = null, origOut = null;
+    if (hasUv) { posOut = []; uvOut = []; uvMap = Object.create(null); origOut = []; }
+    function uvVert(v, corner) {
+      var u = mesh.uvs[corner * 2], w = mesh.uvs[corner * 2 + 1];
+      var key = v + '|' + Math.round(u * 8192) + '|' + Math.round(w * 8192);
+      var r = uvMap[key];
+      if (r == null) {
+        r = uvOut.length / 2;
+        posOut.push(mesh.positions[v * 3], mesh.positions[v * 3 + 1], mesh.positions[v * 3 + 2]);
+        uvOut.push(u, w);
+        origOut.push(v);
+        uvMap[key] = r;
+      }
+      return r;
+    }
+
     for (var f = 0; f < mesh.faceIds.length; f++) {
       var start = mesh.faceOffsets[f], end = mesh.faceOffsets[f + 1];
       var slot = mesh.faceSlots[f] || 0;
@@ -730,17 +790,46 @@
       }
       var v0 = mesh.faceIndices[start];
       for (var k = 1; k < end - start - 1; k++) {
-        idx.push(v0, mesh.faceIndices[start + k], mesh.faceIndices[start + k + 1]);
+        if (hasUv) {
+          idx.push(uvVert(v0, start),
+            uvVert(mesh.faceIndices[start + k], start + k),
+            uvVert(mesh.faceIndices[start + k + 1], start + k + 1));
+        } else {
+          idx.push(v0, mesh.faceIndices[start + k], mesh.faceIndices[start + k + 1]);
+        }
         runCount += 3;
       }
     }
     if (runCount) groups.push({ start: runStart, count: runCount, slot: runSlot });
 
     var geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(posArr, 3));
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(posOut, 3));
+    if (uvOut) geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvOut, 2));
     if (idx.length) geo.setIndex(idx);
     geo.computeVertexNormals();
+    /* 拆出来的渲染顶点要把法线按「原顶点」合回去：否则 UV 缝两侧的拐角变成逐面法线，
+     * 平滑物体的光影会突然变硬（盒子这种本来靠平均法线出来的渐变也会消失）。 */
+    if (hasUv) {
+      var nr = geo.getAttribute('normal');
+      var acc = mesh.positions.length ? new Float32Array(mesh.positions.length) : null;
+      var cnt = new Uint32Array(mesh.positions.length / 3);
+      for (var si = 0; si < origOut.length; si++) {
+        var oi = origOut[si];
+        acc[oi * 3] += nr.getX(si); acc[oi * 3 + 1] += nr.getY(si); acc[oi * 3 + 2] += nr.getZ(si);
+        cnt[oi]++;
+      }
+      for (var sj = 0; sj < origOut.length; sj++) {
+        var oj = origOut[sj], cj = cnt[oj] || 1;
+        var sx = acc[oj * 3] / cj, sy = acc[oj * 3 + 1] / cj, sz = acc[oj * 3 + 2] / cj;
+        var len = Math.sqrt(sx * sx + sy * sy + sz * sz) || 1;
+        nr.setXYZ(sj, sx / len, sy / len, sz / len);
+      }
+      nr.needsUpdate = true;
+    }
     groups.forEach(function (g) { geo.addGroup(g.start, g.count, g.slot); });
+    /* 渲染顶点 → 原顶点 的映射（UV 缝会把同一个顶点拆成多个渲染顶点）。
+     * 拖动顶点时只能按这张表回写缓冲区；按下标直拷会让整块网格炸开。 */
+    if (origOut) geo.userData.mdOrig = origOut;
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
 
@@ -766,6 +855,8 @@
       faceIds: packI32(mesh.faceIds),
       faceSlots: packI32(mesh.faceSlots),
       uvs: packF32(mesh.uvs),
+      /* 缝是字符串 key 的集合，直接存数组；老文件没有这个字段 → 空缝 */
+      uvSeams: Object.keys(mesh.uvSeams || {}),
       stats: stats(mesh)
     };
   }
@@ -782,6 +873,9 @@
     mesh.faceSlots = unpackTyped(obj.faceSlots, Int32Array, 'faceSlots');
     /* UV 是后加的字段：老文件没有它，读成空数组即可（ensureUV 会补一份盒式投影） */
     mesh.uvs = obj.uvs ? unpackTyped(obj.uvs, Float32Array, 'uvs') : [];
+    if (obj.uvSeams && obj.uvSeams.length) {
+      for (var sm = 0; sm < obj.uvSeams.length; sm++) mesh.uvSeams[String(obj.uvSeams[sm])] = 1;
+    }
 
     var errs = validate(mesh);
     if (errs.length) throw new Error('mesh 数据损坏：' + errs.join('；'));
@@ -854,6 +948,11 @@
   var _f32 = new Float32Array(1);
   var _u32 = new Uint32Array(_f32.buffer);
   function fnvByte(h, b) { return Math.imul(h ^ (b & 0xff), 16777619) >>> 0; }
+  function hashStr(s, seed) {
+    var h = seed >>> 0;
+    for (var i = 0; i < s.length; i++) h = fnvByte(h, s.charCodeAt(i));
+    return h;
+  }
   function hashF32(arr, seed) {
     var h = seed >>> 0, i, k;
     for (i = 0; i < arr.length; i++) {
@@ -883,6 +982,9 @@
     b = hashI32(mesh.faceSlots, b);
     /* UV 也进指纹：改 UV 必须算一次编辑，否则撤销栈看不见它 */
     if (mesh.uvs && mesh.uvs.length) a = hashF32(mesh.uvs, a);
+    /* 缝同样进指纹：只加缝（UV 一个字节没动）也必须是一次可撤销的编辑 */
+    var seamKeys = Object.keys(mesh.uvSeams || {});
+    if (seamKeys.length) a = hashStr(seamKeys.sort().join('|'), a);
     return (a >>> 0).toString(36) + '-' + (b >>> 0).toString(36) +
       '-' + mesh.positions.length + '-' + mesh.faceIds.length;
   }
@@ -902,6 +1004,7 @@
     m.faceIds = cloneArray(mesh.faceIds);
     m.faceSlots = cloneArray(mesh.faceSlots);
     m.uvs = cloneArray(mesh.uvs);
+    if (mesh.uvSeams) Object.keys(mesh.uvSeams).forEach(function (k) { m.uvSeams[k] = 1; });
     m.nextVertexId = mesh.nextVertexId || 0;
     m.nextFaceId = mesh.nextFaceId || 0;
     m.version = mesh.version || 0;
@@ -935,6 +1038,11 @@
     uvAt: uvAt,
     ensureUV: ensureUV,
     uvIslands: uvIslands,
+    seamKey: seamKey,
+    hasSeam: hasSeam,
+    setSeam: setSeam,
+    clearSeams: clearSeams,
+    seamCount: seamCount,
     mergeQuads: mergeQuads,
     triNormal: triNormal,
     ensureRawIndices: ensureRawIndices,

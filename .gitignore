@@ -135,3 +135,19 @@ tools/_slot*.png
 # （参考图建模的规格示例），是真数据，要跟着脚本一起入库 → 末尾取反放行。
 tools/_*
 !tools/_demo_spec.json
+
+# ===== 根目录一次性产物（2026-11-06 清理） =====
+# 与 tools/_* 同一约定：下划线开头 = 一次性脚本 / 截图 / 草稿，不入库。
+# 之前这些文件散落在仓库根，每次 git status 都是一长串噪声。
+/_*
+# 演示稿与 QA 截图：随时可重跑生成
+/check-*.png
+/slide-*.png
+/verify-*.png
+/face-node-*.png
+# HTML 分享包（构建产物）
+/.trae-html-share-packages/
+# 本地手工备份
+*.bak-*
+# 用户素材（表情包拆分图，属于数据不属于代码）
+/表情包拆分/

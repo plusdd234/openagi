@@ -34,10 +34,13 @@
   background: var(--md-bg); color: var(--md-txt);
   font: 11.5px/1.35 "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
   overflow: hidden; user-select: none;
+  /* UV 编辑器等浮层用绝对定位挂在这里，参照系必须是 .md-app */
+  position: relative;
 }
 
 /* ---------- 1. 菜单条 ---------- */
 .md-menu {
+  position: relative;
   flex: 0 0 25px; height: 25px;
   display: flex; align-items: center; gap: 6px;
   padding: 0 8px;
@@ -58,6 +61,30 @@
   white-space: nowrap;
 }
 .md-mitem:hover { background: #4b4b4b; border-color: #565656; }
+.md-mitem.open { background: #4b4b4b; border-color: #565656; }
+/* 主菜单下拉：绝对定位在 .md-menu 下方，坐标由 mdOpenMenu 按按钮实测值写入 */
+.md-drop {
+  position: absolute; z-index: 70; min-width: 196px; max-width: 300px;
+  padding: 4px; border-radius: 3px;
+  background: #3b3b3b; border: 1px solid #202020;
+  box-shadow: 0 10px 26px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.05);
+}
+.md-drop[hidden] { display: none; }
+.md-mtitle {
+  padding: 3px 7px 5px; font-size: 10px; color: #9a9a9a; letter-spacing: .06em;
+}
+.md-mi {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  min-height: 23px; padding: 0 8px; border: 0; border-radius: 2px;
+  background: transparent; color: #dcdcdc; font: inherit; font-size: 11.5px;
+  text-align: left; cursor: pointer; white-space: nowrap;
+}
+.md-mi > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.md-mi > b { margin-left: auto; font-size: 10px; font-weight: 400; color: #8f8f8f; }
+.md-mi:hover:not(.off) { background: #4a6a92; color: #fff; }
+.md-mi:hover:not(.off) > b { color: #dbe6f2; }
+.md-mi.off { opacity: .38; cursor: default; }
+.md-msep { display: block; height: 1px; margin: 4px 6px; background: #4d4d4d; }
 .md-menu-right { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
 .md-workspace { font-size: 10px; color: #9c9c9c; white-space: nowrap; }
 .md-name {
@@ -107,6 +134,8 @@
   font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
 }
 .md-act:hover { background: #4a4a4a; color: #fff; }
+/* 开关型按钮（四视图 / 单独显示）的按下态 */
+.md-act.on { background: var(--md-on); border-color: var(--md-on-line); border-top-color: #66839f; color: #fff; }
 .md-act:disabled { opacity: .4; cursor: default; background: #3d3d3d; color: #bdbdbd; }
 .md-act.primary { background: #4f6a84; border-color: #394e61; border-top-color: #6d8aa5; color: #fff; }
 .md-act.primary:hover { background: #5b7897; }
@@ -269,7 +298,9 @@
 .md-vplabel { font-size: 10px; color: #c4c4c4; padding: 0 4px; white-space: nowrap; flex: 0 0 auto; }
 /* 视口标题行的「着色」下拉：真控件，状态与视口同步 */
 .md-vpsel {
-  height: 18px; flex: 0 0 auto;
+  /* 01-base 给所有 select 设了 width:100%，这里不压回 auto 下拉会撑满整条标题行，
+   * 把后面「单独显示」等图标按钮推到最右边看不见 */
+  height: 18px; width: auto; flex: 0 0 auto;
   margin: 0 3px 0 0; padding: 0 2px;
   background: var(--md-field); color: #d8d8d8;
   border: 1px solid var(--md-field-line); border-radius: 2px;
@@ -285,8 +316,11 @@
   font: inherit; font-size: 11px; line-height: 1; padding: 0; cursor: default;
 }
 button.md-vpi { cursor: pointer; }
+/* 标题栏里的图标按钮用内联 SVG（◱ 这类生僻字在部分字体里又小又淡） */
+.md-vpi svg { width: 13px; height: 13px; display: block; }
 .md-vpi:hover { background: #4a4a4a; border-color: #292929; color: #eee; }
 button.md-vpi.on { background: var(--md-on); border-color: var(--md-on-line); color: #fff; }
+button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-vpnum { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .md-numb {
   min-width: 34px; height: 18px; line-height: 16px;
@@ -317,7 +351,9 @@ button.md-vpi.on { background: var(--md-on); border-color: var(--md-on-line); co
 .md-cube {
   position: absolute; top: 12px; right: 14px;
   width: 92px; height: 92px;
-  border-radius: 8px; overflow: hidden;
+  border-radius: 8px;
+  /* 箭头露在框外，所以不能裁；圆角只裁自己的底色，不影响子元素 */
+  overflow: visible;
   background: rgba(20, 22, 25, .62);
   border: 1px solid rgba(0, 0, 0, .4);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 2px 8px rgba(0, 0, 0, .28);
@@ -327,6 +363,24 @@ button.md-vpi.on { background: var(--md-on); border-color: var(--md-on-line); co
 .md-cube:hover { opacity: 1; }
 .md-cube.drag { cursor: grabbing; }
 .md-cube canvas { display: block; width: 100%; height: 100%; }
+
+/* 立方体四边的四个小三角（Maya 那套转向区）：点一下把视图往那个方向翻 90°。
+ * 只有视图「归正」（前/后/左/右/顶/底）时才露出——斜看时翻 90° 落点仍是斜的，
+ * 箭头没有意义，还挡面。露出时才接指针，平时不挡拖拽。 */
+.md-cube-turn {
+  position: absolute; display: block;
+  width: 12px; height: 8px;
+  background: rgba(255, 255, 255, .62);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  opacity: 0; pointer-events: none;
+  transition: opacity .12s, background .12s;
+}
+.md-cube.on .md-cube-turn { opacity: .8; pointer-events: auto; }
+.md-cube-turn:hover { opacity: 1; background: #ffcf86; }
+.md-cube-turn.top { top: -12px; left: 50%; margin-left: -6px; transform: rotate(180deg); }
+.md-cube-turn.bottom { bottom: -12px; left: 50%; margin-left: -6px; }
+.md-cube-turn.left { left: -14px; top: 50%; margin-top: -6px; transform: rotate(90deg); }
+.md-cube-turn.right { right: -14px; top: 50%; margin-top: -6px; transform: rotate(-90deg); }
 
 /* 四视图分屏覆盖层：只画分隔线和标签，3D 由同一个 renderer 的 scissor 分屏渲染 */
 .md-quad { position: absolute; inset: 0; display: none; pointer-events: none; }
@@ -374,14 +428,21 @@ button.md-vpi.on { background: var(--md-on); border-color: var(--md-on-line); co
 }
 .md-hud b { color: #fff; font-weight: 600; }
 
-/* 4.4 右侧：建模工具箱 + 属性编辑器 / 通道盒 */
+/* 4.4 右侧：一整列 + 顶部一行页签（建模工具箱 / 绘画工具箱 / 属性编辑器）。
+ * 三者同时只显示一个：原来工具箱和属性编辑器上下分摊高度，两边都被挤成小窗口。 */
 .md-right {
   flex: 0 0 300px; min-width: 0;
   display: flex; flex-direction: column;
   background: var(--md-panel); border-left: 1px solid var(--md-line);
 }
-.md-tb { flex: 0 0 auto; display: flex; flex-direction: column; border-bottom: 1px solid var(--md-line); }
-.md-tb-body { padding: 3px 0 5px; }
+.md-tb {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+/* 内容比一屏长：列表自己滚，页头 / 模式条始终可见 */
+.md-tb-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 3px 0 5px; }
+.md-right.is-props .md-tb { display: none; }
 .md-tb-h {
   height: 18px; display: flex; align-items: center;
   padding: 0 8px; margin-top: 2px;
@@ -489,7 +550,13 @@ button.md-vpi.on { background: var(--md-on); border-color: var(--md-on-line); co
 }
 .md-soft-reset:hover { background: #4a4a4a; color: #fff; }
 
-.md-props { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* 属性编辑器是第三个页签：默认不占位，切到「属性编辑器」页签才显示 */
+.md-props {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: none; flex-direction: column;
+  background: var(--md-panel);
+}
+.md-right.is-props .md-props { display: flex; }
 .md-ptabs {
   flex: 0 0 23px; height: 23px;
   display: flex; align-items: flex-end; gap: 3px;
@@ -894,6 +961,17 @@ button.md-vpi.on { background: var(--md-on); border-color: var(--md-on-line); co
 }
 .md-hbp-apply:hover { background: #558cb5; }
 .md-hbp-apply:disabled { background: #3a3b40; border-color: #2b2b2c; color: #777; cursor: not-allowed; }
+
+/* 工具会话参数面板（挤出等）：固定贴在视口右上，标题随工具名；行标签更宽、带开关 */
+.md-toolpanel { right: 18px; top: 96px; width: 252px; z-index: 72; }
+.md-toolpanel .md-hbp-row { grid-template-columns: 92px 1fr; }
+.md-tp-sw {
+  height: 20px; cursor: pointer; border-radius: 10px;
+  border: 1px solid #3a3b40; background: #1f2023; color: #a8adb3;
+  font: inherit; font-size: 10.5px; line-height: 1;
+}
+.md-tp-sw.on { background: #4a7ea5; border-color: #3a6588; color: #fff; }
+.md-tp-sw:hover { border-color: #6f88a0; }
 .md-hb-zone.off { opacity: .72; }
 .md-hb-zone button.off { color: #8b9097; cursor: not-allowed; }
 .md-hb-zone button.off i { color: #6f747a; }
@@ -915,3 +993,238 @@ button.md-vpi.on { background: var(--md-on); border-color: var(--md-on-line); co
   box-shadow: 0 10px 28px rgba(0, 0, 0, .5);
 }
 .md-hb-core i { font-style: normal; font-size: 9px; color: #7f858c; }
+
+/* ============================================================
+ * UV 编辑器（X5a–X5e）
+ * 仿 Maya UV 编辑器：标题栏 / 菜单 / 工具栏 / 标尺画布 / UV 工具包。
+ * 浮层挂在 .md-app 内（绝对定位），所以窗口拖动用 left/top，不依赖 body。
+ * ============================================================ */
+.md-uvwin {
+  position: absolute; left: 170px; top: 88px; right: 18px; bottom: 40px;
+  z-index: 30; min-width: 480px; min-height: 320px;
+  display: flex; flex-direction: column;
+  background: #2f2f2f; color: var(--md-txt);
+  border: 1px solid #101010; border-radius: 3px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .045);
+  overflow: hidden; outline: none;
+}
+.md-uvwin.pulse { animation: md-uv-pulse .26s ease; }
+@keyframes md-uv-pulse {
+  50% { box-shadow: 0 0 0 2px var(--md-accent), 0 18px 44px rgba(0, 0, 0, .55); }
+}
+
+.md-uv-head {
+  flex: 0 0 27px; height: 27px;
+  display: flex; align-items: center; gap: 8px; padding: 0 8px;
+  background: linear-gradient(180deg, #464646 0%, #383838 100%);
+  border-bottom: 1px solid #191919;
+  cursor: move;
+}
+.md-uv-head b { font-size: 11.5px; color: #f2f2f2; font-weight: 700; }
+.md-uv-target {
+  font-size: 10px; color: #9a9a9a; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 46%;
+}
+.md-uv-headbtns { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.md-uv-hbtn {
+  height: 19px; padding: 0 7px;
+  border: 1px solid #252525; border-top-color: #4f4f4f; border-radius: 2px;
+  background: #3d3d3d; color: #d4d4d4; font: inherit; font-size: 10px; cursor: pointer;
+}
+.md-uv-hbtn:hover { background: #4a4a4a; color: #fff; }
+
+.md-uv-menubar {
+  flex: 0 0 23px; height: 23px;
+  display: flex; align-items: center; gap: 1px; padding: 0 5px;
+  background: #3a3a3a; border-bottom: 1px solid #1b1b1b;
+  overflow: hidden;
+}
+.md-uv-mitem {
+  height: 19px; padding: 0 6px; flex: 0 0 auto;
+  border: 1px solid transparent; border-radius: 2px;
+  background: transparent; color: #d2d2d2;
+  font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
+}
+.md-uv-mitem:hover { background: #4b4b4b; border-color: #565656; }
+
+.md-uv-drop {
+  position: absolute; z-index: 60; min-width: 186px;
+  background: #3f3f3f; border: 1px solid #161616; border-radius: 2px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(255, 255, 255, .05);
+  padding: 4px;
+}
+.md-uv-drop[hidden] { display: none; }
+.md-uv-mtitle {
+  padding: 3px 7px 5px; color: #8f8f8f; font-size: 9.5px;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.md-uv-mi {
+  width: 100%; height: 23px; padding: 0 7px;
+  display: flex; align-items: center; gap: 8px;
+  border: 0; border-radius: 2px; background: transparent;
+  color: #d6d6d6; font: inherit; font-size: 10.5px; text-align: left; cursor: pointer;
+}
+.md-uv-mi:hover { background: var(--md-on); color: #fff; }
+.md-uv-mi b { margin-left: auto; font-weight: 400; color: #8f8f8f; font-size: 9.5px; }
+.md-uv-mi:hover b { color: #dce8f2; }
+.md-uv-mi.off { color: #7d7d7d; cursor: default; }
+.md-uv-mi.off:hover { background: #454545; color: #9a9a9a; }
+.md-uv-msep { display: block; height: 1px; margin: 3px 2px; background: #2b2b2b; }
+
+.md-uv-tools {
+  flex: 0 0 30px; height: 30px;
+  display: flex; align-items: center; gap: 4px; padding: 0 6px;
+  background: #333333; border-bottom: 1px solid #1b1b1b;
+  overflow: hidden;
+}
+.md-uv-tgrp { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.md-uv-tsep {
+  flex: 0 0 1px; width: 1px; height: 17px; margin: 0 2px;
+  background: #232323; box-shadow: 1px 0 0 #474747;
+}
+.md-uv-tbtn {
+  height: 23px; min-width: 24px; padding: 0 3px;
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0; flex: 0 0 auto;
+  border: 1px solid #242424; border-top-color: #4c4c4c; border-radius: 2px;
+  background: #3b3b3b; color: #bdbdbd;
+  font: inherit; font-size: 9px; line-height: 1; cursor: pointer;
+}
+.md-uv-tbtn svg { width: 13px; height: 13px; }
+.md-uv-tbtn span { font-size: 8.5px; color: #b5b5b5; margin-top: 1px; }
+.md-uv-tbtn:hover { background: #4a4a4a; color: #fff; }
+.md-uv-tbtn.on { background: var(--md-on); border-color: var(--md-on-line); border-top-color: #6d8aa5; color: #fff; }
+.md-uv-tbtn.on span { color: #eaf3fb; }
+.md-uv-tbtn.txt { width: auto; padding: 0 7px; flex-direction: row; font-size: 10.5px; }
+.md-uv-tread {
+  margin-left: auto; padding-left: 8px; flex: 0 1 auto;
+  font-size: 10px; color: #9a9a9a; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.md-uv-tex {
+  flex: 0 0 auto; margin-left: 6px; padding: 1px 6px;
+  font: inherit; font-size: 9.5px; color: #d3a354; cursor: pointer;
+  border: 1px solid #5a4826; border-radius: 2px; background: #3a3325;
+  white-space: nowrap;
+}
+.md-uv-tex:hover { background: #463d2b; border-color: #7a6536; }
+.md-uv-tex.on { background: #4f6a84; border-color: #394e61; color: #fff; }
+
+.md-uv-toast {
+  position: absolute; left: 50%; top: 34px; z-index: 3;
+  transform: translateX(-50%) translateY(-6px);
+  max-width: 88%; padding: 5px 12px;
+  border: 1px solid #5c5c5c; border-radius: 3px;
+  background: rgba(20,20,20,.93); color: #ececec;
+  font-size: 11px; line-height: 1.5; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  opacity: 0; pointer-events: none;
+  transition: opacity .14s ease, transform .14s ease;
+  box-shadow: 0 4px 14px rgba(0,0,0,.45);
+}
+.md-uv-toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+.md-uv-toast.err { border-color: #8a4a3a; color: #ffd3c2; }
+
+.md-uv-body { flex: 1 1 auto; min-height: 0; display: flex; background: #232323; }
+.md-uv-cvwrap { flex: 1 1 auto; min-width: 0; position: relative; }
+#mdUvCanvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: default; }
+.md-uv-hint {
+  position: absolute; left: 26px; right: 12px; bottom: 7px;
+  font-size: 10px; color: #9c9c9c; pointer-events: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-shadow: 0 1px 2px #000;
+}
+
+.md-uv-kit {
+  flex: 0 0 224px; width: 224px; overflow-y: auto; overflow-x: hidden;
+  background: #363636; border-left: 1px solid #1b1b1b;
+  font-size: 10.5px;
+}
+.md-uv-kit::-webkit-scrollbar { width: 9px; }
+.md-uv-kit::-webkit-scrollbar-thumb { background: #4c4c4c; border-radius: 5px; border: 2px solid #363636; }
+.md-uvk-head {
+  position: sticky; top: 0; z-index: 2;
+  height: 27px; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+  background: #404040; border-bottom: 1px solid #1b1b1b;
+}
+.md-uvk-head b { font-size: 11px; color: #e4e4e4; }
+.md-uvk-help {
+  margin-left: auto; height: 18px; padding: 0 6px;
+  border: 1px solid #252525; border-top-color: #4d4d4d; border-radius: 2px;
+  background: #3d3d3d; color: #cfcfcf; font: inherit; font-size: 9.5px; cursor: pointer;
+}
+.md-uvk-help:hover { background: #4a4a4a; }
+
+/* 右侧工具箱的两个页签（建模 / 绘画） */
+.md-tbkinds { display: flex; align-items: center; gap: 2px; }
+.md-tbkinds .md-otab { height: 18px; line-height: 17px; }
+.md-tb.is-paint .md-tb-tabs,
+.md-tb.is-paint .md-modebar,
+.md-tb.is-paint .md-mode-hint,
+.md-tb.is-paint #mdToolbox { display: none; }
+.md-paint { padding: 6px 8px 8px; display: flex; flex-direction: column; gap: 7px; }
+.md-paint[hidden] { display: none; }
+.md-paint-row { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: #c9c9c9; }
+.md-paint-row > span { flex: 0 0 52px; color: #a9a9a9; }
+.md-paint-row input[type=range] { flex: 1 1 auto; min-width: 0; height: 14px; accent-color: #5b9bd5; }
+.md-paint-row b { flex: 0 0 auto; min-width: 40px; text-align: right; font-weight: 400; font-size: 10px; color: #dcdcdc; }
+.md-paint-row select {
+  flex: 1 1 auto; height: 20px; padding: 0 4px; font-size: 10.5px;
+  background: #3a3a3a; color: #ddd; border: 1px solid #262626; border-radius: 3px;
+}
+.md-paint-sw { flex: 0 0 22px; height: 14px; border-radius: 2px; border: 1px solid #1d1d1d; }
+.md-paint-row input[type=color] {
+  flex: 0 0 28px; width: 28px; height: 18px; padding: 0;
+  border: 1px solid #262626; border-radius: 2px; background: #3a3a3a;
+}
+.md-paint-chk {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10.5px; color: #cfcfcf; cursor: pointer; white-space: nowrap;
+}
+.md-paint-chk input { width: 13px; height: 13px; margin: 0; accent-color: #5b9bd5; }
+.md-paint-hint { font-size: 10px; line-height: 1.55; color: #8f8f8f; }
+
+.md-uvk-sec { padding: 7px 8px 8px; border-bottom: 1px solid #2b2b2b; }
+.md-uvk-title { color: #c7c7c7; margin-bottom: 6px; font-size: 10.5px; }
+.md-uvk-grid { display: flex; align-items: stretch; gap: 3px; flex-wrap: wrap; }
+.md-uvk-grid .md-uv-tbtn { flex: 1 1 0; width: auto; min-width: 50px; height: 30px; }
+.md-uvk-grid .md-uv-tbtn span { font-size: 9px; }
+.md-uvk-row {
+  display: flex; justify-content: space-between; gap: 8px;
+  padding: 2px 0; color: #a9a9a9;
+}
+.md-uvk-row b { font-weight: 400; color: #d0d0d0; text-align: right; }
+.md-uvk-row b.off { color: #777; }
+.md-uvk-acts { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 4px; }
+.md-uvk-acts button {
+  height: 19px; padding: 0 7px; flex: 0 0 auto;
+  border: 1px solid #252525; border-top-color: #4d4d4d; border-radius: 2px;
+  background: #3d3d3d; color: #d4d4d4; font: inherit; font-size: 10px; cursor: pointer;
+}
+.md-uvk-acts button:hover { background: var(--md-on); color: #fff; border-color: var(--md-on-line); }
+.md-uvk-acts.wide button { flex: 1 1 0; min-width: 58px; }
+.md-uvk-grp { border-bottom: 1px solid #2b2b2b; }
+.md-uvk-gt {
+  width: 100%; height: 24px; display: flex; align-items: center; gap: 5px; padding: 0 8px;
+  border: 0; background: transparent; color: #d0d0d0;
+  font: inherit; font-size: 10.5px; text-align: left; cursor: pointer;
+}
+.md-uvk-gt:hover { background: #3f3f3f; }
+.md-uvk-gt i { font-style: normal; color: #8f8f8f; transition: transform .15s; }
+.md-uvk-grp.open > .md-uvk-gt i { transform: rotate(90deg); }
+.md-uvk-gb { display: none; padding: 5px 8px 8px; }
+.md-uvk-grp.open > .md-uvk-gb { display: block; }
+.md-uvk-note { color: #7f7f7f; font-size: 10px; line-height: 1.55; }
+
+.md-uv-rs {
+  position: absolute; right: 5px; bottom: 5px; width: 12px; height: 12px;
+  cursor: nwse-resize; z-index: 5;
+  background:
+    linear-gradient(135deg, transparent 44%, #8a8a8a 44%, #8a8a8a 56%, transparent 56%),
+    linear-gradient(135deg, transparent 68%, #666 68%, #666 80%, transparent 80%);
+}
+
+@media (max-width: 1100px) {
+  .md-uvwin { left: 120px; right: 8px; }
+  .md-uv-kit { flex-basis: 200px; width: 200px; }
+}

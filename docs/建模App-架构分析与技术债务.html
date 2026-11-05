@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>建模 App 架构分析与技术债务 · 对标 Blender / Maya / 3ds Max</title>
+<style>
+  :root{
+    --bg:#131519; --panel:#1b1e24; --panel2:#20242b; --line:#2c313a;
+    --txt:#e6e8ec; --dim:#a6adba; --mute:#7d8592;
+    --amber:#d9a441; --amber-dim:#8a6a2c; --blue:#5b8fd6; --red:#d96a6a; --green:#5fae7f;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--txt);
+    font:14px/1.7 "Segoe UI","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 32px 96px}
+  header{border-bottom:1px solid var(--line);padding-bottom:28px;margin-bottom:36px}
+  .kicker{font-size:11px;letter-spacing:.18em;color:var(--amber);text-transform:uppercase;margin-bottom:12px}
+  h1{margin:0 0 14px;font-size:30px;line-height:1.3;font-weight:700;letter-spacing:.01em}
+  .sub{color:var(--dim);font-size:13.5px;max-width:820px}
+  .meta{margin-top:18px;display:flex;flex-wrap:wrap;gap:10px 22px;font-size:11.5px;color:var(--mute)}
+  .meta b{color:var(--dim);font-weight:600}
+  h2{margin:52px 0 6px;font-size:20px;letter-spacing:.02em}
+  h2 .no{color:var(--amber);font-size:12px;letter-spacing:.16em;display:block;margin-bottom:6px}
+  .lead{color:var(--dim);font-size:13px;margin:0 0 20px}
+  h3{font-size:15px;margin:26px 0 8px}
+  p{margin:10px 0}
+  a{color:var(--blue);text-decoration:none;border-bottom:1px solid rgba(91,143,214,.3)}
+  a:hover{border-bottom-color:var(--blue)}
+  code{font-family:"Cascadia Code",Consolas,monospace;font-size:12px;background:#232830;border:1px solid #303743;
+    border-radius:3px;padding:1px 5px;color:#cfd6e2}
+
+  /* 摘要三卡 */
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:22px 0 8px}
+  .card{background:linear-gradient(180deg,#20242b,#1a1d23);border:1px solid var(--line);border-radius:6px;padding:18px 18px 16px}
+  .card .k{font-size:11px;letter-spacing:.12em;color:var(--mute);text-transform:uppercase}
+  .card .v{font-size:26px;font-weight:700;margin:8px 0 4px;line-height:1.2}
+  .card .v small{font-size:12px;font-weight:400;color:var(--mute)}
+  .card .d{font-size:12px;color:var(--dim);line-height:1.6}
+  .v-good{color:var(--green)} .v-warn{color:var(--amber)} .v-bad{color:var(--red)}
+
+  /* 评分条 */
+  .scores{margin:14px 0 8px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .score-row{display:grid;grid-template-columns:190px 1fr 62px;gap:14px;align-items:center;
+    padding:11px 16px;border-top:1px solid var(--line);background:var(--panel)}
+  .score-row:first-child{border-top:0}
+  .score-row .n{font-size:12.5px}
+  .score-row .why{grid-column:3;display:none}
+  .bar{height:7px;background:#262b33;border-radius:4px;overflow:hidden;position:relative}
+  .bar i{display:block;height:100%;border-radius:4px}
+  .bar .fill-g{background:linear-gradient(90deg,#3f7a5c,#63b184)}
+  .bar .fill-w{background:linear-gradient(90deg,#8a6a2c,#d9a441)}
+  .bar .fill-b{background:linear-gradient(90deg,#7c3c3c,#d96a6a)}
+  .score-row .s{text-align:right;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+
+  /* 指标块 */
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0 6px}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:14px 15px}
+  .tile b{display:block;font-size:19px;font-weight:700;letter-spacing:.01em}
+  .tile span{display:block;font-size:11px;color:var(--mute);margin-top:4px}
+
+  /* 表 */
+  table{width:100%;border-collapse:collapse;margin:18px 0 10px;font-size:12.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11px;letter-spacing:.08em;color:var(--mute);text-transform:uppercase;background:#191c21}
+  tr:hover td{background:#1d2127}
+  td:first-child{white-space:nowrap}
+  .tag{display:inline-block;font-size:10.5px;padding:1px 7px;border-radius:10px;border:1px solid;white-space:nowrap}
+  .t-p0{color:#efb0b0;border-color:#5e3333;background:#2a1b1b}
+  .t-p1{color:#f0d29a;border-color:#5b4924;background:#292216}
+  .t-p2{color:#a9c6ec;border-color:#33465e;background:#1b2430}
+  .t-ok{color:#a7d6bb;border-color:#2f5140;background:#182420}
+
+  /* 债务条目 */
+  .debt{border:1px solid var(--line);border-radius:6px;background:var(--panel);margin:16px 0;overflow:hidden}
+  .debt-h{display:flex;align-items:center;gap:12px;padding:13px 16px;background:linear-gradient(180deg,#242932,#1e2229);
+    border-bottom:1px solid var(--line);cursor:default}
+  .debt-h .id{font-family:Consolas,monospace;font-size:11px;color:var(--mute);letter-spacing:.06em}
+  .debt-h .name{font-size:14px;font-weight:600}
+  .debt-b{padding:6px 16px 16px}
+  .kv{display:grid;grid-template-columns:76px 1fr;gap:2px 12px;font-size:12.5px;margin-top:10px}
+  .kv .k{color:var(--mute);font-size:11px;letter-spacing:.04em}
+  .kv .v{color:var(--dim)}
+  .kv .v b{color:var(--txt);font-weight:600}
+
+  /* 路线图 */
+  .steps{counter-reset:s;margin:18px 0 0}
+  .step{display:grid;grid-template-columns:34px 1fr;gap:14px;padding:14px 0;border-top:1px solid var(--line)}
+  .step:first-child{border-top:0}
+  .step .dot{width:26px;height:26px;border-radius:50%;border:1px solid var(--amber-dim);color:var(--amber);
+    display:flex;align-items:center;justify-content:center;font-size:11px;font-variant-numeric:tabular-nums;margin-top:2px}
+  .step b{font-size:13.5px}
+  .step p{margin:4px 0 0;font-size:12.5px;color:var(--dim)}
+  .exit{font-size:11.5px;color:var(--mute);margin-top:6px}
+  .exit s{color:var(--green);text-decoration:none}
+
+  .note{border-left:2px solid var(--amber);background:#1d2026;padding:12px 16px;font-size:12.5px;color:var(--dim);
+    border-radius:0 4px 4px 0;margin:18px 0}
+  .note b{color:var(--amber)}
+  footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);font-size:11.5px;color:var(--mute)}
+  @media (max-width:820px){
+    .cards,.tiles{grid-template-columns:1fr 1fr}
+    .score-row{grid-template-columns:130px 1fr 48px}
+    h1{font-size:24px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Architecture Review · 2026-11-05</div>
+  <h1>建模 App 架构分析与技术债务评估</h1>
+  <div class="sub">
+    以当前仓库真实代码为依据，对照 Blender、Maya、3ds Max 的成熟分层，回答两个问题：
+    <b>这套架构现在欠了什么债</b>，以及<b>哪些债已经在收利息</b>（近期三个线上缺陷都是它的直接产物）。
+  </div>
+  <div class="meta">
+    <span><b>范围</b>　js/ 91 个文件 · 54,253 行；CSS 7,347 行；vendor 8,396 行</span>
+    <span><b>方法</b>　文件规模统计 + 关键路径读码 + 探针回归（219 条断言）</span>
+    <span><b>不被计入</b>　其他 App（svg-tools、blueprint、node-flow 等）</span>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<h2><span class="no">SUMMARY</span>结论摘要</h2>
+<p class="lead">三层判断：内核方向正确，外壳欠债最多，实时路径余量最小。</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="k">架构健康度</div>
+    <div class="v v-warn">5.4 <small>/ 10</small></div>
+    <div class="d">数据层已有清晰模块（seed-* 11 个文件 5,041 行），但 UI 层与实时交互仍压在 6,484 行的单文件里（已拆出 5 个模块）。</div>
+  </div>
+  <div class="card">
+    <div class="k">最大单点风险</div>
+    <div class="v v-bad">破坏式建模</div>
+    <div class="d">修改器栈只有字段和空壳求值器（<code>seed-evaluator.js</code> 42 行），所有挤出/环切/移动都直接烘焙进基础网格。</div>
+  </div>
+  <div class="card">
+    <div class="k">是否达到“专业级”</div>
+    <div class="v v-warn">雏形</div>
+    <div class="d">交互概念对齐 Maya（隔离、组件模式、UV 编辑器、笔刷贴图），但内核、材质、历史三块仍是“教学级”实现。</div>
+  </div>
+</div>
+
+<div class="scores">
+  <div class="score-row"><div class="n">模块边界与耦合</div><div class="bar"><i class="fill-w" style="width:60%"></i></div><div class="s">6.0</div></div>
+  <div class="score-row"><div class="n">网格数据模型</div><div class="bar"><i class="fill-w" style="width:52%"></i></div><div class="s">5.2</div></div>
+  <div class="score-row"><div class="n">实时性能余量</div><div class="bar"><i class="fill-b" style="width:40%"></i></div><div class="s">4.0</div></div>
+  <div class="score-row"><div class="n">可测试性 / 回归</div><div class="bar"><i class="fill-w" style="width:55%"></i></div><div class="s">5.5</div></div>
+  <div class="score-row"><div class="n">对标专业软件完成度</div><div class="bar"><i class="fill-b" style="width:42%"></i></div><div class="s">4.2</div></div>
+  <div class="score-row"><div class="n">工程化（构建 / lint / CI）</div><div class="bar"><i class="fill-b" style="width:25%"></i></div><div class="s">2.5</div></div>
+</div>
+
+<div class="note">
+  <b>一句话结论：</b>这套 App 的“形”已经很专业（视口、隔离、笔刷、UV、历史都齐），
+  但“骨”还是脚本级——单文件 UI、破坏式网格、O(面数) 的拾取与绘画、贴图以 base64 内联文档。
+  继续加功能的边际成本正在上升，而且已经在三个真实缺陷上付过利息。
+</div>
+
+<!-- ============================================================ -->
+<h2><span class="no">01</span>现状盘点</h2>
+<p class="lead">先看体积与分层。数字本身不是债，但“增长最快的文件承担了最多职责”是。</p>
+
+<div class="tiles">
+  <div class="tile"><b>6,484</b><span>model-desk.js 单文件行数（拆分中）</span></div>
+  <div class="tile"><b>275 / 42</b><span>该文件函数数 / 事件监听数</span></div>
+  <div class="tile"><b>100 / 15</b><span>index.html 的 script / stylesheet 标签</span></div>
+  <div class="tile"><b>219</b><span>探针断言（单一脚本 2,878 行）</span></div>
+</div>
+
+<table>
+  <thead><tr><th>层</th><th>组成</th><th>规模</th><th>评价</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>数据内核</td>
+      <td><code>seed-mesh-core</code>、<code>seed-operators</code>、<code>seed-uv</code>、<code>seed-model-scene</code>、<code>seed-selection</code>、<code>seed-evaluator</code> 等 11 个模块</td>
+      <td>5,041 行</td>
+      <td>边界基本干净，全部挂 <code>window.SeedModel / SeedSelection</code>；求值器是空壳。</td>
+    </tr>
+    <tr>
+      <td>外壳与交互</td>
+      <td><code>model-desk.js</code>：视口渲染、相机、手柄、选择、UV 面板（壳）、导入导出、菜单与面板 DOM（绘画 / 隔离 / 历史 / ViewCube 已拆出）</td>
+      <td>6,484 行</td>
+      <td>仍承担多项职责；<code>onClick</code> 一个函数（L5310 起）覆盖几十种动作。</td>
+    </tr>
+    <tr>
+      <td>样式</td>
+      <td><code>css/12-modeldesk.css</code> 等 15 份，按原行号切片</td>
+      <td>7,347 行</td>
+      <td>文件头自述“按原始行号连续切片，靠 link 顺序维持层叠”——新增样式随时可能被后加载文件覆盖。</td>
+    </tr>
+    <tr>
+      <td>旧 3D 栈</td>
+      <td><code>model3d</code>、<code>m3d-slots</code>、<code>model-document</code>、<code>texpaint</code>、<code>texbrush</code>、<code>uvpack</code> 等 11 个</td>
+      <td>9,868 行</td>
+      <td>仍在为“模型库 / 贴图”面板服务，与新栈并行存在：两套网格、两套画笔、两套文档。</td>
+    </tr>
+    <tr>
+      <td>验证</td>
+      <td><code>tools/probe-modeldesk.js</code>（Playwright + Edge）</td>
+      <td>2,878 行</td>
+      <td>行为覆盖很强，但无内核单测、无 CI、依赖固定 <code>waitForTimeout</code>。</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>分层示意</h3>
+<p style="color:var(--dim);font-size:12.5px">
+  <code>model-desk.js</code>（外壳 / 交互 / 渲染 / 历史 / IO） → <code>SeedCommands</code>、<code>SeedTools</code> →
+  <code>SeedSelection</code>、<code>SeedModel.UV</code> → <code>SeedModel.Mesh</code>、<code>SeedModel.Operators</code> →
+  <code>SeedModel.Scene</code> → 文档（GLB / 资产桥）。方向是对的；问题是第一层太厚，把本该属于数据层的
+  “UV 角号语义、渲染拆点映射、贴图编码”都吸了进来。
+</p>
+
+<!-- ============================================================ -->
+<h2><span class="no">02</span>对标专业软件</h2>
+<p class="lead">逐项对照，而不是笼统地说“还差得远”。差异集中在五处，其余是量的问题。</p>
+
+<table>
+  <thead><tr><th>能力</th><th>Blender / Maya / Max 的做法</th><th>本仓库现状</th><th>差距性质</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>网格内核</td>
+      <td>BMesh 半边缘 / Maya 多边形结构，支持邻接查询、n-gon、属性层</td>
+      <td>平行数组（positions / faceOffsets / faceIndices / faceSlots / faceIds / uvs），邻接靠临时扫描</td>
+      <td class="tag t-p1">结构性</td>
+    </tr>
+    <tr>
+      <td>构造历史</td>
+      <td>Maya construction history（节点图）；Blender Modifier Stack；Max 修改器堆</td>
+      <td><code>node.modifiers</code> 字段存在，求值器 42 行空壳；算子直接改写基础网格</td>
+      <td class="tag t-p0">结构性</td>
+    </tr>
+    <tr>
+      <td>拾取 / 笔刷性能</td>
+      <td>BVH（Embree）、GPU picking、笔刷包围体 + 屏幕空间脏区</td>
+      <td>CPU 逐三角射线（<code>paintRayHit</code> L1422、<code>SeedSelection</code> 同类），每次 move 全量扫描</td>
+      <td class="tag t-p0">结构性</td>
+    </tr>
+    <tr>
+      <td>材质 / 贴图</td>
+      <td>材质 datablock + 节点；多通道 PBR；UDIM；纹理画笔带层、对称、投影绘制</td>
+      <td>文档级 4 个槽位 + 单张 baseColor；贴图以内联 data URL 存文档，上限 1024</td>
+      <td class="tag t-p1">结构性</td>
+    </tr>
+    <tr>
+      <td>撤销</td>
+      <td>命令式增量 / 节点图 diff，内存按操作类型计价</td>
+      <td>整份文档快照 + 网格哈希去重，预算 64MB；一笔画 = 两张 PNG data URL</td>
+      <td class="tag t-p1">实现级</td>
+    </tr>
+    <tr>
+      <td>渲染提交</td>
+      <td>GPU buffer 增量更新；只重传脏区间</td>
+      <td>每次编辑 <code>rebuildModel</code>（L3087）重建 pivot / 几何 / 材质；拖拽期走 <code>liveRefresh</code> 全量回写 + 重算法线</td>
+      <td class="tag t-p0">结构性</td>
+    </tr>
+    <tr>
+      <td>场景结构</td>
+      <td>层级、组、实例引用、引用替换</td>
+      <td><code>node.parent</code> 有字段无功能；隔离按“当前激活对象”生效；无实例化</td>
+      <td class="tag t-p2">功能级</td>
+    </tr>
+    <tr>
+      <td>UI 架构</td>
+      <td>命令系统驱动菜单 / 工具架 / 快捷键（Maya 的 MEL/Python 同源）</td>
+      <td><code>SeedCommands</code> 已存在并被使用，但菜单、工具架、右键仍各写一堆分支</td>
+      <td class="tag t-p1">实现级</td>
+    </tr>
+    <tr>
+      <td>工程化</td>
+      <td>编译 + 单测 + 集成测试 + CI</td>
+      <td>无构建、全局命名空间、100 个 script 顺序加载；只有一条浏览器探针</td>
+      <td class="tag t-p2">工程级</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2><span class="no">03</span>技术债务清单</h2>
+<p class="lead">按“继续拖会怎样”排序，不按“改起来爽不爽”排序。每条都给出证据位置。</p>
+
+<div class="debt">
+  <div class="debt-h"><span class="tag t-p0">P0</span><span class="id">D1</span><span class="name">外壳单文件化：6,484 行（原 8,364 行）承载多项职责</span></div>
+  <div class="debt-b">
+    <div class="kv">
+      <div class="k">证据</div><div class="v"><a href="../js/model-desk.js">model-desk.js</a>：275 个函数、42 处 <code>addEventListener</code>、巨型 innerHTML 模板；单一 <code>st</code> 对象集中视口、选择、软选择、UV、绘画、隔离、历史、面板状态。已拆出 <a href="../js/md-isolate.js">md-isolate.js</a>（140）、<a href="../js/md-paint.js">md-paint.js</a>（354）、<a href="../js/md-uv-editor.js">md-uv-editor.js</a>（1,652）、<a href="../js/md-history.js">md-history.js</a>（189）、<a href="../js/md-viewcube.js">md-viewcube.js</a>（242）。</div>
+      <div class="k">影响</div><div class="v">任何改动都要在 6 千行里找落点；无法单测 UI 逻辑；<code>__debug()</code> 把内部状态直接交给探针，测试与实现互相锁定。</div>
+      <div class="k">建议</div><div class="v">继续把剩余职责拆开：<b>Viewport</b>（renderer/camera/quad）、<b>Overlays</b>（边/点/手柄）、<b>Panels</b>（右栏/左栏/菜单）、<b>DocIO</b>（打开/保存/内容浏览器）；动作统一走 <code>SeedCommands</code>，DOM 只负责呈现。</div>
+    </div>
+  </div>
+</div>
+
+<div class="debt">
+  <div class="debt-h"><span class="tag t-p0">P0</span><span class="id">D2</span><span class="name">破坏式建模：没有可回放的构造历史</span></div>
+  <div class="debt-b">
+    <div class="kv">
+      <div class="k">证据</div><div class="v"><a href="../js/seed-evaluator.js">seed-evaluator.js</a> 全文 42 行，只有接口；<a href="../js/seed-operators.js">seed-operators.js</a>（1,599 行）直接改写 <code>mesh.positions / faceOffsets / rawIndices</code>；文档只存“结果网格”。</div>
+      <div class="k">影响</div><div class="v">挤出后再想改厚度只能撤销重做；参数化、程序化、批量重构都无从谈起。对专业用户最直观的“不像专业软件”就来自这里。</div>
+      <div class="k">建议</div><div class="v">先做<b>算子命令化</b>：每个算子产出 <code>{op, params, inputHashes}</code>，节点持一条 op 链，Evaluator 从基网格重放；第一步只覆盖挤出/环切/倒角。历史从“文档快照”逐步换成“命令 + 快照兜底”。</div>
+    </div>
+  </div>
+</div>
+
+<div class="debt">
+  <div class="debt-h"><span class="tag t-p0">P0</span><span class="id">D3</span><span class="name">实时路径 O(面数)：拾取、绘画、重建</span></div>
+  <div class="debt-b">
+    <div class="kv">
+      <div class="k">证据</div><div class="v"><a href="../js/model-desk.js">paintRayHit</a>（L1422）每次指针移动逐三角求交；<code>rebuildModel</code>（L3087）每次编辑重建全部 pivot / 几何 / 材质；<code>liveRefresh</code>（L1143）每帧全量回写顶点并 <code>computeVertexNormals</code>。</div>
+      <div class="k">影响</div><div class="v">当前 1 万面级的资产还能撑；到 10 万面会明显掉帧，笔刷会“粘笔”，隔离改选一次要重算整套几何。</div>
+      <div class="k">建议</div><div class="v">静态网格建 BVH（射线与笔刷共用）；绘画只在笔刷包围盒内求交；变换/绘画走脏区提交，不重建整个 BufferGeometry；隔离改成 per-face visibility mask 或 drawRange，而不是生成替身网格。</div>
+    </div>
+  </div>
+</div>
+
+<div class="debt">
+  <div class="debt-h"><span class="tag t-p1">P1</span><span class="id">D4</span><span class="name">三套索引隐式约定：顶点号 / UV 角号 / 渲染顶点号</span></div>
+  <div class="debt-b">
+    <div class="kv">
+      <div class="k">证据</div><div class="v"><a href="../js/seed-mesh-core.js">buildGeometry</a>（L748）按 (顶点, UV) 拆渲染顶点，用 <code>geo.userData.mdOrig</code> 反查；<code>rawIndices</code> 语义在<a href="../js/seed-mesh-core.js">ensureRawIndices</a>（L271）中曾从“顶点号”改为“角号”。</div>
+      <div class="k">影响</div><div class="v">近期三个缺陷全部源于此：挤出后全身贴图错乱、拖面时整块炸开、平平涂没有贴图。每次都要靠读码+探针反推，而不是靠类型或不变量挡住。</div>
+      <div class="k">建议</div><div class="v">把三层写成一页契约：<b>Vertex</b>（共享空间点）、<b>Corner</b>（面角，承载 UV/法线/材质）、<b>RenderVertex</b>（GPU 拆点，仅渲染层可见）。内核只暴露 Corner/Vertex API，渲染层唯一持有映射；加“角号连续性 / UV 有限 / 渲染映射可逆”的不变量测试。</div>
+    </div>
+  </div>
+</div>
+
+<div class="debt">
+  <div class="debt-h"><span class="tag t-p1">P1</span><span class="id">D5</span><span class="name">贴图以 base64 内联文档，历史按 PNG 计价</span></div>
+  <div class="debt-b">
+    <div class="kv">
+      <div class="k">证据</div><div class="v"><a href="../js/model-desk.js">textureDataURL</a>（L6363）把贴图压成 ≤1024 JPEG 的 data URL 塞进 <code>doc.materials.slotMaps</code>；每笔绘画 <code>canvas.toDataURL('image/png')</code> 再存一份；<code>HISTORY_BUDGET</code> 64MB 按字符串字节计。</div>
+      <div class="k">影响</div><div class="v">文档膨胀、保存变慢、每笔画撤销成本是整张贴图；大贴图反复编解码还会掉精度（再导出 GLB 只剩降采样版本）。</div>
+      <div class="k">建议</div><div class="v">贴图移出文档：走已有的资源/资产桥（blob 引用 + 缩略图），文档只存 <code>textureRef</code>；历史存<b>脏矩形</b>而非整图；绘画按 mip/分块存储，避免每次全量 PNG。</div>
+    </div>
+  </div>
+</div>
+
+<div class="debt">
+  <div class="debt-h"><span class="tag t-p1">P1</span><span class="id">D6</span><span class="name">材质模型过窄：4 个全局槽 + 单通道 baseColor</span></div>
+  <div class="debt-b">
+    <div class="kv">
+      <div class="k">证据</div><div class="v"><a href="../js/seed-model-scene.js">materialsOf</a>（L108）只归一化 <code>slotNames / slotColors / slotMaps</code>；<code>slotMaps[slot]</code> 是文档级共享，没有“对象材质实例”。</div>
+      <div class="k">影响</div><div class="v">做 PBR、粗糙度/法线绘制、把两个对象贴不同外观、UDIM、材质复制都受限；专业用户会立刻感到“只能涂色”。</div>
+      <div class="k">建议</div><div class="v">升级为材质 datablock（id + 通道）+ 节点引用 <code>materialSlots</code>（字段已存在，只是语义单薄）。先补 baseColor / normal / roughness 三通道，再谈节点。</div>
+    </div>
+  </div>
+</div>
+
+<div class="debt">
+  <div class="debt-h"><span class="tag t-p1">P1</span><span class="id">D7</span><span class="name">双轨 3D 栈：新旧两套网格与画笔并存</span></div>
+  <div class="debt-b">
+    <div class="kv">
+      <div class="k">证据</div><div class="v">旧栈 11 个文件 9,868 行（<code>model3d</code> / <code>m3d-*</code> / <code>texpaint</code> / <code>texbrush</code> / <code>uvpack</code> …），新栈 11 个文件 5,041 行；两套都能编辑网格、都能画贴图。</div>
+      <div class="k">影响</div><div class="v">同一概念两份实现，修 bug 要修两遍；新人不知道哪套是“真相”；导出/导入路径互相踩。</div>
+      <div class="k">建议</div><div class="v">明确“<b>seed-* 是唯一真相</b>”，旧栈降为只读预览或直接下线；迁移调用点用清单管理，禁止新功能再进旧栈。</div>
+    </div>
+  </div>
+</div>
+
+<div class="debt">
+  <div class="debt-h"><span class="tag t-p2">P2</span><span class="id">D8</span><span class="name">验证只有一条浏览器探针</span></div>
+  <div class="debt-b">
+    <div class="kv">
+      <div class="k">证据</div><div class="v"><code>tools/probe-modeldesk.js</code> 2,878 行、219 条断言、依赖 msedge 与固定等待；<code>package.json</code> 里没有对应脚本，<code>.github/</code> 不存在。</div>
+      <div class="k">影响</div><div class="v">内核的纯数学部分（算子、UV、哈希）没有秒级回归；探针一挂就是几十秒起，且失败点难定位。</div>
+      <div class="k">建议</div><div class="v">加 <code>node</code> 单测（不依赖 DOM）：算子输入输出、面积/水密/角号连续、UV 覆盖、渲染映射可逆；探针保留做集成验收。把 run 命令写进 <code>package.json</code>。</div>
+    </div>
+  </div>
+</div>
+
+<div class="debt">
+  <div class="debt-h"><span class="tag t-p2">P2</span><span class="id">D9</span><span class="name">CSS 按行号切片，层叠靠加载顺序</span></div>
+  <div class="debt-b">
+    <div class="kv">
+      <div class="k">证据</div><div class="v"><a href="../css/12-modeldesk.css">12-modeldesk.css</a> 文件头自述：“按原始行号连续切片……靠 index.html 的 link 顺序维持层叠……别在 08 之前写最终样式”。</div>
+      <div class="k">影响</div><div class="v">新加样式可能被后面的文件静默覆盖；右栏那几轮布局改动都在和时间赛跑（本次「属性编辑器」页签就牵扯三处宽度断点）。</div>
+      <div class="k">建议</div><div class="v">把 modeldesk 相关样式收进一个文件，按区块（菜单/视口/右栏/浮层）分区，尺寸用 CSS 变量集中管理。</div>
+    </div>
+  </div>
+</div>
+
+<div class="debt">
+  <div class="debt-h"><span class="tag t-p2">P2</span><span class="id">D10</span><span class="name">场景能力缺位：无层级、无实例、隔离靠替身</span></div>
+  <div class="debt-b">
+    <div class="kv">
+      <div class="k">证据</div><div class="v"><code>node.parent</code> 字段存在但未参与变换/可见性；<code>applyIsolation</code>（L2976）只按“当前激活对象”切 <code>pivot.visible</code>；组件隔离每次改选都重建一份子网格。</div>
+      <div class="k">影响</div><div class="v">多对象工程的整理成本高；隔离瞬时会多占一份几何内存；无法做“引用同一网格的多个实例”。</div>
+      <div class="k">建议</div><div class="v">补父子变换与组；隔离改为几何级 mask（同一条 geometry 上按面可见），这一项能直接抵掉 D3 的替身开销。</div>
+    </div>
+  </div>
+</div>
+
+<div class="debt">
+  <div class="debt-h"><span class="tag t-p2">P2</span><span class="id">D11</span><span class="name">无构建、无 lint、全局命名空间</span></div>
+  <div class="debt-b">
+    <div class="kv">
+      <div class="k">证据</div><div class="v"><code>index.html</code> 里 100 个 <code>&lt;script src&gt;</code>、15 个样式表；模块全部挂 <code>window.SeedModel</code> 等全局；没有 ESLint 配置。</div>
+      <div class="k">影响</div><div class="v">启动解析成本、加载顺序耦合、拼写错误只能等运行时；重构（改名/搬文件）没有工具兜底。</div>
+      <div class="k">建议</div><div class="v">不必上打包器，但可换 ES Module（Electron 直接支持 <code>file://</code> 的 module），或至少加 ESLint + <code>tsc --allowJs --checkJs</code> 的渐进类型检查。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2><span class="no">04</span>已经在收利息：三个近期缺陷的归因</h2>
+<p class="lead">债务不是理论。过去这段时间修的三个问题，全是 D4 / D3 / D2 的直接产物。</p>
+
+<table>
+  <thead><tr><th>缺陷</th><th>表象</th><th>真实根因</th><th>对应债务</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>挤出后全身贴图错乱</td>
+      <td>一挤出面，整只模型贴图乱飞</td>
+      <td><code>rawIndices</code> 存的是顶点号，却被当成 UV 角号去索引 <code>uvs</code></td>
+      <td class="tag t-p1">D4</td>
+    </tr>
+    <tr>
+      <td>拖面时模型炸成尖刺</td>
+      <td>拖动组件手柄时网格自交、尖刺四射</td>
+      <td>渲染层按 (顶点, UV) 拆点后，实时刷新仍按下标直拷 <code>positions</code>，缓冲区错位</td>
+      <td class="tag t-p0">D3 + D4</td>
+    </tr>
+    <tr>
+      <td>画笔无法撤销</td>
+      <td>画完无法回退，历史里没有这一笔</td>
+      <td>历史只识别“文档差异”，贴图写入不在快照差分范围内</td>
+      <td class="tag t-p1">D2</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <b>规律：</b>凡是“改了网格/贴图却看不见效果”的 bug，最后都落在三套索引或“结果 vs 过程”的边界上。
+  这意味着下一步不该继续加功能，而该先把这些边界写成代码契约和测试。
+</div>
+
+<!-- ============================================================ -->
+<h2><span class="no">05</span>演进路线（按投入产出排序）</h2>
+<p class="lead">不改架构目标，只改“先做什么”。每步都有明确的退出条件。</p>
+
+<div class="steps">
+  <div class="step"><div class="dot">01</div><div>
+    <b>固化不变量（先止血）</b>
+    <p>把 Vertex / Corner / RenderVertex 三层写进内核注释与 API；补 node 单测：角号连续、UV 有限、渲染映射可逆、挤出侧壁 UV 继承、面积守恒。</p>
+    <div class="exit"><s>退出条件</s>：任何改动破坏索引约定时，单测在 1 秒内失败，而不是等探针截图。</div>
+  </div></div>
+  <div class="step"><div class="dot">02</div><div>
+    <b>拆外壳</b>
+    <p>从 model-desk.js 抽出 Viewport / Overlays / Panels / Paint / Isolate / UV / History / ViewCube / DocIO 模块；菜单、工具架、右栏按钮统一发 <code>SeedCommands</code>，DOM 只读状态。已完成 Isolate / Paint / UV / History / ViewCube（8,805 → 6,484 行），其余待拆。</p>
+    <div class="exit"><s>退出条件</s>：model-desk.js 降到 2,000 行以内；新增一个工具只需加命令 + 面板项，不改事件大循环。</div>
+  </div></div>
+  <div class="step"><div class="dot">03</div><div>
+    <b>实时路径加速</b>
+    <p>BVH（拾取与笔刷共用）→ 笔刷包围盒求交 → 变换/绘画脏区提交 → 隔离改 mask。四件事可以独立落地、独立验收。</p>
+    <div class="exit"><s>退出条件</s>：10 万面资产下拖拽与绘画仍保持交互帧率；隔离切换不再分配新几何。</div>
+  </div></div>
+  <div class="step"><div class="dot">04</div><div>
+    <b>资源化贴图与历史</b>
+    <p>贴图迁到 blob 引用（<code>textureRef</code>），文档不再内联 base64；历史记录脏矩形 + 操作类型，贴图按块计价。</p>
+    <div class="exit"><s>退出条件</s>：文档体积与“画了多少笔”脱钩；64MB 预算能容纳的笔画数提升一个量级。</div>
+  </div></div>
+  <div class="step"><div class="dot">05</div><div>
+    <b>构造历史（真正的“专业感”）</b>
+    <p>Evaluator 从空壳变成 op 链重放；先接管挤出/环切/倒角，其它算子保持烘焙；op 参数可再编辑。</p>
+    <div class="exit"><s>退出条件</s>：挤出后能改厚度而不撤销；文档里能看见一条可回放的算子链。</div>
+  </div></div>
+</div>
+
+<h3>不建议现在做</h3>
+<p style="color:var(--dim);font-size:12.5px">
+  ① 重写成半边缘结构（收益大但会打断所有算子与探针，先用契约和测试锁住现有语义）；
+  ② 引入前端框架重做 UI（当前问题是职责没切开，不是缺少组件库）；
+  ③ 一次性替换 GLB 读写（先把贴图从文档里搬出去，再谈格式）。
+</p>
+
+<footer>
+  报告依据：仓库当前快照（2026-11-05）。行号与规模均为实测：
+  <code>js/ 96 文件 58,119 行</code>、<code>css 7,347 行</code>、<code>model-desk.js 6,484 行 / 275 函数 / 42 监听</code>、
+  <code>probe 2,878 行 / 219 断言</code>、<code>seed-* 11 文件 5,041 行</code>、<code>旧 3D 栈 11 文件 9,868 行</code>。
+  评分是工程判断，不是精确度量；债务条目均附可核对的文件与行号。
+</footer>
+
+</div>
+</body>
+</html>

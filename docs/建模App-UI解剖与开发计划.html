@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>建模 App · UI 解剖与开发计划表</title>
+<style>
+  :root{
+    --bg:#f5f4f1; --paper:#ffffff; --ink:#1d1d1f; --mute:#6b6b70;
+    --line:#e3e0d8; --accent:#c2410c; --accent2:#0f766e;
+    --chip:#f1efe8; --ok:#15803d; --doing:#b45309; --todo:#6b7280;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:14px/1.7 "Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 22px 80px}
+  header.hero{
+    background:#17171a;color:#f4f2ec;border-radius:16px;padding:26px 28px 24px;
+    display:grid;grid-template-columns:1fr auto;gap:18px;align-items:end;
+  }
+  header.hero h1{margin:0 0 6px;font-size:26px;letter-spacing:.02em}
+  header.hero p{margin:0;color:#b9b6ad;font-size:13px;max-width:760px}
+  .hero-meta{font-size:12px;color:#8f8c84;text-align:right;line-height:1.9}
+  .hero-meta b{color:#e7e3d8;font-weight:600}
+  nav.toc{
+    position:sticky;top:0;z-index:9;background:rgba(245,244,241,.92);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--line);
+    display:flex;gap:6px;flex-wrap:wrap;padding:10px 2px;margin:18px 0 26px;
+  }
+  nav.toc a{
+    color:#3f3f46;text-decoration:none;font-size:12.5px;padding:5px 10px;border-radius:999px;
+  }
+  nav.toc a:hover{background:#e9e6de;color:#111}
+  section{margin:0 0 34px}
+  h2{
+    font-size:19px;margin:0 0 6px;display:flex;align-items:center;gap:10px;
+  }
+  h2 .no{
+    font-size:11px;letter-spacing:.08em;color:#fff;background:var(--accent);
+    border-radius:6px;padding:2px 7px;font-weight:600;
+  }
+  .lead{color:var(--mute);font-size:13px;margin:0 0 14px;max-width:900px}
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  table{width:100%;border-collapse:collapse;font-size:12.6px;background:var(--paper)}
+  .tablewrap{overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--paper)}
+  th,td{padding:9px 11px;text-align:left;vertical-align:top;border-bottom:1px solid #eeebe4}
+  th{
+    background:#faf9f5;font-weight:600;color:#3a3a3f;position:sticky;top:0;z-index:1;
+    font-size:12px;letter-spacing:.02em;
+  }
+  tr:last-child td{border-bottom:none}
+  td.num{color:#9a9891;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .tag{
+    display:inline-block;font-size:11px;line-height:1.7;padding:0 7px;border-radius:999px;
+    background:var(--chip);color:#4b4b52;white-space:nowrap;
+  }
+  .tag.a{background:#fdece5;color:#9a3412}
+  .tag.b{background:#e3f3f1;color:#115e59}
+  .tag.c{background:#ecebf7;color:#4338ca}
+
+  /* ---------- 布局草图 ---------- */
+  .mock{
+    background:#232326;border-radius:12px;padding:10px;color:#c9c6bd;
+    font-size:11px;display:grid;gap:6px;border:1px solid #313135;
+  }
+  .mock .bar{background:#2e2e33;border-radius:5px;padding:5px 8px;display:flex;justify-content:space-between;gap:8px;color:#a9a69e}
+  .mock .mid{display:grid;grid-template-columns:150px 1fr 200px;gap:6px;min-height:238px}
+  .mock .pane{background:#2a2a2f;border-radius:6px;padding:7px 8px;border:1px solid #38383e;position:relative}
+  .mock .pane h4{margin:0 0 6px;color:#dedbd2;font-size:11px;font-weight:600}
+  .mock .vp{
+    background:
+      linear-gradient(#3a3a40 1px,transparent 1px) 0 0/26px 26px,
+      linear-gradient(90deg,#3a3a40 1px,transparent 1px) 0 0/26px 26px,
+      #1f1f23;
+    border-color:#484850;
+  }
+  .mock .cube{
+    position:absolute;right:10px;top:10px;width:44px;height:44px;border:1px solid #6f6f78;
+    color:#a9a69e;display:grid;place-items:center;border-radius:3px;font-size:9px;background:#2b2b31;
+  }
+  .mock .row{display:flex;gap:4px;flex-wrap:wrap;margin:3px 0}
+  .mock .pill{background:#383840;border-radius:3px;padding:1px 6px;color:#b4b1a8;font-size:10px}
+  .mock .shelf{display:flex;gap:4px;flex-wrap:wrap}
+  .mock .ico{width:20px;height:16px;background:#3c3c44;border-radius:3px}
+
+  /* ---------- 架构图 ---------- */
+  .layers{display:grid;gap:8px}
+  .layer{
+    display:grid;grid-template-columns:120px 1fr;gap:12px;align-items:center;
+    background:#fff;border:1px solid var(--line);border-left:4px solid var(--accent2);
+    border-radius:9px;padding:10px 13px;
+  }
+  .layer b{font-size:12.5px}
+  .layer span{font-size:12px;color:var(--mute)}
+  .layer.ui{border-left-color:var(--accent)}
+  .layer.data{border-left-color:#6d28d9}
+  .arrow{text-align:center;color:#a8a49a;font-size:12px;line-height:1}
+  code,kbd{
+    font-family:ui-monospace,Consolas,monospace;font-size:12px;
+    background:#f2efe7;border:1px solid #e5e1d7;border-radius:4px;padding:0 5px;
+  }
+  kbd{font-size:11px;padding:1px 5px;box-shadow:0 1px 0 #ddd8cc}
+  .callchain{background:#1c1c20;color:#cfccc3;border-radius:10px;padding:14px 16px;font-size:12.3px;line-height:2}
+  .callchain b{color:#f0b27a}
+  .callchain i{color:#7dd3c9;font-style:normal}
+
+  .note{
+    border-left:3px solid var(--accent);background:#fdf6ef;border-radius:0 8px 8px 0;
+    padding:10px 14px;font-size:12.5px;color:#5a4535;
+  }
+  .note.teal{border-left-color:var(--accent2);background:#eff8f6;color:#174e49}
+  .note b{color:#8a3410}
+
+  .decisions{display:grid;gap:10px}
+  .decision{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .decision h4{margin:0 0 4px;font-size:13.5px}
+  .decision p{margin:0;font-size:12.5px;color:#525257}
+  .decision .pick{display:inline-block;margin-top:6px;font-size:11.5px;color:var(--accent2);font-weight:600}
+
+  /* ---------- 计划表 ---------- */
+  .st{
+    display:inline-block;cursor:pointer;user-select:none;font-size:11px;padding:2px 9px;border-radius:999px;
+    background:#efeee9;color:#666;border:1px solid transparent;white-space:nowrap;
+  }
+  .st:hover{border-color:#c9c5ba}
+  .st.doing{background:#fdf0dd;color:#92400e}
+  .st.done{background:#e6f6ec;color:#166534}
+  .plan tr.p1 td:first-child{border-left:3px solid var(--accent)}
+  .plan tr.p2 td:first-child{border-left:3px solid var(--accent2)}
+  .plan tr.p3 td:first-child{border-left:3px solid #6d28d9}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--mute);margin:8px 0 12px}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:1px}
+
+  details{
+    background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 15px;font-size:12.5px;
+  }
+  details summary{cursor:pointer;font-weight:600;color:#34343a}
+  details pre{
+    white-space:pre-wrap;word-break:break-word;background:#faf9f5;border:1px solid #ece8de;
+    border-radius:8px;padding:12px;margin:12px 0 0;font:12.2px/1.9 ui-monospace,Consolas,monospace;color:#3c3c42;
+  }
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:4px 0 0}
+  .kpi{background:#fff;border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .kpi b{display:block;font-size:20px;letter-spacing:-.02em}
+  .kpi span{font-size:11.5px;color:var(--mute)}
+  footer{margin-top:36px;color:#9a968c;font-size:11.5px;text-align:center}
+  @media(max-width:900px){
+    .grid2,.grid3,.kpis{grid-template-columns:1fr 1fr}
+    header.hero{grid-template-columns:1fr}
+    .hero-meta{text-align:left}
+    .mock .mid{grid-template-columns:110px 1fr;}
+    .mock .mid .pane:last-child{grid-column:1/-1}
+  }
+  @media print{
+    nav.toc{display:none}
+    body{background:#fff}
+    header.hero{background:#fff;color:#111;border:1px solid #ddd}
+    header.hero p,header.hero .hero-meta{color:#555}
+    .tablewrap{overflow:visible}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div>
+    <h1>通用建模 App · UI 解剖与开发计划表</h1>
+    <p>以 Autodesk Maya 2024 中文界面为参照，拆解「一套通用建模软件该长什么样、每个区域怎么动、背后用什么架构支撑」，并把可交付范围压到 MVP-1。放弃参数化人形路线，改为可编辑多边形建模。</p>
+    <p style="margin-top:10px;padding:9px 12px;background:#2b2c31;border-left:3px solid #b4471c;border-radius:0 6px 6px 0;font-size:12px;color:#d9d5cb">
+      <b>产品定位：通用建模软件</b>（多边形 + 曲线曲面 + UV + 材质 + 选择/变换/显示）；多对象与层级是<b>地基</b>，不是附加项。<br>
+      ⚠ <b>2026-11-03 调整：</b>命令层与工具层的<b>执行方式</b>已改（命令注册表 + 工具会话 + 吸附服务 + VIEW_FLAGS 表），
+      里程碑编号不变，M7 的载体从「各处 if」换成一张表。详见<a href="建模App-进度审计与计划表单.html#s9" style="color:#e8b98a">《建模App-进度审计与计划表单》第 09 节</a>；
+      完成度以那份文档为准（本文只保留架构推理）。</p>
+  </div>
+  <div class="hero-meta">
+    <div><b>修订</b> 2026-11-03</div>
+    <div><b>参照</b> Maya 2024 · 中文截图</div>
+    <div><b>评审</b> Astra（gpt-6-astra）</div>
+    <div><b>状态</b> 见《进度审计与计划表单》</div>
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#s1">01 UI 解剖</a>
+  <a href="#s2">02 交互假想</a>
+  <a href="#s3">03 功能配置</a>
+  <a href="#s4">04 架构分层</a>
+  <a href="#s5">05 持久化与决策</a>
+  <a href="#s6">06 MVP 计划表</a>
+  <a href="#s7">07 明确不做</a>
+  <a href="#s8">08 风险</a>
+  <a href="#review">Astra 评审原文</a>
+</nav>
+
+<!-- ============ S1 ============ -->
+<section id="s1">
+  <h2><span class="no">01</span>UI 解剖：这套界面由什么组成</h2>
+  <p class="lead">Maya 的界面本质是「中间一个大视口 + 四面包围的功能带」。它不是九个独立面板，而是三个层级：<b>全局命令层</b>（菜单 / 状态行 / 工具架）、<b>场景层</b>（大纲 / 视口 / ViewCube）、<b>属性层</b>（建模工具箱 / 属性编辑器 / 通道盒）。我们照这个骨架搬，不照它的功能量搬。</p>
+
+  <div class="grid2" style="margin-bottom:14px">
+    <div class="mock" aria-label="界面布局草图">
+      <div class="bar"><span>The seed 建模 · 文件 编辑 创建 修改 显示 窗口 帮助</span><span>工作区：建模 · 标准 · 立方体 MVP-1</span></div>
+      <div class="bar">
+        <span>➤ 移动 旋转 缩放 | 世界 吸附 对齐:禁用 单位:米</span><span>新建 打开 保存GLB 撤销 重做 | 四视图 材质槽</span>
+      </div>
+      <div class="bar" style="display:block">
+        <div class="shelf"><span class="pill">多边形建模</span><span class="pill">曲线</span><span class="pill">曲面</span><span class="pill">动画</span><span class="pill">FX</span><span class="pill">渲染</span><span class="pill">动力学</span></div>
+        <div class="row" style="margin-top:5px"><i class="ico"></i><i class="ico"></i><i class="ico"></i><i class="ico"></i><i class="ico"></i><i class="ico"></i><i class="ico"></i><i class="ico"></i><i class="ico"></i><i class="ico"></i><i class="ico"></i><i class="ico"></i></div>
+      </div>
+      <div class="bar">
+        <span>视图 ▾ 着色 ▾ 照明 ▾ 显示 ▾ 渲染器 ▾ 面板 ▾ | ⌗ ▦ ◱ ◍</span><span>0.00 / 1.00 · ACES 1.0 SDR-video</span>
+      </div>
+      <div class="mid" style="grid-template-columns:24px 138px 1fr 188px">
+        <div class="pane" style="padding:6px 3px;display:flex;flex-direction:column;align-items:center;gap:4px">
+          <span class="pill">▣</span><span class="pill">✥</span><span class="pill">⟳</span><span class="pill">⤢</span><span class="pill">◱</span>
+        </div>
+        <div class="pane">
+          <h4>大纲视图</h4>
+          <div class="row"><span class="pill">显示</span><span class="pill">隐藏</span><span class="pill">搜索</span></div>
+          <div style="line-height:1.95;color:#9d9a92">□ persp<br>□ top<br>□ front<br>□ side<br>▸ defaultLightSet<br>▸ defaultObjectSet<br>▸ 立方体</div>
+        </div>
+        <div class="pane vp">
+          <div class="cube">View<br>Cube</div>
+          <div style="position:absolute;left:10px;bottom:8px;color:#8f8c85">地面栅格 · 透视相机 · HUD</div>
+        </div>
+        <div class="pane">
+          <h4>建模工具箱</h4>
+          <div class="row"><span class="pill">对象</span><span class="pill">多组件</span></div>
+          <div style="color:#9d9a92;line-height:1.9">网格：结合 分离 平滑 倒角<br>组件：挤出 桥接 倒角<br>工具：多切割 目标焊接</div>
+          <div class="row" style="margin-top:6px"><span class="pill">属性编辑器</span><span class="pill">通道盒</span></div>
+          <div style="color:#9d9a92;line-height:1.8">名称 / 统计 / 变换<br>材质槽 / M1 边界</div>
+        </div>
+      </div>
+      <div class="bar"><span>命令行 &gt; 输入命令后回车</span><span>状态 / 错误回显</span></div>
+    </div>
+
+    <div class="card" style="display:flex;flex-direction:column;gap:10px">
+      <h4 style="margin:0;font-size:13.5px">三个层级（比区域名单更重要）</h4>
+      <div><span class="tag a">命令层</span> 菜单栏、状态行、Shelf、视口标题行 —— 负责「发出命令」，不持有数据。</div>
+      <div><span class="tag b">场景层</span> 竖工具条、大纲、视口、ViewCube —— 负责「看与选」，只读场景与网格。</div>
+      <div><span class="tag c">属性层</span> 建模工具箱、属性编辑器、通道盒、命令行 —— 负责「改数值 / 改模式」，写命令不改内存。</div>
+      <div class="note" style="margin-top:2px">搬骨架的判断标准：<b>同一个动作只能有一个入口逻辑</b>。菜单、Shelf、快捷键、命令行都调到同一个 Command，界面只负责参数收集与回显。</div>
+    </div>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th style="width:34px">#</th><th style="width:132px">区域</th><th>Maya 里有什么</th><th style="width:210px">职责</th><th style="width:240px">本产品对应</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td>标题栏</td><td>软件名、文档名、版本</td><td>身份与当前文档</td><td>窗口内不画标题栏；App 名 + 文档名 + MVP 徽标放在菜单条右侧</td></tr>
+        <tr><td class="num">2</td><td>主菜单栏</td><td>文件 / 编辑 / 创建 / 修改 / 显示 / 窗口 / 帮助</td><td>低频但完整的命令入口</td><td>七组菜单已画；M1 只挂占位回显，命令注册表在 M7 接</td></tr>
+        <tr><td class="num">3</td><td>菜单集切换</td><td>建模 / 动画 / 渲染 / FX / XGen</td><td>按工作流换一套菜单</td><td>右侧「工作区：建模 · 标准」标签；不换菜单集，避免假入口</td></tr>
+        <tr><td class="num">4</td><td>状态行</td><td>左侧操作提示；右侧选择遮罩、捕捉、构建历史</td><td>全局开关 + 当前工具提示</td><td>移动/旋转/缩放 · 世界/局部 · 吸附 · 对齐/单位 + 右侧文档动作</td></tr>
+        <tr><td class="num">5</td><td>Shelf 工具架</td><td>分页标签 + 两行图标</td><td>高频命令一键触发</td><td>多边形建模等 7 个标签 + 20 个彩色图标，M5/M6 接入</td></tr>
+        <tr><td class="num">6</td><td>视口标题行</td><td>视图 / 着色 / 照明 / 显示 / 渲染器 / 面板 + 显示开关</td><td>视口级设置</td><td>标题行 + 栅格/线框/隔离/透视小图标 + 曝光 0.00/1.00 + ACES 标签</td></tr>
+        <tr><td class="num">7</td><td>左侧竖工具条</td><td>选择、移动、旋转、缩放、组件、相机、灯光</td><td>高频工具切换</td><td>34px 竖条；M1 为占位图标，移动/旋转/缩放从状态行进</td></tr>
+        <tr><td class="num">8</td><td>左侧 Outliner</td><td>搜索、显示层、层级树、可见性、相机节点</td><td>场景导航与组织</td><td>大纲：显示/隐藏页签 + 搜索 + 相机/集占位行 + 真实节点</td></tr>
+        <tr><td class="num">9</td><td>视口</td><td>网格地面、模型、右上 ViewCube、轴指示</td><td>主工作区</td><td>中灰背景 + 地面栅格 + 右上 CSS ViewCube + 左下 HUD</td></tr>
+        <tr><td class="num">10</td><td>右侧建模工具箱</td><td>对象/顶点/边/面/多组件、软选择、工具列表</td><td>模式 + 工具面板</td><td>对象/多组件 + 网格/组件/工具三组按钮，M6 占位</td></tr>
+        <tr><td class="num">11</td><td>属性编辑器</td><td>变换、形状、材质、UV、历史节点页签</td><td>精确参数与节点属性</td><td>属性编辑器页：名称 / 统计 / 变换 / 材质槽 / M1 边界</td></tr>
+        <tr><td class="num">12</td><td>通道盒</td><td>平移/旋转/缩放数值、输入节点、层覆盖</td><td>快速数值修改</td><td>通道盒页：变换九通道 + 节点统计 + 文档版本</td></tr>
+        <tr><td class="num">13</td><td>底部时间轴</td><td>播放、关键帧、范围</td><td>动画</td><td><b>不做</b>，该区域留给命令行</td></tr>
+        <tr><td class="num">14</td><td>命令行 / 反馈行</td><td>单行命令输入 + 状态/错误输出</td><td>高级用户入口、错误可见</td><td>底部 26px：命令行输入 + 右对齐状态/错误回显</td></tr>
+        <tr><td class="num">15</td><td>浮动 HUD</td><td>变换时的数值输入框</td><td>边拖边精确输入</td><td>视口左下角：revision / 网格版本 / 点面边 / 位置缩放</td></tr>
+        <tr><td class="num">16</td><td>覆盖层</td><td>四视图、材质槽、打开列表、贴图查看器</td><td>不打断主布局的临时浮层</td><td>视口内覆盖层：四视图 / 材质槽 / 打开资产列表</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h4 style="margin:0 0 6px;font-size:13px">已落地（2026-11-03，MVP-1 外壳）</h4>
+      <div style="font-size:12.3px;color:#555;line-height:1.95">
+        <b>文档动作</b> 新建 / 打开 / 保存 GLB / 撤销 / 重做（状态行右侧）<br>
+        <b>变换</b> 移动 / 旋转 / 缩放、世界 / 局部、吸附、四视图、材质槽<br>
+        <b>大纲</b> 按名称搜索过滤；真实节点可点选；相机 / 集为禁用占位行<br>
+        <b>视口</b> 中灰底 + 地面栅格；栅格显隐按钮；CSS ViewCube；左下 HUD<br>
+        <b>右侧</b> 建模工具箱分组（对象 / 网格 / 组件 / 工具）；属性编辑器 ⇄ 通道盒切换<br>
+        <b>命令行</b> 回车回显；状态 / 错误统一走底部状态位
+      </div>
+    </div>
+    <div class="card">
+      <h4 style="margin:0 0 6px;font-size:13px">仍是占位（title 里写明接入里程碑）</h4>
+      <div style="font-size:12.3px;color:#555;line-height:1.95">
+        <b>菜单七组</b> 点击只回显「M5 接入」，不弹菜单<br>
+        <b>Shelf 七页 + 20 图标</b> M5 / M6 / M7 / M8 接入<br>
+        <b>视口标题行下拉</b> 视图 / 着色 / 照明 / 显示 / 渲染器 / 面板<br>
+        <b>建模工具箱按钮</b> 结合 / 分离 / 平滑 / 倒角 / 挤出 / 桥接 / 多切割…（M6）<br>
+        <b>左竖条与多组件</b> M2 / M3 接入手势与模式<br>
+        <b>命令行语义</b> M7 接命令注册表与快捷键
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ S2 ============ -->
+<section id="s2">
+  <h2><span class="no">02</span>交互假想：每个区域怎么动</h2>
+  <p class="lead">这张表是「假想所有 UI 交互」的完整清单。原则：<b>鼠标有实时预览，松手才提交一条历史</b>；所有模式切换有全局状态行回显；所有命令都能从命令行复现。</p>
+
+  <div class="grid2">
+    <div>
+      <h4 style="margin:0 0 8px;font-size:13.5px">A. 视口导航与相机</h4>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th style="width:150px">操作</th><th>行为</th><th style="width:88px">可配置</th></tr></thead>
+          <tbody>
+            <tr><td>Alt + 左键拖动</td><td>环绕（tumble），绕视口中心旋转</td><td>灵敏度</td></tr>
+            <tr><td>Alt + 中键拖动</td><td>平移（track），沿相机平面移动</td><td>灵敏度</td></tr>
+            <tr><td>Alt + 右键拖动 / 滚轮</td><td>推拉（dolly），推进或拉远</td><td>灵敏度</td></tr>
+            <tr><td><kbd>F</kbd></td><td>聚焦当前选中对象；无选中则框选全部</td><td>—</td></tr>
+            <tr><td><kbd>A</kbd></td><td>显示全部（缩放到包围盒）</td><td>—</td></tr>
+            <tr><td>ViewCube 单击面/角</td><td>切换正视图 / 轴测视角</td><td>动画时长</td></tr>
+            <tr><td>ViewCube 拖拽 / 双击</td><td>自由翻转 / 回到默认轴测角</td><td>默认角度</td></tr>
+            <tr><td>视口工具条「四视图」</td><td>切到前/后/左/右正交网格（只读预览）</td><td>同步相机</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <h4 style="margin:0 0 8px;font-size:13.5px">B. 选择</h4>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th style="width:150px">操作</th><th>行为</th><th style="width:88px">可配置</th></tr></thead>
+          <tbody>
+            <tr><td>单击 / 单击空白</td><td>选中组件；空白取消选择</td><td>拾取优先级</td></tr>
+            <tr><td>Shift / Ctrl</td><td>加选 / 减选（不替换原选择）</td><td>—</td></tr>
+            <tr><td>框选 / 套索</td><td>按当前模式批量选择；可切换「仅可见 / 穿透」</td><td>穿透开关</td></tr>
+            <tr><td>双击边 / 面</td><td>边环、面环快速选择</td><td>—</td></tr>
+            <tr><td><kbd>F8</kbd> / <kbd>F9</kbd> / <kbd>F10</kbd> / <kbd>F11</kbd></td><td>对象 / 顶点 / 边 / 面 模式</td><td>快捷键可改</td></tr>
+            <tr><td>模式切换</td><td>点→边→面按包含关系转换，保留尽量多的语义</td><td>转换策略</td></tr>
+            <tr><td>软选择开关</td><td>选中点带权重衰减，颜色热力显示</td><td>半径 / 衰减曲线</td></tr>
+            <tr><td>框选加减</td><td>拖动中实时高亮，松手提交</td><td>实时预览</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid2" style="margin-top:14px">
+    <div>
+      <h4 style="margin:0 0 8px;font-size:13.5px">C. 变换与数值输入</h4>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th style="width:150px">操作</th><th>行为</th><th style="width:88px">可配置</th></tr></thead>
+          <tbody>
+            <tr><td><kbd>Q</kbd> / <kbd>W</kbd> / <kbd>E</kbd> / <kbd>R</kbd></td><td>选择 / 移动 / 旋转 / 缩放 工具</td><td>快捷键</td></tr>
+            <tr><td>拖手柄 / 中键拖动</td><td>沿轴或平面变换，拖动中实时预览</td><td>—</td></tr>
+            <tr><td>X / Y / Z 键</td><td>临时锁定单轴</td><td>轴约束</td></tr>
+            <tr><td>按住 Ctrl</td><td>临时吸附；步长 0.05m / 15° / 0.1</td><td>步长</td></tr>
+            <tr><td>HUD 输入</td><td>拖动手柄时键入数值，回车生效</td><td>单位显示</td></tr>
+            <tr><td>世界 / 局部</td><td>手柄坐标系切换；局部随对象旋转</td><td>默认坐标系</td></tr>
+            <tr><td>pointerup</td><td>提交一条 Command；连续拖动自动合并</td><td>合并窗口</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <h4 style="margin:0 0 8px;font-size:13.5px">D. 拓扑与建模工具</h4>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th style="width:118px">工具</th><th>交互</th><th style="width:118px">参数</th></tr></thead>
+          <tbody>
+            <tr><td>挤出</td><td>选中面 → 拖动法线方向 → 松手提交</td><td>距离 / 偏移 / 分段</td></tr>
+            <tr><td>内插</td><td>在面内拖出厚度与深度</td><td>厚度 / 深度</td></tr>
+            <tr><td>倒角</td><td>拖边 → 宽度 / 分段；预览圆角</td><td>宽度 / 分段</td></tr>
+            <tr><td>环切</td><td>悬停边预览切线位置，点击落刀</td><td>条数 / 滑移</td></tr>
+            <tr><td>合并</td><td>选中两点/边 → 阈值内合并</td><td>阈值</td></tr>
+            <tr><td>桥接</td><td>两组边界 → 生成过渡面</td><td>分段 / 平滑</td></tr>
+            <tr><td>删除面</td><td>删除并保留边界</td><td>是否连带点边</td></tr>
+            <tr><td>镜像 / 阵列</td><td>轴与偏移，可选合并阈值</td><td>轴 / 数量 / 偏移</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid2" style="margin-top:14px">
+    <div>
+      <h4 style="margin:0 0 8px;font-size:13.5px">E. 大纲与组织</h4>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th style="width:150px">操作</th><th>行为</th><th style="width:88px">可配置</th></tr></thead>
+          <tbody>
+            <tr><td>单击节点</td><td>选中对象；Shift 多选</td><td>—</td></tr>
+            <tr><td>双击名字</td><td>就地重命名</td><td>—</td></tr>
+            <tr><td>拖拽</td><td>改变父子层级（仅组节点可作父）</td><td>—</td></tr>
+            <tr><td>眼睛图标</td><td>切换可见性（可单独隐藏子节点）</td><td>—</td></tr>
+            <tr><td>右键</td><td>分组 / 复制 / 删除 / 解除父子</td><td>—</td></tr>
+            <tr><td>搜索框</td><td>过滤节点，回车定位</td><td>—</td></tr>
+            <tr><td>相机节点</td><td>persp / top / front / side 常驻，双击切视图</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <h4 style="margin:0 0 8px;font-size:13.5px">F. 属性 / 命令行 / 快捷键</h4>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th style="width:150px">操作</th><th>行为</th><th style="width:88px">可配置</th></tr></thead>
+          <tbody>
+            <tr><td>属性数值框</td><td>键入 / 上下拖动 / 回车提交</td><td>步进</td></tr>
+            <tr><td>重置 / 锁定</td><td>回到默认值；锁定后手柄不可改</td><td>—</td></tr>
+            <tr><td>通道盒</td><td>平移 XYZ、旋转 XYZ、缩放 XYZ、可见性</td><td>单位</td></tr>
+            <tr><td>命令行</td><td>输入 <code>extrude 0.2</code> 之类命令；↑↓ 历史</td><td>—</td></tr>
+            <tr><td>反馈行</td><td>命令结果/错误就地显示，不弹 alert</td><td>—</td></tr>
+            <tr><td>空格热盒 / 右键标记菜单</td><td>径向快捷菜单（P2 后再做）</td><td>菜单项</td></tr>
+            <tr><td>快捷键设置页</td><td>按键映射 + 冲突检测</td><td>全部</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <h4 style="margin:22px 0 8px;font-size:13.5px">G. 外壳控件：现在接了什么、以后接什么</h4>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th style="width:170px">控件</th><th style="width:210px">M1 现状</th><th>目标交互 / 配置</th><th style="width:84px">里程碑</th></tr></thead>
+      <tbody>
+        <tr><td>菜单七组</td><td>点击只回显状态提示</td><td>每组一个下拉，菜单项统一注册为 Command；灰显不可用项</td><td>M5 / M7</td></tr>
+        <tr><td>文档动作（新建/打开/保存 GLB/撤销/重做）</td><td>已接文档与历史，保存走单 GLB</td><td>快捷键 Ctrl+N/O/S/Z/Y；保存前做面数与材质校验</td><td>已落地 / M8</td></tr>
+        <tr><td>移动 / 旋转 / 缩放 · 世界 / 局部 · 吸附</td><td>已接手柄与吸附步长</td><td>快捷键 W/E/R、轴约束、状态行实时显示步长</td><td>已落地 / M4</td></tr>
+        <tr><td>四视图 / 材质槽</td><td>已接覆盖层</td><td>四视图共用同一网格数据；材质槽复用 m3d-slots</td><td>已落地</td></tr>
+        <tr><td>Shelf 七页 + 图标</td><td>禁用占位，title 标 M5/M6</td><td>页签切换一套命令；图标走插件注册表，参数进右侧属性页</td><td>M5 / M6</td></tr>
+        <tr><td>视口标题行下拉</td><td>纯标签，不展开</td><td>视图 / 着色 / 照明 / 显示 / 渲染器 / 面板 六个下拉，状态存 SeedPrefs</td><td>M2</td></tr>
+        <tr><td>栅格显隐</td><td>已接 GridHelper.visible</td><td>偏好持久化；吸附网格与视觉网格同一间距</td><td>已落地 / M4</td></tr>
+        <tr><td>0.00 / 1.00 · ACES</td><td>静态文本</td><td>视口曝光与色彩管理下拉；只影响预览，不写资产</td><td>M2</td></tr>
+        <tr><td>ViewCube</td><td>纯 CSS 装饰</td><td>单击面/角切正视图，拖拽环绕，双击回默认轴测</td><td>M2</td></tr>
+        <tr><td>大纲搜索</td><td>已接按名称过滤</td><td>回车定位并高亮；支持组名与层级路径</td><td>已落地 / M7</td></tr>
+        <tr><td>大纲页签 显示 / 隐藏</td><td>显示为当前页，隐藏 / 帮助占位</td><td>隐藏页列出不可见节点；帮助页显示快捷键速查</td><td>M7</td></tr>
+        <tr><td>建模工具箱 对象 / 多组件</td><td>对象为当前页，多组件占位</td><td>多组件页列出 点/边/面/UV 子模式与软选择</td><td>M3</td></tr>
+        <tr><td>工具箱按钮（结合/分离/平滑/倒角/挤出/桥接/多切割/目标焊接/连接/四边形绘制）</td><td>全部禁用占位</td><td>每个按钮 = 一条 Command；参数在属性页，可撤销、可预览</td><td>M6</td></tr>
+        <tr><td>属性编辑器 / 通道盒</td><td>已接切换，数值只读展示</td><td>数值框可编辑，上下拖动调值，回车提交一条历史；锁定/重置</td><td>M4 / M7</td></tr>
+        <tr><td>左竖工具条</td><td>占位图标</td><td>选择 / 移动 / 旋转 / 缩放 / 组件 / 相机 / 灯光，与状态行同一命令源</td><td>M2 / M3</td></tr>
+        <tr><td>命令行</td><td>回车只回显占位提示</td><td>接命令注册表，支持 ↑↓ 历史与自动补全；与菜单同一 Command</td><td>M7</td></tr>
+        <tr><td>工作区标签 / App 名</td><td>静态</td><td>只显示「建模 · 标准」，不伪造未实现的菜单集</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">原则：占位控件必须有 <b>title 说明接入里程碑</b>，点击不能静默失败；能点的控件必须走与菜单 / 快捷键相同的 Command，避免第二套逻辑。</div>
+</section>
+
+<!-- ============ S3 ============ -->
+<section id="s3">
+  <h2><span class="no">03</span>功能配置：默认值与存储位置</h2>
+  <p class="lead">配置统一收口到一个 <code>SeedPrefs</code>（localStorage 单键 <code>seed_model_prefs_v1</code>），属性面板只读写它。文档级状态（revision、选择集、变换）进 GLB；应用级偏好（颜色、吸附、快捷键）留在 localStorage，避免每打开一个资产就带一份个性化配置。</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th style="width:180px">配置项</th><th style="width:150px">默认值</th><th>说明 / 选项</th><th style="width:150px">存储</th></tr></thead>
+      <tbody>
+        <tr><td>长度单位 / 角度单位</td><td>米 / 度</td><td>内部统一米；状态行显示「单位：米」，厘米显示留到单位设置页</td><td>SeedPrefs</td></tr>
+        <tr><td>平移吸附步长</td><td>0.05 m</td><td>Ctrl 临时吸附，状态行显示当前步长</td><td>SeedPrefs</td></tr>
+        <tr><td>旋转吸附步长</td><td>15°</td><td>同上</td><td>SeedPrefs</td></tr>
+        <tr><td>缩放吸附步长</td><td>0.1</td><td>同上</td><td>SeedPrefs</td></tr>
+        <tr><td>网格间距 /  subdivisions</td><td>1 m / 10 格</td><td>地面网格，可关闭</td><td>SeedPrefs</td></tr>
+        <tr><td>视口背景 / 网格色</td><td>#5a5d61 / #6d7074</td><td>中灰工作台，跟 Maya 视口一致；网格线略深于底色</td><td>SeedPrefs</td></tr>
+        <tr><td>视口栅格显隐</td><td>开</td><td>视口标题行 ⌗ 按钮切换；当前为会话状态，M4 起持久化</td><td>内存 / SeedPrefs</td></tr>
+        <tr><td>大纲搜索词</td><td>空</td><td>只过滤当前树，不写偏好；清空即恢复全量</td><td>内存</td></tr>
+        <tr><td>右侧默认页签</td><td>属性编辑器</td><td>打开资产先看对象信息；M7 可记住上次页签与滚动位置</td><td>内存 / SeedPrefs</td></tr>
+        <tr><td>状态行单位标签</td><td>米</td><td>与内部米制一致，避免「厘米」标签造成误读</td><td>代码常量</td></tr>
+        <tr><td>视口配色标签</td><td>ACES 1.0 SDR-video (sRGB)</td><td>M1 只显示；M2 接曝光与色彩管理下拉</td><td>代码常量</td></tr>
+        <tr><td>外壳最小宽度</td><td>1100 px</td><td>窄于 1120 收缩大纲 / 右侧面板；1240×760 无横向溢出</td><td>代码常量</td></tr>
+        <tr><td>选择高亮色 / 组件色</td><td>#f59e0b / #38bdf8</td><td>点、边、面各一套；确保深色下可辨</td><td>SeedPrefs</td></tr>
+        <tr><td>边线显示 / 顶点显示</td><td>开 / 开</td><td>着色 + 线框叠加是默认显示模式</td><td>SeedPrefs</td></tr>
+        <tr><td>顶点大小</td><td>4 px</td><td>屏幕空间恒定，不随缩放变大</td><td>SeedPrefs</td></tr>
+        <tr><td>软选择半径 / 衰减</td><td>0.5 m / 平滑</td><td>平滑 / 线性 / 尖峰 / 常数</td><td>SeedPrefs</td></tr>
+        <tr><td>拾取优先级</td><td>顶点 &gt; 边 &gt; 面</td><td>组件模式下按就近距离与优先级判定</td><td>SeedPrefs</td></tr>
+        <tr><td>穿透选择</td><td>关</td><td>开 = 框选包含背后组件</td><td>SeedPrefs</td></tr>
+        <tr><td>撤销内存预算</td><td>64 MB</td><td>超预算丢最旧记录，界面提示</td><td>SeedPrefs</td></tr>
+        <tr><td>自动保存间隔</td><td>120 s</td><td>仅在桌面端启用；写同一资产</td><td>SeedPrefs</td></tr>
+        <tr><td>文档 schemaVersion</td><td>2</td><td>读取兼容 v1（参数化资产烘焙）</td><td>GLB extras</td></tr>
+        <tr><td>MVP 最大面数</td><td>10000</td><td>超过拒绝进入编辑并提示（持久化体积保护）</td><td>代码常量</td></tr>
+        <tr><td>默认材质槽</td><td>base</td><td>材质真源仍是 <code>openagi_model_tex_v1</code></td><td>GLB extras + localStorage</td></tr>
+        <tr><td>快捷键</td><td>Q/W/E/R、F8–F11、F/A、Alt 组合</td><td>可在设置页重映射</td><td>SeedPrefs</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ S4 ============ -->
+<section id="s4">
+  <h2><span class="no">04</span>开发架构：九个模块、一条依赖线</h2>
+  <p class="lead">结论来自 Astra 评审 + 本项目「零构建、纯 script、全局命名空间」的硬约束。<b>核心修正</b>：在八层中补一个 <code>evaluator/cache</code>，视口只读求值结果，不直接理解拓扑操作。</p>
+
+  <div class="layers">
+    <div class="layer ui"><b>⑨ ui-shell</b><span>菜单栏 / Shelf / 大纲 / 属性编辑器 / 通道盒 / 命令行 / 快捷键 / HUD。只发命令、只回显，不改网格内存。</span></div>
+    <div class="arrow">▼ 只能调用下一层</div>
+    <div class="layer"><b>⑧ viewport</b><span>three.js 渲染、真实边线与顶点、高亮、软选择热力、ViewCube、四视图、拾取代理。只依赖「只读求值网格 + 选择集」。</span></div>
+    <div class="arrow">▼</div>
+    <div class="layer"><b>⑦ tool-controller</b><span>模态工具状态机（移动/旋转/缩放/挤出/环切…）、轴约束、吸附、数值 HUD；拖动中预览，松手提交。</span></div>
+    <div class="arrow">▼</div>
+    <div class="layer"><b>⑥ command-history</b><span>Command 栈：before/after/选择变化/合并规则；一次拖动一条记录；64MB 预算。</span></div>
+    <div class="arrow">▼</div>
+    <div class="layer"><b>⑤ selection</b><span>对象/顶点/边/面模式、ID 集合、点线面转换、框选套索、操作后的选择迁移。</span></div>
+    <div class="arrow">▼</div>
+    <div class="layer"><b>④ topology-ops</b><span>纯函数算子：<code>mesh + params → {mesh, patch, remap}</code>。不碰撤销、不碰 UI、不碰 three.js。</span></div>
+    <div class="arrow">▼</div>
+    <div class="layer"><b>③ evaluator / cache</b><span>base mesh + modifiers → evaluated mesh；脏标记与显示缓存。MVP 只有空壳与接口。</span></div>
+    <div class="arrow">▼</div>
+    <div class="layer data"><b>② mesh-core</b><span>face-vertex 网格：顶点数组、面 offset + 索引、按需边表、文档级稳定 ID、竖向 <code>toJSON/fromJSON</code>、<code>buildGeometry()</code>。</span></div>
+    <div class="arrow">▼</div>
+    <div class="layer data"><b>① scene-doc</b><span>节点树（组 / 网格 / 相机 / 灯光）、变换、材质槽引用、选择集快照、revision、GLB 文档读写。</span></div>
+  </div>
+
+  <div class="note teal" style="margin:14px 0">
+    <b>依赖铁律：</b>箭头只能向下。禁止 <code>mesh-core</code> 引用 <code>selection</code>，禁止 <code>topology-ops</code> 引用 <code>three.js</code>，禁止 <code>viewport</code> 直接调用算子。<b>循环依赖</b>用「事件总线 + 只读快照」解，不用模块注册器藏起来——Astra 明确不建议用注册器掩盖依赖。
+  </div>
+
+  <h4 style="font-size:13.5px;margin:18px 0 8px">文件落位（沿用现有 js/ 目录，加载顺序即依赖顺序）</h4>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th style="width:190px">文件</th><th style="width:110px">层</th><th>职责</th><th style="width:260px">对外接口（挂在 <code>SeedModel.*</code>）</th></tr></thead>
+      <tbody>
+        <tr><td><code>js/seed-model-scene.js</code></td><td>① 文档</td><td>节点树、变换、材质槽、选择快照、revision、v1→v2 迁移</td><td><code>createDoc</code> / <code>validate</code> / <code>openAsset</code> / <code>saveAsset</code></td></tr>
+        <tr><td><code>js/seed-mesh-core.js</code></td><td>② 网格</td><td>face-vertex、边表、稳定 ID、几何缓存、序列化</td><td><code>Mesh.create</code> / <code>fromPrimitive</code> / <code>buildGeometry</code> / <code>toJSON</code></td></tr>
+        <tr><td><code>js/seed-evaluator.js</code></td><td>③ 求值</td><td>修改器空壳、脏标记、显示缓存</td><td><code>evaluate(node)</code> / <code>invalidate(nodeId)</code></td></tr>
+        <tr><td><code>js/seed-topology-ops.js</code></td><td>④ 算子</td><td>挤出 / 内插 / 倒角 / 环切 / 合并 / 桥接 / 删除 / 细分</td><td><code>Ops.extrude(mesh, params)</code> → <code>{mesh, patch, remap}</code></td></tr>
+        <tr><td><code>js/seed-selection.js</code></td><td>⑤ 选择</td><td>模式、ID 集合、转换、迁移、框选判定</td><td><code>Select.setMode</code> / <code>toVertexIds</code> / <code>migrate</code></td></tr>
+        <tr><td><code>js/seed-commands.js</code></td><td>⑥ 历史</td><td>命令栈、事务合并、预算裁剪</td><td><code>Commands.run(cmd)</code> / <code>undo</code> / <code>redo</code></td></tr>
+        <tr><td><code>js/seed-tools.js</code></td><td>⑦ 工具</td><td>模态状态机、轴约束、吸附、HUD 数值</td><td><code>Tools.set('move'|'rotate'|'scale'|'extrude')</code></td></tr>
+        <tr><td><code>js/seed-mesh-viewport.js</code></td><td>⑧ 视口</td><td>渲染、边线/顶点 overlay、拾取、ViewCube、四视图</td><td><code>Viewport.mount</code> / <code>pick</code> / <code>setShading</code></td></tr>
+        <tr><td><code>js/model-desk.js</code>（演进）</td><td>⑨ 外壳</td><td>窗口、三栏布局、菜单、Shelf、属性页、命令行</td><td><code>window.modelDesk.open/openAsset/save/undo</code></td></tr>
+        <tr><td><code>js/modeler.js</code>（保留）</td><td>基础体工厂</td><td>复用现有基础体与曲线生成，产出 <code>BufferGeometry</code> 后转入 mesh-core</td><td><code>Modeler.buildGroup</code>（不再作为文档主模式）</td></tr>
+        <tr><td><code>js/seed-glb-meta.js</code>（复用）</td><td>持久化</td><td>只替换 JSON chunk 的读写</td><td><code>SeedGLB.readSeedModel/inject</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4 style="font-size:13.5px;margin:18px 0 8px">UI 外壳的实现约定（本轮已按此落地，待 Astra 复核）</h4>
+  <div class="grid2">
+    <div class="card">
+      <h4 style="margin:0 0 6px;font-size:13px">一个 IIFE + 一个状态对象</h4>
+      <div style="font-size:12.3px;color:#555;line-height:1.95">
+        <code>model-desk.js</code> 里只有 <code>st</code> 一个会话状态（文档 / 视口 / 历史 / 选中 / 右侧页签 / 搜索词 / 栅格开关）。<br>
+        DOM 只在 <code>ensureUI</code> 建一次；所有事件用委托绑在 host 上：<code>click</code> / <code>input</code> / <code>change</code> / <code>focusin</code> / <code>keydown</code>。<br>
+        <code>paintAll</code> = <code>paintOutline</code> + <code>paintParams</code> + <code>updateHud</code> + <code>updateChrome</code>，保证一次数据变更只走一条回显路径。
+      </div>
+    </div>
+    <div class="card">
+      <h4 style="margin:0 0 6px;font-size:13px">data-md-* 是唯一契约</h4>
+      <div style="font-size:12.3px;color:#555;line-height:1.95">
+        现有绑定：<code>data-md-act</code>（命令）、<code>data-md-mode</code>（手柄）、<code>data-md-space</code>、<code>data-md-node</code>、<code>data-md-tab</code>、<code>data-md-menu</code>、<code>data-md-global</code>（文档级输入）。<br>
+        加一个入口只需三步：写带有 <code>data-md-act</code> 的标记 → 在 <code>onClick</code> 的 switch 里调同一 Command → 在 <code>updateChrome</code> 回显。禁止在别的模块里直接摸 DOM。
+      </div>
+    </div>
+  </div>
+
+  <div class="note teal" style="margin:14px 0">
+    <b>下一步（M2 起）把它升级成命令注册表：</b><code>SeedCommands.define({ id, label, when, run })</code>，菜单 / Shelf / 快捷键 / 命令行全部按 id 查同一张表；外壳只维护 <code>Map&lt;widget, commandId&gt;</code>，不再给每个按钮写一段 switch。<b>这正是 Astra 上一轮强调的「一个动作一个入口」的落地方式。</b>
+  </div>
+
+  <h4 style="font-size:13.5px;margin:18px 0 8px">一次「挤出面」的完整调用链</h4>
+  <div class="callchain">
+    <b>pointerdown</b> → <i>Tools</i> 进入 extrude 模态，记录起点与选中面 ID<br>
+    → <i>mouse move</i>：<i>Ops.extrude(baseMesh, {distance})</i> 返回预览网格（不提交）<br>
+    → <i>Viewport</i> 用 <i>Evaluator</i> 的预览缓存重画实体/边线/高亮<br>
+    → <b>pointerup</b>：<i>Commands.run({ before, after, selectionBefore, selectionAfter })</i><br>
+    → <i>Commands</i> 入栈 + 预算裁剪 → <i>Evaluator.invalidate</i> → <i>Viewport.rebuild</i> → <i>Scene.revision++</i> → 属性面板回显
+  </div>
+
+  <div class="note" style="margin-top:14px">
+    <b>为什么不用完整 half-edge：</b>目标几万面、纯 JS、无构建。half-edge 每次拆分/合并都要维护大量反向链，bug 成本远高于收益。face-vertex + 按需重建边表足够；未来某个算子性能不够，<b>只把那一个算子升级成局部 half-edge</b>，不整体换数据结构。
+  </div>
+</section>
+
+<!-- ============ S5 ============ -->
+<section id="s5">
+  <h2><span class="no">05</span>持久化与需要你拍板的决策</h2>
+  <p class="lead">可编辑网格比参数化 spec 大一个量级。现有硬约束是「单个 GLB + 只替换 JSON chunk + 不动 BIN」，Astra 的长期建议是把网格写进 BIN。两者冲突，MVP 先用折中方案，把选择权交给你。</p>
+
+  <div class="decisions">
+    <div class="decision">
+      <h4>D1 · 网格存哪里？</h4>
+      <p>A：<b>JSON + base64 类型数组</b>（推荐 MVP-1）。顶点坐标、面偏移、面索引、稳定 ID 编码成 base64 放进 <code>extras.seedModel.mesh</code>，仍然只替换 JSON chunk，完全符合现有约束；1 万面约 1–2 MB。B：写进 BIN chunk + accessor（更省体积，但要改导出器和「不动 BIN」约束）。</p>
+      <span class="pick">建议：MVP-1 选 A，面数硬上限 1 万；MVP-2 再做 B 并把 schema 升到 3。</span>
+    </div>
+    <div class="decision">
+      <h4>D2 · <code>modeler.js</code> 参数化内核怎么处理？</h4>
+      <p>不删。降级为「基础体 / 曲线工厂」：新建对象时调用它生成几何，随后立刻烘焙成 face-vertex 网格。<code>mode:'parametric'</code> 不再是文档主模式；旧的 v1 资产打开时自动烘焙为可编辑网格，保存后写 v2。</p>
+      <span class="pick">建议：保留文件，转换逻辑单独一层（scene-doc 的 <code>fromV1</code>）。</span>
+    </div>
+    <div class="decision">
+      <h4>D3 · 底部时间轴要不要？</h4>
+      <p>Maya 的底部是动画时间轴，本产品不做动画。该区域改为<b>命令行 + 反馈行</b>，既保留通用建模软件的操作习惯，又不做一堆假控件。</p>
+      <span class="pick">建议：不做动画，不保留时间轴占位。</span>
+    </div>
+    <div class="decision">
+      <h4>D4 · 修改器栈放哪一层？</h4>
+      <p>数据放 scene-doc 节点（<code>modifiers: []</code>），求值放 evaluator。MVP-1 <b>只保留接口与空数组</b>，不做 UI；否则会同时承担拓扑、参数依赖、缓存、撤销四套复杂度。</p>
+      <span class="pick">建议：接口先留，功能进 P3。</span>
+    </div>
+    <div class="decision">
+      <h4>D5 · 材质与贴图怎么接？</h4>
+      <p>继续遵守既有约束：文档只存 <code>slotNames</code> + <code>textureConfigKey</code>，贴图真源仍在 <code>m3d-slots.js</code> 的 <code>openagi_model_tex_v1</code>。建模 App 只负责新建/重命名材质槽，不复制贴图配置。</p>
+      <span class="pick">建议：MVP-1 只做槽位，不做材质编辑器。</span>
+    </div>
+  </div>
+
+  <h4 style="font-size:13.5px;margin:18px 0 8px">文档结构（v2 草案）</h4>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th style="width:180px">字段</th><th>内容</th><th style="width:180px">备注</th></tr></thead>
+      <tbody>
+        <tr><td><code>schemaVersion</code></td><td>2</td><td>v1 只读兼容</td></tr>
+        <tr><td><code>mode</code></td><td><code>'mesh'</code></td><td>不再允许 parametric 作为主模式</td></tr>
+        <tr><td><code>revision</code></td><td>current / source / mesh / modifiers</td><td>拓扑操作推进 mesh，变换推进 current</td></tr>
+        <tr><td><code>nodes[]</code></td><td>id / type / name / parent / transform / visible / meshRef / materialSlots</td><td>支持多对象与组</td></tr>
+        <tr><td><code>mesh</code></td><td>vertices / faceOffsets / faceIndices / vertexIds / faceIds（base64）</td><td>边与邻接重建，不持久化</td></tr>
+        <tr><td><code>selection</code></td><td>mode / vertexIds / edgeIds / faceIds</td><td>只存 ID，不存索引</td></tr>
+        <tr><td><code>materials</code></td><td>slotNames / textureConfigKey / textureConfigMissing</td><td>贴图真源仍在外面的 localStorage</td></tr>
+        <tr><td><code>historyBoundary</code></td><td>undoPersisted / loadedAtRevision / lastConversionRevision</td><td>重开清撤销，避免跨会话脏快照</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ S6 ============ -->
+<section id="s6">
+  <h2><span class="no">06</span>计划表单：MVP-1 与后续阶段</h2>
+  <p class="lead">按 Astra 的依赖排序压到 8 项 MVP-1。点状态胶囊可循环「待开发 → 进行中 → 已完成」，状态存在本机浏览器 localStorage，方便你逐项签收。<b>M0（UI 外壳）与 M1（文档/网格内核）已于 2026-11-03 落地</b>，表中默认显示为已完成；其余仍为待开发。</p>
+  <div class="legend">
+    <span><i style="background:#c2410c"></i>MVP-1 内核</span>
+    <span><i style="background:#0f766e"></i>P2 工具完善</span>
+    <span><i style="background:#6d28d9"></i>P3 非破坏与 UV</span>
+    <span style="margin-left:auto">状态：点击切换</span>
+  </div>
+
+  <div class="tablewrap">
+    <table class="plan">
+      <thead><tr><th style="width:52px">编号</th><th style="width:210px">任务</th><th style="width:150px">依赖</th><th>交付物 / 验收标准（可测）</th><th style="width:84px">状态</th></tr></thead>
+      <tbody>
+        <tr class="p1"><td class="num">M0</td><td>UI 外壳：Maya 式五段布局 + 深灰主题 + 视口 ViewCube</td><td>—</td><td>菜单 / 状态行 / 工具架 / 大纲 / 视口标题行 / 右侧属性页 / 命令行齐备；1240×760 无横向溢出；M1 功能无回归</td><td><span class="st" data-id="M0" data-default="done">已完成</span></td></tr>
+        <tr class="p1"><td class="num">M1</td><td>文档与网格内核：scene-doc v2 + face-vertex mesh-core + 稳定 ID + 基础体工厂接入</td><td>—</td><td>新建资产 → 生成 1 个可编辑网格；v1 旧资产可打开并烘焙；重新保存后仍是单个 GLB</td><td><span class="st" data-id="M1" data-default="done">已完成</span></td></tr>
+        <tr class="p1"><td class="num">M2</td><td>视口渲染与导航：实体 + 真实边线 + 顶点 + 着色模式 + ViewCube + 四视图</td><td>M1</td><td>Alt 三键导航可用；切着色模式无残影；四视图与主视口同一模型、无拉伸</td><td><span class="st" data-id="M2" data-default="done">已完成</span></td></tr>
+        <tr class="p1"><td class="num">M3</td><td>选择系统：对象/顶点/边/面、框选/套索、Shift 加减、模式转换</td><td>M1、M2</td><td>1 万面模型单击/框选命中正确；F8–F11 切换后选择按包含关系保留；无穿透误选</td><td><span class="st" data-id="M3">待开发</span></td></tr>
+        <tr class="p1"><td class="num">M4</td><td>变换工具：Q/W/E/R、手柄、轴约束、吸附、HUD 数值、单次拖动单条历史</td><td>M3</td><td>拖 10 次只产生 10 条历史；Ctrl 吸附命中 0.05/15°/0.1；HUD 输入回车生效</td><td><span class="st" data-id="M4">待开发</span></td></tr>
+        <tr class="p1"><td class="num">M5</td><td>基础体创建：立方体/平面/圆柱/球/圆锥/圆环，参数化生成后转可编辑网格</td><td>M1</td><td>每个基础体可调段数；生成后立即能进点/边/面模式；撤销可回到创建前</td><td><span class="st" data-id="M5">待开发</span></td></tr>
+        <tr class="p1"><td class="num">M6</td><td>第一组拓扑算子：挤出、内插、删除面、合并顶点（含拖动预览）</td><td>M3、M4</td><td>四个算子均可撤销/重做；预览不写历史；操作后选择迁移到新组件；无孤立点</td><td><span class="st" data-id="M6">待开发</span></td></tr>
+        <tr class="p1"><td class="num">M7</td><td>面板与命令层：Outliner、属性编辑器、通道盒、Shelf、命令行、快捷键、偏好设置</td><td>M1–M6</td><td>大纲可重命名/分组/隐藏；属性数值与视口双向同步；命令行能复现任一算子</td><td><span class="st" data-id="M7">待开发</span></td></tr>
+        <tr class="p1"><td class="num">M8</td><td>持久化与壳集成：GLB v2 读写、自动保存、缩略图、desk 注册、撤销重做验收</td><td>M1–M7</td><td>关闭重开后拓扑/变换/选择/材质槽恢复；旧 v1 可开；无 JS 报错；纹理路径不受影响</td><td><span class="st" data-id="M8">待开发</span></td></tr>
+
+        <tr class="p2"><td class="num">P2-1</td><td>倒角、环切、桥接、细分、溶解</td><td>M6</td><td>倒角分段可调；环切悬停预览、点击落刀；桥接两组边界生成过渡面；全部可撤销</td><td><span class="st" data-id="P2-1" data-default="doing">进行中 · 环切已完成</span></td></tr>
+        <tr class="p2"><td class="num">P2-1b</td><td>环切 + 循环边（X6）：四边环识别 / 条数 / 滑移 / 双击选整圈</td><td>M6</td><td>选中边所在全四边环可切 1–8 条并滑移 −1..1，实时预览、Enter 一条历史；三角 / n 边环明确拒绝；边模式双击选中循环边</td><td><span class="st" data-id="P2-1b" data-default="done">已完成</span></td></tr>
+        <tr class="p2"><td class="num">P2-1c</td><td>三角转四边（X7）：成对三角并四边 + UV 接缝保护</td><td>M6</td><td>同材质、凸四边形、共面 ≤40° 或 UV 2×2 才并；UV 接缝 / 单三角拒绝；Shelf / 工具箱 / 热盒 / 命令同源</td><td><span class="st" data-id="P2-1c" data-default="done">已完成</span></td></tr>
+        <tr class="p2"><td class="num">P2-2</td><td>软选择：半径、衰减曲线、热力显示、按权重变换</td><td>M4</td><td>权重随距离平滑衰减；热力颜色与权重一致；软选择下撤销仍是一条记录</td><td><span class="st" data-id="P2-2">待开发</span></td></tr>
+        <tr class="p2"><td class="num">P2-3</td><td>镜像、阵列、对称建模</td><td>M6</td><td>镜像轴/合并阈值可调；阵列数量与偏移实时预览；对称修改后两侧一致</td><td><span class="st" data-id="P2-3">待开发</span></td></tr>
+        <tr class="p2"><td class="num">P2-4</td><td>右键标记菜单、空格热盒、自定义快捷键</td><td>M7</td><td>径向菜单可配置；快捷键冲突检测；热盒不遮挡视口操作</td><td><span class="st" data-id="P2-4">待开发</span></td></tr>
+        <tr class="p2"><td class="num">P2-5</td><td>显示优化：面数上限提示、大模型分块缓存、拾取性能</td><td>M2、M8</td><td>1 万面连续操作不掉帧到不可用；超限拒绝并给出面数；拾取无漏选</td><td><span class="st" data-id="P2-5">待开发</span></td></tr>
+
+        <tr class="p3"><td class="num">P3-1</td><td>修改器栈：细分 / 倒角 / 镜像，evaluated mesh 与缓存</td><td>P2</td><td>修改器可增删排序；基础编辑只作用于 base mesh；开关修改器不丢编辑</td><td><span class="st" data-id="P3-1">待开发</span></td></tr>
+        <tr class="p3"><td class="num">P3-2</td><td>UV 编辑器基础（X5a–X5e）：浮动窗口 / 0–1 画布 / 点边壳选择 / 变换吸附 / 投影展开排布</td><td>S9</td><td>11 菜单与 9 组工具包；点选 UV 点同步 3D 面；一次拖动一条历史；自动展开 6 岛 0 重叠且 UV 全在 0–1</td><td><span class="st" data-id="P3-2" data-default="done">已完成</span></td></tr>
+        <tr class="p3"><td class="num">P3-2b</td><td>UV 投影补充 / 缝合 / 棋盘格底图（X5f）</td><td>P3-2</td><td>圆柱/球形投影归一化到 0–1；缝合 2% 容差内选中点；棋盘格开关改画布像素</td><td><span class="st" data-id="P3-2b" data-default="done">已完成</span></td></tr>
+        <tr class="p3"><td class="num">P3-2c</td><td>UV 缝切割 / 分离 UV 壳 / 图片底图（X5g）</td><td>P3-2b</td><td>切割写进 mesh.uvSeams 并被 uvIslands / 展开识别且可撤销；分离壳按 2% 间隙重排且全在 0–1；图片底图可载入 / 清除且不写资产</td><td><span class="st" data-id="P3-2c" data-default="done">已完成</span></td></tr>
+        <tr class="p3"><td class="num">P3-2d</td><td>多 UV 集（X5h）：新建 / 重命名 / 删除 / 切换</td><td>P3-2c</td><td>UV 集可增删改名；切换后画布与 3D 同步；随资产保存恢复</td><td><span class="st" data-id="P3-2d">待开发</span></td></tr>
+        <tr class="p3"><td class="num">P3-3</td><td>材质槽编辑与贴图联动（复用 m3d-slots）</td><td>M8</td><td>新建/重命名/删除槽不破坏现有贴图配置；贴图预览走既有烘焙链路</td><td><span class="st" data-id="P3-3">待开发</span></td></tr>
+        <tr class="p3"><td class="num">P3-4</td><td>网格写 BIN（schema 3）+ 体积回归</td><td>M8</td><td>同模型 BIN 方案体积显著小于 JSON base64；v2 文件仍可读；外部查看器可打开</td><td><span class="st" data-id="P3-4">待开发</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><b>8</b><span>MVP-1 必交付项</span></div>
+    <div class="kpi"><b>9</b><span>架构模块（含求值缓存）</span></div>
+    <div class="kpi"><b>1 万</b><span>MVP 面数上限</span></div>
+    <div class="kpi"><b>64 MB</b><span>撤销内存预算</span></div>
+  </div>
+</section>
+
+<!-- ============ S7 ============ -->
+<section id="s7">
+  <h2><span class="no">07</span>明确不做（防止范围失控）</h2>
+  <div class="grid3">
+    <div class="card"><h4 style="margin:0 0 6px;font-size:13px">MVP-1 不做</h4>
+      <div style="font-size:12.5px;color:#555;line-height:1.9">
+        half-edge 全量结构<br>修改器栈 UI<br>UV 展开与 UV 编辑器（已提前实现 X5a–X5e）<br>软选择<br>倒角 / 桥接 / 细分（环切已提前实现 X6）<br>镜像 / 阵列<br>材质编辑器与贴图烘焙<br>GPU picking<br>动画 / 骨骼 / 动力学
+      </div>
+    </div>
+    <div class="card"><h4 style="margin:0 0 6px;font-size:13px">整个产品不做</h4>
+      <div style="font-size:12.5px;color:#555;line-height:1.9">
+        布尔运算（需要稳健 BSP/网格修复）<br>雕刻笔刷与多分辨率<br>角色绑定 / 蒙皮<br>渲染器与灯光系统<br>协作与版本云同步<br>插件市场
+      </div>
+    </div>
+    <div class="card"><h4 style="margin:0 0 6px;font-size:13px">不再做</h4>
+      <div style="font-size:12.5px;color:#555;line-height:1.9">
+        参数化人形资产作为文档主模式<br>把 spec JSON 当唯一真相<br>新增 <code>.model.json</code> / sidecar<br>第二套材质配置存储<br>为建模 App 单开 Electron 进程
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ S8 ============ -->
+<section id="s8">
+  <h2><span class="no">08</span>风险与对策</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th style="width:220px">风险</th><th style="width:80px">等级</th><th>对策</th></tr></thead>
+      <tbody>
+        <tr><td>拓扑算子写错导致网格损坏</td><td><span class="tag a">高</span></td><td>算子全部纯函数 + 单元级断言（欧拉公式、边界闭环、无重复边）；损坏时回滚到 before，不写文档</td></tr>
+        <tr><td>稳定 ID 在增删面后错位，选择迁移错误</td><td><span class="tag a">高</span></td><td>ID 永不回收；算子必须返回 <code>created/deleted/remap</code>；迁移有独立测试用例</td></tr>
+        <tr><td>1 万面 JSON base64 体积超限</td><td><span class="tag">中</span></td><td>面数硬上限 + 体积预估拒绝；P3 切 BIN</td></tr>
+        <tr><td>three.js r149 与自研边线叠加的深度冲突</td><td><span class="tag">中</span></td><td>边线用 polygonOffset 退让 + 真实深度；顶点屏幕尺寸恒定；先做单 pass 方案再评估</td></tr>
+        <tr><td>点/边拾取在密集网格上误选</td><td><span class="tag">中</span></td><td>屏幕空间距离阈值 + 优先级 + 深度过滤；先 raycast，P2 再评估 id buffer</td></tr>
+        <tr><td>零构建下的全局命名空间污染与循环依赖</td><td><span class="tag">中</span></td><td>统一 <code>window.SeedModel</code> 命名空间；严格单向依赖；加载顺序写进 index.html 注释</td></tr>
+        <tr><td>旧 v1 参数化资产打开异常</td><td><span class="tag">中</span></td><td>v1 → 烘焙网格的独立转换层；转换失败只读展示 + 明确提示，不覆盖原资产</td></tr>
+        <tr><td>与现有纹理混合/烘焙链路冲突</td><td><span class="tag">中</span></td><td>只存 slotNames；不改 <code>openagi_model_tex_v1</code>；保存前后跑现有 GLB 纹理用例</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 评审 ============ -->
+<section id="review">
+  <h2><span class="no">09</span>与 Astra 的评审记录</h2>
+  <p class="lead">上一轮已通过用户账号下的 <code>gpt-6-astra</code>（OpenAI 兼容接口）完成一次架构评审，回答原文如下，落地时采纳了三项：<b>face-vertex 不选 half-edge</b>、<b>补 evaluator/cache 层</b>、<b>Command 负责事务而 patch 只管数据</b>。<br>
+  本轮（2026-11-03，UI 外壳落地后）想带新界面再复核一次，但接口返回 <b>HTTP 403「账户余额不足」</b>，未能发起对话；下面保留上一轮原文，并列出待补问的清单。</p>
+  <details>
+    <summary>Astra 回复原文（约 2400 字，点击展开）</summary>
+    <pre>总体分层合理，但应补一层 `evaluator/cache`：负责 modifier 求值、显示网格缓存和脏标记。`viewport` 不应直接理解拓扑操作。
+
+1. **mesh-core：选折中方案，不选完整 half-edge**
+
+   用 `face-vertex`：顶点数组、面顶点索引、面 offset；另维护按需生成的 `edgeTable`，操作完成后重建边表和邻接缓存。几万面、纯 JS 下足够，内存和调试成本明显低于 half-edge。
+
+   half-edge 适合高频局部拓扑操作和复杂洞/边界处理，但每次拆分、合并都要维护大量互链，纯 JS 中 bug 成本高。后续性能确实不足，再把局部算子升级为 half-edge，不要一开始全量引入。
+
+2. **拓扑算子与撤销**
+
+   算子保持纯函数：`mesh + operationParams -> {mesh, patch, remap}`。预览时在原网格上计算临时结果，鼠标拖动结束才提交。
+
+   外层必须有 `Command` 对象，负责旧状态、新状态、选择变化、材质变化和合并规则。patch 只解决数据差异，不负责事务、撤销栈和交互生命周期。MVP 可先保存局部快照，复杂 patch 后置。
+
+3. **选择集与稳定 ID**
+
+   顶点、边、面都使用文档级稳定整数 ID，不直接暴露数组索引。mesh 内部使用 `id -> dense index` 映射；删除后索引可压缩，ID 不复用。
+
+   拓扑操作返回 `created/deleted/remap`，选择系统据此迁移选择。边 ID 应由端点 ID 的规范化组合生成；发生拆边时创建新 ID。选择历史只保存 ID 集合，不保存索引。
+
+4. **three.js 显示与拾取**
+
+   实体面使用 indexed `BufferGeometry`；真实边线由拓扑边表生成独立 line buffer；顶点使用 points 或 instanced marker。软选择权重写入顶点颜色，实体材质开启 vertexColors。
+
+   不做多 pass。每次提交或预览时统一生成显示缓存，静态拓扑不重复构建。MVP 用 raycast：对象模式射线命中 mesh，组件模式用三角形、边线和点的独立代理拾取。几万面仍可接受。GPU picking 等稳定性和维护成本不值得放入 MVP。
+
+5. **零构建文件边界**
+
+   建议文件顺序：
+
+   `seed-core.js`、`scene-doc.js`、`mesh-core.js`、`mesh-selection.js`、`topology-ops.js`、`command-history.js`、`tool-controller.js`、`mesh-viewport.js`、`model-ui.js`。
+
+   依赖只能向下：`ui -> tools -> command/selection/topology -> mesh/scene`，`viewport`只依赖只读数据接口。可以引入极小注册器，但只注册服务和工厂，不用它隐藏依赖；优先通过 `window.SeedModel.*` 命名空间暴露模块。
+
+6. **修改器栈**
+
+   放在 `scene-doc` 的节点数据中，求值放入新增的 `evaluator/cache`。每个 modifier 接收 evaluated mesh，返回新 mesh；基础编辑始终作用于 base mesh。
+
+   MVP 不实现修改器，只保留 `modifiers: []`、`evaluate()` 和缓存失效接口。否则会同时承担拓扑、参数依赖、缓存和撤销四套复杂度。
+
+7. **GLB 持久化**
+
+   长期推荐：网格顶点、面 offset、面索引、稳定 ID、材质槽写入 GLB 的 BIN，通过 JSON chunk 中的 bufferView/accessor 描述；`extras.seedModel` 只存 schema、节点、编辑元数据、选择和 slotNames。不要把完整拓扑塞进 JSON。
+
+   但现有"只替换 JSON、不动 BIN"约束下，MVP 只能使用紧凑 JSON 数组或 base64 数据，并限制文档规模。应增加 `schemaVersion: 2` 和 `storage: json|bin`，读取同时兼容 v1；完成 BIN 写入后迁移，旧文件继续可读。
+
+8. **MVP-1，按依赖排序**
+
+   1. scene-doc 多对象节点树、变换、材质槽、稳定 ID。
+   2. face-vertex mesh-core、边表、BufferGeometry 缓存。
+   3. 对象/顶点/边/面选择、框选、选择迁移。
+   4. 移动/旋转/缩放、轴约束、数值输入、一次拖动一次撤销。
+   5. 立方体/平面/圆柱基础体。
+   6. 挤出、内插、合并、删除面；真实边线和组件拾取。
+   7. Outliner、Attribute/Channel 面板、四视图、ViewCube、网格吸附。
+   8. GLB v1 读取、v2 JSON 写入、desk 集成、撤销重做验收。
+
+   明确不做：half-edge、修改器、UV 展开、软选择、桥接、环切、倒角、镜像、阵列、GPU picking、复杂材质、动画和多人协作。
+
+   验收指标：1 万面场景交互保持可操作；上述算子可撤销/重做；四视图选择结果一致；关闭重开后拓扑、变换、材质槽和选择可恢复；旧 v1 文件可打开。</pre>
+  </details>
+
+  <h4 style="font-size:13.5px;margin:18px 0 8px">本轮待补问（Astra 余额恢复后发送）</h4>
+  <div class="decisions">
+    <div class="decision">
+      <h4>Q1 · 命令注册表归谁</h4>
+      <p>当前定的是 <code>SeedCommands</code> 既做历史栈又做命令定义。是否应拆成 <code>command-defs</code>（id / label / when / run）与 <code>command-history</code>（事务与撤销）两层，避免历史层被 UI 依赖？</p>
+    </div>
+    <div class="decision">
+      <h4>Q2 · 视图状态放哪</h4>
+      <p><code>rightTab</code>、<code>outlineQuery</code>、<code>showGrid</code> 目前和文档状态一起放在外壳的 <code>st</code> 里。它们应该进 <code>SeedPrefs</code>、视口状态，还是干脆留在内存？跨文档切换时哪些要重置？</p>
+    </div>
+    <div class="decision">
+      <h4>Q3 · 占位控件的尺度</h4>
+      <p>现在未实现的功能统一 <code>disabled + title</code>，点击无反馈。是否应允许点击并在状态行说明「M6 接入」，以减少「看起来坏了」的观感？如何避免变成假 UI？</p>
+    </div>
+    <div class="decision">
+      <h4>Q4 · 窄窗口退让顺序</h4>
+      <p>外壳标称最小 1100px。低于该值时先收窄大纲、再收窄属性页，视口不低于 460px。这个优先级合理吗？还是应该允许折叠面板而不是压缩？</p>
+    </div>
+    <div class="decision">
+      <h4>Q5 · 命令行时机</h4>
+      <p>命令行放到 M7 是否太晚？是否应该在 M2 就接一个最小解析器（只支持镜头与显示命令），顺带当调试入口？</p>
+    </div>
+    <div class="decision">
+      <h4>Q6 · 中灰视口的选中对比度</h4>
+      <p>视口底色从深蓝黑改成 <code>#5a5d61</code> 中灰后，现有选中色 <code>#f59e0b</code> / <code>#38bdf8</code> 在 1 万面密集网格上是否仍然清晰？是否需要给选中面加描边而不是纯填色？</p>
+    </div>
+  </div>
+</section>
+
+<footer>建模 App · UI 解剖与开发计划表 · 2026-11-03 · 参照 Maya 2024 中文界面 · 架构评审 Astra（gpt-6-astra）</footer>
+</div>
+
+<script>
+/* 计划表状态：点击循环 待开发 → 进行中 → 已完成，存本机 localStorage。
+   只影响这张表单的签收状态，不写进产品代码与 GLB。 */
+(function () {
+  var KEY = 'seed_model_plan_status_v1';
+  var MAP = { todo: '待开发', doing: '进行中', done: '已完成' };
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { state = {}; }
+
+  function paint(el, key) {
+    var v = state[key] || el.getAttribute('data-default') || 'todo';
+    el.className = 'st' + (v === 'doing' ? ' doing' : v === 'done' ? ' done' : '');
+    el.textContent = MAP[v];
+  }
+  document.querySelectorAll('.st[data-id]').forEach(function (el) {
+    var key = el.getAttribute('data-id');
+    paint(el, key);
+    el.addEventListener('click', function () {
+      var cur = state[key] || 'todo';
+      var next = cur === 'todo' ? 'doing' : cur === 'doing' ? 'done' : 'todo';
+      state[key] = next;
+      try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+      paint(el, key);
+    });
+  });
+})();
+</script>
+</body>
+</html>

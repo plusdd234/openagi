@@ -515,6 +515,58 @@
     return { vertexIds: [], edgeIds: [], faceIds: orderBy(mesh.faceIds, outF) };
   }
 
+  /* ---------------- 边循环（edge loop） ----------------
+   * 从一条边出发，在两端各走一趟：只有「该端点恰好有一条不与当前边共面的其它边」时才继续。
+   * 四边面上这正好是对边；遇到三角 / n 边、边界或非流形自然停下（Blender 的循环边也是这个判据）。
+   * 返回选中的边 ID 数组（含起点），顺序是从一端到另一端。 */
+  function edgeLoop(mesh, edgeId) {
+    var M = global.SeedModel && global.SeedModel.Mesh;
+    if (!M || !mesh) return [];
+    var tbl = M.ensureEdges(mesh);
+    var byId = tbl.edgeById || Object.create(null);
+    var first = byId[edgeId];
+    if (!first) return [];
+
+    var byVert = Object.create(null), i, rec;
+    for (i = 0; i < tbl.edges.length; i++) {
+      rec = tbl.edges[i];
+      (byVert[rec.aId] || (byVert[rec.aId] = [])).push(rec);
+      (byVert[rec.bId] || (byVert[rec.bId] = [])).push(rec);
+    }
+
+    function sharesFace(a, b) {
+      for (var j = 0; j < a.faces.length; j++) {
+        if (b.faces.indexOf(a.faces[j]) >= 0) return true;
+      }
+      return false;
+    }
+    function nextFrom(recCur, vertexId) {
+      var cands = byVert[vertexId] || [], out = [];
+      for (var j = 0; j < cands.length; j++) {
+        if (cands[j].id === recCur.id) continue;
+        if (!sharesFace(recCur, cands[j])) out.push(cands[j]);
+      }
+      return out.length === 1 ? out[0] : null;
+    }
+
+    var seen = Object.create(null);
+    var list = [first.id];
+    seen[first.id] = 1;
+    var ends = [first.aId, first.bId];
+    for (i = 0; i < 2; i++) {
+      var cur = first, vert = ends[i];
+      while (cur) {
+        var next = nextFrom(cur, vert);
+        if (!next || seen[next.id]) break;
+        seen[next.id] = 1;
+        list.push(next.id);
+        vert = (next.aId === vert) ? next.bId : next.aId;
+        cur = next;
+      }
+    }
+    return list;
+  }
+
   global.SeedSelection = {
     pick: pick,
     pickBox: pickBox,
@@ -522,6 +574,7 @@
     pickRegion: pickRegion,
     pointInPolygon: pointInPolygon,
     convertSelection: convertSelection,
+    edgeLoop: edgeLoop,
     VERT_PX: VERT_PX,
     EDGE_PX: EDGE_PX
   };

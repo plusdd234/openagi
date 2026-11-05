@@ -37,8 +37,8 @@
     impls[id] = {
       id: id,
       label: str(spec.label, id),
-      /* 参数 schema：[{ key, label, value, min, max, step, off }]
-       * 参数条由它生成，会话里通过 ctx.params.key 读 */
+      /* 参数 schema：[{ key, label, value, min, max, step, off, type }]
+       * 参数条由它生成（type='toggle' 时 value 当 0/1 开关），会话里通过 ctx.params.key 读 */
       params: Array.isArray(spec.params) ? spec.params.map(function (p) {
         return {
           key: str(p.key, ''),
@@ -47,7 +47,8 @@
           min: p.min == null ? null : Number(p.min),
           max: p.max == null ? null : Number(p.max),
           step: p.step == null ? null : Number(p.step),
-          off: !!p.off
+          off: !!p.off,
+          type: p.type === 'toggle' ? 'toggle' : 'number'
         };
       }) : [],
       begin: spec.begin,
@@ -87,6 +88,7 @@
     return live.impl.params.map(function (p) {
       return {
         key: p.key, label: p.label, min: p.min, max: p.max, step: p.step, off: p.off,
+        type: p.type || 'number',
         value: live.params[p.key]
       };
     });

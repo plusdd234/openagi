@@ -214,6 +214,62 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
   check(shade[0].solid === true && shade[0].edge === false, '实体模式隐藏边线', JSON.stringify(shade[0]));
   check(shade[1].solid === false && shade[1].edge === true, '线框模式隐藏面、显示边', JSON.stringify(shade[1]));
 
+  /* 4b. 平涂 / UV 岛着色（参考模型库的材质预览做法） */
+  const shadeMore = await page.evaluate(async () => {
+    const sel = document.getElementById('mdShadeSel');
+    const apply = async (v) => {
+      sel.value = v;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise(r => requestAnimationFrame(r));
+    };
+    const firstSolid = () => {
+      let s = null;
+      const piv = window.modelDesk.__debug().pivots || {};
+      Object.keys(piv).forEach(k => piv[k].traverse(o => {
+        if (!s && o.userData && o.userData.mdPart === 'solid') s = o;
+      }));
+      return s;
+    };
+    const typeOf = o => {
+      if (!o || !o.material) return null;
+      return (Array.isArray(o.material) ? o.material[0] : o.material).type;
+    };
+    const out = {};
+    await apply('flat');
+    const s1 = firstSolid();
+    const m1 = s1 && (Array.isArray(s1.material) ? s1.material[0] : s1.material);
+    out.flat = {
+      state: window.modelDesk.getState().shading,
+      type: typeOf(s1), toneMapped: m1 ? m1.toneMapped : null, visible: !!(s1 && s1.visible)
+    };
+    await apply('uv');
+    const d2 = window.modelDesk.__debug();
+    let layer = null, solid2 = null;
+    Object.keys(d2.pivots || {}).forEach(k => d2.pivots[k].traverse(o => {
+      const part = o.userData && o.userData.mdPart;
+      if (part === 'uvisland') layer = o;
+      if (part === 'solid' && !solid2) solid2 = o;
+    }));
+    out.uv = {
+      state: window.modelDesk.getState().shading,
+      layer: !!layer, layerVisible: !!(layer && layer.visible),
+      colors: !!(layer && layer.geometry && layer.geometry.attributes && layer.geometry.attributes.color),
+      vertexColors: !!(layer && layer.material && layer.material.vertexColors),
+      solidHidden: !(solid2 && solid2.visible)
+    };
+    await apply('shaded-wire');
+    out.restored = { state: window.modelDesk.getState().shading, type: typeOf(firstSolid()) };
+    return out;
+  });
+  check(shadeMore.flat.state === 'flat' && shadeMore.flat.type === 'MeshBasicMaterial' &&
+    shadeMore.flat.visible === true && shadeMore.flat.toneMapped === false,
+    '平涂 = unlit 材质（不吃灯光 / 色调映射）', JSON.stringify(shadeMore.flat));
+  check(shadeMore.uv.state === 'uv' && shadeMore.uv.layer === true && shadeMore.uv.layerVisible === true &&
+    shadeMore.uv.colors === true && shadeMore.uv.vertexColors === true && shadeMore.uv.solidHidden === true,
+    'UV 岛着色：实体收起、岛色层（顶点色）出场', JSON.stringify(shadeMore.uv));
+  check(shadeMore.restored.state === 'shaded-wire' && shadeMore.restored.type === 'MeshStandardMaterial',
+    '切回实体 + 线框恢复受光材质', JSON.stringify(shadeMore.restored));
+
   /* 5. 栅格按钮 */
   const grid = await page.evaluate(async () => {
     const before = window.modelDesk.__debug().scene.children.find(o => o.type === 'GridHelper').visible;
@@ -265,7 +321,95 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
   });
   check(cube.size > 0 && cube.view === '前视图', 'ViewCube 点面切正视图', JSON.stringify(cube));
 
-  /* 7.2 立体跟随：拖立方体 → 相机绕模型转，立方体朝向同步反着转 */
+  /* 7.2 转向三角：点一下 = 绕目标点翻 90°，落点是正轴视图且箭头继续显示 */
+  const cubeTurn = await page.evaluate(async () => {
+    const d = window.modelDesk.__debug();
+    const box = document.getElementById('mdCube');
+    const before = d.camera.position.clone().sub(d.controls.target).normalize();
+    const shown = box.classList.contains('on');
+    document.querySelector('[data-md-turn="right"]').click();
+    await new Promise(r => setTimeout(r, 200));
+    const after = d.camera.position.clone().sub(d.controls.target).normalize();
+    return {
+      deg: before.angleTo(after) * 180 / Math.PI,
+      view: window.modelDesk.getState().viewName,
+      shown: shown, still: box.classList.contains('on')
+    };
+  });
+  const VIEWS = ['前视图', '后视图', '左视图', '右视图', '顶视图', '底视图'];
+  check(Math.abs(cubeTurn.deg - 90) < 5 && VIEWS.indexOf(cubeTurn.view) >= 0 &&
+    cubeTurn.shown && cubeTurn.still, 'ViewCube 箭头 90° 转向', JSON.stringify(cubeTurn));
+
+  /* 7.2b 任意正视图 → 向上翻：必须落在正顶视图
+   * （旧实现 phi 夹 0.08，会留下 4.6° 斜角，正是「前视图切顶视图没摆正」） */
+  const cubeTop = await page.evaluate(async () => {
+    const d = window.modelDesk.__debug();
+    const box = document.getElementById('mdCube');
+    document.querySelector('[data-md-turn="up"]').click();
+    await new Promise(r => setTimeout(r, 200));
+    const dir = d.camera.position.clone().sub(d.controls.target).normalize();
+    return {
+      view: window.modelDesk.getState().viewName,
+      y: +dir.y.toFixed(6), x: +dir.x.toFixed(6), z: +dir.z.toFixed(6),
+      shown: box.classList.contains('on')
+    };
+  });
+  check(cubeTop.view === '顶视图' && cubeTop.y > 0.99999 && Math.abs(cubeTop.z) < 0.01 && cubeTop.shown,
+    'ViewCube 翻到顶视图摆正', JSON.stringify(cubeTop));
+
+  /* 7.2c 极点不能把按钮吞掉：顶 → 下 → 前 → 下 → 底；
+   * 底视图里「左 / 右」要还能转画面（相机右向量转 90°，仍在底视图），
+   * 「下」要能离开极点落到另一个正轴视图。上一版在极点无条件 theta=0，这三个按钮等于失效。 */
+  const cubePole = await page.evaluate(async () => {
+    const d = window.modelDesk.__debug();
+    const T = window.THREE;
+    const box = document.getElementById('mdCube');
+    const click = async (k) => {
+      document.querySelector('[data-md-turn="' + k + '"]').click();
+      await new Promise(r => setTimeout(r, 160));
+    };
+    const snap = () => {
+      const dir = d.camera.position.clone().sub(d.controls.target).normalize();
+      return {
+        view: window.modelDesk.getState().viewName,
+        y: +dir.y.toFixed(5), x: +dir.x.toFixed(5), z: +dir.z.toFixed(5),
+        shown: box.classList.contains('on')
+      };
+    };
+    const right = () => new T.Vector3().setFromMatrixColumn(d.camera.matrixWorld, 0).clone();
+    await click('down');
+    const seq1 = snap();
+    await click('down');
+    const seq2 = snap();
+    const r0 = right();
+    await click('left');
+    const r1 = right();
+    const leftRoll = +(r0.angleTo(r1) * 180 / Math.PI).toFixed(1);
+    const afterLeft = snap();
+    await click('right');
+    const rightRoll = +(r1.angleTo(right()) * 180 / Math.PI).toFixed(1);
+    const afterRight = snap();
+    await click('down');
+    const afterDown = snap();
+    return {
+      seq: [seq1.view, seq2.view], afterLeft, afterRight, afterDown,
+      leftRoll, rightRoll
+    };
+  });
+  check(cubePole.seq[0] === '前视图' && cubePole.seq[1] === '底视图',
+    '顶视图按「下」两次落到正底视图', JSON.stringify(cubePole.seq));
+  check(cubePole.afterLeft.view === '底视图' && cubePole.afterLeft.y < -0.99999 &&
+    cubePole.afterLeft.shown && Math.abs(cubePole.leftRoll - 90) < 3,
+    '底视图按「左」画面原地转 90°', JSON.stringify(cubePole.afterLeft) + ' roll=' + cubePole.leftRoll);
+  check(cubePole.afterRight.view === '底视图' && cubePole.afterRight.y < -0.99999 &&
+    cubePole.afterRight.shown && Math.abs(cubePole.rightRoll - 90) < 3,
+    '底视图按「右」画面原地转 90°', JSON.stringify(cubePole.afterRight) + ' roll=' + cubePole.rightRoll);
+  check(VIEWS.indexOf(cubePole.afterDown.view) >= 0 && cubePole.afterDown.view !== '底视图' &&
+    cubePole.afterDown.shown, '底视图按「下」离开极点落到正轴视图',
+    JSON.stringify(cubePole.afterDown));
+
+  /* 7.3 立体跟随：拖立方体 → 相机绕模型转，立方体朝向同步反着转；
+   * 转完不再归正，四个转向三角必须收起来 */
   const cubeSync = await page.evaluate(async () => {
     const d = window.modelDesk.__debug();
     const c = d.cube;
@@ -279,9 +423,19 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
     for (let i = 1; i <= 5; i++) send('pointermove', cx + i * 8);
     send('pointerup', cx + 40);
     await new Promise(res => setTimeout(res, 240));
-    return { dq: q0.angleTo(c.group.quaternion), view: window.modelDesk.getState().viewName };
+    return {
+      dq: q0.angleTo(c.group.quaternion), view: window.modelDesk.getState().viewName,
+      shown: document.getElementById('mdCube').classList.contains('on')
+    };
   });
-  check(cubeSync.dq > 0.05 && cubeSync.view === '自由', 'ViewCube 随相机同步旋转', JSON.stringify(cubeSync));
+  check(cubeSync.dq > 0.05 && cubeSync.view === '自由' && !cubeSync.shown,
+    'ViewCube 随相机同步旋转', JSON.stringify(cubeSync));
+
+  /* 7.4 回轴测：后面的 Alt 导航与拾取断言都依赖这个视角 */
+  await page.evaluate(async () => {
+    document.getElementById('mdCube').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 200));
+  });
 
   /* 7.5 Alt 导航门控：**不发 keydown**，只让指针事件带 altKey。
    * 真实浏览器里第一次按 Alt 常被窗口菜单吃掉 keydown，旧实现会「第一次拖拽无效」。 */
@@ -606,8 +760,8 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
       opts: box.querySelectorAll('.md-hb-opt').length
     };
   });
-  check(hbRows.rows === 24 && hbRows.icons === 24 && hbRows.opts === 24,
-    '每行 = 图标 + 名字 + 右侧方框（24 行一一对应）', JSON.stringify(hbRows));
+  check(hbRows.rows === hbRows.icons && hbRows.icons === hbRows.opts && hbRows.rows >= 24,
+    '每行 = 图标 + 名字 + 右侧方框（一一对应）', JSON.stringify(hbRows));
 
   const hb = await readHb();
   check(hb.on && hb.zones.length === 4 && hb.zones[1].t === '对象操作',
@@ -718,14 +872,58 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
   check(delOne.n === 1 && delOne.scene === 1 && delOne.names[0] === '立方体',
     'Delete 后场景真的只剩立方体（渲染层同步回收）', JSON.stringify(delOne));
 
+  /* 最后一个对象也能删：场景变空是合法状态，渲染层跟着清空，Ctrl+Z 还能整份回来 */
   await page.keyboard.press('Delete');
   await page.waitForTimeout(250);
   const delLast = await page.evaluate(() => {
     const s = window.modelDesk.getState();
-    return { n: s.nodeCount, scene: s.sceneObjects, status: s.status };
+    return { n: s.nodeCount, scene: s.sceneObjects, faces: s.faces, status: s.status };
   });
-  check(delLast.n === 1 && delLast.scene === 1 && /最后一个对象/.test(delLast.status),
-    '最后一个对象拒绝删除（模型还在 + 状态行说明）', JSON.stringify(delLast));
+  check(delLast.n === 0 && delLast.scene === 0 && delLast.faces === 0 && /场景已空/.test(delLast.status),
+    '最后一个对象可以删除，场景变空（渲染层同步清掉）', JSON.stringify(delLast));
+
+  /* 空场景也要能导出（保存时 currentGLB 不再因为「没有网格」直接抛错） */
+  const emptyGlb = await page.evaluate(async () => {
+    try {
+      const buf = await window.modelDesk.exportBytes();
+      return { ok: true, bytes: buf.byteLength || buf.length };
+    } catch (e) { return { ok: false, err: String((e && e.message) || e) }; }
+  });
+  check(emptyGlb.ok && emptyGlb.bytes > 0,
+    '空场景能导出 GLB（保存链路不再抛「还没有网格」）', JSON.stringify(emptyGlb));
+
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(350);
+  const undel = await page.evaluate(() => {
+    const s = window.modelDesk.getState();
+    return { n: s.nodeCount, scene: s.sceneObjects, faces: s.faces, names: s.docNodes.map(x => x.name) };
+  });
+  check(undel.n === 1 && undel.scene === 1 && undel.faces === 6,
+    '撤销删除：对象与网格一起回来', JSON.stringify(undel));
+
+  /* 空场景里再从「新建」加对象：不能因为文档没有激活节点就卡住 */
+  await page.keyboard.press('Delete');
+  await page.waitForTimeout(250);
+  await page.evaluate(() => window.modelDesk.createPrimitive());
+  await page.waitForTimeout(350);
+  const fromEmpty = await page.evaluate(() => {
+    const s = window.modelDesk.getState();
+    return { n: s.nodeCount, scene: s.sceneObjects, faces: s.faces };
+  });
+  check(fromEmpty.n === 1 && fromEmpty.scene === 1 && fromEmpty.faces > 0,
+    '空场景里「新建」能重新加对象', JSON.stringify(fromEmpty));
+
+  /* 回到「立方体」单对象：撤销这次新建，再撤销删除，后续用例状态就绪 */
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(250);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
+  const backToCube = await page.evaluate(() => {
+    const s = window.modelDesk.getState();
+    return { n: s.nodeCount, faces: s.faces, names: s.docNodes.map(x => x.name) };
+  });
+  check(backToCube.n === 1 && backToCube.faces === 6 && /立方体/.test(backToCube.names[0]),
+    '两次撤销回到「立方体」单对象', JSON.stringify(backToCube));
 
   /* B2b 大纲层级：行数 = 假节点 + 真节点，点行 = 换激活对象 */
   await page.evaluate(() => window.modelDesk.createPrimitive('sphere'));
@@ -1229,6 +1427,22 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
     'GLB 往返后两个对象的网格与面数都还在',
     JSON.stringify({ nodes: rt.nodes, meshes: rt.meshes, faces: rt.faces }));
 
+  /* 11.8b 空场景也能存盘再读回：删光对象后的文档不该被「补一个幽灵节点」 */
+  const emptyRt = await page.evaluate(() => {
+    const S = window.SeedModel.Scene;
+    const doc = S.validate(S.toSeedModel(window.modelDesk.getDocument())).doc;
+    S.nodesOf(doc).forEach(function (n) { S.removeNode(doc, n.id); });
+    const v = S.validate(S.toSeedModel(doc));
+    return {
+      ok: v.ok, errors: v.errors, warnEmpty: (v.warnings || []).some(w => /空场景/.test(w)),
+      nodes: v.doc ? v.doc.nodes.length : -1,
+      meshes: v.doc ? Object.keys(v.doc.meshes).length : -1,
+      active: v.doc ? v.doc.activeNodeId : 'x'
+    };
+  });
+  check(emptyRt.ok && emptyRt.nodes === 0 && emptyRt.meshes === 0 && emptyRt.active === '' && emptyRt.warnEmpty,
+    '空场景可以序列化 / 校验（不会补幽灵节点）', JSON.stringify(emptyRt));
+
   /* 11.8 面数上限是策略线不是性能线：2 万面级网格应能直接转换 */
   const capite = await page.evaluate(() => {
     const THREE = window.THREE, M = window.SeedModel.Mesh;
@@ -1355,6 +1569,73 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
     '普通 GLB 打开时自动转成可编辑网格（不再「打开失败」）',
     JSON.stringify({ nodes: plainOpen.nodeCount, status: plainOpen.status }));
 
+  /* 11.10b 导入色真的到材质上：slotColors / slotMaps 不能只存在文档里，视口实体材质得吃到 */
+  const importedColor = await page.evaluate(() => {
+    const d = window.modelDesk.__debug();
+    const doc = window.modelDesk.getDocument();
+    const mats = [];
+    if (d.pivot) d.pivot.traverse(o => {
+      if (o.userData && o.userData.mdPart === 'solid' && o.material) {
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => mats.push(m));
+      }
+    });
+    return {
+      slotNames: doc.materials.slotNames.length,
+      slotColors: doc.materials.slotColors,
+      maps: (doc.materials.slotMaps || []).filter(Boolean).length,
+      matColors: mats.map(m => '#' + m.color.getHexString()),
+      matMaps: mats.map(m => !!m.map)
+    };
+  });
+  check(importedColor.slotNames > 0 && importedColor.slotColors.length === importedColor.slotNames &&
+    importedColor.matColors.length > 0 &&
+    importedColor.matColors[0] === importedColor.slotColors[0],
+    '导入后槽色写进文档并挂到实体材质上（重开不再变灰）',
+    JSON.stringify({ doc: importedColor.slotColors[0], mat: importedColor.matColors[0],
+      slots: importedColor.slotNames, maps: importedColor.maps }));
+
+  /* 11.10c 同名同材质碎片并成一个节点（导出器 16 位索引 / 按材质拆 primitive 的常见产物） */
+  await page.evaluate(async () => {
+    const THREE = window.THREE, G = window.SeedGLB;
+    const scene = new THREE.Scene();
+    const mat = new THREE.MeshStandardMaterial({ name: '同材质', color: 0xb0b4ba });
+    const a = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
+    a.name = 'Body';
+    a.position.set(-1.2, 0, 0);
+    const b = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
+    b.name = 'Body';
+    b.position.set(1.2, 0, 0);
+    scene.add(a, b);
+    const buf = await new Promise((res, rej) => new THREE.GLTFExporter().parse(scene, res, rej, { binary: true }));
+    const prevRead = window.openagiDesktop.assetRead;
+    window.openagiDesktop.assetRead = async id => {
+      if (id === 'asset-dock-merge') return { ok: true, dataURL: G.toDataURL(buf) };
+      return prevRead(id);
+    };
+    const prevList = window.openagiDesktop.assetList;
+    window.openagiDesktop.assetList = async () => {
+      const l = await prevList();
+      l.assets.push({ id: 'asset-dock-merge', name: '同名碎片.glb', kind: 'model', ext: 'glb', size: buf.byteLength, updated: 1749999998000 });
+      return l;
+    };
+  });
+  await page.click('.md-dock-mini[data-md-dock="refresh"]');
+  await page.waitForTimeout(500);
+  await page.click('[data-md-cb-id="asset-dock-merge"] [data-md-cb-open]');
+  await page.waitForTimeout(900);
+  const mergedOpen = await page.evaluate(() => {
+    const st = window.modelDesk.getState();
+    const doc = window.modelDesk.getDocument();
+    return {
+      nodes: st.docNodes.map(n => n.name),
+      faces: Object.keys(doc.meshes).map(k => doc.meshes[k].faceCount),
+      status: st.status
+    };
+  });
+  check(mergedOpen.nodes.length === 1 && mergedOpen.nodes[0] === 'Body' && mergedOpen.faces[0] === 12,
+    '同名同材质碎片并成一个节点（不再裂成两个 Body）',
+    JSON.stringify(mergedOpen));
+
   /* 11.10b FBX：ASCII 网格走同一条「普通模型」导入路径 */
   const FBX_MINI = `; FBX 7.2.0 project file
 ; Copyright (C) 1997-2010 Autodesk Inc. and/or its licensors.
@@ -1420,7 +1701,7 @@ Connections:  {
       buttons: card ? Array.from(card.querySelectorAll('button')).map(b => b.textContent) : []
     };
   });
-  check(fbxCard.cards === 3 && fbxCard.buttons.join(',') === '置于,打开',
+  check(fbxCard.cards >= 3 && fbxCard.buttons.join(',') === '置于,打开',
     'FBX 资产在内容浏览器里可置于/打开', JSON.stringify(fbxCard));
 
   await page.click('[data-md-cb-id="asset-dock-fbx"] [data-md-cb-open]');
@@ -1459,6 +1740,1299 @@ Connections:  {
   check(dockClosed === false, '再点页签可收起内容浏览器', String(dockClosed));
   await page.click('.md-dock-tab[data-md-dock="toggle"]');
   await page.waitForTimeout(300);
+
+  /* 11.12 Maya 式变换手柄：中心 = 屏幕空间、平面手柄 = 两轴平面、外圈 = 屏幕旋转、
+   *       中心方块 = 整体缩放、旋转 / 缩放环跟随对象朝向、悬停高亮 */
+  const giz = await page.evaluate(async () => {
+    const d = window.modelDesk.__debug(), g = d.gizmo, T = window.THREE;
+    const pickAt = (h, local) => g._screenPoint(h.pickers[0].localToWorld(new T.Vector3().copy(local)));
+    const send = (type, x, y, id) => d.canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, button: 0, pointerId: id, clientX: x, clientY: y
+    }));
+    const drag = async (h, local, dx, dy, id) => {
+      const a = pickAt(h, local || new T.Vector3());
+      send('pointerdown', a.x, a.y, id);
+      for (let i = 1; i <= 8; i++) send('pointermove', a.x + dx * i / 8, a.y + dy * i / 8, id);
+      send('pointerup', a.x + dx, a.y + dy, id);
+      await new Promise(r => setTimeout(r, 120));
+    };
+    const pos = () => d.pivot.position.clone();
+    const out = {};
+
+    g.setMode('translate');
+    /* 中心方块：位移必须落在「正对相机」的平面里（与视线方向的点积 ≈ 0） */
+    const cH = g.handles.find(h => h.kind === 'center');
+    const camDir = g._cameraDir().clone();
+    const p0 = pos();
+    await drag(cH, new T.Vector3(), 60, -60, 11);
+    const dvC = pos().sub(p0);
+    out.center = { len: +dvC.length().toFixed(3), dotCam: +Math.abs(dvC.dot(camDir)).toFixed(4) };
+
+    /* XY 平面手柄：法向 Z，位移不该有 Z 分量 */
+    const pH = g.handles.find(h => h.kind === 'plane' && h.axes.join('') === 'xy');
+    const p1 = pos();
+    await drag(pH, new T.Vector3(), 56, 40, 12);
+    const dvP = pos().sub(p1);
+    out.plane = { len: +dvP.length().toFixed(3), dz: +Math.abs(dvP.z).toFixed(4) };
+
+    /* X 轴：只沿 X 走 */
+    const xH = g.handles.find(h => h.kind === 'axis' && h.mode === 'translate' && h.axis === 'x');
+    const p2 = pos();
+    await drag(xH, new T.Vector3(0, 0.21, 0), 72, 32, 13);
+    const dvX = pos().sub(p2);
+    out.axis = { len: +dvX.length().toFixed(3), dy: +Math.abs(dvX.y).toFixed(4), dz: +Math.abs(dvX.z).toFixed(4) };
+
+    /* 外圈：绕相机视线旋转；环的朝向与对象一致 */
+    g.setMode('rotate');
+    const sH = g.handles.find(h => h.kind === 'screen');
+    const q0 = d.pivot.quaternion.clone();
+    const sp = pickAt(sH, new T.Vector3(sH.pickers[0].geometry.parameters.radius, 0, 0));
+    const cen = pickAt(sH, new T.Vector3());
+    const rr = Math.hypot(sp.x - cen.x, sp.y - cen.y), a0 = Math.atan2(sp.y - cen.y, sp.x - cen.x);
+    send('pointerdown', sp.x, sp.y, 14);
+    for (let i = 1; i <= 12; i++) {
+      const ang = a0 + 1.2 * i / 12;
+      send('pointermove', cen.x + Math.cos(ang) * rr, cen.y + Math.sin(ang) * rr, 14);
+    }
+    send('pointerup', cen.x + Math.cos(a0 + 1.2) * rr, cen.y + Math.sin(a0 + 1.2) * rr, 14);
+    await new Promise(r => setTimeout(r, 120));
+    const dq = q0.clone().invert().multiply(d.pivot.quaternion);
+    const ang = 2 * Math.acos(Math.min(1, Math.abs(dq.w)));
+    const ax = new T.Vector3(dq.x, dq.y, dq.z);
+    if (ax.length() > 1e-6) ax.normalize();
+    out.screenRot = {
+      deg: +(ang * 180 / Math.PI).toFixed(1),
+      axisDot: +Math.abs(ax.dot(camDir)).toFixed(3),
+      follow: +g.group.quaternion.angleTo(d.pivot.getWorldQuaternion(new T.Quaternion())).toFixed(4)
+    };
+
+    /* 中心方块：整体缩放（右拖变大 / 左拖变小，三轴同步） */
+    g.setMode('scale');
+    const uH = g.handles.find(h => h.kind === 'uniform');
+    const s0 = d.pivot.scale.clone();
+    await drag(uH, new T.Vector3(), 80, 0, 15);
+    const s1 = d.pivot.scale.clone();
+    await drag(uH, new T.Vector3(), -80, 0, 16);
+    const s2 = d.pivot.scale.clone();
+    out.uniform = {
+      right: +(s1.x / s0.x).toFixed(2),
+      left: +(s2.x / s1.x).toFixed(2),
+      skew: +Math.max(Math.abs(s1.y / s0.y - s1.x / s0.x), Math.abs(s1.z / s0.z - s1.x / s0.x)).toFixed(4)
+    };
+
+    /* 悬停高亮 */
+    g.setMode('translate');
+    const hp = pickAt(xH, new T.Vector3(0, 0.21, 0));
+    send('pointermove', hp.x, hp.y, 17);
+    await new Promise(r => setTimeout(r, 60));
+    out.hover = { kind: g._hover ? g._hover.kind : null, axis: g._hover ? g._hover.axis : null };
+
+    /* 内圈：拖三色环 = 绕该环自己的轴旋转（环在结构上是一根轴，走 axis 分支）；
+     * 旧代码把环标成 kind='ring'，pointerdown 没有这个分支 → 拿不到起点方向，拖了完全没反应。
+     * 三只环的拾取管互相叠着，射线命中哪只由 gizmo 判定，所以基准轴取「拖动记录里的轴」。 */
+    g.setMode('rotate');
+    const rH = g.handles.find(h => h.kind === 'ring' && h.axis === 'y');
+    let rp = null;
+    for (const c of [[1, 0, 0], [0.7, 0.7, 0], [-0.7, 0.7, 0], [0, -1, 0]]) {
+      rp = pickAt(rH, new T.Vector3(c[0], c[1], c[2]));
+      send('pointermove', rp.x, rp.y, 18);
+      await new Promise(r => setTimeout(r, 40));
+      if (g._hover && g._hover.kind === 'ring') break;
+    }
+    const qR0 = d.pivot.quaternion.clone();
+    const rc = pickAt(rH, new T.Vector3());
+    const rad = { x: rp.x - rc.x, y: rp.y - rc.y };
+    const rl = Math.hypot(rad.x, rad.y) || 1;
+    const tx = -rad.y / rl, ty = rad.x / rl;      /* 屏幕上的切线方向 = 绕环拖动 */
+    send('pointerdown', rp.x, rp.y, 18);
+    const rKey = g.drag ? g.drag.axis : '';
+    const rAxis = g.drag ? g.drag.dir.clone() : new T.Vector3();
+    for (let i = 1; i <= 10; i++) send('pointermove', rp.x + tx * 90 * i / 10, rp.y + ty * 90 * i / 10, 18);
+    send('pointerup', rp.x + tx * 90, rp.y + ty * 90, 18);
+    await new Promise(r => setTimeout(r, 120));
+    /* 世界空间的增量：q · q0⁻¹（premultiply 的旋转轴是世界轴，不能拿 q0⁻¹·q 来量） */
+    const dqr = d.pivot.quaternion.clone().multiply(qR0.clone().invert());
+    const angR = 2 * Math.acos(Math.min(1, Math.abs(dqr.w)));
+    const axR = new T.Vector3(dqr.x, dqr.y, dqr.z);
+    if (axR.length() > 1e-6) axR.normalize();
+    out.ringRot = {
+      axis: rKey, deg: +(angR * 180 / Math.PI).toFixed(1),
+      axisDot: +Math.abs(axR.dot(rAxis)).toFixed(3)
+    };
+    return out;
+  });
+  check(giz.center.len > 0.05 && giz.center.dotCam < 0.01,
+    '中心拖拽 = 屏幕空间平移（位移与视线垂直）', JSON.stringify(giz.center));
+  check(giz.plane.len > 0.05 && giz.plane.dz < 0.005,
+    '平面手柄 = 两轴平面内平移（XY 面不动 Z）', JSON.stringify(giz.plane));
+  check(giz.axis.len > 0.05 && giz.axis.dy < 0.005 && giz.axis.dz < 0.005,
+    '轴手柄 = 只沿该轴平移', JSON.stringify(giz.axis));
+  check(Math.abs(giz.screenRot.deg - 68.8) < 6 && giz.screenRot.axisDot > 0.99 && giz.screenRot.follow < 0.001,
+    '外圈 = 屏幕空间旋转，且旋转环跟随对象轴', JSON.stringify(giz.screenRot));
+  check(giz.ringRot.deg > 5 && giz.ringRot.axisDot > 0.99,
+    '内圈 = 绕该环自身轴旋转（拖了有反应）', JSON.stringify(giz.ringRot));
+  check(giz.uniform.right > 1.2 && giz.uniform.left < 0.9 && giz.uniform.skew < 0.001,
+    '中心方块整体缩放（右增大 / 左缩小 / 三轴同步）', JSON.stringify(giz.uniform));
+  check(giz.hover.kind === 'axis' && giz.hover.axis === 'x', '悬停手柄高亮', JSON.stringify(giz.hover));
+
+  /* 11.13 挤出：工具一启动就弹属性面板（厚度 / 局部平移 Z / 偏移 / 分段 / 保持面的连续性）；
+   * 关闭连接性 = 每张面各自挤出（各长 4 面侧壁），开启 = 整块壳体（只在区域外边界长 6 面，
+   * 内部共享边上没有隐藏的内接面）。 */
+  const ext = await page.evaluate(async () => {
+    const d = window.modelDesk.__debug();
+    const API = window.modelDesk;
+    const m = d.mesh;
+    /* 找一对共享一条边的四边形面 */
+    const first = Object.create(null);
+    let pair = null;
+    for (let f = 0; f < m.faceIds.length && !pair; f++) {
+      const s = m.faceOffsets[f], e = m.faceOffsets[f + 1], n = e - s;
+      if (n !== 4) continue;
+      for (let c = 0; c < n; c++) {
+        const a = m.faceIndices[s + c], b = m.faceIndices[s + (c + 1) % n];
+        const k = a < b ? a + '_' + b : b + '_' + a;
+        if (first[k] != null && first[k] !== f) { pair = [first[k], f]; break; }
+        first[k] = f;
+      }
+    }
+    const ids = [m.faceIds[pair[0]], m.faceIds[pair[1]]];
+    const doc = API.getDocument();
+    doc.selection = {
+      mode: 'face', nodeIds: doc.selection.nodeIds || [],
+      vertexIds: [], edgeIds: [], faceIds: ids
+    };
+    API.reselect();
+    window.SeedCommands.run('mesh.extrude', {});
+    await new Promise(r => setTimeout(r, 150));
+
+    const panel = document.getElementById('mdToolPanel');
+    const rows = panel ? Array.from(panel.querySelectorAll('.md-hbp-row > span')).map(s => s.textContent) : [];
+    const sw = panel ? panel.querySelector('.md-tp-sw') : null;
+    const live0 = window.modelDesk.getState().toolLive;
+    const preview0 = !!d.scene.getObjectByName('tool-preview-mesh');
+    const toggle0 = sw ? { text: sw.textContent.trim(), on: sw.classList.contains('on') } : null;
+
+    /* 面板上改厚度 → 预览立刻重算（不需要重新点工具） */
+    const thick = panel ? panel.querySelector('input[data-tp="0"]') : null;
+    if (thick) {
+      thick.value = '0.25';
+      thick.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    await new Promise(r => setTimeout(r, 80));
+    const live1 = window.modelDesk.getState().toolLive;
+    const preview1 = !!d.scene.getObjectByName('tool-preview-mesh');
+
+    /* 关掉「保持面的连续性」→ 预览还在，参数为 0 */
+    if (sw) sw.click();
+    await new Promise(r => setTimeout(r, 80));
+    const offState = (window.SeedTools.current() || {}).params || null;
+
+    /* × = 取消：面板收起、预览清掉、网格不动 */
+    const closers = panel ? panel.querySelector('[data-tp-act="close"]') : null;
+    if (closers) closers.click();
+    await new Promise(r => setTimeout(r, 120));
+    const afterCancel = {
+      panel: !!document.getElementById('mdToolPanel'),
+      live: window.modelDesk.getState().toolLive,
+      preview: !!d.scene.getObjectByName('tool-preview-mesh')
+    };
+
+    const base = { faces: m.faceIds.length, verts: m.vertexIds.length };
+    const E = o => window.SeedOps.extrudeFaces(m, Object.assign({ faceIds: ids, dist: 0.1 }, o));
+    const on = E({ keepTogether: true });
+    const off = E({ keepTogether: false });
+    const div = E({ keepTogether: true, divisions: 2 });
+    const plain = E({ keepTogether: true, dist: 0.1, offset: 0 });
+    const inset = E({ keepTogether: true, dist: 0.1, offset: -0.05 });
+    const area = mesh => {
+      let sum = 0, p = mesh.positions;
+      for (let f = 0; f < mesh.faceIds.length; f++) {
+        if (ids.indexOf(mesh.faceIds[f]) < 0) continue;
+        const s = mesh.faceOffsets[f], e = mesh.faceOffsets[f + 1], n = e - s;
+        let ax = 0, ay = 0, az = 0;
+        for (let c = 0; c < n; c++) {
+          const i = mesh.faceIndices[s + c], j = mesh.faceIndices[s + ((c + 1) % n)];
+          ax += p[i * 3] * p[j * 3 + 1] - p[j * 3] * p[i * 3 + 1];
+          ay += p[i * 3 + 1] * p[j * 3 + 2] - p[j * 3 + 1] * p[i * 3 + 2];
+          az += p[i * 3 + 2] * p[j * 3] - p[j * 3 + 2] * p[i * 3];
+        }
+        sum += Math.sqrt(ax * ax + ay * ay + az * az) * 0.5;
+      }
+      return sum;
+    };
+    return {
+      pairing: pair, ids: ids,
+      rows, toggle0, live0, preview0, live1, preview1, offState,
+      afterCancel,
+      base,
+      on: { faces: on.faceIds.length - base.faces, verts: on.vertexIds.length - base.verts },
+      off: { faces: off.faceIds.length - base.faces, verts: off.vertexIds.length - base.verts },
+      div: { faces: div.faceIds.length - base.faces, verts: div.vertexIds.length - base.verts },
+      areaPlain: +area(plain).toFixed(4), areaInset: +area(inset).toFixed(4)
+    };
+  });
+  check(ext.pairing && ext.rows.length === 5 &&
+    ext.rows.join('|') === '厚度|局部平移 Z|偏移|分段|保持面的连续性',
+    '挤出后弹出属性面板（五个参数齐全）', JSON.stringify(ext.rows));
+  check(ext.toggle0 && ext.toggle0.text === '启用' && ext.toggle0.on && ext.live0 && ext.preview0,
+    '面板绑在工具会话上（默认保持连接 + 实时预览）', JSON.stringify({ t: ext.toggle0, live: ext.live0, pv: ext.preview0 }));
+  check(ext.live1 && ext.preview1 && ext.offState && ext.offState.keep === 0,
+    '面板改厚度 / 切开关都实时重算预览', JSON.stringify({ live: ext.live1, pv: ext.preview1, keep: ext.offState && ext.offState.keep }));
+  check(ext.afterCancel.live === false && ext.afterCancel.panel === false && ext.afterCancel.preview === false,
+    '面板 × = 取消会话（预览与面板一起收起）', JSON.stringify(ext.afterCancel));
+
+  /* 货架入口：点一下必须**留下**参数面板并进入 live 会话。
+   * 以前的 bug 是走 runToolNow → 立刻 commit，面板只闪一帧，用户根本看不到。 */
+  const shelfExtrude = await page.evaluate(async () => {
+    const btn = document.querySelector('.md-shelf [data-md-op="extrude"]');
+    if (!btn) return { btn: false };
+    btn.click();
+    await new Promise(r => setTimeout(r, 180));
+    const panel = document.getElementById('mdToolPanel');
+    const out = {
+      btn: true,
+      panel: !!panel,
+      live: window.modelDesk.getState().toolLive,
+      rows: panel ? panel.querySelectorAll('.md-hbp-row').length : 0,
+      title: panel ? (panel.querySelector('.md-hbp-h b') || {}).textContent || '' : '',
+      preview: !!window.modelDesk.__debug().scene.getObjectByName('tool-preview-mesh')
+    };
+    if (panel) {
+      const wr = document.getElementById('modelDeskWin').getBoundingClientRect();
+      const pr = panel.getBoundingClientRect();
+      out.insideWin = pr.left >= wr.left - 1 && pr.right <= wr.right + 1 &&
+        pr.top >= wr.top - 1 && pr.bottom <= wr.bottom + 1;
+      out.rect = { l: Math.round(pr.left), t: Math.round(pr.top), w: Math.round(pr.width) };
+    }
+    const closer = panel && panel.querySelector('[data-tp-act="close"]');
+    if (closer) closer.click();
+    await new Promise(r => setTimeout(r, 100));
+    out.afterClose = { panel: !!document.getElementById('mdToolPanel'), live: window.modelDesk.getState().toolLive };
+    return out;
+  });
+  check(shelfExtrude.btn && shelfExtrude.panel && shelfExtrude.live && shelfExtrude.rows === 5,
+    '货架点「挤出」留下参数面板（不再闪一帧就提交）', JSON.stringify(shelfExtrude));
+  check(shelfExtrude.insideWin === true,
+    '参数面板落在建模窗口内（窗口没最大化也不会跑到屏幕角落）', JSON.stringify(shelfExtrude.rect));
+  check(shelfExtrude.afterClose && shelfExtrude.afterClose.panel === false && shelfExtrude.afterClose.live === false,
+    '货架挤出的面板可关闭并干净取消', JSON.stringify(shelfExtrude.afterClose));
+  check(ext.on.faces === 6 && ext.on.verts === 6,
+    '保持连接：只在区域外边界长 6 面、共享边共用 6 个新点（无内部隐藏面）', JSON.stringify(ext.on));
+  check(ext.off.faces === 8 && ext.off.verts === 8,
+    '关闭连接：两张面各自挤出（每张各 4 面侧壁 + 4 个新点）', JSON.stringify(ext.off));
+  check(ext.div.faces === 12 && ext.div.verts === 12,
+    '分段 2：侧壁拆成两圈（顶面仍是一张面）', JSON.stringify(ext.div));
+  check(ext.areaInset < ext.areaPlain * 0.95 && ext.areaPlain > 0,
+    '偏移 -0.05 让顶面内缩', 'plain=' + ext.areaPlain + ' inset=' + ext.areaInset);
+
+
+
+  /* 11.5 UV 编辑器（X5a–X5e）：窗口结构 / 画布 / 拾取 / 变换 / 撤销 / 展开排布 */
+  const uvOpen = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll('[data-md-act="uv"]')];
+    if (!btns.length) return { ok: false };
+    btns[0].click();
+    return { ok: true, clicked: btns.length };
+  });
+  await page.waitForTimeout(360);
+  const uvSt0 = await page.evaluate(() => window.modelDesk.getState());
+  check(uvOpen.ok && uvSt0.uvOpen && !!await page.$('#mdUvWin'), 'Shelf ◒ 打开 UV 编辑器窗口',
+    JSON.stringify({ clicked: uvOpen.clicked, open: uvSt0.uvOpen }));
+
+  const uvUi = await page.evaluate(() => {
+    const win = document.getElementById('mdUvWin');
+    if (!win) return null;
+    return {
+      title: win.querySelector('.md-uv-head b').textContent,
+      menus: [...win.querySelectorAll('.md-uv-mitem')].map(b => b.textContent),
+      groups: [...win.querySelectorAll('.md-uvk-gt span')].map(b => b.textContent),
+      kit: (win.querySelector('.md-uvk-head b') || {}).textContent,
+      modes: [...win.querySelectorAll('.md-uv-tools [data-uvact^="mode"]')].length,
+      canvas: !!document.getElementById('mdUvCanvas'),
+      tex: (win.querySelector('.md-uv-tex') || {}).textContent,
+      hint: (document.getElementById('mdUvHint') || {}).textContent
+    };
+  });
+  check(!!uvUi && uvUi.title === 'UV 编辑器' && uvUi.kit === 'UV 工具包' && uvUi.canvas,
+    '标题栏 / UV 工具包 / 画布都在', uvUi && JSON.stringify({ title: uvUi.title, kit: uvUi.kit }));
+  check(!!uvUi && uvUi.menus.length === 11 && uvUi.menus.indexOf('切割/缝合') >= 0,
+    '11 个菜单（编辑 / 创建 / 选择 / 切割缝合 / 修改 / 工具 / 视图 / 图像 / 纹理 / UV 集 / 帮助）',
+    uvUi && uvUi.menus.join('|'));
+  check(!!uvUi && uvUi.groups.join('|') === '固定|按类型选择|软选择|变换|创建|切割和缝合|展开|对齐和捕捉|排列和布局',
+    '工具包 9 个折叠组与截图同名同序', uvUi && uvUi.groups.join('|'));
+
+  const uvPix = await page.evaluate(() => {
+    const c = document.getElementById('mdUvCanvas');
+    if (!c) return null;
+    const ctx = c.getContext('2d');
+    const img = ctx.getImageData(0, 0, c.width, c.height).data;
+    let cyan = 0, orange = 0, ink = 0;
+    for (let i = 0; i < img.length; i += 4) {
+      const r = img[i], g = img[i + 1], b = img[i + 2];
+      if (Math.abs(r - 35) + Math.abs(g - 35) + Math.abs(b - 35) > 26) ink++;
+      if (r < 130 && g > 140 && b > 160) cyan++;
+      if (r > 170 && g > 100 && b < 130) orange++;
+    }
+    return { w: c.width, h: c.height, cyan, orange, ink };
+  });
+  check(!!uvPix && uvPix.w > 300 && uvPix.h > 200 && uvPix.cyan + uvPix.orange > 300 && uvPix.ink > 1000,
+    '画布真的画出 UV 壳 + 网格（不是空画布）', uvPix && JSON.stringify(uvPix));
+
+  /* 点选：按 uvState 的视图变换把面角 0 换算成屏幕坐标，再真实点一下 */
+  const uvPick = await page.evaluate(() => {
+    const d = window.modelDesk.__debug();
+    const uv = window.modelDesk.uvState();
+    const c = document.getElementById('mdUvCanvas');
+    if (!d.mesh || !c || !uv.canvas) return null;
+    const rect = c.getBoundingClientRect();
+    const meshes = d.mesh;
+    let pick = null;
+    for (let k = 0; k < meshes.faceIndices.length; k++) {
+      const u = meshes.uvs[k * 2], v = meshes.uvs[k * 2 + 1];
+      const x = rect.left + uv.canvas.w / 2 + (u - uv.view.cu) * uv.view.scale;
+      const y = rect.top + uv.canvas.h / 2 - (v - uv.view.cv) * uv.view.scale;
+      if (x > rect.left + 40 && x < rect.right - 12 && y > rect.top + 40 && y < rect.bottom - 12) {
+        pick = { corner: k, u, v, x, y }; break;
+      }
+    }
+    return pick;
+  });
+  check(!!uvPick, '找到一个可见面角用于点选', uvPick && JSON.stringify({ corner: uvPick.corner }));
+  if (uvPick) {
+    await page.mouse.click(uvPick.x, uvPick.y);
+    await page.waitForTimeout(140);
+  }
+  const uvSel = await page.evaluate(() => {
+    const s = window.modelDesk.getState();
+    return { corners: s.uvSelCorners, faces: s.uvSelFaces, mode: s.uvMode, selMode: s.selMode, selFace: s.selFace };
+  });
+  check(uvSel.corners > 0 && uvSel.faces > 0 && uvSel.selFace > 0,
+    '点选 UV 点 → UV 选择集非空，并同步到 3D 面选择', JSON.stringify(uvSel));
+
+  const uvDrag0 = await page.evaluate(corner => {
+    const s = window.modelDesk.getState();
+    const d = window.modelDesk.__debug();
+    return { u: d.mesh.uvs[corner * 2], v: d.mesh.uvs[corner * 2 + 1], undo: s.undo, scale: s.uvScale };
+  }, uvPick ? uvPick.corner : 0);
+  if (uvPick) {
+    await page.mouse.move(uvPick.x, uvPick.y);
+    await page.mouse.down();
+    await page.mouse.move(uvPick.x + 40, uvPick.y + 20, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(160);
+  }
+  const uvDrag1 = await page.evaluate(corner => {
+    const s = window.modelDesk.getState();
+    const d = window.modelDesk.__debug();
+    return { u: d.mesh.uvs[corner * 2], v: d.mesh.uvs[corner * 2 + 1], undo: s.undo };
+  }, uvPick ? uvPick.corner : 0);
+  const du = uvDrag1.u - uvDrag0.u, dv = uvDrag1.v - uvDrag0.v;
+  check(Math.abs(du - 40 / uvDrag0.scale) < 0.02 && Math.abs(dv + 20 / uvDrag0.scale) < 0.02,
+    '拖动 UV 点按屏幕像素换算成 UV 位移（右 +40 / 下 +20）',
+    JSON.stringify({ du: +du.toFixed(4), dv: +dv.toFixed(4), expect: [+(40 / uvDrag0.scale).toFixed(4), +(-20 / uvDrag0.scale).toFixed(4)] }));
+  check(uvDrag1.undo === uvDrag0.undo + 1, '一次 UV 拖动只进一条历史', uvDrag0.undo + ' → ' + uvDrag1.undo);
+
+  const uvUndo = await page.evaluate(corner => {
+    window.modelDesk.undo();
+    const d = window.modelDesk.__debug();
+    const s = window.modelDesk.getState();
+    return { u: d.mesh.uvs[corner * 2], v: d.mesh.uvs[corner * 2 + 1], undo: s.undo };
+  }, uvPick ? uvPick.corner : 0);
+  check(Math.abs(uvUndo.u - uvDrag0.u) < 1e-9 && Math.abs(uvUndo.v - uvDrag0.v) < 1e-9,
+    'Ctrl+Z / undo 还原 UV 坐标', JSON.stringify({ before: uvDrag0.u.toFixed(4), after: uvUndo.u.toFixed(4) }));
+
+  const uvSelOps = await page.evaluate(() => {
+    const before = window.modelDesk.getState();
+    window.modelDesk.uvCommand('selAll');
+    const all = { corners: window.modelDesk.getState().uvSelCorners, total: window.modelDesk.__debug().mesh.faceIndices.length };
+    window.modelDesk.uvCommand('selNone');
+    const none = window.modelDesk.getState().uvSelCorners;
+    window.modelDesk.uvCommand('selInvert');
+    const inv = window.modelDesk.getState().uvSelCorners;
+    return { all, none, inv };
+  });
+  check(uvSelOps.all.corners === uvSelOps.all.total && uvSelOps.none === 0 && uvSelOps.inv > 0,
+    '全选 / 清除 / 反向选择按面角工作', JSON.stringify(uvSelOps));
+
+  /* 自动展开：清空选择 → 对全网格跑；断言 UV 全在 0–1 内、岛之间不重叠 */
+  const uvUnwrap = await page.evaluate(() => {
+    window.modelDesk.uvCommand('selNone');
+    const undo0 = window.modelDesk.getState().undo;
+    const ok = window.modelDesk.uvCommand('unwrap');
+    const s = window.modelDesk.getState();
+    const d = window.modelDesk.__debug();
+    const m = d.mesh;
+    const uvs = m.uvs;
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+    for (let i = 0; i < uvs.length; i += 2) {
+      if (uvs[i] < minU) minU = uvs[i];
+      if (uvs[i] > maxU) maxU = uvs[i];
+      if (uvs[i + 1] < minV) minV = uvs[i + 1];
+      if (uvs[i + 1] > maxV) maxV = uvs[i + 1];
+    }
+    const isl = window.SeedModel.Mesh.uvIslands(m);
+    const boxes = isl.islands.map(is => {
+      let a = Infinity, b = Infinity, c = -Infinity, e = -Infinity;
+      for (const f of is.faces) {
+        for (let k = m.faceOffsets[f]; k < m.faceOffsets[f + 1]; k++) {
+          const u = uvs[k * 2], v = uvs[k * 2 + 1];
+          if (u < a) a = u; if (u > c) c = u; if (v < b) b = v; if (v > e) e = v;
+        }
+      }
+      return { a, b, c, e };
+    });
+    let overlap = 0;
+    for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+      const A = boxes[i], B = boxes[j];
+      const w = Math.min(A.c, B.c) - Math.max(A.a, B.a);
+      const h = Math.min(A.e, B.e) - Math.max(A.b, B.b);
+      if (w > 1e-6 && h > 1e-6) overlap++;
+    }
+    return {
+      ok, islands: isl.islands.length, overlap,
+      minU: +minU.toFixed(4), maxU: +maxU.toFixed(4), minV: +minV.toFixed(4), maxV: +maxV.toFixed(4),
+      undo: s.undo - undo0, faces: m.faceIds.length
+    };
+  });
+  check(uvUnwrap.ok && uvUnwrap.undo === 1 && uvUnwrap.islands > 0,
+    '自动展开按壳拍平并记一条历史', JSON.stringify(uvUnwrap));
+  check(uvUnwrap.minU >= -1e-6 && uvUnwrap.maxU <= 1 + 1e-6 && uvUnwrap.minV >= -1e-6 && uvUnwrap.maxV <= 1 + 1e-6,
+    '展开后 UV 全部落在 0–1 空格内', JSON.stringify({ u: [uvUnwrap.minU, uvUnwrap.maxU], v: [uvUnwrap.minV, uvUnwrap.maxV] }));
+  check(uvUnwrap.overlap === 0, '展开后排布的 UV 岛之间没有包围盒重叠', '重叠对数=' + uvUnwrap.overlap + ' / ' + uvUnwrap.islands + ' 岛');
+
+  const uvToggles = await page.evaluate(() => {
+    const g = document.querySelector('#mdUvWin [data-uvact="grid"]');
+    const sn = document.querySelector('#mdUvWin [data-uvact="snap"]');
+    const before = window.modelDesk.getState();
+    if (g) g.click();
+    if (sn) sn.click();
+    const after = window.modelDesk.getState();
+    return { grid: [before.uvGrid, after.uvGrid], snap: [before.uvSnap, after.uvSnap] };
+  });
+  check(uvToggles.grid[0] !== uvToggles.grid[1] && uvToggles.snap[0] !== uvToggles.snap[1],
+    '工具栏「网格 / 吸附」按钮真的切换状态', JSON.stringify(uvToggles));
+
+  const uvMenu = await page.evaluate(() => {
+    const btn = document.querySelector('#mdUvWin .md-uv-mitem');
+    btn.click();
+    const drop = document.getElementById('mdUvDrop');
+    const items = [...drop.querySelectorAll('.md-uv-mi')].map(b => b.querySelector('span').textContent);
+    const shown = !drop.hidden;
+    btn.click();
+    return { label: btn.textContent, shown, items, closed: drop.hidden };
+  });
+  check(uvMenu.shown && uvMenu.items.indexOf('撤销') >= 0 && uvMenu.closed,
+    '菜单能展开 / 收起，编辑菜单含撤销等命令', JSON.stringify({ label: uvMenu.label, items: uvMenu.items.length }));
+
+  /* 11.6 X5f 已落地的一半：圆柱/球形投影、棋盘格、缝合、点击提示 */
+  const uvProj = await page.evaluate(() => {
+    const s0 = window.modelDesk.getState();
+    const okCyl = window.modelDesk.uvCommand('projCyl');
+    const okSph = window.modelDesk.uvCommand('projSphere');
+    const m = window.modelDesk.__debug().mesh;
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+    for (let i = 0; i < m.uvs.length; i += 2) {
+      if (m.uvs[i] < minU) minU = m.uvs[i];
+      if (m.uvs[i] > maxU) maxU = m.uvs[i];
+      if (m.uvs[i + 1] < minV) minV = m.uvs[i + 1];
+      if (m.uvs[i + 1] > maxV) maxV = m.uvs[i + 1];
+    }
+    return {
+      okCyl, okSph, undo: window.modelDesk.getState().undo - s0.undo,
+      u: [+minU.toFixed(4), +maxU.toFixed(4)], v: [+minV.toFixed(4), +maxV.toFixed(4)]
+    };
+  });
+  check(uvProj.okCyl && uvProj.okSph && uvProj.undo >= 1 &&
+    uvProj.u[0] >= -1e-6 && uvProj.u[1] <= 1 + 1e-6 && uvProj.v[0] >= -1e-6 && uvProj.v[1] <= 1 + 1e-6,
+    '圆柱 / 球形投影可用且归一化到 0–1', JSON.stringify(uvProj));
+
+  const uvTex = await page.evaluate(() => {
+    const c = document.getElementById('mdUvCanvas');
+    const ctx = c.getContext('2d');
+    const sum = () => {
+      const d = ctx.getImageData(0, 0, c.width, c.height).data;
+      let s = 0;
+      for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2];
+      return s;
+    };
+    const before = sum();
+    document.getElementById('mdUvTex').click();
+    const after = sum();
+    return { tex: window.modelDesk.getState().uvTex, before, after, label: document.getElementById('mdUvTex').textContent };
+  });
+  check(uvTex.tex && uvTex.after > uvTex.before && /棋盘格/.test(uvTex.label),
+    '棋盘格底图开关真正改画布像素', JSON.stringify({ tex: uvTex.tex, delta: uvTex.after - uvTex.before, label: uvTex.label }));
+
+  const uvStitch = await page.evaluate(() => {
+    document.querySelector('#mdUvWin [data-uvact="selAll"]').click();
+    const d = window.modelDesk.__debug();
+    const m = d.mesh;
+    const s = m.faceOffsets[0], e = m.faceOffsets[1];
+    const before = [m.uvs[s * 2], m.uvs[s * 2 + 1]];
+    for (let k = s; k < e; k++) { m.uvs[k * 2] += 0.015; m.uvs[k * 2 + 1] += 0.008; }
+    window.SeedModel.Mesh.bump(m);
+    const moved = [m.uvs[s * 2], m.uvs[s * 2 + 1]];
+    const u0 = window.modelDesk.getState().undo;
+    window.modelDesk.uvCommand('stitch');
+    const after = [window.modelDesk.__debug().mesh.uvs[s * 2], window.modelDesk.__debug().mesh.uvs[s * 2 + 1]];
+    return { before, moved, after, undo: window.modelDesk.getState().undo - u0, toast: document.getElementById('mdUvToast').textContent };
+  });
+  check(uvStitch.undo === 1 && Math.abs(uvStitch.after[0] - uvStitch.moved[0]) > 1e-4,
+    '缝合把 2% 容差内的选中 UV 点吸到平均位置', JSON.stringify(uvStitch));
+
+  const uvToast = await page.evaluate(() => {
+    const mi = [...document.querySelectorAll('#mdUvWin .md-uv-mitem')].find(b => b.textContent === 'UV 集');
+    mi.click();
+    const todo = [...document.querySelectorAll('#mdUvDrop .md-uv-mi')].find(b => b.dataset.uvtodo);
+    if (todo) todo.click();
+    const el = document.getElementById('mdUvToast');
+    return { has: !!el, on: el.classList.contains('on'), text: el.textContent, todo: !!todo };
+  });
+  check(uvToast.has && uvToast.todo && uvToast.on && uvToast.text.length > 0,
+    '点未实现菜单项时画布内有可见提示（不是「点了没反应」）', JSON.stringify(uvToast));
+
+  /* X5g：沿边切割 / 分离 UV 壳 / 图片底图 */
+  /* 先点一个 UV 点，让选择集落在「一个角 + 它周围的几个面」上（与真实操作一致） */
+  const seamPoint = await page.evaluate(() => {
+    const desk = window.modelDesk;
+    desk.uvCommand('selNone');
+    desk.uvCommand('modePoint');
+    const uv = desk.uvState();
+    const d = desk.__debug();
+    const c = document.getElementById('mdUvCanvas');
+    const rect = c.getBoundingClientRect();
+    for (let k = 0; k < d.mesh.faceIndices.length; k++) {
+      const u = d.mesh.uvs[k * 2], v = d.mesh.uvs[k * 2 + 1];
+      const x = rect.left + uv.canvas.w / 2 + (u - uv.view.cu) * uv.view.scale;
+      const y = rect.top + uv.canvas.h / 2 - (v - uv.view.cv) * uv.view.scale;
+      if (x > rect.left + 40 && x < rect.right - 12 && y > rect.top + 40 && y < rect.bottom - 12) {
+        return { corner: k, x, y };
+      }
+    }
+    return null;
+  });
+  check(!!seamPoint, '找到一个可见 UV 点用于切割', seamPoint && JSON.stringify({ corner: seamPoint.corner }));
+  if (seamPoint) {
+    await page.mouse.click(seamPoint.x, seamPoint.y);
+    await page.waitForTimeout(160);
+  }
+  const uvSeam = await page.evaluate(() => {
+    const desk = window.modelDesk;
+    const Mesh = window.SeedModel.Mesh;
+    const m0 = desk.__debug().mesh;
+    const seams0 = Mesh.seamCount(m0);
+    const isl0 = Mesh.uvIslands(m0).islands.length;
+    const faces0 = m0.faceIds.length;
+    const selFaces = desk.getState().uvSelFaces;
+    const ok = desk.uvCommand('seamCut');
+    const m1 = desk.__debug().mesh;
+    return {
+      ok, selFaces, seams0, seams1: Mesh.seamCount(m1),
+      isl0, isl1: Mesh.uvIslands(m1).islands.length,
+      faces0, faces1: m1.faceIds.length
+    };
+  });
+  check(uvSeam.ok && uvSeam.selFaces > 0 && uvSeam.seams1 > uvSeam.seams0,
+    '沿边切割把选中面的边界落成 UV 缝（岛按缝重算）', JSON.stringify(uvSeam));
+  check(uvSeam.isl1 >= uvSeam.isl0,
+    '切割后 UV 岛数量只增不减（缝真的阻断合并）', uvSeam.isl0 + ' → ' + uvSeam.isl1);
+  check(uvSeam.faces1 === uvSeam.faces0,
+    '切割只改 UV 缝标记，不改拓扑（面数不变）', uvSeam.faces0 + ' → ' + uvSeam.faces1);
+
+  const uvSep = await page.evaluate(() => {
+    const desk = window.modelDesk;
+    const Mesh = window.SeedModel.Mesh;
+    const undo0 = desk.getState().undo;
+    const ok = desk.uvCommand('sepShells');
+    const m = desk.__debug().mesh;
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+    for (let i = 0; i < m.uvs.length; i += 2) {
+      if (m.uvs[i] < minU) minU = m.uvs[i];
+      if (m.uvs[i] > maxU) maxU = m.uvs[i];
+      if (m.uvs[i + 1] < minV) minV = m.uvs[i + 1];
+      if (m.uvs[i + 1] > maxV) maxV = m.uvs[i + 1];
+    }
+    return {
+      ok, undo: desk.getState().undo - undo0, seams: Mesh.seamCount(m),
+      islands: Mesh.uvIslands(m).islands.length, faces: m.faceIds.length,
+      u: [+minU.toFixed(4), +maxU.toFixed(4)], v: [+minV.toFixed(4), +maxV.toFixed(4)]
+    };
+  });
+  check(uvSep.ok && uvSep.undo === 1 && uvSep.islands > 1,
+    '分离 UV 壳：边界切开后按 2% 间隙重新排布', JSON.stringify(uvSep));
+  check(uvSep.u[0] >= -1e-6 && uvSep.u[1] <= 1 + 1e-6 && uvSep.v[0] >= -1e-6 && uvSep.v[1] <= 1 + 1e-6,
+    '分离后 UV 仍在 0–1 空格内', JSON.stringify({ u: uvSep.u, v: uvSep.v }));
+
+  const uvSeamUndo = await page.evaluate(() => {
+    const desk = window.modelDesk;
+    const Mesh = window.SeedModel.Mesh;
+    desk.undo();   /* 分离壳 */
+    desk.undo();   /* 沿边切割 */
+    const m = desk.__debug().mesh;
+    return { seams: Mesh.seamCount(m), faces: m.faceIds.length };
+  });
+  check(uvSeamUndo.seams === uvSeam.seams0 && uvSeamUndo.faces === uvSeam.faces0,
+    '撤销还原 UV 缝（缝标记进指纹与历史）', JSON.stringify({ seams: uvSeamUndo.seams, faces: uvSeamUndo.faces }));
+
+  const texFile = path.join(__dirname, '_md-uvtex.svg');
+  fs.writeFileSync(texFile, '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">' +
+    '<rect width="32" height="32" fill="#ff2d55"/></svg>');
+  const redCount = await page.evaluate(() => {
+    const c = document.getElementById('mdUvCanvas');
+    const ctx = c.getContext('2d');
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let red = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] > 150 && d[i + 1] < 110 && d[i + 2] < 130) red++;
+    }
+    return red;
+  });
+  await page.setInputFiles('#mdUvFile', texFile);
+  await page.waitForTimeout(600);
+  const uvImg = await page.evaluate(() => {
+    const desk = window.modelDesk;
+    const c = document.getElementById('mdUvCanvas');
+    const ctx = c.getContext('2d');
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let red = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] > 150 && d[i + 1] < 110 && d[i + 2] < 130) red++;
+    }
+    return {
+      red, image: desk.getState().uvImage, name: desk.getState().uvImageName,
+      tex: desk.getState().uvTex
+    };
+  });
+  check(uvImg.image && uvImg.name === '_md-uvtex.svg' && uvImg.red > redCount + 200,
+    '载入图片后 0–1 范围铺上真实底图（画布像素变化）', JSON.stringify(uvImg));
+  check(uvImg.tex === false, '载入图片时自动关闭棋盘格（避免底图发花）', 'tex=' + uvImg.tex);
+
+  const uvImgClear = await page.evaluate(() => {
+    window.modelDesk.uvCommand('imgClear');
+    const c = document.getElementById('mdUvCanvas');
+    const ctx = c.getContext('2d');
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let red = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] > 150 && d[i + 1] < 110 && d[i + 2] < 130) red++;
+    }
+    return { image: window.modelDesk.getState().uvImage, red };
+  });
+  check(!uvImgClear.image && uvImgClear.red < uvImg.red,
+    '清除图片底图后画布恢复（不写文档也能退出）', JSON.stringify(uvImgClear));
+
+
+  /* 线框必须按拓扑画：平面上的 4 张四边面 = 12 条边都要出来。
+   * 旧实现按相邻面法线过滤（共面内部边隐藏），这里只剩 8 条，正好把环切 / 细分线吞掉。 */
+  const wire = await page.evaluate(async () => {
+    const M = window.SeedModel.Mesh;
+    const m = M.create();
+    m.positions = [0, 0, 0, 1, 0, 0, 2, 0, 0, 0, 0, 1, 1, 0, 1, 2, 0, 1, 0, 0, 2, 1, 0, 2, 2, 0, 2];
+    m.vertexIds = [0, 1, 2, 3, 4, 5, 6, 7, 8]; m.nextVertexId = 9;
+    m.faceOffsets = [0, 4, 8, 12, 16];
+    m.faceIndices = [0, 1, 4, 3, 1, 2, 5, 4, 3, 4, 7, 6, 4, 5, 8, 7];
+    m.faceIds = [0, 1, 2, 3]; m.faceSlots = [0, 0, 0, 0]; m.nextFaceId = 4;
+    M.bump(m);
+    const beforeFaces = window.modelDesk.getState().faces;
+    window.modelDesk.applyMesh(m, 'probe:wireframe');
+    await new Promise(r => requestAnimationFrame(r));
+    const d = window.modelDesk.__debug();
+    const seg = d.edgeLines ? d.edgeLines.geometry.attributes.position.count / 2 : -1;
+    const topo = M.ensureEdges(d.mesh).edges.length;
+    window.modelDesk.undo();
+    await new Promise(r => requestAnimationFrame(r));
+    return { seg, topo, beforeFaces, faces: window.modelDesk.getState().faces };
+  });
+  check(wire.seg === wire.topo && wire.topo === 12 && wire.faces === wire.beforeFaces,
+    '线框按实际拓扑画满每条边（共面内部边不再被面法线过滤）', JSON.stringify(wire));
+
+
+  /* X6：环切（四边环）/ 循环边选择内核 */
+  const loopCore = await page.evaluate(() => {
+    const M = window.SeedModel.Mesh, Ops = window.SeedOps;
+    function grid() {
+      const m = M.create();
+      const pos = [], ids = [], idx = [];
+      for (let y = 0; y < 3; y++) {
+        for (let x = 0; x < 3; x++) { ids.push(y * 3 + x); pos.push(x / 2, y / 2, 0); }
+      }
+      const quads = [[0, 1, 4, 3], [1, 2, 5, 4], [3, 4, 7, 6], [4, 5, 8, 7]];
+      quads.forEach(q => q.forEach(v => idx.push(v)));
+      m.positions = pos; m.vertexIds = ids; m.nextVertexId = 9;
+      m.faceOffsets = [0]; quads.forEach((q, i) => m.faceOffsets.push((i + 1) * 4));
+      m.faceIndices = idx; m.faceIds = [0, 1, 2, 3]; m.faceSlots = [0, 0, 0, 0]; m.nextFaceId = 4;
+      m.uvs = []; idx.forEach(v => { m.uvs.push((v % 3) / 2, Math.floor(v / 3) / 2); });
+      M.bump(m);
+      return m;
+    }
+    const m = grid();
+    const ring = Ops.edgeRing(m, 1, 4);
+    if (!ring) return { ring: null };
+    const cut = Ops.loopCut(m, { aId: 1, bId: 4, count: 1, slide: 0 });
+    const allQuad = cut.faceOffsets.every((o, i) => i === 0 || cut.faceOffsets[i] - cut.faceOffsets[i - 1] === 4);
+    const m2 = grid();
+    const cut2 = Ops.loopCut(m2, { aId: 1, bId: 4, count: 1, slide: 0.3 });
+    let mid = null, midCount = 0;
+    for (let i = 0; i < cut2.vertexIds.length; i++) {
+      if (cut2.vertexIds[i] >= 9) {
+        const x = cut2.positions[i * 3], y = cut2.positions[i * 3 + 1];
+        if (Math.abs(x - 0.5) < 1e-6) { midCount++; if (!mid) mid = { x: +x.toFixed(4), y: +y.toFixed(4), id: cut2.vertexIds[i] }; }
+      }
+    }
+    const tri = M.create();
+    tri.positions = [0, 0, 0, 1, 0, 0, 0, 1, 0]; tri.vertexIds = [0, 1, 2]; tri.nextVertexId = 3;
+    tri.faceOffsets = [0, 3]; tri.faceIndices = [0, 1, 2]; tri.faceIds = [0]; tri.faceSlots = [0]; tri.nextFaceId = 1;
+    tri.uvs = [0, 0, 1, 0, 0, 1]; M.bump(tri);
+    const triCut = Ops.loopCut(tri, { aId: 0, bId: 1, count: 1, slide: 0 });
+    const edges = M.ensureEdges(m);
+    let loopRec = null;
+    edges.edges.forEach(r => { if (r.aId === 1 && r.bId === 4) loopRec = r; });
+    const loop = loopRec ? window.SeedSelection.edgeLoop(m, loopRec.id) : [];
+    return {
+      ring: true,
+      ringFaces: ring.faces.length, ringEdges: ring.edges.length, ringClosed: ring.closed,
+      faces: cut.faceIds.length, verts: cut.vertexIds.length, allQuad,
+      mid, midCount, triRefused: triCut === null, loop: loop.length,
+      tool: !!window.SeedTools.lookup('tool.loopcut'),
+      params: (window.SeedTools.lookup('tool.loopcut') || {}).params ? window.SeedTools.lookup('tool.loopcut').params.length : 0
+    };
+  });
+  check(loopCore.ring && loopCore.ringFaces === 2 && loopCore.ringEdges === 3 && !loopCore.ringClosed,
+    '边环遍历：选中边所在环认出 2 张四边面 / 3 条环边', JSON.stringify(loopCore));
+  check(loopCore.faces === 6 && loopCore.verts === 12 && loopCore.allQuad,
+    '环切：2 张四边面切成 4 张，总面数 4 → 6，新面全是四边', JSON.stringify({ faces: loopCore.faces, verts: loopCore.verts }));
+  check(loopCore.mid && loopCore.midCount === 1 && Math.abs(loopCore.mid.y - 0.3235) < 0.01,
+    '滑移 0.3（t=0.647）时环边只有一个共享切点，反向半边没有错开', JSON.stringify({ mid: loopCore.mid, n: loopCore.midCount }));
+  check(loopCore.triRefused, '三角面 / n 边环拒绝环切（不留 T 形接点）', 'triCut=' + loopCore.triRefused);
+  check(loopCore.loop === 2, '循环边选择：3×3 网格上 1-4 边得到 1-4 / 4-7 两条边', 'loop=' + loopCore.loop);
+  check(loopCore.tool && loopCore.params === 2,
+    '环切已注册为 live 工具（条数 / 滑移两个参数）', JSON.stringify({ tool: loopCore.tool, params: loopCore.params }));
+
+  /* 入口盘点：Shelf 图标 + 工具箱行 + 命令表都得能找到同一个环切 */
+  const loopEntry = await page.evaluate(() => {
+    const host = document.getElementById('modelDeskHost');
+    return {
+      n: host.querySelectorAll('[data-md-op="loopcut"]').length,
+      toolboxLabel: (host.querySelector('.md-op[data-md-op="loopcut"] .md-op-lb') || {}).textContent || '',
+      cmd: !!window.SeedCommands.lookup('mesh.loopcut')
+    };
+  });
+  check(loopEntry.n >= 2 && loopEntry.toolboxLabel === '环切' && loopEntry.cmd,
+    '环切有 Shelf 图标 + 工具箱行 + 命令表三个入口',
+    JSON.stringify(loopEntry));
+
+  /* 三角转四边：成对三角并成四边；UV 接缝不并；单三角不并；三个入口都能找到 */
+  const t2q = await page.evaluate(() => {
+    const M = window.SeedModel.Mesh, Ops = window.SeedOps;
+    function square(seam) {
+      const m = M.create();
+      m.positions = [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0];
+      m.vertexIds = [0, 1, 2, 3]; m.nextVertexId = 4;
+      m.faceOffsets = [0, 3, 6];
+      m.faceIndices = [0, 1, 2, 0, 2, 3];
+      m.faceIds = [0, 1]; m.faceSlots = [0, 0]; m.nextFaceId = 2;
+      m.uvs = [0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1];
+      if (seam) m.uvs[8] = 0.5;              /* 三角 2 在共享点 2 的 UV 与三角 1 不一致 */
+      M.bump(m);
+      return m;
+    }
+    const m = square(false);
+    const q = Ops.trisToQuads(m);
+    const seam = square(true);
+    const single = M.create();
+    single.positions = [0, 0, 0, 1, 0, 0, 0, 1, 0]; single.vertexIds = [0, 1, 2]; single.nextVertexId = 3;
+    single.faceOffsets = [0, 3]; single.faceIndices = [0, 1, 2]; single.faceIds = [0]; single.faceSlots = [0];
+    single.nextFaceId = 1; M.bump(single);
+    const host = document.getElementById('modelDeskHost');
+    return {
+      before: m.faceIds.length, after: q ? q.faceIds.length : -1,
+      corners: q ? q.faceOffsets[1] - q.faceOffsets[0] : -1,
+      originalUntouched: m.faceIds.length === 2,
+      seamNull: Ops.trisToQuads(seam) === null,
+      singleNull: Ops.trisToQuads(single) === null,
+      cmd: !!window.SeedCommands.lookup('mesh.trisToQuads'),
+      entries: host.querySelectorAll('[data-md-op="tris-to-quads"]').length
+    };
+  });
+  check(t2q.after === 1 && t2q.corners === 4 && t2q.originalUntouched,
+    '三角转四边：成对三角并成 1 张四边（原网格不被原地改）', JSON.stringify(t2q));
+  check(t2q.seamNull && t2q.singleNull, '三角转四边：UV 接缝 / 单张三角明确拒绝', JSON.stringify({ seam: t2q.seamNull, single: t2q.singleNull }));
+  check(t2q.cmd && t2q.entries >= 2, '三角转四边有 Shelf 图标 + 工具箱行 + 命令表入口', JSON.stringify({ cmd: t2q.cmd, entries: t2q.entries }));
+
+
+  try {
+    const uvwin = await page.$('#mdUvWin');
+    if (uvwin) {
+      await uvwin.screenshot({ path: path.join(__dirname, '_md-shot-uv.png') });
+      info('UV 窗口截图', path.join(__dirname, '_md-shot-uv.png'));
+    }
+  } catch (e) { info('UV 截图失败', String(e && e.message)); }
+
+  const uvClose = await page.evaluate(() => {
+    const b = document.querySelector('#mdUvWin [data-uvact="close"]');
+    if (b) b.click();
+    return { open: window.modelDesk.getState().uvOpen, dom: !!document.getElementById('mdUvWin') };
+  });
+  check(!uvClose.open && !uvClose.dom, '关闭按钮移除窗口并复位 uvOpen', JSON.stringify(uvClose));
+
+  /* 11.14 挤出专用操纵器：法线箭头（拖 = 厚度）+ 箭头根部轴心方柄（右拖放大 / 左拖缩小顶面）。
+   * 断言以「参数 + 面板数字 + 历史」为准，不依赖截图。 */
+  const extGiz = await page.evaluate(async () => {
+    const API = window.modelDesk, d = API.__debug();
+    const T = window.THREE, M = window.SeedModel.Mesh;
+    const canvas = d.canvas, r = canvas.getBoundingClientRect();
+    const send = (target, type, x, y, id) => target.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, button: 0, pointerId: id, clientX: x, clientY: y
+    }));
+    const wait = ms => new Promise(res => setTimeout(res, ms));
+    const proj = v => {
+      const p = v.clone().project(d.camera);
+      return { x: (p.x * 0.5 + 0.5) * r.width, y: (-p.y * 0.5 + 0.5) * r.height };
+    };
+    /* 挑一张「法线不冲着相机」的四边形面：箭头在屏幕上要有足够长度才拖得动 */
+    const pm = d.pivot.matrixWorld, m0 = d.mesh;
+    let best = null;
+    for (let f = 0; f < m0.faceIds.length; f++) {
+      const s = m0.faceOffsets[f], e = m0.faceOffsets[f + 1], n = e - s;
+      if (n !== 4) continue;
+      const tn = [0, 0, 0];
+      M.triNormal(m0, f, tn);
+      const nv = new T.Vector3(tn[0], tn[1], tn[2]).transformDirection(pm).normalize();
+      const c = { x: 0, y: 0, z: 0 };
+      for (let k = s; k < e; k++) {
+        const vi = m0.faceIndices[k];
+        c.x += m0.positions[vi * 3]; c.y += m0.positions[vi * 3 + 1]; c.z += m0.positions[vi * 3 + 2];
+      }
+      c.x /= n; c.y /= n; c.z /= n;
+      const cw = new T.Vector3(c.x, c.y, c.z).applyMatrix4(pm);
+      const a = proj(cw), b = proj(cw.clone().addScaledVector(nv, 0.3));
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (!best || len > best.len) best = { f: f, id: m0.faceIds[f], len: len };
+    }
+    if (!best) return { best: null };
+    const doc = API.getDocument();
+    doc.selection = { mode: 'face', nodeIds: doc.selection.nodeIds || [], vertexIds: [], edgeIds: [], faceIds: [best.id] };
+    API.reselect();
+    window.SeedCommands.run('mesh.extrude', {});
+    await wait(260);
+
+    const g = API.__debug().extrudeGizmo;
+    const out = { best: { id: best.id, px: +best.len.toFixed(1) }, has: !!g };
+    if (!g) return out;
+    out.visible = g.group.visible === true;
+    out.parts = g.group.children.length;
+    out.basePx = g.basePx && { x: Math.round(g.basePx.x), y: Math.round(g.basePx.y) };
+    out.tipPx = g.tipPx && { x: Math.round(g.tipPx.x), y: Math.round(g.tipPx.y) };
+    out.tipLen = Math.round(Math.hypot(g.tipPx.x - g.basePx.x, g.tipPx.y - g.basePx.y));
+    out.transformHidden = !(d.gizmo.group && d.gizmo.group.visible);
+
+    /* 悬停光标：根部 = ew-resize，杆身 = grab */
+    const tip = { x: r.left + g.tipPx.x, y: r.top + g.tipPx.y };
+    const base = { x: r.left + g.basePx.x, y: r.top + g.basePx.y };
+    send(canvas, 'pointermove', tip.x, tip.y, 31);
+    out.cursorTip = canvas.style.cursor;
+    send(canvas, 'pointermove', base.x, base.y, 31);
+    out.cursorRoot = canvas.style.cursor;
+
+    /* 拖箭头 → dist 增加；面板输入框同步 */
+    const ax = { x: g.tipPx.x - g.basePx.x, y: g.tipPx.y - g.basePx.y };
+    const al = Math.hypot(ax.x, ax.y) || 1;
+    const distBefore = +Number(window.SeedTools.current().params.dist).toFixed(3);
+    send(canvas, 'pointerdown', tip.x, tip.y, 32);
+    for (let i = 1; i <= 6; i++) {
+      send(window, 'pointermove', tip.x + ax.x / al * 90 * i / 6, tip.y + ax.y / al * 90 * i / 6, 32);
+    }
+    send(window, 'pointerup', tip.x + ax.x / al * 90, tip.y + ax.y / al * 90, 32);
+    await wait(140);
+    const distAfter = +Number(window.SeedTools.current().params.dist).toFixed(3);
+    const panel = document.getElementById('mdToolPanel');
+    const thickInput = panel && panel.querySelector('input[data-tp="0"]');
+    out.dist = { before: distBefore, after: distAfter };
+    out.panelSync = thickInput ? +Number(thickInput.value).toFixed(3) : null;
+
+    /* 箭头拖完后根部已经跟着厚度走了：按新的 basePx 再取根部方柄 */
+    const gNow = API.__debug().extrudeGizmo;
+    const base2 = { x: r.left + gNow.basePx.x, y: r.top + gNow.basePx.y };
+    /* 拖根部方柄：右 = 外扩（offset > 0）、左 = 收缩（offset < 0） */
+    send(canvas, 'pointerdown', base2.x, base2.y, 33);
+    for (let i = 1; i <= 6; i++) send(window, 'pointermove', base2.x + 72 * i / 6, base2.y, 33);
+    send(window, 'pointerup', base2.x + 72, base2.y, 33);
+    await wait(120);
+    const offR = +Number(window.SeedTools.current().params.offset).toFixed(3);
+    /* 第二次必须仍从手柄所在位置按下（按住时移动了 72px 不代表手柄跟着走） */
+    send(canvas, 'pointerdown', base2.x, base2.y, 34);
+    for (let i = 1; i <= 8; i++) send(window, 'pointermove', base2.x - 144 * i / 8, base2.y, 34);
+    send(window, 'pointerup', base2.x - 144, base2.y, 34);
+    await wait(120);
+    const offL = +Number(window.SeedTools.current().params.offset).toFixed(3);
+    out.offset = { right: offR, left: offL };
+
+    /* Enter 提交：一条历史，手柄收起，变换手柄回来 */
+    const st0 = API.getState();
+    API.commitTool();
+    await wait(220);
+    const st1 = API.getState();
+    const gAfter = API.__debug().extrudeGizmo;
+    out.commit = {
+      live: st1.toolLive, panel: !!document.getElementById('mdToolPanel'),
+      undo: st1.undo - st0.undo, faces: st1.meshHash !== st0.meshHash,
+      gizmoHidden: !gAfter || gAfter.group.visible !== true,
+      transformBack: !!(d.gizmo.target)
+    };
+    /* 预览收起后，正式实体 / 边线必须原样回来（预览期间被 mdPreviewOff 藏起来的那批） */
+    let leftOff = 0;
+    API.__debug().pivot.traverse(function (o) { if (o.userData && o.userData.mdPreviewOff) leftOff++; });
+    out.commit.offLeft = leftOff;
+    out.commit.previewGone = !API.__debug().toolPreview;
+
+    /* 再开一次，拖箭头后取消：网格与历史必须无痕 */
+    const m1 = API.__debug().mesh;
+    let fid = null;
+    for (let f = 0; f < m1.faceIds.length; f++) {
+      if (m1.faceOffsets[f + 1] - m1.faceOffsets[f] === 4) { fid = m1.faceIds[f]; break; }
+    }
+    const d1 = API.getDocument();
+    d1.selection = { mode: 'face', nodeIds: d1.selection.nodeIds || [], vertexIds: [], edgeIds: [], faceIds: [fid] };
+    API.reselect();
+    window.SeedCommands.run('mesh.extrude', {});
+    await wait(220);
+    const g2 = API.__debug().extrudeGizmo;
+    const undoBefore = API.getState().undo, hashBefore = API.getState().meshHash;
+    if (g2 && g2.basePx) {
+      const t2 = { x: r.left + g2.tipPx.x, y: r.top + g2.tipPx.y };
+      send(canvas, 'pointerdown', t2.x, t2.y, 35);
+      send(window, 'pointermove', t2.x + 40, t2.y, 35);
+      send(window, 'pointerup', t2.x + 40, t2.y, 35);
+      await wait(100);
+    }
+    API.cancelTool();
+    await wait(200);
+    const st2 = API.getState();
+    out.cancel = {
+      live: st2.toolLive, undo: st2.undo - undoBefore, historyClean: st2.meshHash === hashBefore,
+      gizmoHidden: !(API.__debug().extrudeGizmo && API.__debug().extrudeGizmo.group.visible),
+      transformBack: !!(d.gizmo.target)
+    };
+    return out;
+  });
+  check(extGiz.has && extGiz.visible && extGiz.parts === 3 && extGiz.tipLen > 40,
+    '挤出会话里出现专用箭头（杆 + 锥头 + 根部轴心柄，屏幕长度够拖）',
+    JSON.stringify({ visible: extGiz.visible, parts: extGiz.parts, tipLen: extGiz.tipLen }));
+  check(extGiz.cursorTip === 'grab' && extGiz.cursorRoot === 'ew-resize',
+    '箭头 / 轴心柄悬停光标（grab / ew-resize）', JSON.stringify({ tip: extGiz.cursorTip, root: extGiz.cursorRoot }));
+  check(extGiz.dist && extGiz.dist.after > extGiz.dist.before + 0.05 && extGiz.panelSync === extGiz.dist.after,
+    '沿箭头轴向拖 = 厚度变大（面板数字同步）', JSON.stringify(extGiz.dist) + ' panel=' + extGiz.panelSync);
+  check(extGiz.offset && extGiz.offset.right > 0.02 && extGiz.offset.left < -0.02,
+    '轴心方柄右拖放大 / 左拖缩小顶面（offset 正负）', JSON.stringify(extGiz.offset));
+  check(extGiz.commit && extGiz.commit.live === false && extGiz.commit.panel === false &&
+    extGiz.commit.undo === 1 && extGiz.commit.faces === true && extGiz.commit.gizmoHidden === true,
+    'Enter 提交：一条历史、手柄收起', JSON.stringify(extGiz.commit));
+  check(extGiz.commit.offLeft === 0 && extGiz.commit.previewGone === true,
+    '提交后预览退场，正式实体 / 边线恢复显示', JSON.stringify({ offLeft: extGiz.commit.offLeft, previewGone: extGiz.commit.previewGone }));
+  check(extGiz.cancel && extGiz.cancel.live === false && extGiz.cancel.undo === 0 &&
+    extGiz.cancel.historyClean === true && extGiz.cancel.gizmoHidden === true,
+    'Esc 取消：网格与历史无痕、手柄收起', JSON.stringify(extGiz.cancel));
+  check(extGiz.transformHidden === true && extGiz.commit.transformBack === true,
+    '挤出会话里变换手柄让位，提交后恢复', JSON.stringify({ hidden: extGiz.transformHidden, back: extGiz.commit.transformBack }));
+
+  /* 11.15 绘画工具箱：页签切换 → 笔刷设置 → 在模型上画一笔，贴图写回文档 */
+  const paintTab = await page.evaluate(() => {
+    const b = document.querySelector('[data-md-tbk="paint"]');
+    if (b) b.click();
+    const s = window.modelDesk.getState();
+    const box = document.getElementById('mdPaintBox');
+    const tb = document.getElementById('mdToolbox');
+    const cs = tb ? getComputedStyle(tb) : null;
+    /* 属性编辑器是同一行的第三个页签：切到绘画时它整块收起，不占高度 */
+    const right = document.querySelector('.md-right'), props = document.querySelector('.md-props');
+    return {
+      kind: s.tbKind, boxVisible: !!(box && !box.hidden), toolboxHidden: !!(cs && cs.display === 'none'),
+      hasBrush: !!document.getElementById('mdBrushSel'), hasSize: !!document.getElementById('mdBrushSize'),
+      hasMask: !!document.getElementById('mdPaintMask'),
+      dir: getComputedStyle(right).flexDirection,
+      propsHidden: getComputedStyle(props).display === 'none',
+      tabs: Array.from(document.querySelectorAll('[data-md-tbk]')).map(b => b.dataset.mdTbk)
+    };
+  });
+  check(paintTab.kind === 'paint' && paintTab.boxVisible && paintTab.toolboxHidden && paintTab.hasBrush && paintTab.hasSize,
+    '绘画工具箱页签切出笔刷面板，建模工具箱让位', JSON.stringify(paintTab));
+  check(paintTab.dir === 'column' && paintTab.propsHidden && paintTab.hasMask && paintTab.tabs.length === 3,
+    '属性编辑器与工具箱同排页签，切换显示不占额外空间',
+    JSON.stringify({ dir: paintTab.dir, propsHidden: paintTab.propsHidden, tabs: paintTab.tabs }));
+
+  const paintOpts = await page.evaluate(() => {
+    const sel = document.getElementById('mdBrushSel');
+    sel.value = 'hard';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    const size = document.getElementById('mdBrushSize');
+    size.value = '60';
+    size.dispatchEvent(new Event('input', { bubbles: true }));
+    const col = document.getElementById('mdBrushColor');
+    col.value = '#22c55e';
+    col.dispatchEvent(new Event('input', { bubbles: true }));
+    const s = window.modelDesk.getState();
+    return { brush: s.brush, size: s.brushSize, color: s.brushColor };
+  });
+  check(paintOpts.brush === 'hard' && paintOpts.size === 60 && paintOpts.color === '#22c55e',
+    '笔刷类型 / 大小 / 颜色设置生效', JSON.stringify(paintOpts));
+
+  const paintStroke = await page.evaluate(() => {
+    const API = window.modelDesk, d = API.__debug(), T = window.THREE;
+    const canvas = d.canvas, r = canvas.getBoundingClientRect();
+    /* 探针跑到这里时对象已被前面的变换测试挪过位置，不能再拿世界原点当落笔点；
+     * 取「正对相机的那张面」的面心，投影到屏幕，保证这一点真的在模型上。 */
+    const m = d.mesh;
+    const camPos = d.camera.getWorldPosition(new T.Vector3());
+    let bestFace = -1, bestDot = -Infinity, bestC = null;
+    for (let f = 0; f < m.faceIds.length; f++) {
+      const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+      if (e - s < 3) continue;
+      const c = new T.Vector3(), n = new T.Vector3();
+      for (let k = s; k < e; k++) {
+        const vi = m.faceIndices[k] * 3;
+        c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
+      }
+      c.multiplyScalar(1 / (e - s));
+      const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
+      const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+      const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+      n.crossVectors(v1, v2).normalize();
+      const wc = d.pivot.localToWorld(c.clone());
+      const wn = n.clone().transformDirection(d.pivot.matrixWorld);
+      /* 法线朝相机 → 是可见面；视线方向 = 面心指回相机 */
+      const dot = wn.dot(camPos.clone().sub(wc).normalize());
+      if (dot > bestDot) { bestDot = dot; bestFace = f; bestC = wc; }
+    }
+    const p = bestC.clone().project(d.camera);
+    const x = r.left + (p.x * 0.5 + 0.5) * r.width, y = r.top + (-p.y * 0.5 + 0.5) * r.height;
+    const send = (type, cx, cy) => canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      pointerId: 77, clientX: cx, clientY: cy
+    }));
+    /* 先打开 UV 岛遮罩，验证落笔时上下文真的加了岛剪裁，抬笔后剪裁被释放 */
+    const maskEl = document.getElementById('mdPaintMask');
+    maskEl.checked = true;
+    maskEl.dispatchEvent(new Event('change', { bubbles: true }));
+    const before = (API.getDocument().materials.slotMaps || [])[0] || '';
+    send('pointerdown', x, y);
+    const mid = API.getState();
+    for (let i = 1; i <= 5; i++) send('pointermove', x + i * 8, y + i * 5);
+    send('pointerup', x + 40, y + 25);
+    const end = API.getState();
+    const after = (API.getDocument().materials.slotMaps || [])[0] || '';
+    return {
+      face: bestFace, dot: Number(bestDot.toFixed(2)),
+      maskOn: mid.paintMask, clipped: mid.paintClipped, clipPolys: mid.paintClipPolys,
+      restored: !end.paintClipped,
+      beforeLen: before.length, afterLen: after.length, changed: before !== after, slot: end.paintSlot
+    };
+  });
+  check(paintStroke.changed && paintStroke.afterLen > 2000,
+    '在模型上画一笔，贴图编码回文档 slotMaps', JSON.stringify(paintStroke));
+  check(paintStroke.maskOn === true && paintStroke.clipped === true &&
+    paintStroke.clipPolys >= 1 && paintStroke.restored === true,
+    'UV 岛遮罩：落笔试加了岛剪裁，抬笔后释放',
+    JSON.stringify({ mask: paintStroke.maskOn, clipped: paintStroke.clipped, polys: paintStroke.clipPolys, restored: paintStroke.restored }));
+
+  /* 画笔撤销：一笔 = 一条历史，撤销后 slotMaps 回到落笔前，重做后回到落笔后 */
+  const paintUndo = await page.evaluate(() => {
+    const API = window.modelDesk;
+    const afterUrl = (API.getDocument().materials.slotMaps || [])[0] || '';
+    const undoOk = API.undo();
+    const midUrl = (API.getDocument().materials.slotMaps || [])[0] || '';
+    const redoOk = API.redo();
+    const backUrl = (API.getDocument().materials.slotMaps || [])[0] || '';
+    const st = API.getState(), d = API.__debug();
+    return {
+      undoOk, redoOk,
+      midLen: midUrl.length, backLen: backUrl.length, afterLen: afterUrl.length,
+      sameAfter: backUrl === afterUrl,
+      undoLeft: st.undo, redoLeft: st.redo,
+      /* 撤销重建了视口：绘画页签下手柄不能趁机复活 */
+      gizmoHidden: !(d.gizmo && d.gizmo.target)
+    };
+  });
+  check(paintUndo.undoOk === true && paintUndo.midLen === paintStroke.beforeLen &&
+    paintUndo.redoOk === true && paintUndo.sameAfter === true && paintUndo.gizmoHidden === true,
+    '画笔笔画可撤销 / 重做（贴图前后两张切换，手柄保持收起）',
+    JSON.stringify({ undoOk: paintUndo.undoOk, midLen: paintUndo.midLen, beforeLen: paintStroke.beforeLen, redoOk: paintUndo.redoOk, sameAfter: paintUndo.sameAfter, gizmoHidden: paintUndo.gizmoHidden }));
+
+  /* 单独显示（隔离所选）：只留当前对象，再点一次恢复；文档里的 node.visible 不受影响 */
+  const iso = await page.evaluate(() => {
+    const API = window.modelDesk;
+    /* 单对象场景看不出隔离效果：先 Ctrl+D 复制一个（也是用户走得到的路径） */
+    if (API.getState().nodeCount < 2) {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', ctrlKey: true, bubbles: true }));
+    }
+    const before = API.getState();
+    const btn = document.getElementById('mdIsolateBtn');
+    /* 图标按钮应该在「着色」下拉的右边，不是跑到分隔线后面 */
+    const sel = document.getElementById('mdShadeSel').getBoundingClientRect();
+    const br = btn.getBoundingClientRect();
+    const placed = br.width > 0 && br.left >= sel.right - 1 && (br.left - sel.right) < 24;
+    btn.click();
+    const on = API.getState();
+    const d = API.__debug();
+    const visIds = Object.keys(d.pivots).filter(id => d.pivots[id].visible);
+    const statusOn = (document.getElementById('mdStatus') || {}).textContent || '';
+    const docVis = API.getDocument().nodes.map(n => n.visible !== false);
+    btn.click();
+    const off = API.getState();
+    return {
+      placed,
+      nodeCount: before.nodeCount, beforeVisible: before.visibleObjects,
+      isolateOn: on.isolate, onVisible: on.visibleObjects, visIds: visIds.length,
+      active: on.activeNodeId, statusOk: statusOn.indexOf('单独显示') >= 0,
+      docVis: docVis.filter(Boolean).length,
+      isolateOff: off.isolate, offVisible: off.visibleObjects,
+      btnOff: !btn.classList.contains('on')
+    };
+  });
+  check(iso.nodeCount >= 2 && iso.isolateOn === true && iso.onVisible === 1 && iso.visIds === 1 &&
+    iso.statusOk === true && iso.isolateOff === false && iso.offVisible === iso.beforeVisible &&
+    iso.btnOff === true && iso.placed === true,
+    '单独显示：图标按钮在着色右侧，只渲染当前选中对象，再点恢复（不动文档可见性）',
+    JSON.stringify(iso));
+
+  const backModel = await page.evaluate(() => {
+    document.querySelector('[data-md-tbk="model"]').click();
+    const s = window.modelDesk.getState();
+    return { kind: s.tbKind, boxHidden: document.getElementById('mdPaintBox').hidden };
+  });
+  check(backModel.kind === 'model' && backModel.boxHidden, '切回建模工具箱后绘画面板收起', JSON.stringify(backModel));
+
+  /* 组件单独显示：面模式下选一张面，隔离后只显示这张面（替身网格），退出恢复整只对象 */
+  await page.keyboard.press('F11');
+  const compIso = await page.evaluate(() => {
+    const API = window.modelDesk, d = API.__debug(), T = window.THREE;
+    const canvas = d.canvas, r = canvas.getBoundingClientRect();
+    const m = d.mesh;
+    const camPos = d.camera.getWorldPosition(new T.Vector3());
+    let bestFace = -1, bestDot = -Infinity, bestP = null;
+    for (let f = 0; f < m.faceIds.length; f++) {
+      const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+      if (e - s < 3) continue;
+      const c = new T.Vector3(), n = new T.Vector3();
+      for (let k = s; k < e; k++) {
+        const vi = m.faceIndices[k] * 3;
+        c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
+      }
+      c.multiplyScalar(1 / (e - s));
+      const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
+      const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+      const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+      n.crossVectors(v1, v2).normalize();
+      const wc = d.pivot.localToWorld(c.clone());
+      const wn = n.clone().transformDirection(d.pivot.matrixWorld);
+      const dot = wn.dot(camPos.clone().sub(wc).normalize());
+      /* 取面心与第一个角点之间靠角的位置：避开正中被手柄轴挡住的区域 */
+      const corner = new T.Vector3(m.positions[a0], m.positions[a0 + 1], m.positions[a0 + 2]);
+      const pick = c.clone().multiplyScalar(0.45).add(corner.multiplyScalar(0.55));
+      const wp = d.pivot.localToWorld(pick.clone());
+      if (dot > bestDot) { bestDot = dot; bestFace = f; bestP = wp; }
+    }
+    const p = bestP.project(d.camera);
+    const x = r.left + (p.x * 0.5 + 0.5) * r.width, y = r.top + (-p.y * 0.5 + 0.5) * r.height;
+    const send = (type) => canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      pointerId: 78, clientX: x, clientY: y
+    }));
+    send('pointerdown'); send('pointerup');
+    const picked = API.getState();
+    const btn = document.getElementById('mdIsolateBtn');
+    btn.click();
+    const on = API.getState();
+    const dOn = API.__debug(), pv = dOn.pivot;
+    const group = pv.userData.mdIsoMesh;
+    let visibleSolids = 0;
+    pv.traverse(o => { if (o.userData.mdPart === 'solid' && o.visible) visibleSolids++; });
+    const subSolid = group && group.children.find(o => o.userData.mdPart === 'solid');
+    btn.click();
+    const off = API.getState();
+    const dOff = API.__debug();
+    let origVisible = false;
+    dOff.pivot.traverse(o => { if (o.userData.mdPart === 'solid' && !o.userData.mdIsolate && o.visible) origVisible = true; });
+    return {
+      selMode: picked.selMode, selFace: picked.selFace, dot: Number(bestDot.toFixed(2)),
+      isoOn: on.isolate, isoComp: on.isoComp, isoFaces: on.isoFaces,
+      hasGroup: !!group, subGroups: subSolid ? subSolid.geometry.groups.length : 0,
+      visibleSolids,
+      isoOff: off.isolate, isoCompOff: off.isoComp,
+      groupGone: !dOff.pivot.userData.mdIsoMesh, origVisible,
+      status: (document.getElementById('mdStatus') || {}).textContent || ''
+    };
+  });
+  check(compIso.selMode === 'face' && compIso.selFace >= 1 && compIso.isoOn === true &&
+    compIso.isoComp === true && compIso.isoFaces >= 1 && compIso.hasGroup === true &&
+    compIso.subGroups >= 1 && compIso.visibleSolids === 1 &&
+    compIso.isoOff === false && compIso.isoCompOff === false && compIso.groupGone === true &&
+    compIso.origVisible === true,
+    '组件单独显示：只显示选中的面，退出后恢复整只对象',
+    JSON.stringify(compIso));
+
+  /* 有 UV 的网格拖面：渲染顶点是拆过的，缓冲区必须按 mdOrig 映射回写，否则整块模型炸开 */
+  const faceDrag = await page.evaluate(() => {
+    const API = window.modelDesk, d = API.__debug();
+    const m = d.mesh;
+    const before = new Float32Array(m.positions);
+    let geo = null;
+    d.pivot.traverse(o => {
+      if (!geo && o.userData && o.userData.mdPart === 'solid' && o.geometry) geo = o.geometry;
+    });
+    if (!geo) return { noGeo: true };
+    const arr = geo.attributes.position.array, map = geo.userData.mdOrig;
+    d.gizmo.onStart({ mode: 'translate', axis: 'x' });
+    d.compPivot.position.x += 0.25;
+    d.compPivot.updateMatrixWorld(true);
+    d.gizmo.onChange();
+    let mis = 0, bad = 0, maxD = 0;
+    for (let i = 0; i < m.positions.length; i += 3) {
+      const dd = Math.hypot(m.positions[i] - before[i], m.positions[i + 1] - before[i + 1], m.positions[i + 2] - before[i + 2]);
+      if (dd > maxD) maxD = dd;
+      if (!isFinite(m.positions[i]) || !isFinite(m.positions[i + 1]) || !isFinite(m.positions[i + 2])) bad++;
+    }
+    const rn = arr.length / 3;
+    for (let r = 0; r < rn; r++) {
+      const oi = (map ? map[r] : r) * 3, ri = r * 3;
+      if (Math.abs(arr[ri] - m.positions[oi]) > 1e-4 ||
+        Math.abs(arr[ri + 1] - m.positions[oi + 1]) > 1e-4 ||
+        Math.abs(arr[ri + 2] - m.positions[oi + 2]) > 1e-4) mis++;
+    }
+    d.gizmo.onEnd({ mode: 'translate', axis: 'x', changed: true });
+    API.undo();
+    return {
+      hasMap: !!map, mapLen: map ? map.length : 0, renderVerts: rn,
+      meshVerts: m.positions.length / 3, mis, bad, maxD: +maxD.toFixed(3),
+      selFace: API.getState().selFace
+    };
+  });
+  /* maxD 是网格局部位移；导入模型常被整体缩放过，所以只校验「动了、没乱、没出非数」 */
+  check(faceDrag.hasMap === true && faceDrag.mis === 0 && faceDrag.bad === 0 &&
+    faceDrag.maxD > 0.1 && faceDrag.selFace >= 1,
+    '拖面：渲染缓冲按 UV 拆点映射回写，模型不炸开',
+    JSON.stringify(faceDrag));
+
+  /* 「属性编辑器」页签：切过去才显示，且整块吃满右栏高度；切回建模后收起 */
+  const propsTab = await page.evaluate(() => {
+    document.querySelector('[data-md-tbk="props"]').click();
+    const right = document.querySelector('.md-right');
+    const props = document.querySelector('.md-props'), tb = document.querySelector('.md-tb');
+    const pr = props.getBoundingClientRect();
+    const params = document.getElementById('mdParams').getBoundingClientRect();
+    const out = {
+      kind: window.modelDesk.getState().tbKind, isProps: right.classList.contains('is-props'),
+      propsShown: getComputedStyle(props).display !== 'none' && pr.height > 300,
+      toolboxHidden: getComputedStyle(tb).display === 'none',
+      paramsVisible: params.height > 100
+    };
+    document.querySelector('[data-md-tbk="model"]').click();
+    out.backToModel = window.modelDesk.getState().tbKind;
+    return out;
+  });
+  check(propsTab.kind === 'props' && propsTab.isProps && propsTab.propsShown &&
+    propsTab.toolboxHidden && propsTab.paramsVisible && propsTab.backToModel === 'model',
+    '属性编辑器页签可切换：占满右栏高度，切回建模后收起',
+    JSON.stringify(propsTab));
 
   /* 12. 截图（整窗 + 视口） */
   const shotWin = path.join(__dirname, '_md-shot-win.png');

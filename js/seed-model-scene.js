@@ -109,13 +109,17 @@
     var o = isObj(m) ? m : {};
     var names = Array.isArray(o.slotNames) ? o.slotNames.map(function (n) { return String(n); }) : [];
     var colors = Array.isArray(o.slotColors) ? o.slotColors.map(function (c) { return String(c); }) : [];
+    /* 导入时从源模型里抽出的基础色贴图（data URL）。只是显示用，不进 GLB 主材质，
+     * 但跟着 seedModel 走，重开资产才不会又变回一片灰。 */
+    var maps = Array.isArray(o.slotMaps) ? o.slotMaps.map(function (u) { return String(u || ''); }) : [];
     for (var i = 0; i < names.length; i++) {
       if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(colors[i] || '')) colors[i] = '#c9ccd4';
     }
     return {
       slotNames: names,
-      /* 只用于视口显示；贴图仍然按 textureConfigKey 去 m3d-slots 查 */
+      /* 只用于视口显示；贴图配置仍按 textureConfigKey 去 m3d-slots 查 */
       slotColors: colors.slice(0, names.length),
+      slotMaps: maps.slice(0, names.length),
       textureConfigKey: str(o.textureConfigKey, assetId),
       textureConfigMissing: !!o.textureConfigMissing
     };
@@ -185,11 +189,11 @@
 
   function normalizeDoc(raw) {
     var rev = revisionOf(raw.revision);
-    var nodes = Array.isArray(raw.nodes) && raw.nodes.length
-      ? raw.nodes.map(nodeOfRaw)
-      : [nodeOfRaw({}, 0)];
+    /* nodes: [] 是合法状态（删掉最后一个对象后的空场景）：不能凭空补节点，
+     * 否则「打开一个空模型」会冒出一个幽灵对象。只有缺 nodes 字段的老格式才补默认节点。 */
+    var nodes = Array.isArray(raw.nodes) ? raw.nodes.map(nodeOfRaw) : [nodeOfRaw({}, 0)];
     var mats = materialsOf(raw.materials, raw.assetId);
-    if (!nodes[0].materialSlots.length) nodes[0].materialSlots = mats.slotNames.slice();
+    if (nodes.length && !nodes[0].materialSlots.length) nodes[0].materialSlots = mats.slotNames.slice();
 
     /* v2 → v2.1 迁移：只补结构，不改数据。meshRef 指向不存在的网格时统一落到第一个，
      * 否则节点会「指向空气」，渲染时表现为打开后什么都没有。 */
@@ -201,13 +205,13 @@
     var actId = str(raw.activeNodeId, '');
     if (!actId || !nodes.some(function (n) { return n.id === actId; })) {
       var firstMesh = nodes.filter(function (n) { return n.type === 'mesh'; })[0];
-      actId = firstMesh ? firstMesh.id : nodes[0].id;
+      actId = firstMesh ? firstMesh.id : (nodes[0] ? nodes[0].id : '');
     }
 
     return {
       schemaVersion: SCHEMA_VERSION,
       assetId: str(raw.assetId, ''),
-      name: str(raw.name, nodes[0].name),
+      name: str(raw.name, nodes[0] ? nodes[0].name : '空场景'),
       mode: 'mesh',
       storage: 'json',
       revision: rev,
@@ -232,8 +236,10 @@
       warnings.push('seedModel 版本 ' + (raw.schemaVersion || '缺失') + '，已按 v2 读取');
     }
     var mmIn = meshesOf(raw);
-    if (!Object.keys(mmIn.map).length) errors.push('缺少网格数据（meshes 与 mesh 都没有）');
-    if (!Array.isArray(raw.nodes) || !raw.nodes.length) warnings.push('缺少 nodes，已补一个默认网格节点');
+    var emptyScene = Array.isArray(raw.nodes) && raw.nodes.length === 0;
+    if (!Object.keys(mmIn.map).length && !emptyScene) errors.push('缺少网格数据（meshes 与 mesh 都没有）');
+    if (!Array.isArray(raw.nodes)) warnings.push('缺少 nodes，已补一个默认网格节点');
+    else if (emptyScene) warnings.push('空场景（nodes 为空）');
     if (!isObj(raw.meshes) && isObj(raw.mesh)) warnings.push('老格式（单 mesh）已迁移为 meshes.main');
 
     var doc = normalizeDoc(raw);
@@ -245,7 +251,7 @@
       }
     });
     var meshNode = doc.nodes.filter(function (n) { return n.type === 'mesh'; })[0];
-    if (!meshNode) errors.push('nodes 里没有 mesh 类型节点');
+    if (doc.nodes.length && !meshNode) errors.push('nodes 里没有 mesh 类型节点');
     return { ok: errors.length === 0, errors: errors, warnings: warnings, doc: errors.length ? null : doc };
   }
 

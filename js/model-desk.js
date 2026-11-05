@@ -30,6 +30,17 @@
     mode: 'translate', space: 'world', snap: false,
     rightTab: 'props', outlineQuery: '', showGrid: true, gridHelper: null,
     shading: 'shaded-wire', quad: false, quadCams: null, viewName: '透视',
+    /* 单独显示（隔离所选）：只影响视口，不写文档里的 node.visible */
+    isolate: false,
+    /* 右侧工具箱两个页签：建模 / 绘画。绘画 = 把笔刷颜色直接画进当前材质槽的基础色贴图 */
+    tbKind: 'model',
+    paint: {
+      brush: 'soft', size: 42, opacity: 90, color: '#d94f4f',
+      /* mask = 只画进落笔所在的 UV 岛（stroke 开始时按岛的多边形给 2D 上下文加 clip） */
+      mask: false,
+      stroke: null, doc: null, slot: -1, tex: null, canvas: null, ctx: null,
+      clipCtx: null, clipped: false, clipPolys: 0
+    },
     /* V7：四视图可交互 —— quadCtl 每格一个 OrbitControls，只 enable 激活那一个；
      * quadMax 非空时该格全屏；quadDown / quadClick 用来区分单击、拖拽与双击。 */
     quadCtl: null, quadActive: 'front', quadMax: null, quadDown: null, quadClick: null,
@@ -39,6 +50,8 @@
     history: { undo: [], redo: [], bytes: 0 },
     editBefore: null, txBefore: null,
     uiReady: false, busy: false, statusTimer: 0, texOpen: false,
+    menu: null,
+    toolPanel: null,
     prefs: null,
     /* 内容浏览器（底部 dock）：收起时只留页签；assets 为 null 表示还没读过 */
     dock: null, dockBody: null, dockOpen: false, dockLoading: false,
@@ -60,7 +73,26 @@
     /* 热盒：按住空格弹出，松开执行鼠标下的那一条 */
     hbOpen: false, hbHover: null, hbZones: [], hbPanel: null, pointer: { x: 0, y: 0 },
     /* 工具（竖条）：select / lasso / paint / move / rotate / scale；gest 是当前手势 */
-    tool: 'select', gest: null
+    tool: 'select', gest: null,
+    /* 挤出专用操纵器（箭头 + 轴心缩放柄）：只在 tool.extrude 会话里出现 */
+    extrudeGizmo: null, extrudeDrag: null, extrudeHover: null,
+    /* UV 编辑器（X5a–X5e）：窗口 + 二维画布 + 选择/变换状态。
+     * corners 存的是**面角下标**（uvs 的一对值），不存 UV 点 ID ——
+     * 点分组是派生的（同一顶点同一 UV），拓扑/UV 一改就重算。 */
+    uv: {
+      win: null, canvas: null, ctx: null, open: false,
+      mode: 'point', transform: 'move', grid: true, ruler: true, snap: false,
+      tex: false,
+      /* X5g：底图。mapImg = 模型自己的基础色贴图（doc.materials.slotMaps 解码来的），
+       * img 是用户临时载入的参考图；两者都只画在 0–1 贴图范围内，不写进文档。 */
+      mapOn: false, mapImg: null, mapName: '', mapUrl: '',
+      /* X5g：图片底图。img 是已解码的 Image，只画在 0–1 贴图范围内；不写进文档 */
+      img: null, imgName: '',
+      cu: 0.5, cv: 0.5, scale: 380,
+      corners: [], cornerSet: Object.create(null), selFaces: [],
+      syncedFaces: '', hover: null, drag: null, marquee: null, menu: null, drawRaf: 0, frameSkip: 0, lastMs: 0,
+      faceCache: null
+    }
   };
 
   function esc(s) {
@@ -186,6 +218,8 @@
     knife: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M5 4.5c4 .5 8.5 3 11.5 6.5L7.5 20 5 4.5z"/><path d="M13 20.5 19 14.5" opacity=".55"/><path d="m5 4.5 14 14" stroke-dasharray="2 2" opacity=".7"/></svg>',
     targetWeld: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><circle cx="6" cy="7" r="3"/><circle cx="18" cy="17" r="3"/><path d="m8.6 9.2 6.8 5.6M14 14.4l1.4 2.6M15.4 17h-2.8"/></svg>',
     connect: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><circle cx="6" cy="17" r="3"/><circle cx="18" cy="7" r="3"/><path d="m8.4 15.6 7.2-7.2"/><path d="M12 17H6M18 7v5" opacity=".35"/></svg>',
+    loopcut: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="4" y="4" width="16" height="16"/><path d="M4 12h16" stroke="#d98b3f" stroke-width="1.7"/><path d="M10.6 4v16M16 4v16" stroke-dasharray="2.4 2" opacity=".55"/></svg>',
+    tris2quads: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M3 5h7L3 15z"/><path d="M10 5v10H3" opacity=".5"/><path d="M11.2 10h3.6m-1.4-1.4L15 10l-1.6 1.4"/><rect x="16.2" y="4.8" width="4.8" height="10.4"/></svg>',
     quadDraw: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M5 5h14v14H5z" stroke-dasharray="3 2.4"/><g fill="#d98b3f" stroke="none"><circle cx="5" cy="5" r="1.8"/><circle cx="19" cy="5" r="1.8"/><circle cx="19" cy="19" r="1.8"/><circle cx="5" cy="19" r="1.8"/></g></svg>'
   };
 
@@ -195,13 +229,15 @@
       { op: 'join', label: '结合', icon: 'join', title: '把大纲中多选的对象合成一个网格' },
       { op: 'separate', label: '分离', icon: 'separate', title: '按连通块拆成多个对象' },
       { op: 'smooth', label: '平滑', icon: 'smooth', title: '平滑选中顶点（不选 = 整体）' },
+      { op: 'tris-to-quads', label: '三角转四边', icon: 'tris2quads', title: '把成对的共边三角面并成四边面（UV 接缝处不并）' },
       { op: 'boolean', label: '布尔', icon: 'boolean', title: '对两个对象做差集（A − B）' }
     ] },
     { id: 'comp', title: '组件', items: [
       { op: 'extrude', label: '挤出', icon: 'extrude', title: '沿面法线挤出选中面' },
       { op: 'bevel', label: '倒角', icon: 'bevel', title: '选中面内缩成环 + 深度' },
       { op: 'bridge', label: '桥接', icon: 'bridge', title: '连接两个同边数的面' },
-      { op: 'segments', label: '添加分段', icon: 'segments', title: '把选中面切成四份' }
+      { op: 'segments', label: '添加分段', icon: 'segments', title: '把选中面切成四份' },
+      { op: 'loopcut', label: '环切', icon: 'loopcut', title: '沿选中边所在的四边环切分；条数 / 滑移实时预览' }
     ] },
     { id: 'tool', title: '工具', items: [
       { op: 'knife', label: '多切割', icon: 'knife', title: '在视口拖一条线，用视平面切开网格' },
@@ -267,6 +303,7 @@
       '      <button type="button" class="md-mitem" data-md-menu="窗口">窗口</button>',
       '      <button type="button" class="md-mitem" data-md-menu="帮助">帮助</button>',
       '    </nav>',
+      '    <div class="md-drop" id="mdDrop" hidden></div>',
       '    <div class="md-menu-right">',
       '      <span class="md-workspace">工作区：建模 · 标准</span>',
       '      <b class="md-name" id="mdName">未命名模型</b>',
@@ -320,10 +357,12 @@
       '      <button type="button" class="md-sico" style="--c:#9aa8c9" data-md-op="bridge" title="桥接：两个同边数面">' + OP_ICONS.bridge + '</button>',
       '      <button type="button" class="md-sico" style="--c:#c7a0d6" data-md-op="extrude" title="挤出：沿法线挤出选中面">' + OP_ICONS.extrude + '</button>',
       '      <button type="button" class="md-sico" style="--c:#a8a8a8" data-md-op="bevel" title="倒角：选中面内缩 + 深度">' + OP_ICONS.bevel + '</button>',
+      '      <button type="button" class="md-sico" style="--c:#d98b3f" data-md-op="loopcut" title="环切：沿选中边所在的四边环切分">' + OP_ICONS.loopcut + '</button>',
+      '      <button type="button" class="md-sico" style="--c:#8fc7a8" data-md-op="tris-to-quads" title="三角转四边：成对三角并成四边面">' + OP_ICONS.tris2quads + '</button>',
       '      <button type="button" class="md-sico" style="--c:#8fb5b8" data-md-op="separate" title="分离（大纲多选后可用结合）">' + OP_ICONS.separate + '</button>',
       '      <button type="button" class="md-sico" style="--c:#c9b27c" data-md-op="smooth" title="平滑：选中顶点或整体">' + OP_ICONS.smooth + '</button>',
       '      <span class="md-sico" style="--c:#c88a8a" title="纹理（M5 接入）">◍</span>',
-      '      <span class="md-sico" style="--c:#9fc0e0" title="UV 编辑器（M5 接入）">◒</span>',
+      '      <button type="button" class="md-sico" style="--c:#9fc0e0" data-md-act="uv" title="UV 编辑器：二维 UV 视图 / 选择 / 变换 / 展开排布">◒</button>',
       '      <span class="md-sico" style="--c:#d0b080" title="曲线工具（后续接入）">✑</span>',
       '      <span class="md-sico" style="--c:#b0b0b0" title="曲面放样（后续接入）">◫</span>',
       '      <span class="md-sico" style="--c:#d8a15a" title="动画（M7 接入）">❖</span>',
@@ -357,7 +396,15 @@
       '          <option value="shaded-wire">实体 + 线框</option>',
       '          <option value="shaded">实体</option>',
       '          <option value="wire">线框</option>',
+      '          <option value="flat">平涂</option>',
+      '          <option value="uv">UV 岛着色</option>',
       '        </select>',
+      '        <button type="button" class="md-vpi" data-md-act="isolate" id="mdIsolateBtn" title="单独显示：只显示当前选中对象；面 / UV 岛模式下只显示选中的面（再点退出）">' +
+      '          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">' +
+      '            <rect x="2.6" y="2.6" width="18.8" height="18.8" stroke-dasharray="2.6 2.2" opacity=".75"/>' +
+      '            <path d="M12 6.6 17 9.3v5.4L12 17.4 7 14.7V9.3z"/>' +
+      '            <path d="M12 11.9 17 9.3v5.4L12 17.4z" fill="currentColor" stroke="none" opacity=".85"/>' +
+      '          </svg></button>',
       '        <span class="md-vplabel">照明 ▾</span>',
       '        <span class="md-vplabel">显示 ▾</span>',
       '        <span class="md-vplabel">渲染器 ▾</span>',
@@ -365,7 +412,6 @@
       '        <span class="md-sep"></span>',
       '        <button type="button" class="md-vpi" data-md-act="grid" id="mdGridBtn" title="显示 / 隐藏地面栅格">⌗</button>',
       '        <button type="button" class="md-vpi" data-md-act="shade-cycle" id="mdShadeBtn" title="切换着色模式（实体 / 实体+线框 / 线框）">▦</button>',
-      '        <span class="md-vpi" title="隔离所选（M3 接入）">◱</span>',
       '        <span class="md-vpi" title="透视视角（M4 接入）">◍</span>',
       '        <span class="md-vpnum"><span class="md-numb">0.00</span><i>/</i><span class="md-numb">1.00</span></span>',
       '        <span class="md-vpstyle">ACES 1.0 SDR-video (sRGB)<i>▾</i></span>',
@@ -384,16 +430,24 @@
       '          <span class="md-quad-l bl" data-md-qcell="left">左视图</span>',
       '          <span class="md-quad-l br" data-md-qcell="right">右视图</span>',
       '        </div>',
-      '        <div class="md-cube" id="mdCube" title="拖拽翻转视角 · 点面切正视图 · 双击回轴测">',
+      '        <div class="md-cube" id="mdCube" title="拖拽翻转视角 · 点面切正视图 · 箭头每次转 90° · 双击回轴测">',
       '          <canvas id="mdCubeCanvas"></canvas>',
+      '          <b class="md-cube-turn top" data-md-turn="up" title="视图向上翻转 90°"></b>',
+      '          <b class="md-cube-turn bottom" data-md-turn="down" title="视图向下翻转 90°"></b>',
+      '          <b class="md-cube-turn left" data-md-turn="left" title="视图向左翻转 90°"></b>',
+      '          <b class="md-cube-turn right" data-md-turn="right" title="视图向右翻转 90°"></b>',
       '        </div>',
       '        <div class="md-hud" id="mdHud"></div>',
       '        <div class="md-overlay" id="mdOverlay"></div>',
       '      </div>',
       '    </div>',
       '    <aside class="md-right">',
+      '      <div class="md-panel-h md-right-h"><span class="md-tbkinds">' +
+      '        <button type="button" class="md-otab on" data-md-tbk="model" title="建模工具箱">建模工具箱</button>' +
+      '        <button type="button" class="md-otab" data-md-tbk="paint" title="绘画工具箱：笔刷直接画进基础色贴图">绘画工具箱</button>' +
+      '        <button type="button" class="md-otab" data-md-tbk="props" title="属性编辑器：变换 / 材质槽 / 操作历史">属性编辑器</button>' +
+      '      </span><em id="mdTbMode">对象</em></div>',
       '      <section class="md-tb">',
-      '        <div class="md-panel-h"><span>建模工具箱</span><em id="mdTbMode">对象</em></div>',
       '        <div class="md-tb-tabs"><button type="button" class="md-otab md-tbtab on" data-md-tbtab="object">对象</button><button type="button" class="md-otab md-tbtab" data-md-tbtab="component">多组件</button></div>',
       '        <div class="md-modebar" id="mdModeBar">',
       '          <button type="button" class="md-mode" data-md-selmode="object" title="对象模式（F8）">' + MODE_ICONS.object + '</button>',
@@ -405,6 +459,16 @@
       '        <div class="md-mode-hint" id="mdModeHint">当前：对象</div>',
       '        <div class="md-tb-body md-tb-list" id="mdToolbox">',
       toolboxHtml(),
+      '        </div>',
+      '        <div class="md-paint" id="mdPaintBox" hidden>',
+      '          <div class="md-paint-row"><span>笔刷</span><select id="mdBrushSel">' +
+      '            <option value="soft">圆形软笔</option><option value="hard">圆形硬笔</option>' +
+      '            <option value="erase">橡皮擦</option></select></div>',
+      '          <div class="md-paint-row"><span>大小</span><input type="range" id="mdBrushSize" min="6" max="180" step="1" value="42"><b id="mdBrushSizeVal">42 px</b></div>',
+      '          <div class="md-paint-row"><span>不透明度</span><input type="range" id="mdBrushOpacity" min="5" max="100" step="1" value="90"><b id="mdBrushOpacityVal">90%</b></div>',
+      '          <div class="md-paint-row"><span>颜色</span><i class="md-paint-sw" id="mdBrushSw" style="background:#d94f4f"></i><input type="color" id="mdBrushColor" value="#d94f4f"></div>',
+      '          <div class="md-paint-row"><span>遮罩</span><label class="md-paint-chk" title="只画进落笔所在的 UV 岛，笔刷不会溢到相邻岛"><input type="checkbox" id="mdPaintMask">UV 岛遮罩</label></div>',
+      '          <div class="md-paint-hint">在模型上按住左键拖动即可上色：颜色画进当前面所属材质槽的基础色贴图（没有贴图就新建一张）。Alt+左键 / 中键仍然导航；笔画结束后贴图写回文档，保存时随 GLB 一起走。</div>',
       '        </div>',
       '      </section>',
       '      <section class="md-props">',
@@ -455,6 +519,21 @@
     host.addEventListener('keydown', onKeyDown);
     global.addEventListener('keydown', onKeyLayer, false);
 
+    /* 主菜单下拉：点外面 / 按 Esc 收起。捕获阶段处理，先于工具层的 Esc。 */
+    document.addEventListener('pointerdown', function (e) {
+      if (!st.menu) return;
+      var tg = e.target;
+      if (tg && tg.closest && (tg.closest('#mdDrop') || tg.closest('.md-mitem'))) return;
+      mdCloseMenu();
+    }, true);
+    document.addEventListener('keydown', function (e) {
+      if (st.menu && (e.key === 'Escape' || e.key === 'Esc')) {
+        mdCloseMenu();
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, true);
+
     var closeBtn = $('btnModelDeskClose');
     if (closeBtn) {
       closeBtn.addEventListener('click', function () {
@@ -475,6 +554,9 @@
   }
 
   function setStatus(text, isErr) {
+    /* UV 编辑器浮在窗口中间时，状态行可能被它盖住：同步在画布上弹一条提示，
+     * 保证点任何地方都有可见反馈。 */
+    if (st.uv && st.uv.open) uvToast(text, isErr);
     if (!st.statusEl) return;
     clearTimeout(st.statusTimer);
     st.statusEl.textContent = text || '';
@@ -510,6 +592,11 @@
     if (shadeBtn) shadeBtn.classList.toggle('on', st.shading === 'wire');
     var quadBtn = document.querySelector('.md-act[data-md-act="quad"]');
     if (quadBtn) quadBtn.classList.toggle('on', st.quad);
+    var isoBtn = $('mdIsolateBtn');
+    if (isoBtn) {
+      isoBtn.classList.toggle('on', st.isolate);
+      isoBtn.disabled = !st.doc || !st.node;
+    }
     var viewLabel = $('mdViewLabel');
     if (viewLabel) viewLabel.textContent = (st.quad ? quadViewText() : (st.viewName || '透视')) + ' ▾';
     document.querySelectorAll('.md-tool[data-md-tool]').forEach(function (b) {
@@ -520,7 +607,10 @@
       b.classList.toggle('on', b.dataset.mdSelmode === st.selMode);
     });
     var tbMode = $('mdTbMode');
-    if (tbMode) tbMode.textContent = SEL_NOUN[st.selMode] || '对象';
+    if (tbMode) tbMode.textContent = tbModeLabel();
+    document.querySelectorAll('[data-md-tbk]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.mdTbk === st.tbKind);
+    });
     var modeHint = $('mdModeHint');
     if (modeHint) {
       var keys = { object: 'F8', vertex: 'F9', edge: 'F10', face: 'F11', island: 'F12' };
@@ -648,8 +738,12 @@
     document.querySelectorAll('.md-ptab[data-md-tab]').forEach(function (b) {
       b.classList.toggle('on', b.dataset.mdTab === st.rightTab);
     });
-    if (!st.doc || !st.node) {
+    if (!st.doc) {
       box.innerHTML = '<div class="md-note">还没有打开文档。</div>';
+      return;
+    }
+    if (!st.node) {
+      box.innerHTML = '<div class="md-note">场景是空的：用「新建」加一个对象，或在内容浏览器里「置于」一个模型。</div>';
       return;
     }
     var s = statsNow();
@@ -766,6 +860,9 @@
     paintParams();
     updateHud();
     updateChrome();
+    /* UV 窗口打开时跟着外部选择 / 撤销 / 换对象刷新；uvRefresh 自己会做同步判断，
+     * 不会反过来触发 paintAll，所以这里不存在递归。 */
+    if (st.uv.open) uvRefresh();
   }
 
   /* ---------------- 选择（S1 拾取 + 高亮） ----------------
@@ -828,10 +925,12 @@
     st.selGroup = null;
   }
 
-  /* 高亮三件套：面（半透明罩）、边（穿透过）、点（深环 + 亮芯，和顶点层同构） */
-  function paintSelection() {
+  /* 高亮三件套：面（半透明罩）、边（穿透过）、点（深环 + 亮芯，和顶点层同构）
+   * mesh 可传预览网格：挤出拖动时高亮要跟着预览的顶面走，不能停在旧位置 */
+  function paintSelection(mesh) {
     disposeSelection();
-    if (!st.pivot || !st.mesh) return;
+    var mm = mesh || st.mesh;
+    if (!st.pivot || !mm) return;
     pruneSelection();
     var g = new THREE.Group();
     g.name = 'selection';
@@ -840,15 +939,15 @@
     var fi = st.sel.faceIds;
     if (fi.length) {
       var byId = Object.create(null);
-      for (var f = 0; f < st.mesh.faceIds.length; f++) byId[st.mesh.faceIds[f]] = f;
+      for (var f = 0; f < mm.faceIds.length; f++) byId[mm.faceIds[f]] = f;
       var tris = [];
       for (var k = 0; k < fi.length; k++) {
         var face = byId[fi[k]];
         if (face == null) continue;
-        var s = st.mesh.faceOffsets[face], e = st.mesh.faceOffsets[face + 1];
+        var s = mm.faceOffsets[face], e = mm.faceOffsets[face + 1];
         for (var t = s + 1; t < e - 1; t++) {
-          [st.mesh.faceIndices[s], st.mesh.faceIndices[t], st.mesh.faceIndices[t + 1]].forEach(function (vi) {
-            tris.push(st.mesh.positions[vi * 3], st.mesh.positions[vi * 3 + 1], st.mesh.positions[vi * 3 + 2]);
+          [mm.faceIndices[s], mm.faceIndices[t], mm.faceIndices[t + 1]].forEach(function (vi) {
+            tris.push(mm.positions[vi * 3], mm.positions[vi * 3 + 1], mm.positions[vi * 3 + 2]);
           });
         }
       }
@@ -868,7 +967,7 @@
 
     var ei = st.sel.edgeIds;
     if (ei.length) {
-      var edges = SeedModel.Mesh.ensureEdges(st.mesh).edges;
+      var edges = SeedModel.Mesh.ensureEdges(mm).edges;
       var want = Object.create(null), j;
       for (j = 0; j < ei.length; j++) want[ei[j]] = 1;
       var buf = [];
@@ -876,8 +975,8 @@
         var rec = edges[j];
         if (!want[rec.id]) continue;
         buf.push(
-          st.mesh.positions[rec.a * 3], st.mesh.positions[rec.a * 3 + 1], st.mesh.positions[rec.a * 3 + 2],
-          st.mesh.positions[rec.b * 3], st.mesh.positions[rec.b * 3 + 1], st.mesh.positions[rec.b * 3 + 2]
+          mm.positions[rec.a * 3], mm.positions[rec.a * 3 + 1], mm.positions[rec.a * 3 + 2],
+          mm.positions[rec.b * 3], mm.positions[rec.b * 3 + 1], mm.positions[rec.b * 3 + 2]
         );
       }
       if (buf.length) {
@@ -896,12 +995,12 @@
     var vi = st.sel.vertexIds;
     if (vi.length) {
       var byVid = Object.create(null);
-      for (var v = 0; v < st.mesh.vertexIds.length; v++) byVid[st.mesh.vertexIds[v]] = v;
+      for (var v = 0; v < mm.vertexIds.length; v++) byVid[mm.vertexIds[v]] = v;
       var pts = [];
       for (var q = 0; q < vi.length; q++) {
         var idx = byVid[vi[q]];
         if (idx == null) continue;
-        pts.push(st.mesh.positions[idx * 3], st.mesh.positions[idx * 3 + 1], st.mesh.positions[idx * 3 + 2]);
+        pts.push(mm.positions[idx * 3], mm.positions[idx * 3 + 1], mm.positions[idx * 3 + 2]);
       }
       if (pts.length) {
         var vg = new THREE.BufferGeometry();
@@ -922,6 +1021,8 @@
       }
     }
 
+    /* 隔离显示时选择一变，替身网格跟着换（没选任何面就退回整只对象） */
+    if (st.isolate) refreshIsoChild();
     if (!g.children.length) { syncGizmo(); return; }
     st.pivot.add(g);
     st.selGroup = g;
@@ -977,7 +1078,24 @@
 
   /* 有组件选择 → 手柄挂在组件中心；没有 → 回到对象（老行为） */
   function syncGizmo() {
+    /* 绘画页签：手柄必须收起。它在 canvas 的捕获阶段抢 pointerdown（并且会 stopPropagation），
+     * 否则在模型中心落笔会被「屏幕平移」手柄吃掉，画不上颜色还顺手挪了对象。 */
+    if (st.tbKind === 'paint') {
+      if (st.gizmo) st.gizmo.setTarget(null);
+      return;
+    }
+    /* 挤出会话里由专用箭头接管：变换手柄收起来，否则同位叠放、点箭头变成移动组件 */
+    if (st.toolSession === 'tool.extrude') {
+      if (st.gizmo) st.gizmo.setTarget(null);
+      return;
+    }
     if (!st.gizmo || !st.pivot || !THREE || !st.compPivot) return;
+    /* 单独显示定格的是别的对象时，激活对象在视口里是隐藏的：手柄不能挂在它身上，
+     * 否则会拖到看不见的东西。 */
+    if (st.isolate && !ISO.nodeVisible(st.node ? st.node.id : '')) {
+      st.gizmo.setTarget(null);
+      return;
+    }
     if (st.compDrag) return;                       /* 拖动中不要动目标，否则增量会跳 */
     var idx = (st.selMode === 'object') ? [] : selVertexIndices();
     st.compIdx = idx;
@@ -1030,22 +1148,33 @@
 
   /* 拖动中的即时显示：只改缓冲区里的坐标，不重建几何对象（否则每帧都在建 BufferGeometry） */
   function liveRefresh() {
-    var solid = null;
-    if (st.pivot) {
-      st.pivot.traverse(function (o) { if (!solid && o.userData && o.userData.mdPart === 'solid') solid = o; });
-    }
     var i;
-    if (solid && solid.geometry && solid.geometry.attributes.position) {
-      var ga = solid.geometry.attributes.position;
-      var arr = ga.array;
-      for (i = 0; i < st.mesh.positions.length && i < arr.length; i++) arr[i] = st.mesh.positions[i];
-      ga.needsUpdate = true;
-      solid.geometry.computeBoundingSphere();
-      solid.geometry.computeVertexNormals();
+    /* 有 UV 的网格在 buildGeometry 里按 (顶点, UV) 拆过点：渲染顶点和原顶点不再一一对应，
+     * 必须按 geo.userData.mdOrig 映射回写，否则拖面时整块网格会炸开 */
+    if (st.pivot) {
+      st.pivot.traverse(function (o) {
+        if (!o.userData || o.userData.mdPart !== 'solid') return;
+        var geo = o.geometry;
+        if (!geo || !geo.attributes.position) return;
+        var ga = geo.attributes.position, arr = ga.array;
+        var map = geo.userData && geo.userData.mdOrig;
+        var n = map ? Math.min(map.length, arr.length / 3)
+          : Math.min(st.mesh.positions.length, arr.length);
+        for (var r = 0; r < n; r++) {
+          var oi = (map ? map[r] : r) * 3, ri = r * 3;
+          arr[ri] = st.mesh.positions[oi];
+          arr[ri + 1] = st.mesh.positions[oi + 1];
+          arr[ri + 2] = st.mesh.positions[oi + 2];
+        }
+        ga.needsUpdate = true;
+        geo.computeBoundingSphere();
+        geo.computeVertexNormals();
+      });
     }
     if (st.vertPoints && st.vertPoints.children && st.vertPoints.children[0]) {
       var vg = st.vertPoints.children[0].geometry.attributes.position;
       if (vg) {
+        /* 顶点叠加层是按原顶点直接建的，恒等拷贝即可 */
         for (i = 0; i < st.mesh.positions.length && i < vg.array.length; i++) vg.array[i] = st.mesh.positions[i];
         vg.needsUpdate = true;
       }
@@ -1224,21 +1353,34 @@
 
   /* 笔刷圈常驻（Maya 也是：选了绘制选择就能看到圈） */
   function brushFollow(e) {
-    if (st.tool !== 'paint') return;
+    if (st.tool !== 'paint' && st.tbKind !== 'paint') return;
     var n = gestNodes();
     if (!n.brush) return;
     var p = canvasPoint(e);
-    var R = 22;
+    var R = st.tbKind === 'paint' ? Math.max(3, st.paint.size * 0.5) : 22;
     n.brush.style.display = 'block';
     n.brush.style.width = n.brush.style.height = (R * 2) + 'px';
     n.brush.style.left = (p.x - R) + 'px';
     n.brush.style.top = (p.y - R) + 'px';
+    if (st.tbKind === 'paint') {
+      /* 画笔环直接染成当前颜色，软笔描虚线、橡皮用灰环 */
+      n.brush.style.borderColor = st.paint.brush === 'erase' ? '#9aa0a6' : st.paint.color;
+      n.brush.style.borderStyle = st.paint.brush === 'hard' ? 'solid' : 'dashed';
+    } else {
+      n.brush.style.borderColor = '';
+      n.brush.style.borderStyle = '';
+    }
   }
 
   /* 多切割：屏幕线段 → 相机射线平面 → 转成网格局部平面 → 切面。
    * 透视相机用两条射线叉乘；正交（四视图）射线平行，退化为「视线 × 屏幕线方向」。 */
   function knifeCutFromScreen(g, r) {
     if (!THREE || !st.camera || !st.pivot) return false;
+    /* 激活对象在视口里被藏起来时不许切：切割落在看不见的网格上没有意义 */
+    if (!ISO.visibleMesh(st.node ? st.node.id : '')) {
+      setStatus('多切割：当前对象在视口里不可见，先退出单独显示', true);
+      return false;
+    }
     var d1 = new THREE.Vector2((g.x0 / r.width) * 2 - 1, -((g.y0 / r.height) * 2 - 1));
     var d2 = new THREE.Vector2((g.x / r.width) * 2 - 1, -((g.y / r.height) * 2 - 1));
     var rc = new THREE.Raycaster();
@@ -1281,8 +1423,81 @@
     return true;
   }
 
+  /* ---------------- 绘画工具箱：把颜色画进基础色贴图 ----------------
+   * 贴图真源仍是 doc.materials.slotMaps（data URL）。笔刷落在 UV 坐标上：
+   * 工作副本是一张 canvas（打开时把已有贴图解码进来），笔画结束再编码回文档。
+   * 这样不用改材质系统，也天然跟着 seedModel 存进 GLB。 */
+  /* ---------------- 绘画（已拆到 js/md-paint.js） ---------------- */
+  /* 外壳只留门面：落笔 / 拖动 / 抬笔 / 取消 / 撤销补丁。
+   * 贴图工作区（canvas / 上下文 / 当前槽）仍在共享 st.paint 里，UI 直接改参数。 */
+  var PAINT = global.MDPaint.create({
+    st: st, THREE: THREE, SeedModel: SeedModel,
+    sharedTexture: sharedTexture,
+    setStatus: setStatus, updateChrome: updateChrome,
+    rebuildModel: rebuildModel, paintAll: paintAll,
+    uvRefreshSolidGeometry: uvRefreshSolidGeometry,
+    /* 绘画和拾取共用同一条可见性口径：面级隔离时画到的就是视口里那份替身网格 */
+    visibleMesh: function (id) { return ISO.visibleMesh(id); },
+    totalBytes: totalBytes, syncBytes: syncBytes, historyBudget: HISTORY_BUDGET
+  });
+  function paintStrokeBegin(e) { return PAINT.begin(e); }
+  function paintStrokeMove(e) { return PAINT.move(e); }
+  function paintStrokeEnd() { return PAINT.end(); }
+  function paintClipRelease() { return PAINT.cancel(); }
+  function applyPaintPatch(patch, side) { return PAINT.applyPatch(patch, side); }
+
+  /* 右侧栏三个页签共用一行：建模工具箱 / 绘画工具箱 / 属性编辑器。
+   * 同时只显示一个，属性编辑器不再跟工具箱上下分摊高度。 */
+  function tbModeLabel() {
+    if (st.tbKind === 'paint') return '贴图绘制';
+    if (st.tbKind === 'props') return '属性编辑';
+    return SEL_NOUN[st.selMode] || '对象';
+  }
+
+  function setTbKind(kind) {
+    st.tbKind = (kind === 'paint' || kind === 'props') ? kind : 'model';
+    var right = document.querySelector('.md-right');
+    if (right) right.classList.toggle('is-props', st.tbKind === 'props');
+    var sec = document.querySelector('.md-tb');
+    if (sec) sec.classList.toggle('is-paint', st.tbKind === 'paint');
+    var box = $('mdPaintBox');
+    if (box) box.hidden = st.tbKind !== 'paint';
+    var tb = $('mdTbMode');
+    if (tb) tb.textContent = tbModeLabel();
+    document.querySelectorAll('[data-md-tbk]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.mdTbk === st.tbKind);
+    });
+    if (st.canvas) st.canvas.style.cursor = st.tbKind === 'paint' ? 'crosshair' : '';
+    syncGizmo();
+    if (st.tbKind !== 'paint') {
+      st.paint.stroke = null;
+      paintClipRelease();
+      var n = gestNodes();
+      if (n.brush) n.brush.style.cssText = '';
+    }
+    setStatus(st.tbKind === 'paint'
+      ? '绘画工具箱：按住左键在模型上画，颜色写进当前材质槽的基础色贴图'
+      : st.tbKind === 'props'
+        ? '属性编辑器：变换 / 材质槽 / 操作历史（点左上页签切回工具箱）'
+        : '已切回建模工具箱');
+  }
+
   function onPickDown(e) {
     if (e.button || e.altKey || !st.doc) { st.pickDown = null; return; }
+    /* 绘画页签激活时，左键按下就是落笔（工具会话进行中让位给工具，免得抢操作） */
+    if (st.tbKind === 'paint' && !st.quad &&
+        !(global.SeedTools && global.SeedTools.isLive && global.SeedTools.isLive())) {
+      paintStrokeBegin(e);
+      return;
+    }
+    /* 挤出专用手柄优先：点在箭头上 = 拖厚度，点在根部方柄 = 左右拖缩放顶面 */
+    if (global.SeedTools && global.SeedTools.isLive && global.SeedTools.isLive('tool.extrude') && !st.quad) {
+      var gh = extrudeGizmoHit(e);
+      if (gh && beginExtrudeGizmoDrag(gh, e)) {
+        st.pickDown = { x: e.clientX, y: e.clientY, gizmo: true };
+        return;
+      }
+    }
     var gizmoBusy = !!(st.gizmo && st.gizmo.drag);
     st.pickDown = { x: e.clientX, y: e.clientY, gizmo: gizmoBusy };
     if (gizmoBusy) return;
@@ -1310,6 +1525,24 @@
     st.pointer.x = e.clientX;
     st.pointer.y = e.clientY;
     brushFollow(e);
+    /* 绘画笔画进行中：每次移动都按 UV 往画布上补一段，忽略选中/手柄逻辑 */
+    if (st.tbKind === 'paint' && st.paint.stroke) {
+      paintStrokeMove(e);
+      return;
+    }
+    /* 挤出会话：悬停箭头 / 轴心方柄给出可拖动光标。只在命中时写，离开时只清自己写的那次，
+     * 免得把变换手柄（capture 阶段）设的 grab 覆盖掉 */
+    if (global.SeedTools && global.SeedTools.isLive && global.SeedTools.isLive('tool.extrude') &&
+        !st.extrudeDrag && !st.gest) {
+      var eh = extrudeGizmoHit(e);
+      if (eh) {
+        st.extrudeHover = eh;
+        st.canvas.style.cursor = eh === 'root' ? 'ew-resize' : 'grab';
+      } else if (st.extrudeHover) {
+        st.extrudeHover = null;
+        st.canvas.style.cursor = '';
+      }
+    }
     var g = st.gest;
     if (!g) return;
     var p = canvasPoint(e);
@@ -1341,6 +1574,7 @@
     var g = st.gest;
     st.pickDown = null;
     st.gest = null;
+    if (d && d.paint) { paintStrokeEnd(); gestClear(); return; }
     if (!d || e.button || e.altKey || !st.doc || !st.mesh || !st.pivot || !st.camera) { gestClear(); return; }
     if (d.gizmo) { gestClear(); return; }
     var r = st.canvas.getBoundingClientRect();
@@ -1355,8 +1589,10 @@
     /* 拖动过的框选 / 套索：按区域提交 */
     if (g && g.moved && (g.tool === 'select' || g.tool === 'lasso')) {
       var sel = global.SeedSelection;
+      var rm = ISO.visibleMesh(st.node ? st.node.id : '');
+      if (!rm) { gestClear(); return; }
       var base = {
-        mesh: st.mesh, matrix: st.pivot.matrixWorld, camera: st.camera,
+        mesh: rm, matrix: st.pivot.matrixWorld, camera: st.camera,
         rect: { width: r.width, height: r.height }, mode: regionMode()
       };
       var hit = null;
@@ -1386,7 +1622,8 @@
       var best = null;
       SeedModel.Scene.nodesOf(st.doc).forEach(function (n) {
         var pv = st.pivots[n.id];
-        if (!pv) return;
+        /* 视口可见性只有一个口径：被「单独显示」藏起来的对象不能被点穿 */
+        if (!pv || !ISO.nodeVisible(n.id)) return;
         var mesh = SeedModel.Scene.getMesh(st.doc, n);
         if (!mesh) return;
         var h = global.SeedSelection.pick({
@@ -1397,6 +1634,9 @@
       });
       if (best && (!st.node || best.id !== st.node.id)) {
         SeedModel.Scene.setActiveNode(st.doc, best.id);
+        /* 点中另一个对象 = 换选（不是追加）：nodeIds 必须跟激活对象一致，
+         * 否则「单独显示」会按旧多选集合算可见对象。 */
+        st.nodeIds = [best.id];
         st.node = SeedModel.Scene.nodeOf(st.doc);
         st.mesh = SeedModel.Scene.getMesh(st.doc);
         st.sel = { vertexIds: [], edgeIds: [], faceIds: [] };
@@ -1408,8 +1648,12 @@
       }
     }
 
+    /* 拾取只认视口里真正显示的那份网格：面级隔离时是替身网格，
+     * 激活对象被藏起来时直接返回 —— 这样才不会点到看不见的物体 / 看不见的面。 */
+    var pickMesh = ISO.visibleMesh(st.node ? st.node.id : '');
+    if (!pickMesh) return;
     var pick = global.SeedSelection.pick({
-      mesh: st.mesh,
+      mesh: pickMesh,
       matrix: st.pivot.matrixWorld,
       camera: st.camera,
       rect: { width: r.width, height: r.height },
@@ -1420,6 +1664,56 @@
       through: false
     });
     applyPick(pick, e.shiftKey, e.ctrlKey || e.metaKey);
+  }
+
+  /* 边循环选择：双击拾取到的边 → 整圈；没有指针时用当前选中边 */
+  function applyEdgeLoopIds(ids, add) {
+    if (!ids || !ids.length) return false;
+    if (add) {
+      var cur = st.sel.edgeIds.slice();
+      for (var i = 0; i < ids.length; i++) if (cur.indexOf(ids[i]) < 0) cur.push(ids[i]);
+      st.sel.edgeIds = cur;
+    } else {
+      st.sel.edgeIds = ids.slice();
+    }
+    syncSelectionDoc();
+    paintSelection();
+    paintAll();
+    setStatus('已选边循环：' + st.sel.edgeIds.length + ' 条边');
+    return true;
+  }
+
+  function selectEdgeLoopAt(clientX, clientY, add) {
+    var SS = global.SeedSelection;
+    if (!st.mesh || st.selMode !== 'edge' || !SS) return false;
+    var pickMesh = ISO.visibleMesh(st.node ? st.node.id : '');
+    if (!pickMesh) return false;
+    var r = st.canvas.getBoundingClientRect();
+    var hit = SS.pick({
+      mesh: pickMesh, matrix: st.pivot.matrixWorld, camera: st.camera,
+      rect: { width: r.width, height: r.height },
+      x: clientX - r.left, y: clientY - r.top, mode: 'edge', through: false
+    });
+    if (!hit || hit.kind !== 'edge') return false;
+    return applyEdgeLoopIds(SS.edgeLoop(st.mesh, hit.id), add);
+  }
+
+  function selectEdgeLoopFromSelection(add) {
+    var SS = global.SeedSelection;
+    if (!st.mesh || st.selMode !== 'edge' || !SS || !st.sel.edgeIds.length) {
+      setStatus('循环边：请在边模式选中一条边（或双击边）', true);
+      return false;
+    }
+    return applyEdgeLoopIds(SS.edgeLoop(st.mesh, st.sel.edgeIds[0]), add);
+  }
+
+  /* 双击边 = 选中整圈（Maya 习惯）。单击 / 拖拽仍然是普通选择。 */
+  function bindEdgeLoopDblClick() {
+    if (!st.canvas) return;
+    st.canvas.addEventListener('dblclick', function (ev) {
+      if (!st.doc || st.selMode !== 'edge' || st.tool !== 'select') return;
+      if (selectEdgeLoopAt(ev.clientX, ev.clientY, ev.shiftKey)) ev.preventDefault();
+    });
   }
 
   /* 区域选择与点选共用同一个「模式 → 拾取类型」映射 */
@@ -1434,8 +1728,10 @@
     if (g.last && now - g.last < 26) return;     /* 节流：投影全表不便宜 */
     g.last = now;
     var R = 22;
+    var bm = ISO.visibleMesh(st.node ? st.node.id : '');
+    if (!bm) return;
     var hit = global.SeedSelection.pickRegion({
-      mesh: st.mesh, matrix: st.pivot.matrixWorld, camera: st.camera,
+      mesh: bm, matrix: st.pivot.matrixWorld, camera: st.camera,
       rect: { width: g.w, height: g.h }, mode: regionMode(),
       test: function (x, y) {
         var dx = x - g.x, dy = y - g.y;
@@ -1586,7 +1882,12 @@
     st.canvas.addEventListener('pointerdown', onPickDown);
     st.canvas.addEventListener('pointermove', onPickMove);
     st.canvas.addEventListener('pointerup', onPickUp);
-    st.canvas.addEventListener('pointercancel', function () { st.gest = null; st.pickDown = null; gestClear(); });
+    bindEdgeLoopDblClick();
+    st.canvas.addEventListener('pointercancel', function () {
+      /* 画笔被打断也要收尾：否则岛剪裁会一直留在上下文里 */
+      if (st.paint.stroke) paintStrokeEnd();
+      st.gest = null; st.pickDown = null; gestClear();
+    });
     st.canvas.addEventListener('pointerleave', function () {
       var n = gestNodes();
       if (n.brush) n.brush.style.display = 'none';
@@ -1909,8 +2210,16 @@
   function tick() {
     if (!st.running) return;
     st.raf = requestAnimationFrame(tick);
+    /* UV 编辑器基本盖住视口，底下 3D 还在全速画就是白烧 GPU：
+     * 开着 UV 窗口时 3D 降到约 30fps，留出预算给画布重绘和指针响应。 */
+    if (st.uv.open) {
+      st.uv.frameSkip = (st.uv.frameSkip + 1) & 1;
+      if (st.uv.frameSkip) return;
+    }
     if (st.controls && !st.quad) st.controls.update();
     if (st.gizmo) st.gizmo.update();
+    /* 挤出会话每帧同步专用手柄：参数可能从面板 / 热盒 / 键盘任何一路改 */
+    updateExtrudeGizmo();
     if (!st.renderer || !st.scene || !st.camera) return;
     if (st.quad) {
       /* 只 update 激活格的 controls（阻尼需要每帧推进），其他格被动也不许被带动 */
@@ -1952,10 +2261,34 @@
     return m;
   }
 
+  /* 基础色贴图按 data URL 全局共享。
+   * 拖动挤出时预览网格会反复重建材质，如果每次都 new Texture 重新解码一串 data URL，
+   * 解码完成前的那几帧就是黑的 —— 用户看到的「拖坐标轴时贴图短暂变黑」。
+   * 共享后同一张贴图只解码一次，新材质挂上去立刻就有像素。 */
+  var TEX_CACHE = Object.create(null);
+  function sharedTexture(url) {
+    var tex = TEX_CACHE[url];
+    if (tex) return tex;
+    tex = new THREE.TextureLoader().load(url);
+    if ('encoding' in tex && THREE.sRGBEncoding != null) tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = 4;
+    tex.userData.mdShared = true;
+    TEX_CACHE[url] = tex;
+    return tex;
+  }
+
+  /* 共享贴图不能跟着单个材质一起释放，否则别的对象下一次渲染直接黑 */
+  function disposeMap(m) {
+    if (!m || !m.map) return;
+    if (m.map.userData && m.map.userData.mdShared) return;
+    try { m.map.dispose(); } catch (e) {}
+  }
+
   function makeMaterials() {
     var mats = st.doc.materials || {};
     var names = mats.slotNames || [];
     var colors = mats.slotColors || [];
+    var maps = mats.slotMaps || [];
     var count = Math.max(names.length, maxUsedSlot(st.mesh) + 1, 1);
     var list = [];
     for (var i = 0; i < count; i++) {
@@ -1968,6 +2301,9 @@
         polygonOffsetUnits: 1,
         name: names[i] || (i === 0 ? '默认材质' : '插槽 ' + (i + 1))
       });
+      /* 导入模型带回来的基础色贴图（data URL）：有就用，没有就只吃槽色。
+       * 贴图异步解码，解码完成后 three 自己会刷新（不用重建材质）。 */
+      if (maps[i]) mat.map = sharedTexture(maps[i]);
       /* 显示开关要能还原：材质本色 / 原始贴图在这里留底（见 applyViewFlags） */
       mat.userData.mdBaseColor = colors[i] || '#c9ccd4';
       mat.userData.mdBaseMap = mat.map || null;
@@ -1990,7 +2326,19 @@
     root.traverse(function (o) {
       if (o.geometry) { try { o.geometry.dispose(); } catch (e) {} }
       var mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
-      mats.forEach(function (m) { if (m) { try { m.dispose(); } catch (e) {} } });
+      mats.forEach(function (m) {
+        if (!m) return;
+        disposeMap(m);
+        try { m.dispose(); } catch (e) {}
+      });
+      /* 平涂用的 unlit 材质是缓存出来的，当前材质可能是另一套，两个都要释放 */
+      var flat = o.userData && o.userData.mdFlatMats;
+      if (flat) {
+        (Array.isArray(flat) ? flat : [flat]).forEach(function (m) {
+          if (!m || mats.indexOf(m) >= 0) return;
+          try { m.dispose(); } catch (e) {}
+        });
+      }
     });
   }
 
@@ -1998,7 +2346,11 @@
     if (!root) return;
     root.traverse(function (o) {
       var mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
-      mats.forEach(function (m) { if (m) { try { m.dispose(); } catch (e) {} } });
+      mats.forEach(function (m) {
+        if (!m) return;
+        disposeMap(m);
+        try { m.dispose(); } catch (e) {}
+      });
     });
   }
 
@@ -2022,62 +2374,44 @@
   }
 
   /* ---------------- 视口叠加层：真实边线 + 顶点 ---------------- */
-  function faceNormalOf(f, out) {
-    var start = st.mesh.faceOffsets[f], n = st.mesh.faceOffsets[f + 1] - start;
-    if (n < 3) return false;
-    var i0 = st.mesh.faceIndices[start] * 3;
-    var i1 = st.mesh.faceIndices[start + 1] * 3;
-    var i2 = st.mesh.faceIndices[start + 2] * 3;
-    var p = st.mesh.positions;
-    var ax = p[i1] - p[i0], ay = p[i1 + 1] - p[i0 + 1], az = p[i1 + 2] - p[i0 + 2];
-    var bx = p[i2] - p[i0], by = p[i2 + 1] - p[i0 + 1], bz = p[i2 + 2] - p[i0 + 2];
-    out.set(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
-    var len = out.length();
-    if (len < 1e-8) return false;
-    out.multiplyScalar(1 / len);
-    return true;
-  }
-
-  function isFlatInternalEdge(rec, n1, n2) {
-    if (!rec.faces || rec.faces.length !== 2) return false;
-    var f1 = rec.faces[0], f2 = rec.faces[1];
-    if (st.mesh.faceSlots[f1] !== st.mesh.faceSlots[f2]) return false;
-    if (!faceNormalOf(f1, n1) || !faceNormalOf(f2, n2)) return false;
-    return n1.dot(n2) > 0.9995;
-  }
-
+  /* 线框只按**网格拓扑**画：每张面有几条边就画几条，n 边面不会出现扇形三角化的对角线。
+   * 不要再按「相邻面法线夹角」过滤内部边 —— 那会让同一平面上的分段线（环切 / 细分出来的边）
+   * 整条消失，看起来像面没有被切开，也无法判断拓扑密度（Maya / Blender 的 wireframe 都画满拓扑边）。 */
   function buildEdgeLines() {
-    var e = SeedModel.Mesh.ensureEdges(st.mesh);
-    var n1 = new THREE.Vector3(), n2 = new THREE.Vector3();
-    var visible = [];
-    for (var j = 0; j < e.edges.length; j++) {
-      if (!isFlatInternalEdge(e.edges[j], n1, n2)) visible.push(e.edges[j]);
-    }
+    var lines = buildEdgeLinesFor(st.mesh, 'topology-edges');
+    st.edgeRecs = lines.userData.mdEdges;  /* 拖动组件时按这份记录原地改坐标，省掉重算平面过滤 */
+    return lines;
+  }
+
+  /* 任意网格的拓扑边线（预览也和正式模型用同一套画法，线框模式颜色同步） */
+  function buildEdgeLinesFor(mesh, name) {
+    var e = SeedModel.Mesh.ensureEdges(mesh);
+    var visible = e.edges;
     var buf = new Float32Array(visible.length * 6);
     for (var i = 0; i < visible.length; i++) {
       var rec = visible[i];
       var a = rec.a * 3, b = rec.b * 3;
-      buf[i * 6] = st.mesh.positions[a];
-      buf[i * 6 + 1] = st.mesh.positions[a + 1];
-      buf[i * 6 + 2] = st.mesh.positions[a + 2];
-      buf[i * 6 + 3] = st.mesh.positions[b];
-      buf[i * 6 + 4] = st.mesh.positions[b + 1];
-      buf[i * 6 + 5] = st.mesh.positions[b + 2];
+      buf[i * 6] = mesh.positions[a];
+      buf[i * 6 + 1] = mesh.positions[a + 1];
+      buf[i * 6 + 2] = mesh.positions[a + 2];
+      buf[i * 6 + 3] = mesh.positions[b];
+      buf[i * 6 + 4] = mesh.positions[b + 1];
+      buf[i * 6 + 5] = mesh.positions[b + 2];
     }
     var geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(buf, 3));
     geo.computeBoundingSphere();
     var p = st.prefs || prefs();
     var mat = new THREE.LineBasicMaterial({
-      color: new THREE.Color(p.edgeColor),
+      color: new THREE.Color(st.shading === 'wire' ? '#d7dde3' : p.edgeColor),
       /* 不透明 + 不混合：透明管线会把 1px 线再压一层，实测对比度掉 20 左右 */
       transparent: false,
       depthWrite: false
     });
-    st.edgeRecs = visible;          /* 拖动组件时按这份记录原地改坐标，省掉重算平面过滤 */
     var lines = new THREE.LineSegments(geo, mat);
-    lines.name = 'topology-edges';
+    lines.name = name;
     lines.userData.mdPart = 'edges';
+    lines.userData.mdEdges = visible;
     lines.renderOrder = 1;
     lines.frustumCulled = false;
     return lines;
@@ -2138,7 +2472,11 @@
   }
 
   function shadeLabel(mode) {
-    return mode === 'shaded' ? '实体' : mode === 'wire' ? '线框' : '实体 + 线框';
+    return mode === 'shaded' ? '实体'
+      : mode === 'wire' ? '线框'
+      : mode === 'flat' ? '平涂'
+      : mode === 'uv' ? 'UV 岛着色'
+      : '实体 + 线框';
   }
 
   /* 显示开关的唯一读取口：表缺席时按默认（全开）处理 */
@@ -2186,24 +2524,149 @@
     });
   }
 
+  /* ---------------- 着色风格：平涂 / UV 岛着色 ----------------
+   * 参考模型库里的材质预览做法：
+   *   平涂 = 换成 unlit 材质（基本色 + 可选贴图），不吃灯光，像设计图上的纯色块；
+   *   UV 岛 = 每个岛一个随机色，写在**非索引几何**的顶点色上（索引几何的顶点会被
+   *           相邻岛共享，没法按面给色）。
+   * 两者都只是「怎么画」：不改网格、不写文档、不进历史。 */
+  var ISLAND_COLORS = [
+    '#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4',
+    '#46f0f0', '#f032e6', '#bcf60c', '#008080', '#e6beff', '#9a6324'
+  ];
+
+  /* 实体在「平涂 / 受光」之间切换：原材质记在 mdLitMats，unlit 版本按需生成一份 */
+  function applySolidLook(o, unlit) {
+    if (!o || !o.material) return;
+    if (!o.userData.mdLitMats) o.userData.mdLitMats = o.material;
+    var lit = o.userData.mdLitMats;
+    if (!unlit) {
+      if (o.material !== lit) o.material = lit;
+      return;
+    }
+    if (!o.userData.mdFlatMats) {
+      var src = Array.isArray(lit) ? lit : [lit];
+      var made = src.map(function (m) {
+        var f = new THREE.MeshBasicMaterial({
+          color: (m.userData && m.userData.mdBaseColor) || CLAY,
+          map: (m.userData && m.userData.mdBaseMap) || null,
+          side: m.side,
+          toneMapped: false   /* 平涂要的是原色，不要再被 ACES 压一道 */
+        });
+        f.userData.mdBaseColor = (m.userData && m.userData.mdBaseColor) || CLAY;
+        f.userData.mdBaseMap = (m.userData && m.userData.mdBaseMap) || null;
+        return f;
+      });
+      o.userData.mdFlatMats = Array.isArray(lit) ? made : made[0];
+    }
+    if (o.material !== o.userData.mdFlatMats) o.material = o.userData.mdFlatMats;
+  }
+
+  /* pivot → 它自己的网格（多对象时每个对象的 UV 岛都不一样） */
+  function meshForPivot(pv) {
+    if (!pv || !st.doc || !global.SeedModel || !SeedModel.Scene) return null;
+    var id = pv.userData && pv.userData.mdNode;
+    var nodes = SeedModel.Scene.nodesOf(st.doc);
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].id === id) return SeedModel.Scene.getMesh(st.doc, nodes[i]);
+    }
+    return null;
+  }
+
+  function buildIslandOverlay(mesh, side) {
+    var info = SeedModel.Mesh.uvIslands(mesh);
+    var pos = [], col = [], rgb = new THREE.Color();
+    for (var f = 0; f < mesh.faceIds.length; f++) {
+      var islandId = info.faceIsland[f] >= 0 ? info.faceIsland[f] : 0;
+      rgb.set(ISLAND_COLORS[islandId % ISLAND_COLORS.length]);
+      var s = mesh.faceOffsets[f], e = mesh.faceOffsets[f + 1];
+      for (var t = s + 1; t < e - 1; t++) {
+        [mesh.faceIndices[s], mesh.faceIndices[t], mesh.faceIndices[t + 1]].forEach(function (vi) {
+          pos.push(mesh.positions[vi * 3], mesh.positions[vi * 3 + 1], mesh.positions[vi * 3 + 2]);
+          col.push(rgb.r, rgb.g, rgb.b);
+        });
+      }
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.computeBoundingSphere();
+    var mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: side, toneMapped: false });
+    var obj = new THREE.Mesh(geo, mat);
+    obj.name = 'uv-island-layer';
+    obj.userData.mdPart = 'uvisland';
+    obj.renderOrder = 2;
+    obj.frustumCulled = false;
+    return obj;
+  }
+
+  /* 岛色层按网格版本缓存：拖动组件 / 环切后网格变了才重建，切着色模式时可以复用 */
+  function ensureIslandOverlay(pv, side) {
+    var mesh = meshForPivot(pv);
+    if (!mesh) return null;
+    var have = pv.userData.mdIslandLayer;
+    if (have && pv.userData.mdIslandVersion === mesh.version) {
+      if (have.material) have.material.side = side;
+      return have;
+    }
+    if (have) {
+      if (have.parent) have.parent.remove(have);
+      if (have.geometry) have.geometry.dispose();
+      if (have.material) have.material.dispose();
+    }
+    var layer = buildIslandOverlay(mesh, side);
+    pv.add(layer);
+    pv.userData.mdIslandLayer = layer;
+    pv.userData.mdIslandVersion = mesh.version;
+    return layer;
+  }
+
   function applyShading() {
     if (!st.pivot) return;
     var p = st.prefs || prefs();
-    var showFaces = st.shading !== 'wire';
-    var showEdges = st.shading !== 'shaded' && vfOn('edges');
+    var mode = st.shading;
+    var islands = mode === 'uv';
+    var unlit = mode === 'flat';
+    var showFaces = mode !== 'wire' && !islands;
+    var showEdges = mode !== 'shaded' && vfOn('edges');
+    /* 组件隔离（面 / 岛）时只显示替身网格，原件的面、边线、顶点一律让位 */
+    var isoComp = !!st.isoComp;
+    var side = vfOn('backface') ? THREE.DoubleSide : THREE.FrontSide;
     if (st.edgeLines) {
-      st.edgeLines.material.color.set(st.shading === 'wire' ? '#d7dde3' : p.edgeColor);
+      st.edgeLines.material.color.set(mode === 'wire' ? '#d7dde3' : p.edgeColor);
     }
     /* 顶点只在顶点模式下显示（Maya 的行为）：816 面的球体上每个点都画会糊成一片 */
     var showVerts = st.selMode === 'vertex' && vfOn('verts');
     eachViewPivot(function (pv) {
+      /* UV 岛着色是按每个对象自己的网格算的：多对象场景里不能只画激活那个 */
+      var layer = islands ? ensureIslandOverlay(pv, side) : pv.userData.mdIslandLayer;
       pv.traverse(function (o) {
         var part = o.userData && o.userData.mdPart;
-        if (part === 'solid') o.visible = showFaces;
-        else if (part === 'edges') o.visible = showEdges;
-        else if (part === 'verts') o.visible = showVerts;
+        var off = !!(o.userData && o.userData.mdPreviewOff);
+        if (part === 'solid') {
+          if (showFaces) applySolidLook(o, unlit);
+          o.visible = showFaces && !off && (!isoComp || !!o.userData.mdIsolate);
+        } else if (part === 'edges') {
+          o.visible = showEdges && !off && (!isoComp || !!o.userData.mdIsolate);
+        } else if (part === 'verts') o.visible = showVerts && !isoComp;
+        else if (part === 'uvisland') o.visible = islands;
       });
+      if (layer && layer.material) layer.material.side = side;
     });
+    /* 预览和正式模型一样吃着色开关（线框模式下实体收、边线亮） */
+    if (st.previewHost) {
+      st.previewHost.traverse(function (o) {
+        var part = o.userData && o.userData.mdPart;
+        if (part === 'solid') {
+          /* UV 岛模式正式对象换成岛色，预览没有 UV 分层：用平涂色保持「无光照」的一致观感 */
+          applySolidLook(o, unlit || islands);
+          o.visible = mode !== 'wire';
+        } else if (part === 'edges') {
+          o.visible = showEdges;
+          if (o.material) o.material.color.set(mode === 'wire' ? '#d7dde3' : p.edgeColor);
+        }
+      });
+    }
     applyViewFlags();
   }
 
@@ -2236,13 +2699,36 @@
     if (st.gizmo) st.gizmo.setTarget(null);
   }
 
+  /* ---------------- 单独显示（已拆到 js/md-isolate.js） ---------------------------- */
+  /* 隔离只影响视口（pivot.visible），文档里的 node.visible 一律不动；
+   * 面 / 岛模式下模块会临时建一份只含选中面的替身，退出时扔掉。
+   * 外壳保留同名门面，原来的调用点（rebuildModel / 点击 / 菜单）一行都不用改。 */
+  var ISO = global.MDIsolate.create({
+    st: st, THREE: THREE, SeedModel: SeedModel,
+    applyShading: applyShading, makeMaterials: makeMaterials,
+    buildEdgeLinesFor: buildEdgeLinesFor,
+    setStatus: setStatus, updateChrome: updateChrome
+  });
+  function applyIsolation() { return ISO.apply(); }
+  function refreshIsoChild() { return ISO.refresh(); }
+  function toggleIsolate() { return ISO.toggle(); }
+
   /* 多对象渲染：文档里每个可见节点各一个 pivot；叠加层（边线/顶点）只画在**激活对象**上。
    * 以前只建一个 pivot，所以「删掉最后一个对象」时旧模型留在场景里、「新建球体」看起来像替换。 */
   function rebuildModel(keepCamera) {
     if (!st.doc) return false;
     try {
       st.node = SeedModel.Scene.nodeOf(st.doc);
-      st.mesh = SeedModel.Evaluator.evaluate(st.doc, st.node) || SeedModel.Scene.getMesh(st.doc);
+      /* 对象选择只有一个口径：nodeIds。换文档 / 撤销 / 新建 / 删除后旧 id 会失效，
+       * 这里收敛到真实存在的节点，并保证激活对象一定在集合里 ——
+       * 「单独显示」靠这个集合算可见对象，漏了就会显示空场景 / 多显示一个。 */
+      var aliveIds = Object.create(null);
+      SeedModel.Scene.nodesOf(st.doc).forEach(function (n) { aliveIds[n.id] = 1; });
+      st.nodeIds = (st.nodeIds || []).filter(function (id) { return aliveIds[id]; });
+      if (st.node && st.nodeIds.indexOf(st.node.id) < 0) st.nodeIds.push(st.node.id);
+      st.mesh = st.node
+        ? (SeedModel.Evaluator.evaluate(st.doc, st.node) || SeedModel.Scene.getMesh(st.doc))
+        : null;
 
       var old = st.pivots || Object.create(null);
       Object.keys(old).forEach(function (id) {
@@ -2263,10 +2749,23 @@
         st.pivots[n.id] = pv;
         if (st.node && n.id === st.node.id) { st.pivot = pv; st.mesh = mesh; }
       }
-      if (!st.pivot) throw new Error('文档里没有可编辑网格');
+      applyIsolation();
+      if (!st.pivot) {
+        /* 空场景不是错误：删掉最后一个对象后，文档里确实一个网格也没有。
+         * 收手柄、清叠加层、HUD 归零，相机保持不动，等用户从「新建」再建一个。 */
+        st.gizmo.setTarget(null);
+        paintSelection();
+        applyShading();
+        updateHud();
+        if (!keepCamera) frameCamera();
+        if (st.quad) updateQuadCameras(false);
+        return true;
+      }
 
       addOverlays(st.pivot);          /* 叠加层读 st.mesh（此刻= 激活对象的网格） */
-      st.gizmo.setTarget(st.pivot);
+      /* 走 syncGizmo 而不是直接 setTarget：绘画页签下撤销 / 重做会走到这里，
+       * 直接挂上去会把手柄重新亮出来，下一笔又会被「屏幕平移」手柄吃掉。 */
+      syncGizmo();
       /* ⚠ 必须在这里再 applyShading 一次：addOverlays 里那次读的是旧 st.pivot */
       applyShading();
       paintSelection();
@@ -2280,131 +2779,23 @@
     }
   }
 
-  /* ---------------- 历史（快照 + 网格指纹，V3） ---------------- */
-  var meshStore = Object.create(null);   // hash -> { mesh, bytes }
-
-  function meshHashOf(mesh) {
-    try { return (mesh && SeedModel.Mesh.hash) ? SeedModel.Mesh.hash(mesh) : ''; } catch (e) { return ''; }
-  }
-  function ensureMeshCopy(mesh) {
-    var h = meshHashOf(mesh);
-    if (!h) return '';
-    if (!meshStore[h]) {
-      meshStore[h] = { mesh: SeedModel.Mesh.clone(mesh), bytes: SeedModel.Mesh.byteSize(mesh) };
-    }
-    return h;
-  }
-  /* 快照带**每个节点自己的网格指纹**：单存 st.mesh 在多对象下会漏
-   * （新建球体后撤销 → 球体的网格版本没存 → 撤不回几何）。 */
-  function snap() {
-    var s = SeedModel.Scene.snapshot(st.doc);
-    s.meshHash = ensureMeshCopy(st.mesh);
-    if (st.doc && Array.isArray(st.doc.nodes)) {
-      var per = Object.create(null);
-      st.doc.nodes.forEach(function (n) {
-        try {
-          var m = SeedModel.Scene.getMesh(st.doc, n);
-          var h = m ? meshHashOf(m) : '';
-          if (h) per[n.id] = ensureMeshCopy(m);
-        } catch (e) {}
-      });
-      if (Object.keys(per).length) s.meshHashes = per;
-    }
-    return s;
-  }
-  function entryBytes(e) {
-    return (JSON.stringify(e.before).length + JSON.stringify(e.after).length) * 2;
-  }
-  function refHashes(set, e) {
-    if (e.before && e.before.meshHash) set[e.before.meshHash] = 1;
-    if (e.after && e.after.meshHash) set[e.after.meshHash] = 1;
-    ['before', 'after'].forEach(function (side) {
-      var per = e[side] && e[side].meshHashes;
-      if (per) Object.keys(per).forEach(function (id) { set[per[id]] = 1; });
-    });
-  }
-  function gcMeshes() {
-    var keep = Object.create(null);
-    st.history.undo.forEach(function (e) { refHashes(keep, e); });
-    st.history.redo.forEach(function (e) { refHashes(keep, e); });
-    if (st.mesh) {
-      var cur = meshHashOf(st.mesh);
-      if (cur) keep[cur] = 1;
-    }
-    Object.keys(meshStore).forEach(function (k) { if (!keep[k]) delete meshStore[k]; });
-  }
-  function totalBytes() {
-    var n = 0;
-    st.history.undo.forEach(function (e) { n += e.bytes; });
-    st.history.redo.forEach(function (e) { n += e.bytes; });
-    Object.keys(meshStore).forEach(function (k) { n += meshStore[k].bytes; });
-    return n;
-  }
-  function syncBytes() {
-    gcMeshes();
-    st.history.bytes = totalBytes();
-  }
-
-  function editKey(s) {
-    return s ? JSON.stringify({ name: s.name, nodes: s.nodes, mesh: s.meshHash || '' }) : '';
-  }
-  function pushHistory(before, after, label) {
-    if (!before || !after) return false;
-    if (editKey(before) === editKey(after)) return false;
-    var entry = { before: before, after: after, label: label, bytes: 0 };
-    entry.bytes = entryBytes(entry);
-    st.history.undo.push(entry);
-    st.history.redo = [];
-    while (st.history.undo.length > 1 && totalBytes() > HISTORY_BUDGET) {
-      st.history.undo.shift();
-    }
-    syncBytes();
-    updateChrome();
-    return true;
-  }
-  function clearHistory(reason) {
-    st.history.undo = [];
-    st.history.redo = [];
-    st.history.bytes = 0;
-    meshStore = Object.create(null);
-    if (st.doc && st.doc.historyBoundary) {
-      st.doc.historyBoundary.undoPersisted = false;
-      st.doc.historyBoundary.loadedAtRevision = st.doc.revision.current;
-      st.doc.historyBoundary.historyResetReason = reason || '';
-    }
-    updateChrome();
-  }
-
-  function applyHistory(entry, target) {
-    var s = entry[target];
-    SeedModel.Scene.applySnapshot(st.doc, s);
-    /* 先按「每个节点自己的指纹」还原（多对象），再兜底 active 那个 */
-    if (s && s.meshHashes) {
-      Object.keys(s.meshHashes).forEach(function (id) {
-        var h = s.meshHashes[id];
-        var rec = meshStore[h];
-        if (!rec) return;
-        var node = null;
-        var nodes = SeedModel.Scene.nodesOf(st.doc);
-        for (var k = 0; k < nodes.length; k++) if (nodes[k].id === id) { node = nodes[k]; break; }
-        if (!node) return;
-        var cur = SeedModel.Scene.getMesh(st.doc, node);
-        if (meshHashOf(cur) !== h) {
-          SeedModel.Scene.setMesh(st.doc, SeedModel.Mesh.clone(rec.mesh), node);
-        }
-      });
-    }
-    if (s && s.meshHash) {
-      var rec2 = meshStore[s.meshHash];
-      if (rec2 && meshHashOf(SeedModel.Scene.getMesh(st.doc)) !== s.meshHash) {
-        SeedModel.Scene.setMesh(st.doc, SeedModel.Mesh.clone(rec2.mesh));
-      }
-    }
-    st.node = SeedModel.Scene.nodeOf(st.doc);
-    st.mesh = SeedModel.Scene.getMesh(st.doc);
-    rebuildModel(true);
-    paintAll();
-  }
+  /* ---------------- 历史（已拆到 js/md-history.js） ---------------- */
+  /* 外壳只留门面：快照 / 入栈 / 清空 / 应用 / 撤销 / 重做，原调用点一行都不用改。
+   * 网格副本表跟着模块走，这里不要再建第二份。 */
+  var HIST = global.MDHistory.create({
+    st: st, SeedModel: SeedModel,
+    historyBudget: HISTORY_BUDGET,
+    applyPaintPatch: applyPaintPatch,
+    rebuildModel: rebuildModel, paintAll: paintAll,
+    updateChrome: updateChrome, setStatus: setStatus
+  });
+  function meshHashOf(mesh) { return HIST.hashOf(mesh); }
+  function ensureMeshCopy(mesh) { return HIST.registerMesh(mesh); }
+  function snap() { return HIST.snap(); }
+  function pushHistory(before, after, label) { return HIST.push(before, after, label); }
+  function clearHistory(reason) { return HIST.clear(reason); }
+  function totalBytes() { return HIST.totalBytes(); }
+  function syncBytes() { return HIST.syncBytes(); }
 
   /* M6 的算子走这个口：换网格 → 网格版本 +1 → 一次历史。 */
   function applyMesh(mesh, label, name) {
@@ -2433,7 +2824,6 @@
    * ⚠ 预览只进 `st.previewMesh`，**不碰 st.mesh / 不碰 doc.meshes**。
    *   commit 走 applyMesh（已带 snap/pushHistory/paintAll），cancel 不留痕。
    * ============================================================ */
-  var TOOL_PREVIEW_COLOR = 0x22d3ee;
 
   function previewParent() {
     if (!st.previewHost) {
@@ -2444,43 +2834,74 @@
     return st.previewHost;
   }
 
-  function clearToolPreview() {
+  function clearToolPreview(silent) {
     st.previewMesh = null;
+    /* 预览期间收起来的正式实体 / 边线要放回去（silent 用于「换成下一帧预览」时避免闪烁） */
+    var hidden = st.previewHiddenObjs || [];
+    for (var i = 0; i < hidden.length; i++) {
+      var o = hidden[i];
+      if (!o) continue;
+      if (o.userData) delete o.userData.mdPreviewOff;
+      o.visible = true;
+    }
+    st.previewHiddenObjs = [];
     if (st.previewHost && st.previewHost.parent) {
       while (st.previewHost.children.length) {
         var c = st.previewHost.children.pop();
         if (c.geometry) c.geometry.dispose();
-        if (c.material) c.material.dispose();
+        if (c.material) {
+          (Array.isArray(c.material) ? c.material : [c.material]).forEach(function (m) {
+            if (m) m.dispose();
+          });
+        }
+        var flat = c.userData && c.userData.mdFlatMats;
+        if (flat) {
+          (Array.isArray(flat) ? flat : [flat]).forEach(function (m) {
+            if (m && m !== c.material) m.dispose();
+          });
+        }
       }
     }
     if (st.previewHost && st.scene) st.scene.remove(st.previewHost);
     st.previewHost = null;
+    if (!silent) {
+      if (st.pivot) applyShading();
+      if (st.mesh) paintSelection();
+    }
   }
 
-  /* 把一份「只在视口里」的预览网格挂出来（不进文档） */
+  /* 把一份「只在视口里」的预览网格挂出来（不进文档）。
+   * 预览用的是**正式模型同一套材质和边线**，不再盖一层青色半透明罩：
+   * 罩会把整只模型染成一个颜色，挤出 / 内插时根本看不清形体变化。 */
   function showToolPreview(mesh, opts) {
     if (!THREE) return false;
-    clearToolPreview();
+    clearToolPreview(true);
     if (!mesh) return false;
     var geo = SeedModel.Mesh.buildGeometry(mesh, { cache: false });
-    var mat = new THREE.MeshBasicMaterial({
-      color: (opts && opts.color) || TOOL_PREVIEW_COLOR,
-      transparent: true, opacity: 0.55,
-      depthTest: false, depthWrite: false
-    });
-    var obj = new THREE.Mesh(geo, mat);
+    var obj = new THREE.Mesh(geo, makeMaterials());
     obj.name = 'tool-preview-mesh';
-    obj.renderOrder = 10;
+    obj.userData.mdPart = 'solid';
     var host = previewParent();
     host.add(obj);
-    /* 预览挂在激活 pivot 的同一坐标系下（手柄在世界系，预览跟着走） */
+    host.add(buildEdgeLinesFor(mesh, 'preview-edges'));
+    /* 同一个对象的原实体 / 原边线先收起来：两套几何叠着会深度打架、边线也会停在旧拓扑 */
     if (st.pivot) {
+      var hidden = st.previewHiddenObjs = [];
+      st.pivot.traverse(function (o) {
+        var part = o.userData && o.userData.mdPart;
+        if (part !== 'solid' && part !== 'edges') return;
+        o.userData.mdPreviewOff = true;
+        o.visible = false;
+        hidden.push(o);
+      });
+      /* 预览挂在激活 pivot 的同一坐标系下（手柄在世界系，预览跟着走） */
       host.position.copy(st.pivot.position);
       host.quaternion.copy(st.pivot.quaternion);
       host.scale.copy(st.pivot.scale);
       host.updateMatrixWorld(true);
     }
     st.previewMesh = mesh;
+    if (!(opts && opts.keepSelection === false)) paintSelection(mesh);
     return true;
   }
 
@@ -2621,6 +3042,40 @@
   function selVertexIds() {
     return st.selMode === 'vertex' ? st.sel.vertexIds.slice() : [];
   }
+  /* 选中边里的第一条 → 两端顶点 ID（环切 / 循环边的起点） */
+  function selEdgePair() {
+    if (!st.mesh || !st.sel.edgeIds.length || !SeedModel.Mesh) return null;
+    var tbl = SeedModel.Mesh.ensureEdges(st.mesh);
+    for (var i = 0; i < st.sel.edgeIds.length; i++) {
+      var rec = tbl.edgeById[st.sel.edgeIds[i]];
+      if (rec) return { aId: rec.aId, bId: rec.bId };
+    }
+    return null;
+  }
+  /* 环切前置条件：边模式 + 至少一条边 + 该边在全四边环上。返回空串=可以开始 */
+  function loopCutBlocked() {
+    if (st.selMode !== 'edge' || !selEdgePair()) return '环切：先在边模式选中一条边';
+    var pair = selEdgePair();
+    if (!global.SeedOps || !global.SeedOps.edgeRing(st.mesh, pair.aId, pair.bId)) {
+      return '环切：选中边不在全四边环上（先把相邻三角面转成四边，或换一条边）';
+    }
+    return '';
+  }
+
+  /* 三角转四边：整网格一次性算子。成对共边三角并成四边，UV 接缝 / 折叠处不动。
+   * 没有一对可并时返回 null 并由状态行说明原因，不静默吞掉。 */
+  function trisToQuadsNow() {
+    if (!global.SeedOps || !global.SeedOps.trisToQuads || !st.mesh) return false;
+    var out = global.SeedOps.trisToQuads(st.mesh, { tolDeg: 40 });
+    if (!out) {
+      setStatus('三角转四边：没有可合并的三角面（需要成对共边、同材质、凸四边形且 UV 连续）', true);
+      return false;
+    }
+    var merged = st.mesh.faceIds.length - out.faceIds.length;
+    applyMesh(out, '三角转四边');
+    setStatus('三角转四边：合并 ' + merged + ' 对三角，面数 ' + out.faceIds.length);
+    return true;
+  }
 
   /* 通用：算子会话骨架。op(mesh, params) → 新 mesh | null */
   function makeOpTool(id, label, op, paramSchema, hintText) {
@@ -2679,14 +3134,28 @@
     var SeedOps = global.SeedOps;
     if (!SeedTools || !SeedOps) return;
 
-    /* 挤出：选中面 → 沿法线长出侧壁；无面选择时退化为整体外推 */
+    /* 挤出：选中面 → 沿法线长出侧壁；无面选择时退化为整体外推。
+     * 五个参数对应 Maya polyExtrudeFace：厚度 / 局部平移 Z / 偏移 / 分段 / 保持面的连续性 */
     SeedTools.register(makeOpTool(
       'tool.extrude', '挤出',
       function (base, p) {
-        return SeedOps.extrudeFaces(base, { faceIds: selFaceIds(), dist: Number(p.dist) || 0 });
+        return SeedOps.extrudeFaces(base, {
+          faceIds: selFaceIds(),
+          dist: Number(p.dist) || 0,
+          localZ: Number(p.localZ) || 0,
+          offset: Number(p.offset) || 0,
+          divisions: Number(p.divisions) || 1,
+          keepTogether: Number(p.keep) !== 0
+        });
       },
-      [{ key: 'dist', label: '距离 (m)', value: 0.1, min: -2, max: 2, step: 0.01 }],
-      '工具会话：挤出（改「距离」看预览，Enter 提交，Esc 取消）'
+      [
+        { key: 'dist', label: '厚度', value: 0.1, min: -2, max: 2, step: 0.01 },
+        { key: 'localZ', label: '局部平移 Z', value: 0, min: -2, max: 2, step: 0.01 },
+        { key: 'offset', label: '偏移', value: 0, min: -2, max: 2, step: 0.01 },
+        { key: 'divisions', label: '分段', value: 1, min: 1, max: 8, step: 1 },
+        { key: 'keep', label: '保持面的连续性', value: 1, min: 0, max: 1, step: 1, type: 'toggle' }
+      ],
+      '工具会话：挤出（改厚度看预览，Enter 提交，Esc 取消）'
     ));
     defineOpCommand('mesh.extrude', '挤出', 'mesh', 'Ctrl+E', 10,
       function () { return !!(st.doc && st.mesh && selFaceIds().length); }, 'tool.extrude');
@@ -2815,6 +3284,42 @@
     ));
     defineOpCommand('mesh.quadDraw', '四边形绘制', 'mesh', '', 20,
       function () { return !!(st.doc && st.mesh && selVertexIds().length === 4); }, 'tool.quadDraw');
+
+    /* 环切：四边边环 → 每条环边插点，每张四边面切成 count+1 条。
+     * 起点是选中边；滑移只改切点位置，拓扑结构不变，所以能当 live 预览反复调。 */
+    SeedTools.register(makeOpTool(
+      'tool.loopcut', '环切',
+      function (base, p) {
+        var pair = selEdgePair();
+        if (!pair) return null;
+        return SeedOps.loopCut(base, {
+          aId: pair.aId, bId: pair.bId,
+          count: Number(p.count), slide: Number(p.slide)
+        });
+      },
+      [
+        { key: 'count', label: '条数', value: 1, min: 1, max: 8, step: 1 },
+        { key: 'slide', label: '滑移', value: 0, min: -1, max: 1, step: 0.01 }
+      ],
+      '工具会话：环切（只处理全四边环；改条数 / 滑移看预览，Enter 提交，Esc 取消）'
+    ));
+    var SeedCommands = global.SeedCommands;
+    if (SeedCommands) {
+      SeedCommands.define({
+        id: 'mesh.loopcut', label: '环切', group: 'mesh', key: '', order: 21,
+        when: function () { return st.selMode === 'edge' && st.sel.edgeIds.length > 0; },
+        run: function () {
+          var msg = loopCutBlocked();
+          if (msg) { setStatus(msg, true); return false; }
+          return beginTool('tool.loopcut');
+        }
+      });
+      SeedCommands.define({
+        id: 'mesh.trisToQuads', label: '三角转四边', group: 'mesh', key: '', order: 22,
+        when: function () { return !!(st.doc && st.mesh); },
+        run: function () { return trisToQuadsNow(); }
+      });
+    }
   }
 
   /* 统一的工具会话入口（键盘 / 命令行 / 命令表都走它） */
@@ -2827,7 +3332,93 @@
       return false;
     }
     st.toolSession = id;
+    /* 挤出的专用箭头和变换手柄会叠在同一处（都在选中面中心附近）：
+     * 变换手柄是 capture 阶段先拿事件的，不收起来就会「点箭头变成移动组件」 */
+    if (st.gizmo) {
+      if (id === 'tool.extrude') st.gizmo.setTarget(null);
+      else syncGizmo();
+    }
+    openToolPanel();
     return true;
+  }
+
+  /* 工具参数面板（Maya 的 polyExtrudeFace 通道盒）：
+   * 工具一启动就弹出来，改数字 / 切开关立刻重算预览；Enter 提交、Esc 取消时一起收起。
+   * 参数表来自 SeedTools.listParams()，所以只给「有参数的算子」弹。 */
+  function openToolPanel() {
+    closeToolPanel();
+    var SeedTools = global.SeedTools;
+    if (!SeedTools || !SeedTools.isLive()) return;
+    var cur = SeedTools.current();
+    var list = SeedTools.listParams();
+    if (!list.length) return;
+    var impl = SeedTools.lookup(cur.id) || {};
+    var rows = list.map(function (p, i) {
+      if (p.type === 'toggle') {
+        var on = Number(p.value) !== 0;
+        return '<div class="md-hbp-row"><span>' + esc(p.label) + '</span>' +
+          '<button type="button" class="md-tp-sw' + (on ? ' on' : '') + '" data-tp="' + i +
+          '">' + (on ? '启用' : '禁用') + '</button></div>';
+      }
+      return '<label class="md-hbp-row"><span>' + esc(p.label) + '</span>' +
+        '<input type="number" data-tp="' + i + '" value="' + (Number(p.value) || 0) + '"' +
+        (p.min != null ? ' min="' + p.min + '"' : '') + (p.max != null ? ' max="' + p.max + '"' : '') +
+        ' step="' + (p.step != null ? p.step : 0.01) + '"></label>';
+    }).join('');
+    var box = document.createElement('div');
+    box.className = 'md-hbp md-toolpanel';
+    box.id = 'mdToolPanel';
+    box.innerHTML =
+      '<div class="md-hbp-h"><b>' + esc((impl.label || '工具') + '属性') + '</b>' +
+        '<button type="button" data-tp-act="close">×</button></div>' +
+      '<div class="md-hbp-b">' + rows + '</div>' +
+      '<div class="md-hbp-f"><button type="button" class="md-hbp-apply" data-tp-act="done">完成 (Enter)</button></div>';
+    document.body.appendChild(box);
+    /* 面板挂在 body 上（避免被窗口的 overflow 裁掉），但位置要贴住**当前窗口**右上角：
+     * 以前 CSS 写死 right:18 / top:96，窗口没最大化时面板会跑到屏幕角落去，看起来像没弹出来。 */
+    var winEl = document.getElementById('modelDeskWin');
+    if (winEl) {
+      var wr = winEl.getBoundingClientRect();
+      var pr = box.getBoundingClientRect();
+      box.style.left = Math.max(8, Math.round(wr.right - pr.width - 18)) + 'px';
+      box.style.top = Math.max(8, Math.round(wr.top + 96)) + 'px';
+      box.style.right = 'auto';
+    }
+    st.toolPanel = box;
+
+    box.addEventListener('input', function (ev) {
+      var el = ev.target;
+      if (!el || !el.dataset || el.dataset.tp == null) return;
+      var p = list[+el.dataset.tp];
+      var v = Number(el.value);
+      if (!p || !isFinite(v)) return;
+      var patch = {};
+      patch[p.key] = v;
+      dragTool({ params: patch });
+    });
+    box.addEventListener('click', function (ev) {
+      var sw = ev.target.closest ? ev.target.closest('.md-tp-sw') : null;
+      if (sw) {
+        var p = list[+sw.dataset.tp];
+        var on = !sw.classList.contains('on');
+        sw.classList.toggle('on', on);
+        sw.textContent = on ? '启用' : '禁用';
+        var patch = {};
+        patch[p.key] = on ? 1 : 0;
+        dragTool({ params: patch });
+        return;
+      }
+      var b = ev.target.closest ? ev.target.closest('button') : ev.target;
+      if (!b) return;
+      var act = b.dataset.tpAct;
+      if (act === 'done') commitTool();
+      else if (act === 'close') cancelTool();
+    });
+  }
+
+  function closeToolPanel() {
+    if (st.toolPanel && st.toolPanel.parentNode) st.toolPanel.parentNode.removeChild(st.toolPanel);
+    st.toolPanel = null;
   }
 
   function dragTool(update) {
@@ -2841,7 +3432,10 @@
     if (!SeedTools || !SeedTools.isLive()) return false;
     var r = SeedTools.commit();
     st.toolSession = null;
+    closeToolPanel();
     clearToolPreview();
+    hideExtrudeGizmo();
+    if (st.gizmo) syncGizmo();
     return r;
   }
 
@@ -2850,30 +3444,243 @@
     if (!SeedTools || !SeedTools.isLive()) return false;
     var r = SeedTools.cancel();
     st.toolSession = null;
+    closeToolPanel();
     clearToolPreview();
+    hideExtrudeGizmo();
+    if (st.gizmo) syncGizmo();
     return r;
   }
 
-  function undo() {
-    var entry = st.history.undo.pop();
-    if (!entry) return false;
-    st.history.redo.push(entry);
-    applyHistory(entry, 'before');
-    syncBytes();
-    updateChrome();
-    setStatus('已撤销：' + (entry.label || '编辑'));
+  /* ============================================================
+   * 挤出工具专用操纵器：法线箭头 + 轴心缩放柄
+   *
+   * 对照 Maya 的 polyExtrudeFace 手柄：一根沿面法线的箭头，拖动 = 厚度；
+   * 箭头根部的方柄左右拖 = 顶面外扩（右）/ 收缩（左），也就是 offset 参数。
+   * 手柄画在 world 空间（scene 下），每帧按相机距离保持屏幕尺寸；
+   * 只在 tool.extrude 会话里可见，提交 / 取消立即收起。
+   *
+   * 为什么不用 ModelTransformGizmo：它绑的是对象/组件的 TRS，
+   * 而这里要驱动的是**工具参数**（dist / offset），预览由 SeedTools 重算。
+   * 自己画还能保证「拖手柄 = 改参数」只有一条路径，不会和变换手柄互相抢事件。
+   * ============================================================ */
+
+  function liveParamValue(key, def) {
+    var SeedTools = global.SeedTools;
+    if (SeedTools && SeedTools.isLive && SeedTools.isLive()) {
+      var list = SeedTools.listParams();
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].key === key) return Number(list[i].value);
+      }
+    }
+    return def;
+  }
+
+  function ensureExtrudeGizmo() {
+    if (st.extrudeGizmo || !st.scene || !THREE) return st.extrudeGizmo;
+    var matArrow = new THREE.MeshBasicMaterial({ color: 0xffb64a, depthTest: false, transparent: true, opacity: 0.97 });
+    var matRoot = new THREE.MeshBasicMaterial({ color: 0xffd45e, depthTest: false, transparent: true, opacity: 0.95 });
+    var shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.021, 0.021, 1, 8, 1, true), matArrow);
+    shaft.position.y = 0.55;                    /* 圆柱原点在中心，抬半个长度让根部落在原点 */
+    var head = new THREE.Mesh(new THREE.ConeGeometry(0.072, 0.22, 14), matArrow);
+    head.position.y = 1.21;                     /* 杆 0–1.1，锥体从 1.1 起 */
+    var root = new THREE.Group();
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.016, 6, 28), matRoot);
+    var core = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.085, 0.012), matRoot);
+    root.add(ring); root.add(core);
+    var group = new THREE.Group();
+    group.name = '__extrude_gizmo';
+    group.visible = false;
+    group.renderOrder = 11;
+    group.add(shaft); group.add(head); group.add(root);
+    st.scene.add(group);
+    st.extrudeGizmo = { group: group, shaft: shaft, head: head, root: root, radius: 0.5, basePx: null, tipPx: null };
+    return st.extrudeGizmo;
+  }
+
+  function hideExtrudeGizmo() {
+    st.extrudeDrag = null;
+    st.extrudeHover = null;
+    if (st.canvas) st.canvas.style.cursor = '';
+    if (st.extrudeGizmo) st.extrudeGizmo.group.visible = false;
+  }
+
+  /* 选中面的世界中心 / 平均法线 / 半径（用文档网格，预览网格只是临时壳） */
+  function extrudeSelectionWorld() {
+    if (!st.mesh || !st.pivot || !SeedModel.Mesh) return null;
+    var ids = selFaceIds();
+    if (!ids.length) return null;
+    var M = SeedModel.Mesh, pm = st.pivot.matrixWorld;
+    var c = [0, 0, 0], nrm = [0, 0, 1], tmpN = [0, 0, 0];
+    var count = 0, rad = 0;
+    for (var k = 0; k < ids.length; k++) {
+      var fi = -1;
+      for (var q = 0; q < st.mesh.faceIds.length; q++) {
+        if (st.mesh.faceIds[q] === ids[k]) { fi = q; break; }
+      }
+      if (fi < 0) continue;
+      var s = st.mesh.faceOffsets[fi], e = st.mesh.faceOffsets[fi + 1], nv = e - s;
+      if (nv < 3) continue;
+      var fx = 0, fy = 0, fz = 0, c2, c3, vj, dx, dy, dz;
+      for (c2 = s; c2 < e; c2++) {
+        vj = st.mesh.faceIndices[c2];
+        fx += st.mesh.positions[vj * 3]; fy += st.mesh.positions[vj * 3 + 1]; fz += st.mesh.positions[vj * 3 + 2];
+      }
+      fx /= nv; fy /= nv; fz /= nv;
+      M.triNormal(st.mesh, fi, tmpN);
+      c[0] += fx; c[1] += fy; c[2] += fz;
+      nrm[0] += tmpN[0]; nrm[1] += tmpN[1]; nrm[2] += tmpN[2];
+      count++;
+      for (c3 = s; c3 < e; c3++) {
+        vj = st.mesh.faceIndices[c3];
+        dx = st.mesh.positions[vj * 3] - fx;
+        dy = st.mesh.positions[vj * 3 + 1] - fy;
+        dz = st.mesh.positions[vj * 3 + 2] - fz;
+        rad = Math.max(rad, Math.sqrt(dx * dx + dy * dy + dz * dz));
+      }
+    }
+    if (!count) return null;
+    c[0] /= count; c[1] /= count; c[2] /= count;
+    var nl = Math.sqrt(nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]) || 1;
+    var center = new THREE.Vector3(c[0], c[1], c[2]).applyMatrix4(pm);
+    var normal = new THREE.Vector3(nrm[0] / nl, nrm[1] / nl, nrm[2] / nl).transformDirection(pm).normalize();
+    var ps = new THREE.Vector3(), pq = new THREE.Quaternion(), sc = new THREE.Vector3();
+    pm.decompose(ps, pq, sc);
+    return {
+      center: center, normal: normal,
+      radius: Math.max(rad * Math.max(sc.x, sc.y, sc.z), 0.05)
+    };
+  }
+
+  function gizmoProject(v, rect) {
+    var p = v.clone().project(st.camera);
+    return { x: (p.x * 0.5 + 0.5) * rect.width, y: (-p.y * 0.5 + 0.5) * rect.height };
+  }
+
+  function worldPerPixelAt(worldPos) {
+    var cam = st.camera, h = st.canvas.clientHeight || 1;
+    if (!cam) return 0.01;
+    if (cam.isPerspectiveCamera) {
+      var d = Math.max(cam.position.distanceTo(worldPos), 1e-4);
+      return 2 * d * Math.tan((cam.fov * Math.PI / 180) / 2) / h;
+    }
+    return ((cam.top - cam.bottom) / (cam.zoom || 1)) / h;
+  }
+
+  function updateExtrudeGizmo() {
+    var SeedTools = global.SeedTools;
+    var live = !!(SeedTools && SeedTools.isLive && SeedTools.isLive('tool.extrude'));
+    if (!live) { if (st.extrudeGizmo) st.extrudeGizmo.group.visible = false; return; }
+    /* 四视图的指针走分屏自己的交互，主视口的屏幕坐标不成立；先收起，回单视图再出现 */
+    if (st.quad) { if (st.extrudeGizmo) st.extrudeGizmo.group.visible = false; return; }
+    var fr = extrudeSelectionWorld();
+    if (!fr || !st.camera || !st.canvas) { if (st.extrudeGizmo) st.extrudeGizmo.group.visible = false; return; }
+    var g = ensureExtrudeGizmo();
+    if (!g) return;
+    var dist = liveParamValue('dist', 0.1);
+    /* 箭头根部 = 顶面中心：厚度改多少，箭头就跟着走多少 */
+    var base = fr.center.clone().addScaledVector(fr.normal, dist);
+    var camD = st.camera.position.distanceTo(base);
+    var S = Math.max(camD * 0.16, 0.05);
+    g.group.visible = true;
+    g.group.position.copy(base);
+    g.group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), fr.normal);
+    g.group.scale.setScalar(S);
+    /* 轴心方柄永远面向相机，转到侧面也能看见左右拖拽方向 */
+    g.root.quaternion.copy(g.group.quaternion).invert().multiply(st.camera.quaternion);
+    g.radius = fr.radius;
+    var r = st.canvas.getBoundingClientRect();
+    g.basePx = gizmoProject(base, r);
+    /* 1.32 = 锥头尖端（杆 1.1 + 锥高 0.22）：命中线段要盖住看得见的箭头尖 */
+    g.tipPx = gizmoProject(base.clone().addScaledVector(fr.normal, S * 1.32), r);
+    g.wpp = worldPerPixelAt(base);
+  }
+
+  function extrudeGizmoHit(e) {
+    var g = st.extrudeGizmo;
+    if (!g || !g.group.visible || !g.basePx) return null;
+    var r = st.canvas.getBoundingClientRect();
+    var x = e.clientX - r.left, y = e.clientY - r.top;
+    if (Math.sqrt((x - g.basePx.x) * (x - g.basePx.x) + (y - g.basePx.y) * (y - g.basePx.y)) <= 15) return 'root';
+    var vx = g.tipPx.x - g.basePx.x, vy = g.tipPx.y - g.basePx.y;
+    var len2 = vx * vx + vy * vy || 1;
+    var t = ((x - g.basePx.x) * vx + (y - g.basePx.y) * vy) / len2;
+    if (t < -0.05 || t > 1.05) return null;
+    t = Math.max(0, Math.min(1, t));
+    var px = g.basePx.x + vx * t, py = g.basePx.y + vy * t;
+    return Math.sqrt((x - px) * (x - px) + (y - py) * (y - py)) <= 10 ? 'arrow' : null;
+  }
+
+  function beginExtrudeGizmoDrag(mode, e) {
+    var g = st.extrudeGizmo;
+    if (!g) return false;
+    var ax = g.tipPx.x - g.basePx.x, ay = g.tipPx.y - g.basePx.y;
+    var al = Math.sqrt(ax * ax + ay * ay) || 1;
+    st.extrudeDrag = {
+      mode: mode, x0: e.clientX, y0: e.clientY,
+      dist0: liveParamValue('dist', 0.1),
+      offset0: liveParamValue('offset', 0),
+      axis: { x: ax / al, y: ay / al },
+      wpp: g.wpp || 0.01, radius: g.radius || 0.5
+    };
+    st.canvas.style.cursor = mode === 'root' ? 'ew-resize' : 'grabbing';
+    try { st.canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    global.addEventListener('pointermove', onExtrudeGizmoMove, true);
+    global.addEventListener('pointerup', onExtrudeGizmoUp, true);
+    e.preventDefault();
+    setStatus(mode === 'arrow'
+      ? '挤出：沿箭头拖 = 厚度，Enter 提交'
+      : '挤出：左右拖轴心方柄 = 顶面缩小 / 放大，Enter 提交');
     return true;
   }
-  function redo() {
-    var entry = st.history.redo.pop();
-    if (!entry) return false;
-    st.history.undo.push(entry);
-    applyHistory(entry, 'after');
-    syncBytes();
-    updateChrome();
-    setStatus('已重做：' + (entry.label || '编辑'));
-    return true;
+
+  function onExtrudeGizmoMove(e) {
+    var d = st.extrudeDrag;
+    if (!d) return;
+    e.preventDefault();
+    var dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+    var patch, label;
+    if (d.mode === 'arrow') {
+      var along = dx * d.axis.x + dy * d.axis.y;
+      var v = Math.max(-2, Math.min(2, d.dist0 + along * d.wpp));
+      patch = { dist: Math.round(v * 1000) / 1000 };
+      label = '厚度 ' + patch.dist.toFixed(2);
+    } else {
+      var v2 = Math.max(-2, Math.min(2, d.offset0 + dx * (d.radius / 180)));
+      patch = { offset: Math.round(v2 * 1000) / 1000 };
+      label = '顶面偏移 ' + patch.offset.toFixed(2);
+    }
+    if (global.SeedTools) global.SeedTools.drag({ params: patch });
+    syncToolPanelInputs();
+    setStatus('挤出：' + label + '（Enter 提交，Esc 取消）');
   }
+
+  function onExtrudeGizmoUp() {
+    if (!st.extrudeDrag) return;
+    st.extrudeDrag = null;
+    st.extrudeHover = null;
+    st.pickDown = null;
+    global.removeEventListener('pointermove', onExtrudeGizmoMove, true);
+    global.removeEventListener('pointerup', onExtrudeGizmoUp, true);
+    if (st.canvas) st.canvas.style.cursor = '';
+  }
+
+  /* 拖动箭头时把面板里的数字同步过去（不然手柄改了、输入框还停在旧值） */
+  function syncToolPanelInputs() {
+    var box = st.toolPanel, SeedTools = global.SeedTools;
+    if (!box || !SeedTools || !SeedTools.isLive()) return;
+    var list = SeedTools.listParams();
+    var inputs = box.querySelectorAll('input[data-tp]');
+    for (var i = 0; i < inputs.length; i++) {
+      var p = list[+inputs[i].dataset.tp];
+      if (!p || !isFinite(p.value) || document.activeElement === inputs[i]) continue;
+      var v = Number(p.value);
+      inputs[i].value = (v === Math.round(v)) ? String(v) : String(Math.round(v * 1000) / 1000);
+    }
+  }
+
+  /* 撤销 / 重做只留转发：栈与网格副本都在 md-history.js 里 */
+  function undo() { return HIST.undo(); }
+  function redo() { return HIST.redo(); }
 
   /* ---------------- 变换（对象 / 组件共用一套回调） ---------------- */
   function gizmoOnComponents() {
@@ -3019,6 +3826,24 @@
       drawSoftCurve();
       return;
     }
+    if (el.id === 'mdBrushSize') {
+      st.paint.size = Math.max(6, Math.min(180, Math.round(Number(el.value) || 42)));
+      var bsv = $('mdBrushSizeVal');
+      if (bsv) bsv.textContent = st.paint.size + ' px';
+      return;
+    }
+    if (el.id === 'mdBrushOpacity') {
+      st.paint.opacity = Math.max(5, Math.min(100, Math.round(Number(el.value) || 90)));
+      var bov = $('mdBrushOpacityVal');
+      if (bov) bov.textContent = st.paint.opacity + '%';
+      return;
+    }
+    if (el.id === 'mdBrushColor') {
+      st.paint.color = el.value || '#d94f4f';
+      var sw = $('mdBrushSw');
+      if (sw) sw.style.background = st.paint.color;
+      return;
+    }
     if (el.dataset.mdPsize != null) {
       st.prim.size[Number(el.dataset.mdPsize)] = Number(el.value);
       return;
@@ -3095,6 +3920,12 @@
         if (global.SeedTools && global.SeedTools.isLive()) commitTool();
         else beginTool('tool.extrude');
       }
+      else if (k === 'r') {
+        /* Ctrl+R = 环切（Blender 习惯）；边不通四边环时状态行说明原因 */
+        var cutMsg = loopCutBlocked();
+        if (cutMsg) setStatus(cutMsg, true);
+        else beginTool('tool.loopcut');
+      }
       else hit = false;
       if (hit) { e.preventDefault(); }
       return;
@@ -3164,6 +3995,19 @@
   function onChange(e) {
     var el = e.target;
     if (!el) return;
+    if (el.id === 'mdBrushSel') {
+      st.paint.brush = ['soft', 'hard', 'erase'].indexOf(el.value) >= 0 ? el.value : 'soft';
+      var names = { soft: '圆形软笔', hard: '圆形硬笔', erase: '橡皮擦' };
+      setStatus('笔刷：' + names[st.paint.brush] + ' · ' + st.paint.size + ' px');
+      return;
+    }
+    if (el.id === 'mdPaintMask') {
+      st.paint.mask = !!el.checked;
+      setStatus(st.paint.mask
+        ? 'UV 岛遮罩开：笔刷只画进落笔所在的 UV 岛'
+        : 'UV 岛遮罩关：笔刷可画到整张贴图');
+      return;
+    }
     if (el.id === 'mdSoftOn') {
       st.soft.on = !!el.checked;
       paintSoftPanel();
@@ -3192,11 +4036,21 @@
   }
 
   function setShading(mode) {
-    st.shading = (mode === 'shaded' || mode === 'wire') ? mode : 'shaded-wire';
+    if (['shaded', 'wire', 'flat', 'uv'].indexOf(mode) < 0) mode = 'shaded-wire';
+    st.shading = mode;
     applyShading();
     updateChrome();
     updateHud();
     setStatus('着色模式：' + shadeLabel(st.shading));
+    /* UV 岛着色要有 UV 才分得出岛：没 UV 就说清楚，别让人以为是着色坏了 */
+    if (mode === 'uv' && st.mesh) {
+      var info = SeedModel.Mesh.uvIslands(st.mesh);
+      if (!info.islands.length) {
+        setStatus('UV 岛着色：该网格还没有 UV，整体按一个岛显示（先用 UV 编辑器做投影）', true);
+      } else if (info.islands.length === 1) {
+        setStatus('UV 岛着色：当前网格只有 1 个 UV 岛（1 个颜色）');
+      }
+    }
   }
 
   /* 工具与手柄模式是同一件事的两面：
@@ -3419,9 +4273,27 @@
       case 'separate': separateActiveNode(); return;
       case 'boolean': booleanSelectedNodes(); return;
       case 'knife': setKnifeMode(); return;
+      case 'loopcut':
+        /* 环切是 live 工具：不自动提交，让条数 / 滑移在参数面板里反复预览 */
+        var msg = loopCutBlocked();
+        if (msg) { setStatus(msg, true); return; }
+        beginTool('tool.loopcut');
+        return;
+      case 'tris-to-quads':
+        trisToQuadsNow();
+        return;
       case 'smooth':
         /* 平滑是整网格命令，不选点也能用 */
         if (runToolNow('tool.smooth')) setStatus('已平滑' + (selVertexIds().length ? '选中顶点' : '整个网格'));
+        return;
+      case 'extrude':
+        /* 挤出是「工具」不是「一次性命令」：从货架 / 工具箱点进来要留下
+         * polyExtrudeFace 参数面板（厚度 / 局部平移 Z / 偏移 / 分段 / 保持连续性），
+         * 改参数实时预览，Enter 提交、Esc 取消。别用 runToolNow —— 它会立刻提交，
+         * 面板只闪一帧（用户看不到）。 */
+        if (beginTool('tool.extrude')) {
+          setStatus('挤出：在参数面板调厚度 / 偏移 / 分段看预览，Enter 提交，Esc 取消');
+        }
         return;
       default:
         if (TOOLBOX_TOOL[op]) {
@@ -3442,7 +4314,7 @@
     st.quad = on;
     if (st.stage) st.stage.classList.toggle('quad', st.quad);
     if (st.controls) st.controls.enabled = !st.quad;
-    if (st.gizmo) st.gizmo.setTarget(st.quad ? null : st.pivot);
+    if (st.gizmo) st.gizmo.setTarget((st.quad || (st.isolate && !ISO.nodeVisible(st.node ? st.node.id : ''))) ? null : st.pivot);
     if (st.quad) {
       st.quadActive = 'front';
       updateQuadCameras(true);
@@ -3476,6 +4348,56 @@
     st.camera.position.copy(st.controls.target).add(off);
     st.camera.lookAt(st.controls.target);
     st.controls.update();
+  }
+
+  /* 立方体四边的三角：绕目标点一次翻 1/4 圈。
+   * 走球坐标而不是拼像素：90° 的转身不管当前相机在哪都能落在正方向上，
+   * 拖拽那种「按像素估角度」的做法转两次就会歪掉。 */
+  var TURN_LABEL = { up: '向上', down: '向下', left: '向左', right: '向右' };
+  function turnBy(kind) {
+    if (!st.camera || !st.controls || !THREE || !TURN_LABEL[kind]) return;
+    var off = st.camera.position.clone().sub(st.controls.target);
+    var sph = new THREE.Spherical().setFromVector3(off);
+    var step = Math.PI / 2;
+    if (kind === 'left') sph.theta += step;
+    else if (kind === 'right') sph.theta -= step;
+    else if (kind === 'up') sph.phi -= step;
+    else sph.phi += step;
+    /* 顶 / 底是极点，上下和左右要分开处理：
+     *   - 上下翻越过极点：把方位翻到对面、phi 折回 [0, π]，接着往上/下翻会落到对称的正视图
+     *     （底视图再按「向下」→ 后视图）。落到极点时 theta 归零，否则 lookAt 时 up 会和视线
+     *     平行、自己挑一个旋转角，出来就是「歪的顶视图」。
+     *   - 顶 / 底视图里按左右：绝不能把 theta 归零——上一版就是这么写的，等于什么都没做，
+     *     所以「到底视图后左、右按钮失效」。这里保留 theta，phi 压在极点上，
+     *     效果是画面原地转 90°（和 Maya 在极点按左右一致）。 */
+    if (kind === 'up' || kind === 'down') {
+      if (sph.phi < 0) { sph.phi = -sph.phi; sph.theta += Math.PI; }
+      else if (sph.phi > Math.PI) { sph.phi = Math.PI * 2 - sph.phi; sph.theta += Math.PI; }
+      if (sph.phi <= 0.0005) { sph.phi = 0.0005; sph.theta = 0; }
+      else if (sph.phi >= Math.PI - 0.0005) { sph.phi = Math.PI - 0.0005; sph.theta = 0; }
+    } else {
+      if (sph.phi <= 0.0005) sph.phi = 0.0005;
+      else if (sph.phi >= Math.PI - 0.0005) sph.phi = Math.PI - 0.0005;
+    }
+    /* 先摆正 up 再摆位置：上一帧若是顶/底视图，up 会被 lookAt 修正过，
+     * 不清掉的话下一次环绕会绕着歪轴转 */
+    st.camera.up.set(0, 1, 0);
+    var pos = new THREE.Vector3().setFromSpherical(sph);
+    st.camera.position.copy(st.controls.target).add(pos);
+    st.camera.lookAt(st.controls.target);
+    st.controls.update();
+    /* 90° 转身的结果又落在轴上：按轴叫名字，别一律写「自由」 */
+    var n = pos.normalize();
+    var ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+    var axis = Math.max(ax, ay, az) > 0.999
+      ? (ay >= ax && ay >= az ? (n.y > 0 ? 'top' : 'bottom')
+        : ax >= az ? (n.x > 0 ? 'right' : 'left')
+          : (n.z > 0 ? 'front' : 'back'))
+      : '';
+    st.viewName = axis ? VP_LABEL[axis] : '自由';
+    updateChrome();
+    updateHud();
+    setStatus(axis ? '视图：' + st.viewName : '视图已' + TURN_LABEL[kind] + '翻转 90°');
   }
 
   var VP_LABEL = { front: '前视图', back: '后视图', left: '左视图', right: '右视图', top: '顶视图', bottom: '底视图', iso: '轴测' };
@@ -3515,202 +4437,176 @@
     setStatus('视图：' + st.viewName);
   }
 
-  /* ---------------- ViewCube（真 3D） ----------------
-   * 一块独立的小画布：六个面带标签的立方体，朝向永远等于主相机朝向的逆，
-   * 所以视口里怎么转，它就跟着怎么转，还能看出三个面近大远小的透视。
-   * 单独开 renderer 而不是画进主视口：主场景在「线框」模式是白底、还会被
-   * 模型挡住，小画布透明底浮在最上层，任何着色模式下都读得清。 */
-  var CUBE_FACES = [
-    { kind: 'right', label: '右', axes: [1, 0, 0] },
-    { kind: 'left', label: '左', axes: [-1, 0, 0] },
-    { kind: 'top', label: '顶', axes: [0, 1, 0] },
-    { kind: 'bottom', label: '底', axes: [0, -1, 0] },
-    { kind: 'front', label: '前', axes: [0, 0, 1] },
-    { kind: 'back', label: '后', axes: [0, 0, -1] }
+  /* ---------------- ViewCube（已拆到 js/md-viewcube.js） ---------------- */
+  /* 外壳只留两个门面：bind（初始化 + 绑指针）/ draw（每帧跟相机重画）。 */
+  var CUBE = global.MDViewCube.create({
+    st: st, THREE: THREE, $: $,
+    updateChrome: updateChrome, updateHud: updateHud, setStatus: setStatus,
+    turnBy: turnBy, tumbleBy: tumbleBy, viewFromPreset: viewFromPreset
+  });
+  function bindCube() { return CUBE.bind(); }
+  function drawCube() { return CUBE.draw(); }
+
+  /* ================= 主菜单条（📁 编辑…） =================
+   * 之前这七个按钮只 setStatus 一句「在 M5 接入」—— 点了等于没反应。
+   * 这里改成真的下拉菜单：每条都指向已经存在的命令（不外挂新的行为），
+   * 撤销 / 重做在栈空时灰显，避免「点了还是没变化」。 */
+  var MD_MENUS = [
+    { k: '文件', items: [
+      { t: '新建场景', c: 'new', s: 'Ctrl+N' },
+      { t: '打开资产…', c: 'open', s: 'Ctrl+O' },
+      { t: '保存 GLB', c: 'save', s: 'Ctrl+S' },
+      { sep: 1 },
+      { t: '关闭建模窗口', c: 'closeWin' }
+    ] },
+    { k: '编辑', items: [
+      { t: '撤销', c: 'undo', s: 'Ctrl+Z', off: function () { return !st.history.undo.length; } },
+      { t: '重做', c: 'redo', s: 'Ctrl+Y', off: function () { return !st.history.redo.length; } },
+      { sep: 1 },
+      { t: '复制对象', c: 'dup', s: 'Ctrl+D' },
+      { t: '删除对象', c: 'del', s: 'Del' },
+      { t: '隐藏 / 显示对象', c: 'hide', s: 'H' }
+    ] },
+    { k: '创建', items: [
+      { t: '立方体…', c: 'prim:box' },
+      { t: '球体…', c: 'prim:sphere' },
+      { t: '圆柱…', c: 'prim:cylinder' },
+      { t: '圆锥…', c: 'prim:cone' },
+      { t: '圆环…', c: 'prim:torus' },
+      { t: '平面…', c: 'prim:plane' }
+    ] },
+    { k: '修改', items: [
+      { t: '移动工具', c: 'modeTranslate', s: 'W' },
+      { t: '旋转工具', c: 'modeRotate', s: 'E' },
+      { t: '缩放工具', c: 'modeScale', s: 'R' },
+      { sep: 1 },
+      { t: '切换世界 / 局部坐标', c: 'space' },
+      { t: '吸附', c: 'snap' },
+      { sep: 1 },
+      { t: '合并选中顶点', c: 'mergeVertices' }
+    ] },
+    { k: '显示', items: [
+      { t: '四视图', c: 'quad' },
+      { sep: 1 },
+      { t: '着色：实体 + 线框', c: 'shade:shaded-wire' },
+      { t: '着色：实体', c: 'shade:shaded' },
+      { t: '着色：线框', c: 'shade:wire' },
+      { t: '着色：平涂', c: 'shade:flat' },
+      { t: '着色：UV 岛着色', c: 'shade:uv' },
+      { sep: 1 },
+      { t: '显示 / 隐藏栅格', c: 'grid' },
+      { t: '单独显示所选（隔离）', c: 'isolate' },
+      { t: '框显所选 / 全部', c: 'frameAll', s: 'F' },
+      { t: '材质槽（3D 查看器）', c: 'tex' }
+    ] },
+    { k: '窗口', items: [
+      { t: 'UV 编辑器', c: 'uv' },
+      { t: '材质槽', c: 'tex' },
+      { sep: 1 },
+      { t: '内容浏览器', c: 'dock' },
+      { t: '右侧：属性面板', c: 'tabProps' },
+      { t: '右侧：通道盒', c: 'tabChannels' },
+      { sep: 1 },
+      { t: '关闭 UV 编辑器', c: 'uvClose' }
+    ] },
+    { k: '帮助', items: [
+      { t: '快捷键与操作说明', c: 'help' },
+      { t: '关于本版本', c: 'about' }
+    ] }
   ];
-  var CUBE_SIZE = 92;
-  var CUBE_SIDE = 1.5;
-  /* 六个面用六块 PlaneGeometry 拼，而不是一个 BoxGeometry：
-   * BoxGeometry 的 UV 是给贴图设计的（+Y / -Y 的竖直轴是 Z），文字直接贴会歪；
-   * 自己摆六个面，每面的「上」都能对准那个正视图里的屏幕上方，标签永远是正的。 */
-  var CUBE_FACE_XF = [
-    { pos: [0.75, 0, 0], rot: [0, Math.PI / 2, 0] },     /* 右 +X：字头朝 +Y */
-    { pos: [-0.75, 0, 0], rot: [0, -Math.PI / 2, 0] },   /* 左 -X */
-    { pos: [0, 0.75, 0], rot: [-Math.PI / 2, 0, 0] },    /* 顶 +Y：字头朝 -Z */
-    { pos: [0, -0.75, 0], rot: [Math.PI / 2, 0, 0] },    /* 底 -Y：字头朝 +Z */
-    { pos: [0, 0, 0.75], rot: [0, 0, 0] },               /* 前 +Z */
-    { pos: [0, 0, -0.75], rot: [0, Math.PI, 0] }         /* 后 -Z */
-  ];
 
-  function cubeFaceTexture(label) {
-    var c = document.createElement('canvas');
-    c.width = c.height = 128;
-    var x = c.getContext('2d');
-    var g = x.createLinearGradient(0, 0, 0, 128);
-    g.addColorStop(0, '#eeeff2'); g.addColorStop(1, '#cfd3da');
-    x.fillStyle = g; x.fillRect(0, 0, 128, 128);
-    x.strokeStyle = '#9aa1ab'; x.lineWidth = 6;
-    x.strokeRect(3, 3, 122, 122);
-    x.fillStyle = '#2c3138';
-    x.font = '600 44px system-ui,"Microsoft YaHei",sans-serif';
-    x.textAlign = 'center'; x.textBaseline = 'middle';
-    x.fillText(label, 64, 66);
-    var t = new THREE.CanvasTexture(c);
-    if ('encoding' in t) t.encoding = THREE.sRGBEncoding;
-    return t;
+  function mdCloseMenu() {
+    var drop = $('mdDrop');
+    if (drop) { drop.hidden = true; drop.innerHTML = ''; }
+    st.menu = null;
+    var items = document.querySelectorAll('.md-mitem.open');
+    for (var i = 0; i < items.length; i++) items[i].classList.remove('open');
   }
 
-  function setupCube() {
-    var box = $('mdCube'), canvas = $('mdCubeCanvas');
-    if (!box || !canvas || !THREE) return;
-    var size = box.clientWidth || CUBE_SIZE;
-    var renderer;
-    try {
-      renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
-    } catch (e) {
-      /* 开不出第二个 WebGL 上下文时宁可没有立方体，也不要把主视口一起拖垮 */
-      box.style.display = 'none';
-      return;
-    }
-    renderer.setPixelRatio(Math.min(global.devicePixelRatio || 1, 2));
-    renderer.setSize(size, size, false);
-    renderer.setClearAlpha(0);
-    if ('outputEncoding' in renderer) renderer.outputEncoding = THREE.sRGBEncoding;
-
-    var scene = new THREE.Scene();
-    var cam = new THREE.PerspectiveCamera(34, 1, 0.1, 100);
-    cam.position.set(0, 0, 4.4);
-    cam.lookAt(0, 0, 0);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.95));
-    var key = new THREE.DirectionalLight(0xffffff, 0.75);
-    key.position.set(-1.4, 1.8, 2.4);
-    scene.add(key);
-
-    var group = new THREE.Group();
-    scene.add(group);
-    var faceGeo = new THREE.PlaneGeometry(CUBE_SIDE, CUBE_SIDE);
-    var planes = [], mats = [];
-    CUBE_FACES.forEach(function (f, i) {
-      var mat = new THREE.MeshStandardMaterial({ map: cubeFaceTexture(f.label), roughness: 1, metalness: 0 });
-      var mesh = new THREE.Mesh(faceGeo, mat);
-      var xf = CUBE_FACE_XF[i];
-      mesh.position.set(xf.pos[0], xf.pos[1], xf.pos[2]);
-      mesh.rotation.set(xf.rot[0], xf.rot[1], xf.rot[2]);
-      mesh.userData.face = i;
-      group.add(mesh);
-      planes.push(mesh);
-      mats.push(mat);
+  function mdOpenMenu(key, btn) {
+    var drop = $('mdDrop');
+    if (!drop || !btn) return;
+    if (st.menu === key) { mdCloseMenu(); return; }
+    var spec = null, i;
+    for (i = 0; i < MD_MENUS.length; i++) if (MD_MENUS[i].k === key) spec = MD_MENUS[i];
+    if (!spec) return;
+    var html = '<div class="md-mtitle">' + esc(key) + '</div>';
+    spec.items.forEach(function (it) {
+      if (it.sep) { html += '<i class="md-msep"></i>'; return; }
+      var off = !!(it.off && it.off());
+      html += '<button type="button" class="md-mi' + (off ? ' off' : '') + '" data-mdcmd="' + esc(it.c) + '">' +
+        '<span>' + esc(it.t) + '</span><b>' + esc(it.s || '') + '</b></button>';
     });
-    /* 棱线单独画一遍：六个面各自有边框，但立方体的骨架更清楚 */
-    group.add(new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(CUBE_SIDE, CUBE_SIDE, CUBE_SIDE)),
-      new THREE.LineBasicMaterial({ color: 0x7d8794 })
-    ));
-
-    st.cube = {
-      box: box, canvas: canvas, renderer: renderer, scene: scene, cam: cam,
-      group: group, planes: planes, mats: mats, q: new THREE.Quaternion(),
-      ray: new THREE.Raycaster()
-    };
-    drawCube();
+    drop.innerHTML = html;
+    drop.hidden = false;
+    /* 夹在菜单条宽度内，靠右的「帮助」菜单不会溢出窗口 */
+    var menu = document.querySelector('.md-menu'), mr = menu.getBoundingClientRect(), br = btn.getBoundingClientRect();
+    var left = br.left - mr.left;
+    var maxLeft = mr.width - drop.offsetWidth - 4;
+    drop.style.left = Math.max(4, Math.min(left, maxLeft)) + 'px';
+    drop.style.top = (br.bottom - mr.top) + 'px';
+    st.menu = key;
+    var all = document.querySelectorAll('.md-mitem');
+    for (i = 0; i < all.length; i++) all[i].classList.remove('open');
+    btn.classList.add('open');
   }
 
-  /* 相机怎么转，立方体就反向转同样的角度：屏幕上的立方体 = 世界坐标轴的朝向 */
-  function drawCube() {
-    var c = st.cube;
-    if (!c || !st.camera || st.quad || !c.renderer) return;
-    c.q.copy(st.camera.quaternion).conjugate();
-    c.group.quaternion.copy(c.q);
-    c.renderer.render(c.scene, c.cam);
-  }
-
-  function cubePick(e) {
-    var c = st.cube;
-    if (!c) return -1;
-    var r = c.canvas.getBoundingClientRect();
-    if (!r.width || !r.height) return -1;
-    c.group.updateMatrixWorld(true);
-    c.ray.setFromCamera(new THREE.Vector2(
-      ((e.clientX - r.left) / r.width) * 2 - 1,
-      -((e.clientY - r.top) / r.height) * 2 + 1
-    ), c.cam);
-    var hit = c.ray.intersectObjects(c.planes, false)[0];
-    return (hit && hit.object && typeof hit.object.userData.face === 'number')
-      ? hit.object.userData.face : -1;
-  }
-
-  function bindCube() {
-    setupCube();
-    var c = st.cube;
-    if (!c) return;
-    var box = c.box;
-
-    function tint(i) {
-      c.mats.forEach(function (m, k) { m.color.setHex(k === i ? 0xffcf86 : 0xffffff); });
-    }
-
-    box.addEventListener('pointerdown', function (e) {
-      if (e.button) return;
-      st.cubeDrag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, face: cubePick(e) };
-      box.classList.add('drag');
-      try { box.setPointerCapture(e.pointerId); } catch (err) {}
-      e.preventDefault();
-    });
-
-    box.addEventListener('pointermove', function (e) {
-      var d = st.cubeDrag;
-      if (!d) {
-        var hov = cubePick(e);
-        if (hov !== st.cubeHover) { st.cubeHover = hov; tint(hov); }
-        box.style.cursor = hov >= 0 ? 'pointer' : 'grab';
-        return;
-      }
-      if (d.id !== e.pointerId) return;
-      var dx = e.clientX - d.x, dy = e.clientY - d.y;
-      if (!d.moved && Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
-      if (!d.moved) return;
-      tumbleBy(dx, dy);
-      d.x = e.clientX;
-      d.y = e.clientY;
-    });
-
-    box.addEventListener('pointerup', function (e) {
-      var d = st.cubeDrag;
-      if (!d || d.id !== e.pointerId) return;
-      st.cubeDrag = null;
-      box.classList.remove('drag');
-      try { box.releasePointerCapture(e.pointerId); } catch (err) {}
-      if (d.moved) {
-        st.viewName = '自由';
+  function mdRun(c) {
+    mdCloseMenu();
+    var m;
+    if ((m = /^prim:(\w+)$/.exec(c))) { openPrimitiveDialog(m[1]); return; }
+    if ((m = /^shade:(.+)$/.exec(c))) { setShading(m[1]); return; }
+    switch (c) {
+      case 'new': clickAct('new'); break;
+      case 'open': clickAct('open'); break;
+      case 'save': clickAct('save'); break;
+      case 'undo': clickAct('undo'); break;
+      case 'redo': clickAct('redo'); break;
+      case 'snap': clickAct('snap'); break;
+      case 'grid': clickAct('grid'); break;
+      case 'quad': clickAct('quad'); break;
+      case 'uv': clickAct('uv'); break;
+      case 'tex': clickAct('tex'); break;
+      case 'dup': duplicateNode(); break;
+      case 'del': deleteActiveNode(); break;
+      case 'hide': toggleActiveVisible(); break;
+      case 'modeTranslate': setMode('translate'); break;
+      case 'modeRotate': setMode('rotate'); break;
+      case 'modeScale': setMode('scale'); break;
+      case 'space': {
+        st.space = st.space === 'world' ? 'local' : 'world';
+        if (st.gizmo) st.gizmo.setSpace(st.space);
         updateChrome();
-        updateHud();
-        setStatus('视口已环绕');
-        return;
+        setStatus('坐标系：' + (st.space === 'local' ? '局部' : '世界'));
+        break;
       }
-      var face = CUBE_FACES[d.face];
-      if (!face) return;
-      /* 留一点延迟，双击时不要先跳一次单面视图 */
-      clearTimeout(st.cubeClickTimer);
-      st.cubeClickTimer = setTimeout(function () { viewFromPreset(face.kind); }, 260);
-    });
+      case 'mergeVertices': runOp('mesh.mergeVertices'); break;
+      case 'frameAll': frameCamera(); setStatus('已框显（F）'); break;
+      case 'isolate': toggleIsolate(); break;
+      case 'dock': setDock(!st.dockOpen); break;
+      /* 属性编辑器现在是右侧第三个页签：这两个命令还得把页签切过去，否则面板仍是隐藏的 */
+      case 'tabProps': setTbKind('props'); st.rightTab = 'props'; paintParams(); updateChrome(); setStatus('右侧：属性面板'); break;
+      case 'tabChannels': setTbKind('props'); st.rightTab = 'channels'; paintParams(); updateChrome(); setStatus('右侧：通道盒'); break;
+      case 'uvClose':
+        if (!st.uv.open) { setStatus('UV 编辑器没有打开', true); break; }
+        closeUVEditor(); setStatus('UV 编辑器已关闭');
+        break;
+      case 'help': setStatus('W/E/R 移动/旋转/缩放 · F 框显 · H 隐藏 · F8–F12 对象/点/边/面/UV 岛 · Ctrl+Z/Y 撤销/重做 · Alt+左/中/右键 环绕/平移/推拉 · 空格 热盒'); break;
+      case 'about': setStatus('The seed 建模 · MVP-1 · 桌面式建模工作台（UV 编辑器 / 拓扑算子 / 四视图已可用）'); break;
+      case 'closeWin': {
+        var cb = $('btnModelDeskClose');
+        if (cb) cb.click();
+        break;
+      }
+      default: break;
+    }
+  }
 
-    box.addEventListener('pointercancel', function () {
-      st.cubeDrag = null;
-      box.classList.remove('drag');
-    });
-
-    box.addEventListener('pointerleave', function () {
-      if (st.cubeDrag) return;
-      st.cubeHover = -1;
-      tint(-1);
-    });
-
-    box.addEventListener('dblclick', function (e) {
-      e.preventDefault();
-      clearTimeout(st.cubeClickTimer);
-      st.cubeDrag = null;
-      viewFromPreset('iso');
-    });
+  /* 复用工具条 / 视图角标上已经存在的按钮：菜单和它们必须是同一条命令，不另写一份实现 */
+  function clickAct(act) {
+    var b = document.querySelector('[data-md-act="' + act + '"]');
+    if (b) { b.click(); return; }
+    setStatus('命令「' + act + '」当前不可用', true);
   }
 
   function onClick(e) {
@@ -3719,13 +4615,22 @@
      * 否则「点图标」永远点不到（竖条那六个工具按钮就踩过这个坑）。 */
     if (t && t.tagName !== 'BUTTON' && t.closest) t = t.closest('button');
     if (!t || t.tagName !== 'BUTTON') return;
+    if (t.dataset.mdTbk) {
+      setTbKind(t.dataset.mdTbk);
+      updateChrome();
+      return;
+    }
+    if (t.dataset.mdcmd) {
+      mdRun(t.dataset.mdcmd);
+      return;
+    }
     if (t.dataset.mdTab) {
       st.rightTab = t.dataset.mdTab === 'channels' ? 'channels' : 'props';
       paintParams();
       return;
     }
     if (t.dataset.mdMenu) {
-      setStatus('菜单「' + t.dataset.mdMenu + '」在 M5 接入；新建 / 打开 / 保存 / 撤销 / 重做已放在工具行');
+      mdOpenMenu(t.dataset.mdMenu, t);
       return;
     }
     var act = t.dataset.mdAct;
@@ -3822,6 +4727,8 @@
         break;
       }
       case 'quad': toggleQuad(); break;
+      case 'isolate': toggleIsolate(); break;
+      case 'uv': openUVEditor(); break;
       case 'tex': openTextureEditor(); break;
       case 'prim-create': createPrimitive(); break;
       case 'close-overlay': closeOverlay(); break;
@@ -3885,11 +4792,18 @@
     },
     extrude: function () {
       return hbPanelSpec('挤出', [
-        { key: 'dist', label: '距离 (m)', value: 0.1, min: -2, max: 2, step: 0.01 }
+        { key: 'dist', label: '厚度', value: 0.1, min: -2, max: 2, step: 0.01 },
+        { key: 'localZ', label: '局部平移 Z', value: 0, min: -2, max: 2, step: 0.01 },
+        { key: 'offset', label: '偏移', value: 0, min: -2, max: 2, step: 0.01 },
+        { key: 'divisions', label: '分段', value: 1, min: 1, max: 8, step: 1 }
       ], function (v) {
-        if (global.SeedTools && global.SeedTools.isLive()) global.SeedTools.setParams({ dist: v.dist });
-        else { beginTool('tool.extrude'); if (global.SeedTools && global.SeedTools.isLive()) global.SeedTools.setParams({ dist: v.dist }); }
-      }, '沿面法线挤出选中面；拖动手柄或改距离，Enter 提交。');
+        var patch = { dist: v.dist, localZ: v.localZ, offset: v.offset, divisions: v.divisions };
+        if (global.SeedTools && global.SeedTools.isLive()) global.SeedTools.setParams(patch);
+        else {
+          beginTool('tool.extrude');
+          if (global.SeedTools && global.SeedTools.isLive()) global.SeedTools.setParams(patch);
+        }
+      }, '保持面的连续性在工具属性面板里切换；Enter 提交、Esc 取消。');
     },
     inset: function () {
       return hbPanelSpec('内插', [
@@ -3914,9 +4828,20 @@
     },
     loopcut: function () {
       return hbPanelSpec('环切', [
-        { key: 'count', label: '条数', value: 1, min: 1, max: 8, step: 1, off: true },
-        { key: 'slide', label: '滑移', value: 0, min: -1, max: 1, off: true }
-      ], null, '算子尚未接入（计划表 A12）。');
+        { key: 'count', label: '条数', value: 1, min: 1, max: 8, step: 1 },
+        { key: 'slide', label: '滑移', value: 0, min: -1, max: 1, step: 0.01 }
+      ], function (v) {
+        var msg = loopCutBlocked();
+        if (msg) { setStatus(msg, true); return; }
+        if (global.SeedTools && global.SeedTools.isLive('tool.loopcut')) {
+          global.SeedTools.setParams({ count: v.count, slide: v.slide });
+        } else {
+          beginTool('tool.loopcut');
+          if (global.SeedTools && global.SeedTools.isLive('tool.loopcut')) {
+            global.SeedTools.setParams({ count: v.count, slide: v.slide });
+          }
+        }
+      }, '沿选中边所在的四边环切分；条数 / 滑移实时预览，Enter 提交。');
     },
     bridge: function () {
       return hbPanelSpec('桥接', [
@@ -3949,7 +4874,7 @@
       return hbPanelSpec(title, [
         { key: 'a', label: a, value: 0, min: 0, max: 1, off: true },
         { key: 'b', label: b, value: 0, min: 0, max: 1, off: true }
-      ], null, 'UV 工具尚未接入（计划表 X5）。');
+      ], null, '分离 UV 壳尚未接入（计划表 X5g）；展开 / 排布 / 缝合已在 UV 编辑器里可用。');
     }
   };
 
@@ -3983,8 +4908,12 @@
   function hbCtxEdge() {
     return [
       hbItem('移动工具', 'W', function () { setTool('move'); }, st.tool === 'move', false, '', false, { icon: 'tool', panel: hbPanelSpec('移动工具', [{ key: 'snap', label: '吸附步长', value: 0.05, min: 0, max: 1, off: true }], null, '步长配置随 P6 设置页接入。') }),
-      hbTodo('循环边', 'P2', 'edge', hbPanelSpec('循环边', [], null, '环选尚未接入（计划表 P2）。')),
-      hbTodo('环切', 'A12', 'edge', HB_PANEL.loopcut()),
+      hbItem('循环边', '双击', function () { selectEdgeLoopFromSelection(false); }, false, false, '', false, { icon: 'edge', panel: hbPanelSpec('循环边', [], null, '在边模式双击一条边即可选中整圈（四边面上按对边行走）。') }),
+      hbItem('环切', 'Ctrl+R', function () {
+        var msg = loopCutBlocked();
+        if (msg) { setStatus(msg, true); return; }
+        beginTool('tool.loopcut');
+      }, false, false, '', false, { icon: 'edge', panel: HB_PANEL.loopcut() }),
       hbTodo('倒角', 'A12', 'edge', hbPanelSpec('倒角', [], null, '边倒角尚未接入；请用面倒角（面模式）。')),
       hbTodo('桥接', 'A12', 'edge', hbPanelSpec('桥接', [], null, '边桥接尚未接入；请用面桥接（选中两个面）。')),
       hbTodo('删除边', 'B4', 'del', hbPanelSpec('删除边', [], null, '算子尚未接入（计划表 B4）。'))
@@ -3999,6 +4928,8 @@
       hbItem('倒角', '', function () { runOp('mesh.bevel'); }, false, false, '', false, { icon: 'face', panel: HB_PANEL.bevel() }),
       hbItem('桥接', '', function () { runOp('mesh.bridge'); }, false, false, '', false, { icon: 'face', panel: HB_PANEL.bridge() }),
       hbItem('添加分段', '', function () { runOp('mesh.subdivide'); }, false, false, '', false, { icon: 'face', panel: hbPanelSpec('添加分段', [], null, '把选中面切四份；Enter 提交。') }),
+      hbItem('三角转四边', '', function () { runOp('mesh.trisToQuads'); }, false, false, '', false,
+        { icon: 'face', panel: hbPanelSpec('三角转四边', [], null, '成对共边的三角并成四边面；UV 接缝 / 折叠处保持三角，面数不减少时会提示。') }),
       hbItem('删除面', 'Del', function () { runOp('mesh.deleteFaces'); }, false, false, '', false, { icon: 'del', panel: hbPanelSpec('删除面', [{ key: 'clean', label: '清理孤立点 (0/1)', value: 1, min: 0, max: 1, step: 1 }], null, '删掉选中的面，可选清理孤立顶点。') })
     ];
   }
@@ -4006,11 +4937,15 @@
   function hbCtxIsland() {
     return [
       hbItem('材质槽', '', function () { openTextureEditor(); }, false, false, '', false, { icon: 'view', panel: hbPanelSpec('材质槽 / 贴图', [], null, '在 3D 查看器里设置贴图（已接入）。') }),
-      hbTodo('展开', 'X5', 'island', HB_PANEL.uv('展开 UV', '角度阈值', '边距')),
-      hbTodo('排布', 'X5', 'island', HB_PANEL.uv('排布 UV', '间距', '旋转')),
-      hbTodo('分离', 'X5', 'island', HB_PANEL.uv('分离 UV', '缝隙', '—')),
-      hbTodo('缝合', 'X5', 'island', HB_PANEL.uv('缝合 UV', '阈值', '—')),
-      hbTodo('投影', 'X5', 'island', HB_PANEL.uv('UV 投影', '角度', '—'))
+      hbItem('展开', '', function () { openUVEditor(); uvCommand('unwrap'); }, false, false, '', false,
+        { icon: 'island', panel: hbPanelSpec('展开 UV', [], null, '打开 UV 编辑器并按壳的主平面拍平，然后装箱到 0–1。') }),
+      hbItem('排布', '', function () { openUVEditor(); uvCommand('pack'); }, false, false, '', false,
+        { icon: 'island', panel: hbPanelSpec('排布 UV', [], null, '货架装箱：按壳高度排序后从左到右摆进 0–1，间距 2%。') }),
+      hbTodo('分离', 'X5g', 'island', HB_PANEL.uv('分离 UV', '缝隙', '—')),
+      hbItem('缝合', '', function () { openUVEditor(); uvCommand('stitch'); }, false, false, '', false,
+        { icon: 'island', panel: hbPanelSpec('缝合 UV', [], null, '把 2% 容差内的选中 UV 点并到平均位置；先在 UV 编辑器里选点。') }),
+      hbItem('投影', '', function () { openUVEditor(); uvCommand('projBox'); }, false, false, '', false,
+        { icon: 'island', panel: hbPanelSpec('UV 投影', [], null, '盒式投影：按面法线主轴分到 6 个 tile，重新生成 UV。') })
     ];
   }
 
@@ -4046,6 +4981,8 @@
         hbItem('实体 + 线框', '', function () { setShading('shaded-wire'); }, st.shading === 'shaded-wire'),
         hbItem('实体', '', function () { setShading('shaded'); }, st.shading === 'shaded'),
         hbItem('线框', '', function () { setShading('wire'); }, st.shading === 'wire'),
+        hbItem('平涂', '', function () { setShading('flat'); }, st.shading === 'flat'),
+        hbItem('UV 岛着色', '', function () { setShading('uv'); }, st.shading === 'uv'),
         hbItem('四视图', '', function () { toggleQuad(); }, st.quad),
         hbItem('撤销', 'Ctrl+Z', function () { undo(); }),
         hbItem('重做', 'Ctrl+Y', function () { redo(); })
@@ -4254,7 +5191,7 @@
     var t = src.transform;
     var q = new THREE.Quaternion().fromArray(t.rotation);
     var step = new THREE.Vector3(offset, 0, 0).applyQuaternion(q);
-    return docEdit(count > 1 ? '复制对象 ×' + count : '复制对象', function () {
+    var ok = docEdit(count > 1 ? '复制对象 ×' + count : '复制对象', function () {
       var last = null;
       for (var i = 1; i <= count; i++) {
         last = SeedModel.Scene.addMeshNode(doc, {
@@ -4272,6 +5209,13 @@
       st.autoName = false;
       return true;
     });
+    /* 复制完选择落在副本上：多选集合也要换过来，否则开启单独显示时
+     * 会把「原对象 + 副本」一起定格。 */
+    if (ok) {
+      var cur = SeedModel.Scene.nodeOf(doc);
+      st.nodeIds = cur ? [cur.id] : [];
+    }
+    return ok;
   }
 
   function deleteActiveNode() {
@@ -4279,10 +5223,6 @@
     if (!doc) return false;
     var node = SeedModel.Scene.nodeOf(doc);
     if (!node) return false;
-    if (SeedModel.Scene.nodesOf(doc).length <= 1) {
-      setStatus('这是最后一个对象；要清空场景请用「新建」', true);
-      return false;
-    }
     var ok = docEdit('删除对象', function () {
       var removed = SeedModel.Scene.removeNode(doc, node.id);
       if (!removed) return false;
@@ -4290,11 +5230,18 @@
       if (next) SeedModel.Scene.setActiveNode(doc, next.id);
       return true;
     });
+    /* 删到空场景也是合法状态：节点没了，多选 / 组件选择都要跟着清，别留下失主 id */
+    var next = SeedModel.Scene.nodeOf(doc);
+    st.nodeIds = next ? [next.id] : [];
     st.sel = { vertexIds: [], edgeIds: [], faceIds: [] };
     syncSelectionDoc();
     paintSelection();
     syncGizmo();
-    setStatus(ok ? '已删除对象' : '删除失败（至少保留一个对象）');
+    var left = SeedModel.Scene.nodesOf(doc).length;
+    setStatus(ok
+      ? (left ? '已删除对象（剩 ' + left + ' 个对象，Ctrl+Z 可撤销）'
+        : '已删除对象（场景已空，可用「新建」再建一个，Ctrl+Z 可撤销）')
+      : '删除失败');
     return ok;
   }
 
@@ -4493,6 +5440,7 @@
 
     releaseView();
     st.autoName = true;
+    st.isolate = false;        /* 换文档就退出单独显示，别让旧状态把新场景藏起来 */
     st.prim = { shape: 'box', size: [1, 1, 1], seg: 16 };
     st.doc = SeedModel.Scene.createDoc({
       assetId: id,
@@ -4502,6 +5450,7 @@
       historyBoundary: { historyResetReason: 'new' }
     });
     st.node = SeedModel.Scene.nodeOf(st.doc);
+    st.nodeIds = st.node ? [st.node.id] : [];
     st.selMode = 'object';
     st.sel = { vertexIds: [], edgeIds: [], faceIds: [] };
     st.selected = 0;
@@ -4614,7 +5563,7 @@
       if (geo && geo.dispose) geo.dispose();
     }
     if (!mesh) { setStatus('网格构建失败', true); return false; }
-    /* 把新网格先登记进 meshStore，否则 snap() 不会存它的指纹、撤销回不到几何 */
+    /* 把新网格先登记进历史模块的副本表，否则 snap() 不会存它的指纹、撤销回不到几何 */
     ensureMeshCopy(mesh);
     var auto = st.autoName || nameIsAuto();
     var ok = docEdit('新建' + meta.name, function () {
@@ -4654,8 +5603,100 @@
   }
 
   /* 普通 GLB / OBJ（模型库、Tripo 等外部产物）：没有 seedModel，就地把几何烘成可编辑网格。
-   * 每个 Mesh 拆成一条文档节点，世界变换烘进顶点，节点变换保持单位阵；
-   * 材质按对象取一个槽，颜色跟着进 slotColors（不导入贴图）。 */
+   * 世界变换烘进顶点，节点变换保持单位阵；材质按对象取一个槽，颜色跟着进 slotColors（不导入贴图）。
+   *
+   * 同一个物体常被导出器拆成多块**同名**网格（16 位索引 65535 顶点上限、或按材质拆 primitive）。
+   * 直接「一个 Mesh 一个节点」会让大纲里出现两个 Body，移动一个只带动半个身体。
+   * 所以先按「名字 + 材质槽」分组：同组碎片拼成一份几何再 weld（共享边并点、跨块合并四边形）
+   * 成一个节点；不同材质仍分开（合并会把面槽揉乱）；合起来超面数上限时退回分块，
+   * 免得整份资产因为超限而导不进来。 */
+  function triCountOf(geo) {
+    if (!geo) return 0;
+    var index = geo.getIndex ? geo.getIndex() : null;
+    var pos = geo.getAttribute ? geo.getAttribute('position') : null;
+    return index ? Math.floor(index.count / 3) : (pos ? Math.floor(pos.count / 3) : 0);
+  }
+
+  /* clone 后烘矩阵：Model3D 的缓存里几何是共享的，直接 applyMatrix4 会污染缓存 */
+  function bakeImportGeometry(o) {
+    var geo = o.geometry.clone();
+    geo.applyMatrix4(o.matrixWorld);
+    return geo;
+  }
+
+  /* 碎片拼成一份非索引几何：只留 position / uv，法线由 SeedMesh 重算（导入本来就不认原法线）。 */
+  function concatImportGeometries(geos) {
+    var flat = [], temp = [];
+    geos.forEach(function (g) {
+      if (g.index && typeof g.toNonIndexed === 'function') {
+        var ng = g.toNonIndexed();
+        flat.push(ng);
+        temp.push(ng);
+      } else {
+        flat.push(g);
+      }
+    });
+    var total = 0, hasUv = false;
+    flat.forEach(function (g) {
+      total += g.getAttribute('position').count;
+      if (g.getAttribute('uv')) hasUv = true;
+    });
+    var pos = new Float32Array(total * 3);
+    var uv = hasUv ? new Float32Array(total * 2) : null;
+    var off = 0;
+    flat.forEach(function (g) {
+      var p = g.getAttribute('position');
+      for (var i = 0; i < p.count; i++) {
+        pos[(off + i) * 3] = p.getX(i);
+        pos[(off + i) * 3 + 1] = p.getY(i);
+        pos[(off + i) * 3 + 2] = p.getZ(i);
+      }
+      /* 缺 UV 的碎片补 0：不能让 uvs 数组和面角数量对不上 */
+      var t = g.getAttribute('uv');
+      if (uv && t) {
+        for (var k = 0; k < t.count; k++) {
+          uv[(off + k) * 2] = t.getX(k);
+          uv[(off + k) * 2 + 1] = t.getY(k);
+        }
+      }
+      off += p.count;
+    });
+    temp.forEach(function (g) { g.dispose(); });
+    var out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    if (uv) out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    return out;
+  }
+
+  /* 把材质上的基础色贴图压成 data URL：导入模型只有贴图没有槽色时，
+   * 不抽这一张就只能看到一片灰。上限 1024，够看清颜色又不至于把文档撑爆。 */
+  function textureDataURL(tex) {
+    return new Promise(function (resolve) {
+      var img = tex && tex.image;
+      var w = img && (img.width || img.videoWidth);
+      var h = img && (img.height || img.videoHeight);
+      if (!w || !h) return resolve('');
+      var scale = Math.min(1, 1024 / Math.max(w, h));
+      var cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(w * scale));
+      cv.height = Math.max(1, Math.round(h * scale));
+      var ctx = cv.getContext('2d');
+      try {
+        /* glTF / FBX 的贴图约定 v=0 在图片顶部（flipY=false），而 TextureLoader 默认
+         * 当成底部。这里在编码时就把图像上下翻过来，读取端沿用默认 flipY 才不会上下颠倒。 */
+        if (tex.flipY === false) {
+          ctx.translate(0, cv.height);
+          ctx.scale(1, -1);
+        }
+        ctx.drawImage(img, 0, 0, cv.width, cv.height);
+        resolve(cv.toDataURL('image/jpeg', 0.85));
+      } catch (e) {
+        /* 跨域贴图会 taint canvas，抽不出来就退回槽色 */
+        resolve('');
+      }
+    });
+  }
+
   async function importPlainModel(src, name) {
     var m3 = global.Model3D;
     if (!m3 || typeof m3.load !== 'function') throw new Error('3D 解析器未就绪，无法导入');
@@ -4673,35 +5714,77 @@
     });
     if (!parts.length) throw new Error('这个模型里没有可编辑的网格');
 
-    var slotNames = [], slotColors = [], slotKeys = [];
+    var slotNames = [], slotColors = [], slotKeys = [], slotMats = [];
     function slotOf(mat) {
       var nm = (mat && mat.name) || '默认材质';
       var col = (mat && mat.color && mat.color.isColor) ? '#' + mat.color.getHexString() : '#c9ccd4';
       var key = nm + '|' + col;
       var i = slotKeys.indexOf(key);
-      if (i < 0) { i = slotKeys.length; slotKeys.push(key); slotNames.push(nm); slotColors.push(col); }
+      if (i < 0) {
+        i = slotKeys.length;
+        slotKeys.push(key);
+        slotNames.push(nm);
+        slotColors.push(col);
+        slotMats.push(mat);
+      }
       return i;
     }
 
-    var built = parts.map(function (o) {
+    /* 先按「网格名 + 材质槽」分组：同名同材质的碎片是同一个物体被导出器拆开的。
+     * GLTFLoader 会给重名节点自动加 _1 / _2 后缀（three 的 createUniqueName），
+     * 所以名字要先剥掉这层后缀再比 —— 否则 GLB 的同名碎片永远合不起来。 */
+    function nameKeyOf(nm) {
+      var m = /^(.+)_(\d+)$/.exec(nm);
+      return m ? m[1] : nm;
+    }
+    var groups = [], gmap = Object.create(null);
+    parts.forEach(function (o) {
       var mat = Array.isArray(o.material) ? o.material[0] : o.material;
       var slot = slotOf(mat);
-      /* clone 后烘矩阵：Model3D 的缓存里几何是共享的，直接 applyMatrix4 会污染缓存 */
-      var geo = o.geometry.clone();
-      geo.applyMatrix4(o.matrixWorld);
+      var nm = String(o.name || '');
+      var base = nameKeyOf(nm);
+      var key = base + '\u0000' + slot;
+      var g = gmap[key];
+      if (!g) { g = gmap[key] = { name: nm, base: base, slot: slot, parts: [] }; groups.push(g); }
+      g.parts.push(o);
+    });
+
+    /* 合起来会撞面数上限的，宁可保持分块：报错会让整份资产都导不进来 */
+    var cap = SeedModel.Mesh.MAX_FACES || 50000;
+    var jobs = [];
+    groups.forEach(function (g) {
+      if (g.parts.length === 1) { jobs.push(g); return; }
+      var tris = 0;
+      g.parts.forEach(function (o) { tris += triCountOf(o.geometry); });
+      if (tris > cap) {
+        g.parts.forEach(function (o) { jobs.push({ name: g.name, base: g.base, slot: g.slot, parts: [o] }); });
+      } else {
+        jobs.push(g);
+      }
+    });
+
+    var built = jobs.map(function (g) {
+      var geos = g.parts.map(bakeImportGeometry);
+      var geo = geos.length === 1 ? geos[0] : concatImportGeometries(geos);
+      if (geos.length > 1) geos.forEach(function (x) { x.dispose(); });
       var mesh;
-      try { mesh = SeedModel.Mesh.fromBufferGeometry(geo, { slot: slot }); }
-      catch (e) { throw new Error((o.name || '网格') + '：' + ((e && e.message) || e)); }
+      try { mesh = SeedModel.Mesh.fromBufferGeometry(geo, { slot: g.slot }); }
+      catch (e) { throw new Error((g.name || '网格') + '：' + ((e && e.message) || e)); }
       geo.dispose();
-      return { name: o.name || '', mesh: mesh };
+      /* 合并后的节点用去掉后缀的原名；单独一块就保留它自己的名字 */
+      return { name: g.parts.length > 1 ? (g.base || g.name) : g.name, mesh: mesh };
     });
 
     var title = String(name || '').replace(/\.(glb|gltf|obj|fbx)$/i, '') || '导入模型';
+    /* 贴图抽取放在分块之后：一个槽只留第一张基础色贴图，避免同名材质重复编码 */
+    var slotMaps = await Promise.all(slotMats.map(function (mm) {
+      return textureDataURL(mm && mm.map);
+    }));
     var doc = SeedModel.Scene.createDoc({
       name: title,
       mesh: built[0].mesh,
       nodeName: built[0].name || title,
-      materials: { slotNames: slotNames, slotColors: slotColors }
+      materials: { slotNames: slotNames, slotColors: slotColors, slotMaps: slotMaps }
     });
     var firstNode = SeedModel.Scene.nodeOf(doc);
     firstNode.materialSlots = slotNames.slice();
@@ -4714,6 +5797,64 @@
     }
     SeedModel.Scene.setActiveNode(doc, firstNode.id);
     return doc;
+  }
+
+  /* 老资产补色：v2.0 的 seedModel 只存了槽名，没存 slotColors（打开后整只模型都是默认灰）。
+   * 这里从 GLB 自己的材质把显示色 / 基础色贴图补回来：先按材质名配，配不上按槽顺序。
+   * fillFrom = 文档里已有的有效槽色数量，只补它后面的，别覆盖用户改过的颜色。 */
+  async function backfillMaterials(doc, dataURL, fillFrom) {
+    var mats = doc && doc.materials;
+    var names = (mats && mats.slotNames) || [];
+    if (!names.length) return false;
+    var m3 = global.Model3D;
+    if (!m3 || typeof m3.load !== 'function') return false;
+    var model;
+    try { model = await m3.load(dataURL); } catch (e) { return false; }
+    var found = [], byName = Object.create(null);
+    model.root.updateMatrixWorld(true);
+    model.root.traverse(function (o) {
+      if (!o.isMesh || !o.material) return;
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (mm) {
+        if (!mm) return;
+        var nm = String(mm.name || '');
+        if (nm && byName[nm] == null) byName[nm] = found.length;
+        found.push(mm);
+      });
+    });
+    if (!found.length) return false;
+
+    var colors = (mats.slotColors || []).slice();
+    var maps = (mats.slotMaps || []).slice();
+    var picks = [], jobs = [];
+    for (var i = 0; i < names.length; i++) {
+      var idx = byName[names[i]];
+      var mm = idx != null ? found[idx] : (i < found.length ? found[i] : null);
+      picks.push(mm);
+      /* 槽色已经有的不覆盖；贴图缺的仍然补（老文档根本没写过 slotMaps） */
+      if (mm && !maps[i]) jobs.push(i);
+    }
+    /* 贴图抽成 data URL 是异步的，先并发编码再统一写回，避免逐张 await 拖慢打开 */
+    var extracted = await Promise.all(jobs.map(function (j) {
+      return textureDataURL(picks[j] && picks[j].map);
+    }));
+    var changed = false;
+    for (var q = 0; q < names.length; q++) {
+      var mm2 = picks[q];
+      if (!mm2 || q < fillFrom) continue;
+      if (mm2.color && mm2.color.isColor) colors[q] = '#' + mm2.color.getHexString();
+      else if (typeof mm2.color === 'number') colors[q] = '#' + new THREE.Color(mm2.color).getHexString();
+      else colors[q] = '#c9ccd4';
+      changed = true;
+    }
+    jobs.forEach(function (j, k) {
+      if (extracted[k]) { maps[j] = extracted[k]; changed = true; }
+    });
+    if (!changed) return false;
+    while (colors.length < names.length) colors.push('#c9ccd4');
+    while (maps.length < names.length) maps.push('');
+    mats.slotColors = colors.slice(0, names.length);
+    mats.slotMaps = maps.slice(0, names.length);
+    return true;
   }
 
   function assetNameOf(id) {
@@ -4755,6 +5896,17 @@
       doc = v.doc;
       warn = (v.warnings || []).join('；');
     }
+    /* 老文档（v2.0 只写了槽名、没写槽色/槽贴图）打开后整只模型是默认灰：
+     * 从 GLB 自己的材质把颜色和基础色贴图补回来。v1 烘焙时颜色已经写进文档，不动。 */
+    if (!converted && doc.materials && doc.materials.slotNames.length) {
+      var rawMats = raw.materials || {};
+      var haveColors = Array.isArray(rawMats.slotColors) ? rawMats.slotColors.length : 0;
+      var haveMaps = Array.isArray(rawMats.slotMaps) ? rawMats.slotMaps.filter(Boolean).length : 0;
+      if (haveColors < doc.materials.slotNames.length || haveMaps < doc.materials.slotNames.length) {
+        var filled = await backfillMaterials(doc, r.dataURL, haveColors);
+        if (filled) warn = (warn ? warn + '；' : '') + '已从原模型补回材质颜色';
+      }
+    }
     return { id: id, raw: raw, doc: doc, converted: converted, warn: warn };
   }
 
@@ -4777,7 +5929,9 @@
 
     releaseView();
     st.doc = doc;
+    st.isolate = false;        /* 打开新资产时回到全场景显示 */
     st.node = SeedModel.Scene.nodeOf(doc);
+    st.nodeIds = st.node ? [st.node.id] : [];
     st.mesh = SeedModel.Scene.getMesh(doc);
     loadSelection(doc);
     st.autoName = false;
@@ -4973,11 +6127,25 @@
       root.add(makePivotFor(n, mesh, false));
     });
     if (!root.children.length && st.mesh) root.add(makePivotFor(st.node, st.mesh, false));
+    /* 视口贴图只用于显示：真源在 seedModel.materials.slotMaps 里，GLB 主材质不再塞一份。
+     * 另外贴图是异步解码的，打开后立刻保存时 image 可能还没到，GLTFExporter 会直接抛
+     * 「No valid image data found」—— 导出前摘掉，两个问题一起解决。 */
+    root.traverse(function (o) {
+      if (!o.userData || o.userData.mdPart !== 'solid' || !o.material) return;
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m) {
+        if (m && m.map) {
+          disposeMap(m);
+          m.map = null;
+          m.needsUpdate = true;
+        }
+      });
+    });
     return root;
   }
 
   async function currentGLB() {
-    if (!st.doc || !st.mesh) throw new Error('还没有网格');
+    /* 空场景也允许导出：GLB 里只有 scene 与 seedModel，重开时按空文档还原 */
+    if (!st.doc) throw new Error('还没有文档');
     var root = buildExportRoot();
     try {
       return await exportGLB(root);
@@ -5112,6 +6280,41 @@
     }
   }
 
+  /* ============================================================
+   * UV 编辑器（X5a–X5e）
+   * ------------------------------------------------------------
+   * 对应截图里的 Maya UV 编辑器：浮动窗口 / 11 个菜单 / 工具栏 /
+   * 带标尺与 0–1 网格的二维画布 / 右侧「UV 工具包」折叠组。
+   *
+   * 分工：
+   *   - js/seed-uv.js：点分组、拾取、岛、变换、投影、展开、排布（纯函数）
+   *   - 这一段：窗口 DOM、画布绘制、指针交互、与 3D 选择联动、历史
+   *
+   * 铁律：
+   *   - 拖动过程中只改 uvs + 重画画布，不 bump、不记历史（每帧 clone 会卡）
+   *   - 松手时 bump 一次，再 pushHistory（before 在按下时 snap）
+   *   - UV 改动不进 rebuildModel：3D 几何不读 UV，没必要重建
+   * ============================================================ */
+
+  /* ---------------- UV 编辑器（已拆到 js/md-uv-editor.js） ---------------- */
+  /* 外壳只留一层门面：内部仍用同一份 st.uv 状态，原来的调用点一行都不用改。 */
+  var UVED = global.MDUvEditor.create({
+    st: st, $: $, esc: esc, SeedModel: SeedModel,
+    setStatus: setStatus, updateChrome: updateChrome, updateHud: updateHud,
+    undo: undo, redo: redo, snap: snap, pushHistory: pushHistory,
+    paintAll: paintAll, paintSelection: paintSelection, applyShading: applyShading,
+    syncSelectionDoc: syncSelectionDoc, islandFacesOf: islandFacesOf
+  });
+  function openUVEditor() { return UVED.open(); }
+  function closeUVEditor() { return UVED.close(); }
+  function uvCommand(cmd) { return UVED.command(cmd); }
+  function uvRefresh() { return UVED.refresh(); }
+  function uvToast(text, isErr) { return UVED.toast(text, isErr); }
+  /* 下面两个是外壳自己的调用点（getState / 绘画起笔）用到的查询，转发给模块。 */
+  function uvSelectedFaceIds() { return UVED.selectedFaceIds(); }
+  function uvRefreshSolidGeometry() { return UVED.refreshSolidGeometry(); }
+
+
   global.modelDesk = {
     open: open,
     openAsset: openAsset,
@@ -5152,6 +6355,14 @@
         space: st.space,
         snap: st.snap,
         shading: st.shading,
+        /* 单独显示：探针按 isolate / visibleObjects 断言隔离真的只留一个对象 */
+        isolate: !!st.isolate,
+        /* 组件隔离：面 / 岛选择下只显示替身网格 */
+        isoComp: !!st.isoComp,
+        isoFaces: st.isoFaceCount || 0,
+        visibleObjects: st.pivots ? Object.keys(st.pivots).filter(function (id) {
+          return st.pivots[id] && st.pivots[id].visible;
+        }).length : 0,
         quad: st.quad,
         quadActive: st.quadActive,
         quadMax: st.quadMax,
@@ -5162,7 +6373,7 @@
         redo: st.history.redo.length,
         historyBytes: st.history.bytes,
         meshHash: meshHashOf(st.mesh),
-        meshStates: Object.keys(meshStore).length,
+        meshStates: HIST.meshStates(),
         nodeCount: st.doc ? SeedModel.Scene.nodesOf(st.doc).length : 0,
         /* 视口里真实挂出来的 pivot 数（多对象渲染的回归口径：必须 == nodeCount） */
         sceneObjects: st.pivots ? Object.keys(st.pivots).length : 0,
@@ -5203,7 +6414,57 @@
         slotNames: st.doc ? st.doc.materials.slotNames.slice() : [],
         exposure: st.renderer ? st.renderer.toneMappingExposure : null,
         toneMapping: st.renderer ? st.renderer.toneMapping : null,
-        toneMappingName: (st.prefs || prefs()).toneMapping
+        toneMappingName: (st.prefs || prefs()).toneMapping,
+        /* X5a–X5e：UV 编辑器状态（探针断言用） */
+        uvOpen: !!st.uv.open,
+        uvMode: st.uv.mode,
+        uvTransform: st.uv.transform,
+        uvGrid: !!(st.uv.open && st.uv.grid),
+        uvRuler: !!(st.uv.open && st.uv.ruler),
+        uvSnap: !!(st.uv.open && st.uv.snap),
+        uvTex: !!(st.uv.open && st.uv.tex),
+        uvSelCorners: st.uv.open ? st.uv.corners.length : 0,
+        uvSelFaces: st.uv.open ? uvSelectedFaceIds().length : 0,
+        uvIslands: (st.mesh && SeedModel.Mesh) ? SeedModel.Mesh.uvIslands(st.mesh).islands.length : 0,
+        uvSeams: (st.mesh && SeedModel.Mesh) ? SeedModel.Mesh.seamCount(st.mesh) : 0,
+        uvImage: !!(st.uv.open && st.uv.img),
+        uvImageName: st.uv.open ? st.uv.imgName : '',
+        uvMap: !!(st.uv.open && st.uv.mapImg),
+        uvMapName: st.uv.open ? st.uv.mapName : '',
+        uvMapOn: !!(st.uv.open && st.uv.mapOn && st.uv.mapImg),
+        uvScale: st.uv.open ? st.uv.scale : 0,
+        uvView: { cu: st.uv.cu, cv: st.uv.cv, scale: st.uv.scale },
+        /* 右侧工具箱页签 + 绘画笔刷（探针用它断言状态，不点 UI 也能读） */
+        tbKind: st.tbKind,
+        brush: st.paint.brush,
+        brushSize: st.paint.size,
+        brushColor: st.paint.color,
+        brushOpacity: st.paint.opacity,
+        paintSlot: st.paint.slot,
+        paintMask: st.paint.mask,
+        paintClipped: st.paint.clipped,
+        paintClipPolys: st.paint.clipPolys
+      };
+    },
+    /* X5：UV 编辑器入口（Shelf 图标 / 探针 / 快捷键都走这里） */
+    openUVEditor: openUVEditor,
+    closeUVEditor: closeUVEditor,
+    uvCommand: uvCommand,
+    uvState: function () {
+      return {
+        open: !!st.uv.open,
+        mode: st.uv.mode,
+        transform: st.uv.transform,
+        grid: st.uv.grid,
+        ruler: st.uv.ruler,
+        snap: st.uv.snap,
+        tex: st.uv.tex,
+        image: st.uv.imgName || '',
+        seams: st.mesh ? SeedModel.Mesh.seamCount(st.mesh) : 0,
+        corners: st.uv.corners.slice(),
+        faces: uvSelectedFaceIds(),
+        view: { cu: st.uv.cu, cv: st.uv.cv, scale: st.uv.scale },
+        canvas: st.uv.canvas ? { w: st.uv.canvas.clientWidth, h: st.uv.canvas.clientHeight } : null
       };
     },
     /* V1：渲染风格是应用级配置，改完立刻生效并落 localStorage（P6 搬进设置页） */
@@ -5254,6 +6515,8 @@
         lights: st.lights,
         cube: st.cube,
         pivots: st.pivots,
+        extrudeGizmo: st.extrudeGizmo,
+        uv: st.uv,
         mesh: st.mesh, doc: st.doc
       };
     }

@@ -749,7 +749,7 @@
 				if ( scope.enabled === false ) return;
 				if ( pointers.length === 0 ) {
 
-					scope.domElement.setPointerCapture( event.pointerId );
+					try { scope.domElement.setPointerCapture( event.pointerId ); } catch ( e ) { /* 合成事件没有活动指针，捕获失败不影响导航 */ }
 					scope.domElement.addEventListener( 'pointermove', onPointerMove );
 					scope.domElement.addEventListener( 'pointerup', onPointerUp );
 
