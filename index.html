@@ -26,6 +26,8 @@
 <link rel="stylesheet" href="css/12-modeldesk.css">
 <!-- 设置面板的样式：新壳 .settings2 + 总览状态卡。旧 .settings.xp 那 133 行已随拆分删除 -->
 <link rel="stylesheet" href="css/settings.css">
+<!-- 图像工坊：PS 类多图层工作站，只作用于 .os-win.imglab -->
+<link rel="stylesheet" href="css/13-imagelab.css">
 </head>
 <body>
 
@@ -468,6 +470,19 @@
       </div>
       <div class="os-win-body">
         <div id="modelDeskHost" class="md-host"></div>
+      </div>
+    </div>
+
+    <!-- 图像工坊：对标 Photoshop 的多图层图像工作站。
+         窗口常驻，界面与像素逻辑由 js/ps-app.js / ps-core.js 等铺开。 -->
+    <div class="os-win imglab hidden" id="imgLabWin">
+      <div class="os-win-bar">
+        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="os-win-title">图像工坊</div>
+        <button class="os-win-close" id="btnImgLabClose" aria-label="关闭窗口" title="关闭">×</button>
+      </div>
+      <div class="os-win-body">
+        <div class="ps-host" id="psHost"></div>
       </div>
     </div>
 
@@ -1520,6 +1535,8 @@
 <script src="vendor/OrbitControls.js"></script>
 <script src="vendor/GLTFExporter.js"></script>
 <script src="js/model3d.js"></script>
+<!-- 纹理混合算法：模型库插槽面板与建模 App 绘画工具箱共用 -->
+<script src="js/tex-blend.js"></script>
 <script src="js/m3d-slots.js"></script>
 <script src="js/m3d-preview.js"></script>
 <script src="js/svgtex.js"></script>
@@ -1540,6 +1557,7 @@
 <script src="js/model-document.js"></script>
 <script src="js/seed-glb-meta.js"></script>
 <script src="js/seed-mesh-core.js"></script>
+<script src="js/seed-modifiers.js"></script>
 <script src="js/seed-evaluator.js"></script>
 <script src="js/seed-model-scene.js"></script>
 <script src="js/seed-selection.js"></script>
@@ -1554,8 +1572,10 @@
 <script src="js/md-uv-editor.js"></script>
 <script src="js/md-isolate.js"></script>
 <script src="js/md-paint.js"></script>
+<script src="js/md-texmix.js"></script>
 <script src="js/md-history.js"></script>
 <script src="js/md-viewcube.js"></script>
+<script src="js/md-objops.js"></script>
 <script src="js/model-desk.js"></script>
 <script src="js/silhouette.js"></script>
 <script src="js/svgshapes.js"></script>
@@ -1574,6 +1594,12 @@
 <script src="js/comfy-app.js"></script>
 <script src="js/library.js"></script>
 <script src="js/image-editor.js"></script>
+<!-- 图像工坊：内核 → 视口 → 滤镜 → 工具 → 外壳（顺序不能调，各层按此依赖） -->
+<script src="js/ps-core.js"></script>
+<script src="js/ps-view.js"></script>
+<script src="js/ps-filters.js"></script>
+<script src="js/ps-tools.js"></script>
+<script src="js/ps-app.js"></script>
 <script src="js/gateway-client.js"></script>
 <script src="js/chat-client.js"></script>
 <script src="js/workbench.js"></script>

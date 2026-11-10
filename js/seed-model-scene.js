@@ -515,6 +515,106 @@
     return true;
   }
 
+  /* ---------------- 材质槽（P5）
+   * 槽名 / 显示色 / 基础贴图三份数组必须同长：少一份，视口里就会冒出「没有名字的槽」。
+   * 删槽要连 faceSlots 一起重排，否则残留的旧下标会指向空槽（渲染时多出一套默认材质）。 */
+
+  function slotNamesOf(doc) {
+    if (!doc) return [];
+    doc.materials = doc.materials || {};
+    if (!Array.isArray(doc.materials.slotNames)) doc.materials.slotNames = [];
+    if (!Array.isArray(doc.materials.slotColors)) doc.materials.slotColors = [];
+    if (!Array.isArray(doc.materials.slotMaps)) doc.materials.slotMaps = [];
+    return doc.materials.slotNames;
+  }
+  function syncSlotNamesToNodes(doc) {
+    var names = (doc && doc.materials && doc.materials.slotNames) || [];
+    (doc.nodes || []).forEach(function (n) { n.materialSlots = names.slice(); });
+  }
+  function slotArray(doc, key) {
+    doc.materials = doc.materials || {};
+    if (!Array.isArray(doc.materials[key])) doc.materials[key] = [];
+    return doc.materials[key];
+  }
+  function addSlot(doc, opts) {
+    opts = opts || {};
+    if (!doc) return -1;
+    var names = slotNamesOf(doc);
+    var colors = slotArray(doc, 'slotColors');
+    var maps = slotArray(doc, 'slotMaps');
+    var name = str(opts.name, '插槽 ' + (names.length + 1)).slice(0, 60);
+    names.push(name);
+    colors.push(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(opts.color || '')) ? opts.color : '#c9ccd4');
+    maps.push('');
+    syncSlotNamesToNodes(doc);
+    return names.length - 1;
+  }
+  function renameSlot(doc, index, name) {
+    if (!doc) return false;
+    var names = slotNamesOf(doc);
+    index = Math.round(Number(index));
+    if (!(index >= 0 && index < names.length)) return false;
+    var s = str(name, '').slice(0, 60);
+    if (!s || s === names[index]) return false;
+    names[index] = s;
+    syncSlotNamesToNodes(doc);
+    return true;
+  }
+  function removeSlot(doc, index) {
+    if (!doc) return false;
+    var names = slotNamesOf(doc);
+    index = Math.round(Number(index));
+    if (!(index >= 0 && index < names.length)) return false;
+    /* 至少留一个槽：零槽文档会让「槽名 → 贴图 key」整条链没有落点 */
+    if (names.length <= 1) return false;
+    names.splice(index, 1);
+    var colors = slotArray(doc, 'slotColors');
+    var maps = slotArray(doc, 'slotMaps');
+    if (colors.length > index) colors.splice(index, 1);
+    if (maps.length > index) maps.splice(index, 1);
+    /* 每个 meshRef 只重排一次：两个节点共用一份网格时不能算两遍 */
+    var seen = Object.create(null);
+    (doc.nodes || []).forEach(function (n) {
+      var ref = n.meshRef || MESH_REF;
+      if (seen[ref]) return;
+      seen[ref] = 1;
+      var mesh = null;
+      try { mesh = getMesh(doc, n); } catch (e) { mesh = null; }
+      if (!mesh || !mesh.faceSlots) return;
+      for (var i = 0; i < mesh.faceSlots.length; i++) {
+        var s = mesh.faceSlots[i] || 0;
+        if (s === index) mesh.faceSlots[i] = 0;
+        else if (s > index) mesh.faceSlots[i] = s - 1;
+      }
+      M.Mesh.bump(mesh);
+      setMesh(doc, mesh, n);
+    });
+    syncSlotNamesToNodes(doc);
+    return true;
+  }
+  /* 把一组面的稳定 ID 指派到某槽；返回实际改动的面数（0 = 本来就在该槽）。 */
+  function assignSlot(doc, node, faceIds, slot) {
+    if (!doc || !Array.isArray(faceIds) || !faceIds.length) return 0;
+    node = node || nodeOf(doc);
+    var mesh = getMesh(doc, node);
+    if (!mesh) return 0;
+    var slotMax = Math.max(0, slotNamesOf(doc).length - 1);
+    slot = Math.max(0, Math.min(slotMax, Math.round(Number(slot) || 0)));
+    var changed = 0;
+    for (var i = 0; i < faceIds.length; i++) {
+      var k = mesh.faceIds.indexOf(faceIds[i]);
+      if (k < 0) continue;
+      if ((mesh.faceSlots[k] || 0) === slot) continue;
+      mesh.faceSlots[k] = slot;
+      changed += 1;
+    }
+    if (changed) {
+      M.Mesh.bump(mesh);
+      setMesh(doc, mesh, node);
+    }
+    return changed;
+  }
+
   function revision(doc, kind) {
     if (!doc) return doc;
     if (!doc.revision) doc.revision = revisionOf(null);
@@ -600,6 +700,10 @@
     setActiveNode: setActiveNode,
     addMeshNode: addMeshNode,
     removeNode: removeNode,
+    addSlot: addSlot,
+    renameSlot: renameSlot,
+    removeSlot: removeSlot,
+    assignSlot: assignSlot,
     meshIds: meshIds,
     meshIdOfNode: meshIdOfNode,
     stats: stats,

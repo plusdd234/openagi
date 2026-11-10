@@ -257,6 +257,12 @@
 
     function openUVEditor() {
       if (!st.doc || !st.mesh) { setStatus('UV 编辑器：先新建或打开一个模型', true); return false; }
+      /* 修改器生效时 st.mesh 是求值网格（缓存共享），UV 命令会原地改 uvs 写坏它。
+       * 要么先应用修改器，要么删掉修改器；不做「偷偷把求值结果当 base」。 */
+      if (ctx.nodeModsActive && ctx.nodeModsActive(st.node)) {
+        setStatus('UV 编辑器：该对象有修改器，先「应用修改器」或删掉修改器，再编辑 UV', true);
+        return false;
+      }
       if (st.uv.win) {
         st.uv.win.classList.add('pulse');
         setTimeout(function () { if (st.uv.win) st.uv.win.classList.remove('pulse'); }, 260);

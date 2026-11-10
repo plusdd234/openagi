@@ -56,22 +56,12 @@
     /* 合成画布长边上限：结果要内嵌进 GLB，4096 会让文件翻几倍，2048 已经够看 */
     var MIX_MAX_SIDE = 2048;
 
-    /* 混合模式 → canvas 合成算子。名字沿用设计软件的说法；
-     * 「相加」用 lighter——它既是唯一会让结果整体变亮的模式，也是发光层要的效果。 */
-    var BLEND_MODES = [
-      { key: 'normal', label: '正常', op: 'source-over' },
-      { key: 'multiply', label: '正片叠底', op: 'multiply' },
-      { key: 'screen', label: '滤色', op: 'screen' },
-      { key: 'overlay', label: '叠加', op: 'overlay' },
-      { key: 'softlight', label: '柔光', op: 'soft-light' },
-      { key: 'add', label: '相加', op: 'lighter' },
-      { key: 'darken', label: '变暗', op: 'darken' },
-      { key: 'lighten', label: '变亮', op: 'lighten' }
-    ];
-    function blendOp(key) {
-      for (var i = 0; i < BLEND_MODES.length; i++) if (BLEND_MODES[i].key === key) return BLEND_MODES[i].op;
-      return 'source-over';
-    }
+    /* 混合算法与建模 App 的绘画工具箱共用一份（js/tex-blend.js）：
+     * 同一个配置在模型库和建模 App 里必须混出同一张图，不能各写一套。 */
+    var TB = global.TexBlend;
+    var BLEND_MODES = TB.BLEND_MODES;
+    var blendOp = TB.blendOp;
+    var maskAlpha = TB.maskAlpha;
 
     /* ---------------- 贴图配置持久化 ----------------
      * 资产库里的模型只存几何，贴图/遮罩是「查看器里的设置」，关掉窗口就没了。
@@ -196,95 +186,14 @@
      * 为什么不在着色器里混：GLB 导出只认 mat.map 这一张图。用 onBeforeCompile 混出来的
      * 只有视口里好看，导出后是空的——「所见即所得」就断了。
      * 所以这里把每层按「比例 + 遮罩 + 混合模式」烘进一张 canvas，再当贴图用：
-     * 视口、缩略图、GLB 内嵌图三处永远是同一张，不存在「预览对了导出不对」。 */
+     * 视口、缩略图、GLB 内嵌图三处永远是同一张，不存在「预览对了导出不对」。
+     * 具体像素算法在 js/tex-blend.js（建模 App 的绘画工具箱也用同一份）。 */
     function mixSize(slot) {
-      var base = slot.baseTex && slot.baseTex.image;
-      var W = (base && base.width) ? base.width : 0;
-      var H = (base && base.height) ? base.height : 0;
-      if (!W || !H) {
-        var ls = slot.layers || [];
-        for (var i = 0; i < ls.length; i++) {
-          var im = ls[i] && ls[i].img;
-          if (im && im.width) { W = im.width; H = im.height; break; }
-        }
-      }
-      if (!W || !H) { W = H = 1024; }
-      /* 保持长宽比等比压到上限：贴图必须和基础层同一个 UV 比例，改比例会整片拉伸 */
-      var sc = Math.min(1, MIX_MAX_SIDE / Math.max(W, H));
-      return { w: Math.max(4, Math.round(W * sc)), h: Math.max(4, Math.round(H * sc)) };
+      return TB.mixSize({ baseImg: slot.baseTex && slot.baseTex.image, layers: slot.layers }, MIX_MAX_SIDE);
     }
-
-    /* 遮罩 → alpha 图。约定「白=显示、黑=隐藏」，跟常见灰度遮罩一致；
-     * 透明区域一律算隐藏（白色形状 + 透明底 的 PNG 不会整片糊上去）。
-     * 反相只翻灰度、不动透明度——否则透明底会变成整块不透明，层直接消失。
-     * 按「尺寸 + 反相 + 是否上下翻」缓存：拖滑杆时每帧都重算像素会卡。 */
-    function maskAlpha(rec, w, h, flip) {
-      /* 手绘遮罩本身就是「透明底 + 白色笔迹」，等于一张现成的 alpha 图；
-       * 尺寸和合成画布一致、又不反相时直接拿去用。拖动笔刷时这就省掉了
-       * 每帧对整张 1024/2048 贴图做一次 getImageData 的开销。 */
-      if (rec.__direct && !rec.invert && !flip &&
-          rec.img && rec.img.width === w && rec.img.height === h) return rec.img;
-      if (!rec.__mc) rec.__mc = {};
-      var key = w + 'x' + h + (rec.invert ? 'i' : '') + (flip ? 'f' : '');
-      if (rec.__mc[key]) return rec.__mc[key];
-      var cv = document.createElement('canvas');
-      cv.width = w; cv.height = h;
-      var ctx = cv.getContext('2d');
-      if (flip) { ctx.translate(0, h); ctx.scale(1, -1); }
-      ctx.drawImage(rec.img, 0, 0, w, h);
-      var data = ctx.getImageData(0, 0, w, h);
-      var px = data.data;
-      for (var i = 0; i < px.length; i += 4) {
-        var l = px[i] * 0.2126 + px[i + 1] * 0.7152 + px[i + 2] * 0.0722;
-        if (rec.invert) l = 255 - l;
-        px[i + 3] = Math.round(l * px[i + 3] / 255);
-      }
-      ctx.putImageData(data, 0, 0);
-      var keys = Object.keys(rec.__mc);
-      if (keys.length > 5) delete rec.__mc[keys[0]];
-      rec.__mc[key] = cv;
-      return cv;
-    }
-
     function composeSlot(slot) {
       var sz = mixSize(slot);
-      var W = sz.w, H = sz.h;
-      var cv = document.createElement('canvas');
-      cv.width = W; cv.height = H;
-      var ctx = cv.getContext('2d');
-      /* 没有自带贴图时从白底开始：OBJ 的默认材质就是白色，
-       * 用黑底会让「叠一层带透明洞的图」变成黑影，跟直觉相反。 */
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, W, H);
-      var base = slot.baseTex && slot.baseTex.image;
-      if (base && base.width) ctx.drawImage(base, 0, 0, W, H);
-
-      /* 每层先画到自己那张纸上（顺便让遮罩裁一次），再整体混上去：
-       * 直接在主画布上做 destination-in 会把底下的东西一起裁掉。 */
-      var tmp = document.createElement('canvas');
-      tmp.width = W; tmp.height = H;
-      var tctx = tmp.getContext('2d');
-      var ls = slot.layers || [];
-      for (var i = 0; i < ls.length; i++) {
-        var l = ls[i];
-        if (!l || !l.img) continue;
-        var a = clampNum(l.opacity, 0, 1);
-        if (a <= 0) continue;
-        tctx.globalCompositeOperation = 'source-over';
-        tctx.clearRect(0, 0, W, H);
-        tctx.drawImage(l.img, 0, 0, W, H);
-        if (l.mask && l.mask.img) {
-          tctx.globalCompositeOperation = 'destination-in';
-          tctx.drawImage(maskAlpha(l.mask, W, H, false), 0, 0);
-          tctx.globalCompositeOperation = 'source-over';
-        }
-        ctx.globalAlpha = a;
-        ctx.globalCompositeOperation = blendOp(l.blend);
-        ctx.drawImage(tmp, 0, 0);
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = 'source-over';
-      }
-      return cv;
+      return TB.compose({ w: sz.w, h: sz.h, baseImg: slot.baseTex && slot.baseTex.image, layers: slot.layers });
     }
 
     function applyMix(slot) {
@@ -899,11 +808,19 @@
       panel.style.display = '';
 
       if (!commit) {
-        st.layer.mask = st.prev;
+        if (st.kind === 'color') {
+          /* 颜色层是这次新建的：取消就整层撤掉，不留下半张图 */
+          var ls = st.slot.layers || [];
+          var i = ls.indexOf(st.layer);
+          if (st.fresh && i >= 0) ls.splice(i, 1);
+          else st.layer.img = st.prevImg;
+        } else {
+          st.layer.mask = st.prev;
+        }
         applyMix(st.slot);
         refreshList();
         if (mixerAlive) renderMix();
-        hint.textContent = '已取消，遮罩回到绘制前';
+        hint.textContent = st.kind === 'color' ? '已取消，颜色层已撤掉' : '已取消，遮罩回到绘制前';
         return;
       }
       applyMix(st.slot);
@@ -912,9 +829,11 @@
       savePainted(st);
     }
 
-    /* 画布先留在 layer.mask 上（视口不用闪一下），资产入库异步做 */
+    /* 画布先留在图层上（视口不用闪一下），资产入库异步做 */
     async function savePainted(st) {
-      var live = st.live, cv = st.cv;
+      var isColor = st.kind === 'color';
+      /* 遮罩回写 mask，颜色回写图层本身：两者都是「配置里只记 id」 */
+      var live = isColor ? st.layer : st.live, cv = st.cv;
       var id = '';
       var d = window.openagiDesktop;
       if (d && typeof d.assetPut === 'function') {
@@ -922,31 +841,41 @@
           var r = await d.assetPut({
             /* 上次也是手绘的就原地覆盖，不越画越多一张资产 */
             id: st.reuseId || undefined,
-            kind: 'image', name: baseName + '-手绘遮罩',
+            kind: 'image', name: baseName + (isColor ? '-手绘颜色' : '-手绘遮罩'),
             data: cv.toDataURL('image/png'), source: '模型贴图'
           });
           if (r && r.ok && r.asset && r.asset.id) id = String(r.asset.id);
         } catch (e) { }
       }
-      /* 期间层可能被删 / 被换掉：只在还是同一张遮罩时才回写 */
-      if (st.layer.mask !== live) return;
+      /* 期间层可能被删 / 被换掉：只在还是同一张图时才回写 */
+      if (isColor ? (st.layer.img !== cv) : (st.layer.mask !== live)) return;
       live.id = id;
       live.painted = true;
       persistSlot(st.slot);
       refreshList();
       if (mixerAlive) renderMix();
+      if (isColor) {
+        hint.textContent = id
+          ? '手绘颜色已保存（这一层还能继续调比例 / 混合模式 / 遮罩）'
+          : '颜色层已画好（网页版：本次会话内有效）';
+        return;
+      }
       hint.textContent = id
         ? '手绘遮罩已保存（白色显示、擦除处隐藏）'
         : '遮罩已画好（网页版：本次会话内有效）';
     }
 
-    function startPaint(layer) {
+    /* opts.kind: 'mask'（默认，画遮罩）| 'color'（画颜色）
+     * opts.fresh: 这一层是本次会话新建的（取消时整层撤掉，不留下半张图） */
+    function startPaint(layer, opts) {
       var slot = mixerSlot;
       if (!slot || !layer) return;
       /* 换层继续画：先把上一张存下来，别让「没点完成」变成白画 */
       if (painting) stopPaint(true);
+      var kind = (opts && opts.kind) === 'color' ? 'color' : 'mask';
       if (!slotHasUv(slot)) {
-        hint.textContent = '这个材质所在的网格没有 UV，没法在模型上画遮罩（先用建模软件展开 UV）';
+        hint.textContent = '这个材质所在的网格没有 UV，没法在模型上'
+          + (kind === 'color' ? '上色' : '画遮罩') + '（先用建模软件展开 UV）';
         return;
       }
       if (!global.THREE || !camera || !canvas) {
@@ -961,20 +890,28 @@
       var cv = document.createElement('canvas');
       cv.width = W; cv.height = H;
       var ctx = cv.getContext('2d');
-      var prev = layer.mask || null;
       /* 和贴图同一个翻转约定：OBJ 是 flipY=true，glTF 是 false */
       var flip = layer.flipY !== false;
+      var prev = kind === 'mask' ? (layer.mask || null) : null;
+      var prevImg = kind === 'color' ? (layer.img || null) : null;
       if (prev && prev.img) {
         /* 已有遮罩当底稿：透明处继续隐藏，方便在原有基础上补画 */
         try { ctx.drawImage(prev.img, 0, 0, W, H); } catch (e) { }
       }
-      var live = {
-        id: prev && prev.id ? prev.id : '',
-        name: '手绘遮罩', flipY: layer.flipY,
-        invert: prev ? !!prev.invert : false,
-        img: cv, __direct: true, painted: true
-      };
-      layer.mask = live;
+      if (prevImg) { try { ctx.drawImage(prevImg, 0, 0, W, H); } catch (e) { } }
+      var live = null;
+      if (kind === 'mask') {
+        live = {
+          id: prev && prev.id ? prev.id : '',
+          name: '手绘遮罩', flipY: layer.flipY,
+          invert: prev ? !!prev.invert : false,
+          img: cv, __direct: true, painted: true
+        };
+        layer.mask = live;
+      } else {
+        /* 颜色直接画进图层自己的贴图：合成时它就是普通一层，遮罩 / 混合模式照样能用 */
+        layer.img = cv;
+      }
       applyMix(slot);
 
       var THREEx = global.THREE;
@@ -982,8 +919,15 @@
       var ndc = new THREEx.Vector2();
       var st = {
         layer: layer, slot: slot, cv: cv, ctx: ctx, W: W, H: H, flip: flip, prev: prev,
-        reuseId: (prev && prev.painted && prev.id) ? String(prev.id) : '',
+        kind: kind, fresh: !!(opts && opts.fresh), prevImg: prevImg,
+        reuseId: (kind === 'mask' && prev && prev.painted && prev.id) ? String(prev.id) : '',
         live: live, size: Math.max(6, Math.round(Math.min(W, H) * 0.06)),
+        /* 笔迹颜色：画遮罩永远是白（白=显示），画颜色用工具条选的颜色 */
+        ink: kind === 'color' ? '#e05a3c' : '#ffffff',
+        inkRgb: kind === 'color' ? '224,90,60' : '255,255,255',
+        /* 岛遮罩：开了以后一笔只落在起笔那个 UV 岛内，不会溢到相邻岛 */
+        islandClip: kind === 'color',
+        clipId: -1, clipPath: null,
         /* paint=笔刷显示 / erase=擦除 / add=拾取 UV 岛加入 / sub=拾取 UV 岛去掉 */
         mode: 'paint', down: false, lastOk: false, lastX: 0, lastY: 0, lastIsland: -1,
         pointerId: null, ctrlWas: controls ? controls.enabled : true,
@@ -995,7 +939,7 @@
       };
       st.groups = copyGroups(prev);
       /* live.groups 直接挂着同一份数组：分组改动不需要额外同步就能被 persistSlot 写走 */
-      live.groups = st.groups;
+      if (live) live.groups = st.groups;
       painting = st;
       if (controls) controls.enabled = false;
       canvas.style.cursor = 'crosshair';
@@ -1051,15 +995,13 @@
         return a;
       }
 
-      /* 把一个 UV 岛的所有三角形按 UV 铺到遮罩画布上：＋= 白色盖上去，－= 擦掉。
-       * 一次 fill 画完所有三角形，岛再碎也只付一次光栅化。 */
-      function fillIsland(id, add) {
+      /* 一个 UV 岛在贴图上的轮廓（Path2D）：填色与「岛遮罩」剪裁共用同一份几何，
+       * 免得两边各算一遍 UV → 像素、哪天改了口径就错位。 */
+      function islandPath(id) {
         var a = st.a;
         var isl = a && a.islands[id];
-        if (!isl) return false;
-        ctx.globalCompositeOperation = add ? 'source-over' : 'destination-out';
-        ctx.fillStyle = 'rgba(255,255,255,1)';
-        ctx.beginPath();
+        if (!isl) return null;
+        var p = new Path2D();
         for (var i = 0; i < isl.tris.length; i++) {
           var ref = isl.tris[i], part = a.parts[ref.part];
           var ix = part.idx;
@@ -1067,13 +1009,35 @@
             var vi = ix ? ix.getX(ref.t * 3 + k) : ref.t * 3 + k;
             var x = part.uv.getX(vi) * st.W;
             var y = (st.flip ? (1 - part.uv.getY(vi)) : part.uv.getY(vi)) * st.H;
-            if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            if (k === 0) p.moveTo(x, y); else p.lineTo(x, y);
           }
-          ctx.closePath();
+          p.closePath();
         }
-        ctx.fill();
+        return p;
+      }
+
+      /* 把一个 UV 岛的所有三角形按 UV 铺到画布上：＋= 用当前笔色盖上去，－= 擦掉。
+       * 一次 fill 画完所有三角形，岛再碎也只付一次光栅化。 */
+      function fillIsland(id, add) {
+        var p = islandPath(id);
+        if (!p) return false;
+        ctx.globalCompositeOperation = add ? 'source-over' : 'destination-out';
+        ctx.fillStyle = st.ink;
+        ctx.fill(p);
         ctx.globalCompositeOperation = 'source-over';
         return true;
+      }
+
+      /* 起笔点所在的 UV 岛：岛遮罩要靠它决定这一笔能画到哪。 */
+      function islandAt(e) {
+        var a = islandData();
+        if (!a) return -1;
+        var hit = hitAt(e);
+        if (!hit || hit.faceIndex == null) return -1;
+        var pi = st.meshList.indexOf(hit.object);
+        if (pi < 0) return -1;
+        var id = a.triIsland[st.triOff[pi] + hit.faceIndex];
+        return (id == null || id < 0) ? -1 : id;
       }
 
       function pickIsland(e, add) {
@@ -1140,20 +1104,23 @@
         st.states = states;
       }
 
-      /* 笔刷带一点软边：遮罩边界不会在 2K 贴图上留下锯齿 */
+      /* 笔刷带一点软边：边界不会在 2K 贴图上留下锯齿 */
       function dab(x, y, r) {
+        var erase = st.mode === 'erase';
+        var cc = erase ? '0,0,0' : st.inkRgb;
         var g = ctx.createRadialGradient(x, y, 0, x, y, r);
-        var cc = st.mode === 'erase' ? '0,0,0' : '255,255,255';
-        if (st.mode === 'erase') ctx.globalCompositeOperation = 'destination-out';
-        else ctx.globalCompositeOperation = 'source-over';
         g.addColorStop(0, 'rgba(' + cc + ',1)');
         g.addColorStop(0.62, 'rgba(' + cc + ',1)');
         g.addColorStop(1, 'rgba(' + cc + ',0)');
+        /* 岛遮罩：这一笔只允许落在起笔的那个 UV 岛内，贴图空间里相邻岛再近也画不过去 */
+        if (st.clipPath) { ctx.save(); ctx.clip(st.clipPath); }
+        ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
         ctx.fillStyle = g;
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fill();
         ctx.globalCompositeOperation = 'source-over';
+        if (st.clipPath) ctx.restore();
       }
 
       function strokeTo(px) {
@@ -1185,9 +1152,26 @@
           return;
         }
         var px = hitPx(e);
-        if (!px) { hint.textContent = '点在模型上才能画遮罩'; return; }
+        if (!px) { hint.textContent = '点在模型上才能' + (st.kind === 'color' ? '上色' : '画遮罩'); return; }
+        /* 岛遮罩认「起笔那个岛」：一笔之内不换岛，拖到 UV 缝上就自然停住 */
+        st.clipPath = null; st.clipId = -1;
+        if (st.islandClip) {
+          st.clipId = islandAt(e);
+          if (st.clipId >= 0) {
+            st.clipPath = islandPath(st.clipId);
+          } else {
+            hint.textContent = '这一点不在 UV 岛上，这一笔不受岛遮罩限制';
+          }
+        }
         strokeTo(px);
-        hint.textContent = st.mode === 'erase' ? '擦除中：抹掉的地方这一层就隐藏' : '绘制中：涂到的地方这一层显示';
+        if (st.mode === 'erase') {
+          hint.textContent = st.kind === 'color'
+            ? '擦除中：抹掉的地方露出下面的层'
+            : '擦除中：抹掉的地方这一层就隐藏';
+        } else {
+          hint.textContent = (st.kind === 'color' ? '上色中：涂到的地方这一层盖上去' : '绘制中：涂到的地方这一层显示')
+            + (st.clipId >= 0 ? '（只在岛 #' + (st.clipId + 1) + ' 内）' : '');
+        }
       }
       function onMove(e) {
         if (!painting || !st.down) return;
@@ -1202,6 +1186,7 @@
       function onUp() {
         if (!painting || !st.down) return;
         st.down = false; st.lastOk = false; st.lastIsland = -1;
+        st.clipPath = null; st.clipId = -1;
         try { canvas.releasePointerCapture(st.pointerId); } catch (err) { }
         st.pointerId = null;
         /* 一笔画完再重算岛状态：眼睛跟着笔画走，描边时不做无谓的采样 */
@@ -1566,13 +1551,52 @@
       ui.style.cssText = 'pointer-events:auto;position:absolute;right:12px;top:12px;z-index:6;display:flex;flex-direction:column;gap:7px;' +
         'padding:9px 11px;border-radius:10px;background:rgba(13,15,20,.96);border:1px solid #2c303a;' +
         'box-shadow:0 8px 24px rgba(0,0,0,.45);max-width:min(330px,60%);';
+      var isColor = kind === 'color';
       var h1 = document.createElement('div');
-      h1.textContent = '遮罩绘制';
+      h1.textContent = isColor ? '颜色绘制' : '遮罩绘制';
       h1.style.cssText = 'font-weight:600;color:#e8eaf0;font-size:13px;';
       var h2 = document.createElement('div');
-      h2.textContent = '在模型上按住拖动 · 白=显示，擦除处隐藏';
+      h2.textContent = isColor
+        ? '在模型上按住拖动上色 · 这一层会自动加进混合栈'
+        : '在模型上按住拖动 · 白=显示，擦除处隐藏';
       h2.style.cssText = 'color:#8b90a0;font-size:11px;margin-top:-4px;line-height:1.5;';
       ui.appendChild(h1); ui.appendChild(h2);
+
+      /* 颜色行：画颜色时才有。预设几颗常用色，再给一个自由取色 */
+      if (isColor) {
+        var clrRow = document.createElement('div');
+        clrRow.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+        var clrLb = document.createElement('span');
+        clrLb.textContent = '颜色';
+        clrLb.style.cssText = 'flex:0 0 auto;color:#c9cede;font-size:11px;';
+        clrRow.appendChild(clrLb);
+        var clrIn = document.createElement('input');
+        clrIn.type = 'color';
+        clrIn.value = st.ink;
+        clrIn.style.cssText = 'flex:0 0 34px;height:22px;padding:0;border:1px solid #2c303a;border-radius:5px;' +
+          'background:#191c22;cursor:pointer;';
+        var swatches = [];
+        function setInk(hex) {
+          st.ink = hex;
+          st.inkRgb = hexRgb(hex);
+          clrIn.value = hex;
+          swatches.forEach(function (s) { s.style.outlineColor = s.dataset.ink === hex ? '#e8eaf0' : 'transparent'; });
+        }
+        clrIn.oninput = function () { setInk(clrIn.value); };
+        clrRow.appendChild(clrIn);
+        ['#e05a3c', '#e8b13a', '#5fa86a', '#4a86c8', '#8f6fd0', '#f2f4f8', '#1a1d24'].forEach(function (hex) {
+          var s = document.createElement('button');
+          s.type = 'button';
+          s.dataset.ink = hex;
+          s.title = hex;
+          s.style.cssText = 'flex:0 0 16px;height:16px;padding:0;border-radius:4px;border:1px solid #3a3f4b;' +
+            'background:' + hex + ';cursor:pointer;outline:1px solid transparent;outline-offset:1px;';
+          s.onclick = function () { setInk(hex); };
+          swatches.push(s);
+          clrRow.appendChild(s);
+        });
+        ui.appendChild(clrRow);
+      }
 
       var sizeRow = document.createElement('div');
       sizeRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
@@ -1601,7 +1625,12 @@
       /* 模式行：绘制 / 擦除 / 岛＋ / 岛－（岛模式在模型上点，左栏也能点） */
       var modeRow = document.createElement('div');
       modeRow.style.cssText = 'display:flex;gap:5px;flex-wrap:wrap;';
-      var MODE_HINT = {
+      var MODE_HINT = isColor ? {
+        paint: '上色中：涂到的地方这一层盖上去',
+        erase: '擦除中：抹掉的地方露出下面的层',
+        add: '拾取 UV 岛：点模型把整个岛填上当前颜色（拖动可连续选）',
+        sub: '拾取 UV 岛：点模型把整个岛的颜色清掉（拖动可连续选）'
+      } : {
         paint: '绘制中：涂到的地方这一层显示',
         erase: '擦除中：抹掉的地方这一层就隐藏',
         add: '拾取 UV 岛：点模型把整个岛加进遮罩（拖动可连续选）',
@@ -1651,8 +1680,43 @@
       actBtn('取消', function () { stopPaint(false); });
       actBtn('完成', function () { stopPaint(true); }, true);
 
+      /* 岛遮罩开关：画颜色时才给（画遮罩本来就是整岛/整片地画，剪不剪差别不大）。
+       * 开了以后每笔都按起笔那个 UV 岛剪裁，笔刷再大也不会糊到相邻岛。 */
+      var clipBtn = null;
+      if (isColor) {
+        var clipRow = document.createElement('div');
+        clipRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        clipBtn = document.createElement('button');
+        clipBtn.type = 'button';
+        clipBtn.title = '开启后一笔只落在起笔的 UV 岛内，不会溢到相邻岛';
+        clipRow.appendChild(clipBtn);
+        var clipNote = document.createElement('span');
+        clipNote.textContent = '笔刷不会溢到相邻岛';
+        clipNote.style.cssText = 'color:#7d8291;font-size:10.5px;';
+        clipRow.appendChild(clipNote);
+        function syncClipBtn() {
+          clipBtn.textContent = '岛遮罩：' + (st.islandClip ? '开' : '关');
+          mkStyle(clipBtn, st.islandClip);
+          clipBtn.style.borderColor = st.islandClip ? '#2f6b45' : '#2c303a';
+          clipBtn.style.background = st.islandClip ? '#16291f' : '#191c22';
+          clipBtn.style.color = st.islandClip ? '#b6e2c6' : '#c9cede';
+          clipNote.style.opacity = st.islandClip ? '1' : '.55';
+        }
+        clipBtn.onclick = function () {
+          st.islandClip = !st.islandClip;
+          if (st.islandClip && !islandData()) st.islandClip = false;
+          syncClipBtn();
+          hint.textContent = st.islandClip
+            ? '岛遮罩已开：每一笔只画在起笔的 UV 岛内'
+            : '岛遮罩已关：笔刷可以跨 UV 岛（相邻岛也会被涂到）';
+        };
+        syncClipBtn();
+        ui.appendChild(clipRow);
+      }
+
       var tip = document.createElement('div');
-      tip.textContent = '遮罩 ' + W + '×' + H + ' · 只在「' + slotLabel(slot) + '」上画';
+      tip.textContent = (isColor ? '颜色层 ' : '遮罩 ') + W + '×' + H
+        + ' · 只在「' + slotLabel(slot) + '」上画';
       tip.style.cssText = 'color:#7d8291;font-size:10.5px;';
       ui.appendChild(sizeRow); ui.appendChild(modeRow); ui.appendChild(actRow); ui.appendChild(tip);
 
@@ -1691,7 +1755,54 @@
       if (mixer) mixer.style.display = 'none';
       panel.style.display = 'none';
       if (typeof deps.onPanelClose === 'function') deps.onPanelClose();
-      hint.textContent = '遮罩绘制：在模型上按住拖动，白色=显示，擦除=隐藏；左栏可按岛分组开关';
+      hint.textContent = isColor
+        ? '颜色绘制：在模型上按住拖动上色；「岛遮罩」开着时一笔只落在一个 UV 岛内'
+        : '遮罩绘制：在模型上按住拖动，白色=显示，擦除=隐藏；左栏可按岛分组开关';
+    }
+
+    /* '#rrggbb' → 'r,g,b'：笔刷的径向渐变要按这个格式拼 rgba() */
+    function hexRgb(hex) {
+      var h = String(hex || '').replace('#', '');
+      if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+      if (h.length !== 6) return '255,255,255';
+      var n = parseInt(h, 16);
+      if (!isFinite(n)) return '255,255,255';
+      return ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255);
+    }
+
+    /* ---------------- 绘制颜色 ----------------
+     * 纹理混合里加一层「手绘颜色」，直接在模型表面涂：
+     * 以前想补一块锈斑 / 脏迹，只能先去画图软件画一张再上传；
+     * 这里把笔刷接到这一层自己的贴图上，涂完它就是普通混合层，
+     * 比例 / 混合模式 / 遮罩都能接着调。
+     * UV 岛遮罩：贴图上相邻岛往往只差几像素，笔刷一大就糊到隔壁，
+     * 所以每笔按「起笔那个岛」的轮廓剪裁（可关）。 */
+    function startColorPaint(slot) {
+      if (!slot) return;
+      if (painting) stopPaint(true);
+      ensureBase(slot);
+      if (!slotHasUv(slot)) {
+        hint.textContent = '这个材质所在的网格没有 UV，没法在模型上上色（先用建模软件展开 UV）';
+        return;
+      }
+      var ls = slot.layers || (slot.layers = []);
+      if (ls.length >= MIX_LIMIT) {
+        hint.textContent = '这一槽已经 ' + ls.length + ' 层（上限 ' + MIX_LIMIT + '），先合并或删掉一层再画';
+        return;
+      }
+      var sz = mixSize(slot);
+      var cv = document.createElement('canvas');
+      cv.width = sz.w; cv.height = sz.h;
+      var layer = {
+        id: '', name: '手绘颜色', flipY: conventionFlipY(slot),
+        opacity: 1, blend: 'normal', img: cv
+      };
+      ls.push(layer);
+      applyMix(slot);
+      refreshList();
+      if (mixerAlive) renderMix();
+      /* fresh：取消时把这一层整层撤掉，不留半张空图 */
+      startPaint(layer, { kind: 'color', fresh: true });
     }
 
     /* ---------------- 纹理混合面板 ----------------
@@ -1969,11 +2080,23 @@
       bakeBtn.style.color = '#cfe4ff';
       bakeRow.appendChild(bakeBtn);
 
+      /* 画颜色单独占一行：它和多选贴图不一样，是从「新建一层手绘颜色」开始的 */
+      var paintRow = document.createElement('div');
+      paintRow.style.cssText = 'display:flex;gap:8px;';
+      var paintB = mkBtn('✎ 绘制颜色', function () { startColorPaint(slot); });
+      paintB.title = '新建一层手绘颜色，直接在模型表面涂（可开 UV 岛遮罩，笔刷不会溢到相邻岛）';
+      paintB.style.flex = '1 1 auto';
+      paintB.style.height = '30px';
+      paintB.style.borderColor = '#6b5530';
+      paintB.style.background = '#2a2216';
+      paintB.style.color = '#f0dcb4';
+      paintRow.appendChild(paintB);
+
       var tip = document.createElement('div');
       var sz = mixSize(slot);
       tip.textContent = '合成 ' + sz.w + '×' + sz.h + ' · 最多 ' + MIX_LIMIT + ' 层 · 遮罩白=显示 黑=隐藏';
       tip.style.cssText = 'color:#8b90a0;font-size:11px;';
-      foot.appendChild(addRow); foot.appendChild(bakeRow); foot.appendChild(tip);
+      foot.appendChild(addRow); foot.appendChild(paintRow); foot.appendChild(bakeRow); foot.appendChild(tip);
 
       mixer.appendChild(head); mixer.appendChild(body); mixer.appendChild(foot);
       panel.appendChild(mixer);

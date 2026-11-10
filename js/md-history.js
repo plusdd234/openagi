@@ -20,6 +20,8 @@
     var st = ctx.st, SeedModel = ctx.SeedModel;
     var HISTORY_BUDGET = ctx.historyBudget;
     var applyPaintPatch = ctx.applyPaintPatch;
+    var applyMixPatch = ctx.applyMixPatch;
+    var applyMatsPatch = ctx.applyMatsPatch;
     var rebuildModel = ctx.rebuildModel, paintAll = ctx.paintAll;
     var updateChrome = ctx.updateChrome, setStatus = ctx.setStatus;
 
@@ -41,7 +43,10 @@
 
     function snap() {
       var s = SeedModel.Scene.snapshot(st.doc);
-      s.meshHash = registerMesh(st.mesh);
+      /* ⚠ st.mesh 可能是**修改器求值后的网格**，不是文档里的 base：
+       * 把它当快照存进去，撤销时会被当成 base 写回（12 面镜像结果盖掉 6 面原网格，
+       * 再求值一次就成了 24 面）。历史只记录文档，视口结果一律不进来。 */
+      s.meshHash = registerMesh(SeedModel.Scene.getMesh(st.doc) || st.mesh);
       if (st.doc && Array.isArray(st.doc.nodes)) {
         var per = Object.create(null);
         st.doc.nodes.forEach(function (n) {
@@ -93,12 +98,18 @@
     }
 
     function editKey(s) {
-      return s ? JSON.stringify({ name: s.name, nodes: s.nodes, mesh: s.meshHash || '' }) : '';
+      return s ? JSON.stringify({ name: s.name, nodes: s.nodes, mesh: s.meshHash || '', mats: s.matsKey || '' }) : '';
     }
     function push(before, after, label) {
       if (!before || !after) return false;
       if (editKey(before) === editKey(after)) return false;
-      var entry = { before: before, after: after, label: label, bytes: 0 };
+      return pushEntry({ before: before, after: after, label: label });
+    }
+    /* 直接入栈：材质槽这类改动不走 editKey 比较（它的前后差异在 entry.mats 里，
+     * 放进快照会把几 MB 的贴图 data URL 一起复制进历史预算）。 */
+    function pushEntry(entry) {
+      if (!entry) return false;
+      entry.label = entry.label || '编辑';
       entry.bytes = entryBytes(entry);
       st.history.undo.push(entry);
       st.history.redo = [];
@@ -126,6 +137,12 @@
     function apply(entry, target) {
       /* 画笔历史是「贴图补丁」，没有网格 / 节点快照 */
       if (entry.patch) { applyPaintPatch(entry.patch, target); return; }
+      /* 纹理混合历史是「配置快照」：不含图，也不该走 Scene 快照
+       * （Scene.snapshot 里根本没有 materials，走那边等于什么都没撤） */
+      if (entry.mix) { if (applyMixPatch) applyMixPatch(entry.mix, target); return; }
+      /* 材质槽改动：槽名 / 颜色 / 基础贴图，以及删槽时对 faceSlots 的重排 */
+      if (entry.mats) { if (applyMatsPatch) applyMatsPatch(entry.mats, target); }
+      if (!entry.before && !entry.after) { rebuildModel(true); paintAll(); return; }
       var s = entry[target];
       SeedModel.Scene.applySnapshot(st.doc, s);
       /* 先按「每个节点自己的指纹」还原（多对象），再兜底 active 那个 */
@@ -179,7 +196,7 @@
 
     return {
       snap: snap, registerMesh: registerMesh, hashOf: hashOf,
-      push: push, clear: clear, apply: apply, undo: undo, redo: redo,
+      push: push, pushEntry: pushEntry, clear: clear, apply: apply, undo: undo, redo: redo,
       totalBytes: totalBytes, syncBytes: syncBytes, meshStates: meshStates
     };
   }

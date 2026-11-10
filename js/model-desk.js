@@ -44,7 +44,7 @@
     /* V7：四视图可交互 —— quadCtl 每格一个 OrbitControls，只 enable 激活那一个；
      * quadMax 非空时该格全屏；quadDown / quadClick 用来区分单击、拖拽与双击。 */
     quadCtl: null, quadActive: 'front', quadMax: null, quadDown: null, quadClick: null,
-    edgeLines: null, vertPoints: null, navAlt: false, lights: [],
+    edgeLines: null, vertPoints: null, navAlt: false, lights: [], noPick: false,
     cubeDrag: null, cubeClickTimer: 0, cube: null, cubeHover: -1,
     selected: 0,
     history: { undo: [], redo: [], bytes: 0 },
@@ -209,6 +209,7 @@
   var OP_ICONS = {
     join: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="3" y="3" width="11" height="11" rx="1"/><rect x="10" y="10" width="11" height="11" rx="1" opacity=".55"/><path d="M9.5 8.5h5v5" stroke-dasharray="1.5 1.5"/></svg>',
     separate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="3" y="6" width="8" height="12" rx="1"/><rect x="13" y="3" width="8" height="18" rx="1" opacity=".55"/><path d="M11.4 12h1.2" stroke-dasharray="1 1.4"/></svg>',
+    islandSplit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="3" y="3" width="9" height="9" stroke-dasharray="2.4 2"/><rect x="14" y="12" width="7" height="9" opacity=".55"/><path d="M11.8 7.5h5.4v4.2"/><path d="m15.4 9.9 1.8 1.8 1.8-1.8" opacity=".85"/></svg>',
     smooth: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M4 15c3-7 6-9 8-9s5 2 8 9"/><path d="M4 18.5h16" opacity=".5"/><path d="M6.5 12.5h11" opacity=".5"/></svg>',
     boolean: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6" opacity=".7"/><path d="M12 6.9c2.4 1.2 4 3 4 5.1s-1.6 3.9-4 5.1" opacity=".55"/></svg>',
     extrude: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M4 13.5 12 18l8-4.5"/><path d="M4 16.5 12 21l8-4.5" opacity=".45"/><path d="M12 15V4M8.6 7.4 12 4l3.4 3.4"/></svg>',
@@ -220,7 +221,10 @@
     connect: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><circle cx="6" cy="17" r="3"/><circle cx="18" cy="7" r="3"/><path d="m8.4 15.6 7.2-7.2"/><path d="M12 17H6M18 7v5" opacity=".35"/></svg>',
     loopcut: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="4" y="4" width="16" height="16"/><path d="M4 12h16" stroke="#d98b3f" stroke-width="1.7"/><path d="M10.6 4v16M16 4v16" stroke-dasharray="2.4 2" opacity=".55"/></svg>',
     tris2quads: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M3 5h7L3 15z"/><path d="M10 5v10H3" opacity=".5"/><path d="M11.2 10h3.6m-1.4-1.4L15 10l-1.6 1.4"/><rect x="16.2" y="4.8" width="4.8" height="10.4"/></svg>',
-    quadDraw: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M5 5h14v14H5z" stroke-dasharray="3 2.4"/><g fill="#d98b3f" stroke="none"><circle cx="5" cy="5" r="1.8"/><circle cx="19" cy="5" r="1.8"/><circle cx="19" cy="19" r="1.8"/><circle cx="5" cy="19" r="1.8"/></g></svg>'
+    quadDraw: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M5 5h14v14H5z" stroke-dasharray="3 2.4"/><g fill="#d98b3f" stroke="none"><circle cx="5" cy="5" r="1.8"/><circle cx="19" cy="5" r="1.8"/><circle cx="19" cy="19" r="1.8"/><circle cx="5" cy="19" r="1.8"/></g></svg>',
+    array: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2.4" y="8.4" width="6.6" height="7.2" rx="1"/><rect x="8.7" y="8.4" width="6.6" height="7.2" rx="1" opacity=".62"/><rect x="15" y="8.4" width="6.6" height="7.2" rx="1" opacity=".34"/><path d="M5.7 6.2v1.4M12 6.2v1.4M18.3 6.2v1.4" opacity=".5"/></svg>',
+    subdivOnce: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="3.5" y="3.5" width="17" height="17"/><path d="M3.5 9.2h17M3.5 14.8h17M9.2 3.5v17M14.8 3.5v17" opacity=".55"/></svg>',
+    dissolve: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M4 7.2 12 3.6 20 7.2v9.6L12 20.4 4 16.8z"/><path d="M4 7.2 12 11l8-3.8M12 11v9.4" opacity=".4"/><path d="M8.8 11h6.4" stroke="#d98b3f" stroke-width="1.9"/></svg>'
   };
 
   /* 工具箱面板：Blender 式分组 + 行状按钮（图标 + 名称），和截图一致 */
@@ -228,8 +232,12 @@
     { id: 'mesh', title: '网格', items: [
       { op: 'join', label: '结合', icon: 'join', title: '把大纲中多选的对象合成一个网格' },
       { op: 'separate', label: '分离', icon: 'separate', title: '按连通块拆成多个对象' },
+      { op: 'split-islands', label: '拆分岛', icon: 'islandSplit', title: '把选中的 UV 岛拆成一个独立对象（UV 岛模式 F12 选择）' },
       { op: 'smooth', label: '平滑', icon: 'smooth', title: '平滑选中顶点（不选 = 整体）' },
       { op: 'tris-to-quads', label: '三角转四边', icon: 'tris2quads', title: '把成对的共边三角面并成四边面（UV 接缝处不并）' },
+      /* 阵列 / 细分一次都作用在**整份基础网格**：有修改器时先算 base，求值器再叠修改器 */
+      { op: 'array', label: '阵列', icon: 'array', title: '线性复制多份（数量含原件；改间距实时预览）' },
+      { op: 'subdivide-once', label: '细分一次', icon: 'subdivOnce', title: '整网格细分一级（四边→4 四边，三角→4 三角）' },
       { op: 'boolean', label: '布尔', icon: 'boolean', title: '对两个对象做差集（A − B）' }
     ] },
     { id: 'comp', title: '组件', items: [
@@ -237,6 +245,7 @@
       { op: 'bevel', label: '倒角', icon: 'bevel', title: '选中面内缩成环 + 深度' },
       { op: 'bridge', label: '桥接', icon: 'bridge', title: '连接两个同边数的面' },
       { op: 'segments', label: '添加分段', icon: 'segments', title: '把选中面切成四份' },
+      { op: 'dissolve', label: '溶解', icon: 'dissolve', title: '溶解选中的点 / 边 / 面（点需闭合扇形、边需恰好两面）' },
       { op: 'loopcut', label: '环切', icon: 'loopcut', title: '沿选中边所在的四边环切分；条数 / 滑移实时预览' }
     ] },
     { id: 'tool', title: '工具', items: [
@@ -360,6 +369,7 @@
       '      <button type="button" class="md-sico" style="--c:#d98b3f" data-md-op="loopcut" title="环切：沿选中边所在的四边环切分">' + OP_ICONS.loopcut + '</button>',
       '      <button type="button" class="md-sico" style="--c:#8fc7a8" data-md-op="tris-to-quads" title="三角转四边：成对三角并成四边面">' + OP_ICONS.tris2quads + '</button>',
       '      <button type="button" class="md-sico" style="--c:#8fb5b8" data-md-op="separate" title="分离（大纲多选后可用结合）">' + OP_ICONS.separate + '</button>',
+      '      <button type="button" class="md-sico" style="--c:#8fb5b8" data-md-op="split-islands" title="拆分岛：把选中的 UV 岛拆成独立对象">' + OP_ICONS.islandSplit + '</button>',
       '      <button type="button" class="md-sico" style="--c:#c9b27c" data-md-op="smooth" title="平滑：选中顶点或整体">' + OP_ICONS.smooth + '</button>',
       '      <span class="md-sico" style="--c:#c88a8a" title="纹理（M5 接入）">◍</span>',
       '      <button type="button" class="md-sico" style="--c:#9fc0e0" data-md-act="uv" title="UV 编辑器：二维 UV 视图 / 选择 / 变换 / 展开排布">◒</button>',
@@ -461,14 +471,18 @@
       toolboxHtml(),
       '        </div>',
       '        <div class="md-paint" id="mdPaintBox" hidden>',
-      '          <div class="md-paint-row"><span>笔刷</span><select id="mdBrushSel">' +
-      '            <option value="soft">圆形软笔</option><option value="hard">圆形硬笔</option>' +
-      '            <option value="erase">橡皮擦</option></select></div>',
-      '          <div class="md-paint-row"><span>大小</span><input type="range" id="mdBrushSize" min="6" max="180" step="1" value="42"><b id="mdBrushSizeVal">42 px</b></div>',
-      '          <div class="md-paint-row"><span>不透明度</span><input type="range" id="mdBrushOpacity" min="5" max="100" step="1" value="90"><b id="mdBrushOpacityVal">90%</b></div>',
-      '          <div class="md-paint-row"><span>颜色</span><i class="md-paint-sw" id="mdBrushSw" style="background:#d94f4f"></i><input type="color" id="mdBrushColor" value="#d94f4f"></div>',
-      '          <div class="md-paint-row"><span>遮罩</span><label class="md-paint-chk" title="只画进落笔所在的 UV 岛，笔刷不会溢到相邻岛"><input type="checkbox" id="mdPaintMask">UV 岛遮罩</label></div>',
-      '          <div class="md-paint-hint">在模型上按住左键拖动即可上色：颜色画进当前面所属材质槽的基础色贴图（没有贴图就新建一张）。Alt+左键 / 中键仍然导航；笔画结束后贴图写回文档，保存时随 GLB 一起走。</div>',
+      '          <div class="md-paint-card">',
+      '            <div class="md-paint-card-h"><i></i><span>笔刷</span><em>在模型表面拖动上色</em></div>',
+      '            <div class="md-paint-row"><span>笔刷</span><select id="mdBrushSel">' +
+      '              <option value="soft">圆形软笔</option><option value="hard">圆形硬笔</option>' +
+      '              <option value="erase">橡皮擦</option></select></div>',
+      '            <div class="md-paint-row"><span>大小</span><input type="range" id="mdBrushSize" min="6" max="180" step="1" value="42"><b id="mdBrushSizeVal">42 px</b></div>',
+      '            <div class="md-paint-row"><span>不透明度</span><input type="range" id="mdBrushOpacity" min="5" max="100" step="1" value="90"><b id="mdBrushOpacityVal">90%</b></div>',
+      '            <div class="md-paint-row"><span>颜色</span><input type="color" id="mdBrushColor" value="#d94f4f">',
+      '              <label class="md-paint-chk" title="只画进落笔所在的 UV 岛，笔刷不会溢到相邻岛"><input type="checkbox" id="mdPaintMask">UV 岛遮罩</label></div>',
+      '          </div>',
+      '          <div class="md-paint-mix" id="mdMixBox"></div>',
+      '          <div class="md-paint-hint">左键拖动上色，Alt+左键 / 中键导航；笔画写回基础色贴图，保存 GLB 时内嵌合成图。</div>',
       '        </div>',
       '      </section>',
       '      <section class="md-props">',
@@ -550,6 +564,7 @@
       if (e && e.detail && e.detail.win === 'modelDeskWin') resume();
     });
 
+    if (MIX) MIX.init();
     st.uiReady = true;
   }
 
@@ -631,6 +646,13 @@
 
   function statsNow() {
     return st.mesh ? SeedModel.Mesh.stats(st.mesh) : { vertices: 0, faces: 0, edges: 0, triangles: 0 };
+  }
+
+  /* 算子的输入永远是**文档里的基础网格**，不是视口里的求值结果。
+   * 有修改器时 st.mesh 是 evaluator 的输出（缓存共享）：拿它做拓扑算子再写回，
+   * 等于偷偷把修改器烘焙进 base。算子算完 base，视口重建时修改器会重新叠上去。 */
+  function baseMeshNow() {
+    return (st.doc && SeedModel.Scene.getMesh(st.doc)) || st.mesh;
   }
 
   /* 大纲里固定这几行是 Maya 的默认节点：M1 没有透视视图 / 灯光集，
@@ -721,15 +743,209 @@
     var mats = (st.doc && st.doc.materials) || {};
     var names = mats.slotNames || [];
     var colors = mats.slotColors || [];
-    return names.length
-      ? names.map(function (n, i) {
-        return '<div class="md-slot"><i style="background:' + esc(colors[i] || '#c9ccd4') + '"></i><span>' + esc(n) + '</span></div>';
-      }).join('')
-      : '<div class="md-note">还没有材质槽名</div>';
+    if (!names.length) return '<div class="md-note">还没有材质槽名</div>';
+    /* 每个槽的面数：删槽 / 指派前能一眼看出改动落在哪。
+     * 用基础网格而不是 evaluated —— 指派写的是基础网格的 faceSlots。 */
+    var counts = [];
+    var base = null;
+    try { base = st.doc ? SeedModel.Scene.getMesh(st.doc) : null; } catch (e) { base = null; }
+    if (base && base.faceSlots) {
+      for (var k = 0; k < base.faceSlots.length; k++) {
+        var s = base.faceSlots[k] || 0;
+        counts[s] = (counts[s] || 0) + 1;
+      }
+    }
+    var selN = (st.sel && st.sel.faceIds) ? st.sel.faceIds.length : 0;
+    var rows = names.map(function (n, i) {
+      var dis = selN ? '' : ' disabled';
+      return '<div class="md-slot" data-md-slotrow="' + i + '">' +
+        '<input type="color" class="md-slot-c" data-md-slot="' + i + '" data-md-slotf="color" value="' + esc(colors[i] || '#c9ccd4') + '" title="槽颜色">' +
+        '<input type="text" class="md-slot-n" data-md-slot="' + i + '" data-md-slotf="name" value="' + esc(n) + '" maxlength="60" title="双击改名，回车确认">' +
+        '<em class="md-slot-f" title="该槽的面数">' + (counts[i] || 0) + '</em>' +
+        '<button class="md-slot-a" data-md-act="slot-assign" data-md-slot="' + i + '"' + dis + ' title="把当前选中的面指派到这个槽">指派</button>' +
+        '<button class="md-slot-x" data-md-act="slot-del" data-md-slot="' + i + '"' + (names.length <= 1 ? ' disabled' : '') + ' title="删除该槽">✕</button>' +
+        '</div>';
+    }).join('');
+    return '<div class="md-slots">' + rows +
+      '<div class="md-slot-foot">' +
+      '<button class="md-slot-add" data-md-act="slot-add">＋ 新槽</button>' +
+      '<span class="md-note">' + (selN ? ('已选 ' + selN + ' 个面，可指派') : '面 / UV 岛模式选中后可指派') + '</span>' +
+      '</div></div>';
   }
 
   function chRow(label, value) {
     return '<div class="md-ch"><span>' + label + '</span><em>' + esc(value) + '</em></div>';
+  }
+
+  /* ---------------- 修改器栈（属性编辑器里的「修改器」分区） ----------------
+   * 数据格式与 js/seed-modifiers.js 对齐：node.modifiers = [{ type, ...参数 }]。
+   * 每个改动都走 docEdit：快照 → 重建 → 一条历史；这里只碰数组本身。
+   * evaluator 的缓存键里带参数和 revision，改完再 invalidate 一次，下一帧必定重算。 */
+  var MOD_LABEL = {
+    subdivision: '细分曲面', subdivide: '细分曲面',
+    mirror: '镜像', solidify: '加厚', solid: '加厚'
+  };
+
+  function modType(m) { return String((m && (m.type || m.kind)) || '').toLowerCase(); }
+
+  function modParam(m, key, dft) {
+    if (m && m[key] != null) return m[key];
+    if (m && m.params && m.params[key] != null) return m.params[key];
+    return dft;
+  }
+
+  function modFieldsHtml(m, i) {
+    var t = modType(m);
+    if (t === 'subdivision' || t === 'subdivide') {
+      var lv = Math.max(1, Math.min(3, Math.round(Number(modParam(m, 'level', 1)) || 1)));
+      return '<label class="md-mod-f"><span>级别</span><select data-md-modp="level" data-md-modi="' + i + '">' +
+        [1, 2, 3].map(function (n) {
+          return '<option value="' + n + '"' + (n === lv ? ' selected' : '') + '>' + n + '</option>';
+        }).join('') + '</select></label>';
+    }
+    if (t === 'mirror') {
+      var ax = String(modParam(m, 'axis', 'x')).toLowerCase();
+      var mg = Number(modParam(m, 'merge', 0.001));
+      return '<label class="md-mod-f"><span>轴</span><select data-md-modp="axis" data-md-modi="' + i + '">' +
+        ['x', 'y', 'z'].map(function (a) {
+          return '<option value="' + a + '"' + (a === ax ? ' selected' : '') + '>' + a.toUpperCase() + '</option>';
+        }).join('') + '</select></label>' +
+        '<label class="md-mod-f"><span>焊接</span><input type="number" step="0.001" min="0" max="0.2" data-md-modp="merge" data-md-modi="' + i + '" value="' + mg + '"></label>';
+    }
+    if (t === 'solidify' || t === 'solid') {
+      var th = Number(modParam(m, 'thickness', 0.02));
+      var off = Number(modParam(m, 'offset', -1));
+      return '<label class="md-mod-f"><span>厚度</span><input type="number" step="0.01" min="-2" max="2" data-md-modp="thickness" data-md-modi="' + i + '" value="' + th + '"></label>' +
+        '<label class="md-mod-f"><span>偏移</span><input type="number" step="0.1" min="-1" max="1" data-md-modp="offset" data-md-modi="' + i + '" value="' + off + '"></label>';
+    }
+    return '';
+  }
+
+  function modsHtml() {
+    var list = Array.isArray(st.node.modifiers) ? st.node.modifiers : [];
+    var baseMesh = SeedModel.Scene.getMesh(st.doc, st.node) || st.mesh;
+    var liveMesh = SeedModel.Evaluator.evaluate(st.doc, st.node) || baseMesh;
+    var base = baseMesh ? SeedModel.Mesh.stats(baseMesh) : { vertices: 0, faces: 0 };
+    var live = liveMesh ? SeedModel.Mesh.stats(liveMesh) : base;
+    var rows = list.map(function (m, i) {
+      var on = !(m.enabled === false || m.enabled === 0);
+      var t = modType(m);
+      return '<div class="md-mod-row' + (on ? '' : ' off') + '">' +
+        '<label class="md-mod-en" title="启用 / 停用"><input type="checkbox" data-md-modon="' + i + '"' + (on ? ' checked' : '') + '><i></i></label>' +
+        '<span class="md-mod-name">' + esc(MOD_LABEL[t] || m.type || '修改器') + '</span>' +
+        '<span class="md-mod-ops">' +
+        '<button type="button" data-md-act="mod-up" data-md-modi="' + i + '" title="上移">↑</button>' +
+        '<button type="button" data-md-act="mod-down" data-md-modi="' + i + '" title="下移">↓</button>' +
+        '<button type="button" data-md-act="mod-del" data-md-modi="' + i + '" title="删除">✕</button>' +
+        '</span>' +
+        '<div class="md-mod-p">' + modFieldsHtml(m, i) + '</div>' +
+        '</div>';
+    }).join('');
+    return '<div class="md-sec">' +
+      '<div class="md-h2">修改器 <em class="md-mod-count">' + list.length + '</em></div>' +
+      '<div class="md-sec-b">' +
+      (rows ? '<div class="md-mod-list">' + rows + '</div>'
+        : '<div class="md-note">还没有修改器。添加后视口实时求值；要编辑组件先「应用修改器」。</div>') +
+      '<div class="md-mod-add">' +
+      '<button type="button" data-md-act="mod-add" data-md-mod="subdivision">细分</button>' +
+      '<button type="button" data-md-act="mod-add" data-md-mod="mirror">镜像</button>' +
+      '<button type="button" data-md-act="mod-add" data-md-mod="solidify">加厚</button>' +
+      '</div>' +
+      '<div class="md-note">求值：<b>' + live.faces + '</b> 面 / ' + live.vertices + ' 点' +
+      (list.length ? '（基础 ' + base.faces + ' 面）' : '') + '</div>' +
+      (list.length ? '<button type="button" class="md-wide" data-md-act="mod-apply">应用修改器（烘焙到网格）</button>' : '') +
+      '</div></div>';
+  }
+
+  /* 所有修改器改动都从这里过：只改数组，快照 / 重建 / 历史交给 docEdit */
+  function modEdit(label, fn) {
+    if (!st.doc || !st.node) return false;
+    var nodeId = st.node.id;
+    var ok = docEdit(label, function () {
+      if (!Array.isArray(st.node.modifiers)) st.node.modifiers = [];
+      if (fn() === false) return false;
+      SeedModel.Scene.revision(st.doc, 'modifiers');
+      SeedModel.Evaluator.invalidate(nodeId);
+      return true;
+    });
+    if (ok) {
+      /* 生效的修改器会让「求值后网格」的组件选择失效（st.mesh 是缓存结果），
+       * 直接退回对象模式，别让用户对着一个不能编辑的组件集拖手柄。 */
+      if (st.selMode !== 'object' && modsBlockComponents()) setSelMode('object');
+      setStatus(label + '（Ctrl+Z 可撤销）');
+    }
+    return ok;
+  }
+
+  function modAdd(type) {
+    if (!st.doc || !st.node) { setStatus('先在视口或大纲里选中一个对象', true); return false; }
+    var t = String(type || '').toLowerCase();
+    var item = { type: t, enabled: true };
+    if (t === 'subdivision') item.level = 1;
+    else if (t === 'mirror') { item.axis = 'x'; item.merge = 0.001; }
+    else if (t === 'solidify') { item.thickness = 0.02; item.offset = -1; }
+    else return false;
+    return modEdit('添加修改器：' + (MOD_LABEL[t] || t), function () {
+      st.node.modifiers.push(item);
+      return true;
+    });
+  }
+
+  function modSetEnabled(i, on) {
+    return modEdit(on ? '启用修改器' : '停用修改器', function () {
+      var m = st.node.modifiers[i];
+      if (!m) return false;
+      m.enabled = !!on;
+      return true;
+    });
+  }
+
+  function modSetParam(i, key, value) {
+    return modEdit('修改器参数：' + key, function () {
+      var m = st.node.modifiers[i];
+      if (!m) return false;
+      m[key] = value;
+      /* 允许两种写法（扁平键 / params 子对象）同时存在，改一处另一处跟着改，避免分叉 */
+      if (m.params && m.params[key] != null) m.params[key] = value;
+      return true;
+    });
+  }
+
+  function modMove(i, dir) {
+    return modEdit('调整修改器顺序', function () {
+      var arr = st.node.modifiers, j = i + dir;
+      if (!arr[i] || j < 0 || j >= arr.length) return false;
+      var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+      return true;
+    });
+  }
+
+  function modDelete(i) {
+    return modEdit('删除修改器', function () {
+      if (!st.node.modifiers[i]) return false;
+      st.node.modifiers.splice(i, 1);
+      return true;
+    });
+  }
+
+  /* 应用 = 把求值结果烘焙成基础网格、清空栈。之后组件编辑恢复正常 */
+  function modApply() {
+    if (!st.doc || !st.node) return false;
+    var node = st.node;
+    if (!nodeModsActive(node)) { setStatus('没有生效的修改器可应用', true); return false; }
+    var out = SeedModel.Evaluator.evaluate(st.doc, node);
+    if (!out) { setStatus('应用修改器失败：求值返回空（检查参数或面数上限）', true); return false; }
+    var ok = docEdit('应用修改器', function () {
+      SeedModel.Scene.setMesh(st.doc, SeedModel.Mesh.clone(out), st.node);
+      SeedModel.Scene.revision(st.doc, 'mesh');
+      st.node.modifiers = [];
+      SeedModel.Scene.revision(st.doc, 'modifiers');
+      SeedModel.Evaluator.invalidate(st.node.id);
+      return true;
+    });
+    if (!ok) return false;
+    setStatus('修改器已应用：烘焙为 ' + (out.faceIds ? out.faceIds.length : statsNow().faces) + ' 面，栈已清空（Ctrl+Z 可撤销）');
+    return true;
   }
 
   function paintParams() {
@@ -809,6 +1025,7 @@
       '<div class="md-note">' + s.vertices + ' 点 · ' + s.faces + ' 面 · ' + s.edges + ' 边 · ' + s.triangles + ' 三角面</div>',
       '</div>',
       '</div>',
+      modsHtml(),
       '<div class="md-sec">',
       '<div class="md-h2">变换（手柄拖动）</div>',
       '<div class="md-sec-b md-ch-list">',
@@ -1249,6 +1466,11 @@
 
   function setSelMode(mode) {
     if (!SEL_NOUN[mode] || st.selMode === mode) return;
+    /* 修改器生效时组件编辑会写坏求值缓存：先挡住，别让用户白拖一帧 */
+    if (mode !== 'object' && modsBlockComponents()) {
+      setStatus('该对象有修改器：先「应用修改器」或删掉修改器，再编辑组件', true);
+      return;
+    }
     if (mode === 'island' && st.mesh) SeedModel.Mesh.ensureUV(st.mesh);
     /* 换模式不清空：按包含关系转换（点→边→面→岛；对象模式不带组件信息）。
      * 转换是纯数据动作，失败（内核缺席 / 无网格）才退回空集。 */
@@ -1269,6 +1491,10 @@
 
   function applyPick(hit, add, toggle) {
     if (!st.doc) return;
+    if (st.selMode !== 'object' && modsBlockComponents()) {
+      setStatus('该对象有修改器：先「应用修改器」或删掉修改器，再编辑组件', true);
+      return;
+    }
     if (st.selMode === 'object') {
       setStatus(hit ? '已选中对象：' + (st.node ? st.node.name : '') : '没有点中对象');
       paintAll();
@@ -1416,7 +1642,7 @@
     nl.multiplyScalar(1 / lineLen);
     var plane = { nx: nl.x, ny: nl.y, nz: nl.z, d: dWorld / lineLen };
 
-    var cut = global.SeedOps.knifePlaneCut(st.mesh, { plane: plane });
+    var cut = global.SeedOps.knifePlaneCut(baseMeshNow(), { plane: plane });
     if (!cut) { setStatus('多切割：这条线没有穿过当前网格', true); return false; }
     applyMesh(cut, '多切割');
     setStatus('多切割：已沿视平面切开');
@@ -1436,15 +1662,159 @@
     setStatus: setStatus, updateChrome: updateChrome,
     rebuildModel: rebuildModel, paintAll: paintAll,
     uvRefreshSolidGeometry: uvRefreshSolidGeometry,
+    /* 修改器生效时不能给求值网格「补 UV」：那份网格是 evaluator 的缓存 */
+    nodeModsActive: nodeModsActive,
     /* 绘画和拾取共用同一条可见性口径：面级隔离时画到的就是视口里那份替身网格 */
     visibleMesh: function (id) { return ISO.visibleMesh(id); },
-    totalBytes: totalBytes, syncBytes: syncBytes, historyBudget: HISTORY_BUDGET
+    totalBytes: totalBytes, syncBytes: syncBytes, historyBudget: HISTORY_BUDGET,
+    /* 材质落点与纹理混合：笔迹画在基础画布上，材质上挂的是「合成结果」 */
+    applySlotTexture: applySlotTexture,
+    baseImageFor: function (slot) { return MIX ? MIX.baseImageFor(slot) : null; },
+    onPaintBase: function (slot) { if (MIX) MIX.schedule(slot); },
+    onPaintInk: function (slot) { if (MIX) MIX.schedule(slot); },
+    onPaintReset: function (slot) { if (MIX) MIX.schedule(slot); },
+    onPaintSlot: function (slot) { if (MIX) MIX.selectSlot(slot); },
+    /* 纹理混合要读当前绘画工作区：正在画这一槽时，笔迹必须参与合成 */
+    paintCanvasFor: function (slot) {
+      var p = st.paint;
+      return (st.doc && p.doc === st.doc && p.slot === slot && p.canvas) ? p.canvas : null;
+    },
+    paintTexFor: function (slot) {
+      var p = st.paint;
+      return (st.doc && p.doc === st.doc && p.slot === slot && p.tex) ? p.tex : null;
+    }
   });
   function paintStrokeBegin(e) { return PAINT.begin(e); }
   function paintStrokeMove(e) { return PAINT.move(e); }
   function paintStrokeEnd() { return PAINT.end(); }
   function paintClipRelease() { return PAINT.cancel(); }
   function applyPaintPatch(patch, side) { return PAINT.applyPatch(patch, side); }
+
+  /* ---------------- 纹理混合（已拆到 js/md-texmix.js） ----------------
+   * 配置真源是模型库同一份 localStorage（openagi_model_tex_v1），
+   * 图片由资产库保管；这里只负责解码、合成、挂材质、配置编辑 UI 与撤销补丁。 */
+  var MIX = null;
+  function applyMixPatch(patch, side) { if (MIX) MIX.applyPatch(patch, side); }
+  if (global.MDTexMix) {
+    MIX = global.MDTexMix.create({
+      st: st, THREE: THREE, SeedModel: SeedModel,
+      setStatus: setStatus, updateChrome: updateChrome,
+      sharedTexture: sharedTexture,
+      applySlotTexture: applySlotTexture,
+      totalBytes: totalBytes, syncBytes: syncBytes, historyBudget: HISTORY_BUDGET,
+      paintCanvasFor: function (slot) {
+        var p = st.paint;
+        return (st.doc && p.doc === st.doc && p.slot === slot && p.canvas) ? p.canvas : null;
+      },
+      paintTexFor: function (slot) {
+        var p = st.paint;
+        return (st.doc && p.doc === st.doc && p.slot === slot && p.tex) ? p.tex : null;
+      },
+      /* 3D 遮罩绘制要走和画笔同一套射线：命中槽 / 面 / UV 的口径必须一致 */
+      paintRayHit: function (x, y) { return PAINT.rayHit(x, y); },
+      setMaskPaintMode: setMaskPaintMode
+    });
+  }
+
+  /* 视口进入「遮罩绘制」：关掉选择/画笔的落笔判定与 OrbitControls，
+   * 指针事件由 MDTexMix 自己在 capture 阶段接管（否则绘画页签一按就落笔）。 */
+  function setMaskPaintMode(on) {
+    st.noPick = !!on;
+    if (st.controls) st.controls.enabled = !on;
+    if (st.canvas) st.canvas.style.cursor = on ? 'crosshair' : '';
+  }
+
+  /* ---------------- 材质槽（P5） ----------------
+   * 槽改动不进 Scene 快照：slotMaps 是贴图 data URL，每步历史都深拷贝会瞬间吃满预算。
+   * 这里只做「浅快照」（字符串按引用共享），随 entry.mats 入栈，撤销时整体替换三份数组。 */
+  function matsSnap() {
+    var m = (st.doc && st.doc.materials) || {};
+    return {
+      slotNames: (m.slotNames || []).slice(),
+      slotColors: (m.slotColors || []).slice(),
+      slotMaps: (m.slotMaps || []).slice(),
+      textureConfigKey: m.textureConfigKey || ''
+    };
+  }
+  function applyMatsPatch(patch, side) {
+    if (!st.doc || !patch) return;
+    var v = patch[side];
+    if (!v) return;
+    var m = st.doc.materials || (st.doc.materials = {});
+    m.slotNames = (v.slotNames || []).slice();
+    m.slotColors = (v.slotColors || []).slice();
+    m.slotMaps = (v.slotMaps || []).slice();
+    if (v.textureConfigKey) m.textureConfigKey = v.textureConfigKey;
+    /* 贴图可能整组换过：绘画工作区按旧 URL 建的 canvas 不能继续复用 */
+    st.paint.tex = null; st.paint.canvas = null; st.paint.ctx = null;
+    st.paint.clipCtx = null; st.paint.slot = -1; st.paint.doc = null;
+  }
+  function slotEdit(label, fn) {
+    if (!st.doc) return false;
+    var before = snap(), matsBefore = matsSnap();
+    var ok = fn();
+    if (ok === false) return false;
+    st.node = SeedModel.Scene.nodeOf(st.doc);
+    st.mesh = SeedModel.Scene.getMesh(st.doc);
+    rebuildModel(true);
+    paintAll();
+    var after = snap(), matsAfter = matsSnap();
+    return HIST.pushEntry({
+      before: before, after: after,
+      mats: { before: matsBefore, after: matsAfter },
+      label: label || '材质槽编辑'
+    });
+  }
+  function slotAdd() {
+    var idx = -1;
+    var ok = slotEdit('新增材质槽', function () {
+      idx = SeedModel.Scene.addSlot(st.doc);
+      return idx >= 0;
+    });
+    if (ok && MIX) MIX.selectSlot(idx);
+    if (!ok) setStatus('新增材质槽失败', true);
+  }
+  function slotRename(i, name) {
+    var ok = slotEdit('重命名材质槽', function () {
+      return SeedModel.Scene.renameSlot(st.doc, i, name);
+    });
+    if (!ok) paintAll();
+  }
+  function slotSetColor(i, color) {
+    slotEdit('材质槽颜色', function () {
+      var m = st.doc.materials;
+      var colors = m.slotColors || (m.slotColors = []);
+      while (colors.length <= i) colors.push('#c9ccd4');
+      colors[i] = color;
+      return true;
+    });
+  }
+  function slotDelete(i) {
+    var ok = slotEdit('删除材质槽', function () {
+      return SeedModel.Scene.removeSlot(st.doc, i);
+    });
+    if (!ok) setStatus('至少保留一个材质槽', true);
+  }
+  function slotAssignFaces(i) {
+    var ids = (st.sel && st.sel.faceIds) || [];
+    if (!ids.length) {
+      setStatus('先在面或 UV 岛模式下选中要指派的面', true);
+      return;
+    }
+    var n = 0;
+    docEdit('指派面到材质槽', function () {
+      n = SeedModel.Scene.assignSlot(st.doc, st.node, ids, i);
+      if (!n) return false;
+      SeedModel.Scene.revision(st.doc, 'mesh');
+      st.mesh = SeedModel.Scene.getMesh(st.doc);
+      return true;
+    });
+    setStatus(n ? ('已把 ' + n + ' 个面指派到「' + slotNameAt(i) + '」') : '这些面已经在该槽里');
+  }
+  function slotNameAt(i) {
+    var names = (st.doc && st.doc.materials && st.doc.materials.slotNames) || [];
+    return names[i] || ('插槽 ' + (i + 1));
+  }
 
   /* 右侧栏三个页签共用一行：建模工具箱 / 绘画工具箱 / 属性编辑器。
    * 同时只显示一个，属性编辑器不再跟工具箱上下分摊高度。 */
@@ -1483,6 +1853,7 @@
   }
 
   function onPickDown(e) {
+    if (st.noPick) return;
     if (e.button || e.altKey || !st.doc) { st.pickDown = null; return; }
     /* 绘画页签激活时，左键按下就是落笔（工具会话进行中让位给工具，免得抢操作） */
     if (st.tbKind === 'paint' && !st.quad &&
@@ -1521,6 +1892,7 @@
   }
 
   function onPickMove(e) {
+    if (st.noPick) return;
     if (!st.doc) return;
     st.pointer.x = e.clientX;
     st.pointer.y = e.clientY;
@@ -1570,6 +1942,7 @@
   }
 
   function onPickUp(e) {
+    if (st.noPick) return;
     var d = st.pickDown;
     var g = st.gest;
     st.pickDown = null;
@@ -1624,7 +1997,8 @@
         var pv = st.pivots[n.id];
         /* 视口可见性只有一个口径：被「单独显示」藏起来的对象不能被点穿 */
         if (!pv || !ISO.nodeVisible(n.id)) return;
-        var mesh = SeedModel.Scene.getMesh(st.doc, n);
+        /* 拾取用的网格必须和 pivot 里画的是同一份（有修改器时是求值结果） */
+        var mesh = SeedModel.Evaluator.evaluate(st.doc, n) || SeedModel.Scene.getMesh(st.doc, n);
         if (!mesh) return;
         var h = global.SeedSelection.pick({
           mesh: mesh, matrix: pv.matrixWorld, camera: st.camera,
@@ -2284,6 +2658,31 @@
     try { m.map.dispose(); } catch (e) {}
   }
 
+  /* 把一张贴图挂到所有对象「第 slot 个材质」上（含平涂缓存材质）。
+   * 画笔与纹理混合共用这条路径：谁最后决定材质上放哪张图，都由调用方算好。
+   * mdBaseMap 一起换，显示开关「贴图」关掉再打开才不会回到上一张旧图。 */
+  function applySlotTexture(slot, tex) {
+    eachViewPivot(function (pv) {
+      pv.traverse(function (o) {
+        if (!o.userData || o.userData.mdPart !== 'solid') return;
+        if (o.material) {
+          var arr = Array.isArray(o.material) ? o.material : [o.material];
+          var m = arr[slot];
+          if (m) {
+            if (!m.userData.mdPaintOrig) m.userData.mdPaintOrig = m.map || null;
+            m.map = tex || null;
+            m.userData.mdBaseMap = tex || null;
+            m.needsUpdate = true;
+          }
+        }
+        if (o.userData.mdFlatMats) {
+          var fm = o.userData.mdFlatMats[slot];
+          if (fm) { fm.map = tex || null; fm.userData.mdBaseMap = tex || null; fm.needsUpdate = true; }
+        }
+      });
+    });
+  }
+
   function makeMaterials() {
     var mats = st.doc.materials || {};
     var names = mats.slotNames || [];
@@ -2301,9 +2700,11 @@
         polygonOffsetUnits: 1,
         name: names[i] || (i === 0 ? '默认材质' : '插槽 ' + (i + 1))
       });
-      /* 导入模型带回来的基础色贴图（data URL）：有就用，没有就只吃槽色。
-       * 贴图异步解码，解码完成后 three 自己会刷新（不用重建材质）。 */
-      if (maps[i]) mat.map = sharedTexture(maps[i]);
+      /* 有合成纹理就优先用它：重建材质（撤销 / 修改器）后混合层不能「消失」；
+       * 没有才回到导入时抽出来的基础色贴图。 */
+      var mixTex = (MIX && MIX.texFor(i)) || null;
+      if (mixTex) mat.map = mixTex;
+      else if (maps[i]) mat.map = sharedTexture(maps[i]);
       /* 显示开关要能还原：材质本色 / 原始贴图在这里留底（见 applyViewFlags） */
       mat.userData.mdBaseColor = colors[i] || '#c9ccd4';
       mat.userData.mdBaseMap = mat.map || null;
@@ -2568,10 +2969,26 @@
     var id = pv.userData && pv.userData.mdNode;
     var nodes = SeedModel.Scene.nodesOf(st.doc);
     for (var i = 0; i < nodes.length; i++) {
-      if (nodes[i].id === id) return SeedModel.Scene.getMesh(st.doc, nodes[i]);
+      if (nodes[i].id === id) {
+        /* 视口里画的必须是求值后的网格：有修改器时 base 只是输入，
+         * 画 base 会让「加了细分却看不到细分」 */
+        return SeedModel.Evaluator.evaluate(st.doc, nodes[i]) || SeedModel.Scene.getMesh(st.doc, nodes[i]);
+      }
     }
     return null;
   }
+
+  /* 修改器生效时，st.mesh 是求值结果（且被 evaluator 缓存共享），
+   * 组件编辑会原地写坏它（applyCompDelta / restoreCompBase 直接改 positions）。
+   * 所以组件模式与组件拾取统一在这里挡一道，提示先「应用修改器」。 */
+  function nodeModsActive(node) {
+    if (!node || !Array.isArray(node.modifiers) || !node.modifiers.length) return false;
+    var mods = global.SeedModifiers;
+    if (!mods || typeof mods.isActive !== 'function') return false;
+    for (var i = 0; i < node.modifiers.length; i++) if (mods.isActive(node.modifiers[i])) return true;
+    return false;
+  }
+  function modsBlockComponents() { return nodeModsActive(st.node); }
 
   function buildIslandOverlay(mesh, side) {
     var info = SeedModel.Mesh.uvIslands(mesh);
@@ -2742,7 +3159,9 @@
       var nodes = SeedModel.Scene.nodesOf(st.doc);
       for (var i = 0; i < nodes.length; i++) {
         var n = nodes[i];
-        var mesh = SeedModel.Scene.getMesh(st.doc, n);
+        /* 视口只画求值结果：修改器栈是「输入 → 输出」的黑盒，
+         * base 只用来编辑，显示 / 拾取 / 边线都必须读 evaluate 的输出。 */
+        var mesh = SeedModel.Evaluator.evaluate(st.doc, n) || SeedModel.Scene.getMesh(st.doc, n);
         if (!mesh) continue;
         var pv = makePivotFor(n, mesh, true);
         st.scene.add(pv);
@@ -2759,6 +3178,7 @@
         updateHud();
         if (!keepCamera) frameCamera();
         if (st.quad) updateQuadCameras(false);
+        if (MIX) MIX.refresh();
         return true;
       }
 
@@ -2772,6 +3192,8 @@
       updateHud();
       if (!keepCamera) frameCamera();
       if (st.quad) updateQuadCameras(false);
+      /* 材质刚被重建过：把该槽的纹理混合重新挂回来（有配置才动，没有就什么都不做） */
+      if (MIX) MIX.refresh();
       return true;
     } catch (e) {
       setStatus('网格构建失败：' + ((e && e.message) || e), true);
@@ -2786,6 +3208,8 @@
     st: st, SeedModel: SeedModel,
     historyBudget: HISTORY_BUDGET,
     applyPaintPatch: applyPaintPatch,
+    applyMixPatch: applyMixPatch,
+    applyMatsPatch: applyMatsPatch,
     rebuildModel: rebuildModel, paintAll: paintAll,
     updateChrome: updateChrome, setStatus: setStatus
   });
@@ -2905,11 +3329,12 @@
     return true;
   }
 
-  /* 会话上下文：给工具的是「只读快照 + 一个 apply 钩子」，不是整个 st */
+  /* 会话上下文：给工具的是「只读快照 + 一个 apply 钩子」，不是整个 st。
+   * 快照必须是 base 网格：工具结果最终要写回文档，不能把视口求值结果当输入。 */
   function toolCtx() {
     return {
       doc: st.doc,
-      mesh: st.mesh,
+      mesh: baseMeshNow(),
       node: st.node,
       selection: {
         mode: st.selMode,
@@ -3042,10 +3467,12 @@
   function selVertexIds() {
     return st.selMode === 'vertex' ? st.sel.vertexIds.slice() : [];
   }
-  /* 选中边里的第一条 → 两端顶点 ID（环切 / 循环边的起点） */
+  /* 选中边里的第一条 → 两端顶点 ID（环切 / 循环边的起点）。
+   * 用 base 网格：环切最终写回文档，不能拿求值结果里的边去套 base 的面。 */
   function selEdgePair() {
-    if (!st.mesh || !st.sel.edgeIds.length || !SeedModel.Mesh) return null;
-    var tbl = SeedModel.Mesh.ensureEdges(st.mesh);
+    var base = baseMeshNow();
+    if (!base || !st.sel.edgeIds.length || !SeedModel.Mesh) return null;
+    var tbl = SeedModel.Mesh.ensureEdges(base);
     for (var i = 0; i < st.sel.edgeIds.length; i++) {
       var rec = tbl.edgeById[st.sel.edgeIds[i]];
       if (rec) return { aId: rec.aId, bId: rec.bId };
@@ -3056,7 +3483,7 @@
   function loopCutBlocked() {
     if (st.selMode !== 'edge' || !selEdgePair()) return '环切：先在边模式选中一条边';
     var pair = selEdgePair();
-    if (!global.SeedOps || !global.SeedOps.edgeRing(st.mesh, pair.aId, pair.bId)) {
+    if (!global.SeedOps || !global.SeedOps.edgeRing(baseMeshNow(), pair.aId, pair.bId)) {
       return '环切：选中边不在全四边环上（先把相邻三角面转成四边，或换一条边）';
     }
     return '';
@@ -3065,15 +3492,62 @@
   /* 三角转四边：整网格一次性算子。成对共边三角并成四边，UV 接缝 / 折叠处不动。
    * 没有一对可并时返回 null 并由状态行说明原因，不静默吞掉。 */
   function trisToQuadsNow() {
-    if (!global.SeedOps || !global.SeedOps.trisToQuads || !st.mesh) return false;
-    var out = global.SeedOps.trisToQuads(st.mesh, { tolDeg: 40 });
+    if (!global.SeedOps || !global.SeedOps.trisToQuads || !baseMeshNow()) return false;
+    var base = baseMeshNow();
+    var out = global.SeedOps.trisToQuads(base, { tolDeg: 40 });
     if (!out) {
       setStatus('三角转四边：没有可合并的三角面（需要成对共边、同材质、凸四边形且 UV 连续）', true);
       return false;
     }
-    var merged = st.mesh.faceIds.length - out.faceIds.length;
+    var merged = base.faceIds.length - out.faceIds.length;
     applyMesh(out, '三角转四边');
     setStatus('三角转四边：合并 ' + merged + ' 对三角，面数 ' + out.faceIds.length);
+    return true;
+  }
+
+  /* 溶解：把选中的点 / 边 / 面并进邻接面。
+   * 合法性（闭合扇形 / 恰好两面 / 唯一边界）全在算子层判，失败返回 null + lastOpError。 */
+  function dissolveNow() {
+    var SeedOps = global.SeedOps;
+    var base = baseMeshNow();
+    if (!SeedOps || !SeedOps.dissolve || !base) {
+      setStatus('溶解：当前没有可编辑的网格', true);
+      return false;
+    }
+    var kind = 'face', ids = [];
+    if (st.selMode === 'vertex') { kind = 'vertex'; ids = selVertexIds(); }
+    else if (st.selMode === 'edge') { kind = 'edge'; ids = st.sel.edgeIds.slice(); }
+    else { ids = selFaceIds(); }
+    var noun = kind === 'vertex' ? '点' : (kind === 'edge' ? '边' : '面');
+    if (!ids.length) {
+      setStatus('溶解：先在' + noun + '模式下选中要溶解的组件', true);
+      return false;
+    }
+    var out = SeedOps.dissolve(base, { kind: kind, ids: ids });
+    if (!out) {
+      setStatus('溶解失败：' + (SeedOps.lastOpError || '选择不满足条件（点需闭合扇形、边需恰好两面、面区域需唯一边界）'), true);
+      return false;
+    }
+    applyMesh(out, '溶解');
+    setStatus('溶解：处理 ' + ids.length + ' 个' + noun + '，面数 ' + out.faceIds.length);
+    return true;
+  }
+
+  /* 细分一次：整网格一级 simple 细分（和「添加分段」不同，那个只切选中面） */
+  function subdivideOnceNow() {
+    var SeedOps = global.SeedOps;
+    var base = baseMeshNow();
+    if (!SeedOps || !SeedOps.subdivideOnce || !base) {
+      setStatus('细分一次：当前没有可编辑的网格', true);
+      return false;
+    }
+    var out = SeedOps.subdivideOnce(base, { simple: true });
+    if (!out) {
+      setStatus('细分一次失败：' + (SeedOps.lastOpError || '网格为空或面数超出上限'), true);
+      return false;
+    }
+    applyMesh(out, '细分一次');
+    setStatus('细分一次：' + base.faceIds.length + ' 面 → ' + out.faceIds.length + ' 面');
     return true;
   }
 
@@ -3303,6 +3777,31 @@
       ],
       '工具会话：环切（只处理全四边环；改条数 / 滑移看预览，Enter 提交，Esc 取消）'
     ));
+
+    /* 阵列：整份基础网格线性复制（count 含原件；merge 焊接重合点）。
+     * 放工具会话里，改数量 / 间距能反复看预览，Enter 才提交。 */
+    SeedTools.register(makeOpTool(
+      'tool.array', '阵列',
+      function (base, p) {
+        return SeedOps.arrayMesh(base, {
+          mode: 'linear',
+          count: Number(p.count),
+          offset: [Number(p.dx) || 0, Number(p.dy) || 0, Number(p.dz) || 0],
+          merge: Number(p.merge) !== 0
+        });
+      },
+      [
+        { key: 'count', label: '数量（含原件）', value: 3, min: 1, max: 200, step: 1 },
+        { key: 'dx', label: '间距 X', value: 1.2, min: -20, max: 20, step: 0.01 },
+        { key: 'dy', label: '间距 Y', value: 0, min: -20, max: 20, step: 0.01 },
+        { key: 'dz', label: '间距 Z', value: 0, min: -20, max: 20, step: 0.01 },
+        { key: 'merge', label: '焊接重合点', value: 0, min: 0, max: 1, step: 1, type: 'toggle' }
+      ],
+      '工具会话：阵列（数量含原件；改间距看预览，Enter 提交，Esc 取消）'
+    ));
+    defineOpCommand('mesh.array', '阵列', 'mesh', '', 23,
+      function () { return !!(st.doc && st.mesh); }, 'tool.array');
+
     var SeedCommands = global.SeedCommands;
     if (SeedCommands) {
       SeedCommands.define({
@@ -3318,6 +3817,20 @@
         id: 'mesh.trisToQuads', label: '三角转四边', group: 'mesh', key: '', order: 22,
         when: function () { return !!(st.doc && st.mesh); },
         run: function () { return trisToQuadsNow(); }
+      });
+      /* 溶解 / 细分一次是一次性命令：没有参数，失败原因由算子层给出 */
+      SeedCommands.define({
+        id: 'mesh.dissolve', label: '溶解', group: 'mesh', key: '', order: 24,
+        when: function () {
+          return !!(st.doc && baseMeshNow()
+            && (selVertexIds().length || st.sel.edgeIds.length || selFaceIds().length));
+        },
+        run: function () { return dissolveNow(); }
+      });
+      SeedCommands.define({
+        id: 'mesh.subdivideOnce', label: '细分一次', group: 'mesh', key: '', order: 25,
+        when: function () { return !!(st.doc && baseMeshNow()); },
+        run: function () { return subdivideOnceNow(); }
       });
     }
   }
@@ -3840,8 +4353,6 @@
     }
     if (el.id === 'mdBrushColor') {
       st.paint.color = el.value || '#d94f4f';
-      var sw = $('mdBrushSw');
-      if (sw) sw.style.background = st.paint.color;
       return;
     }
     if (el.dataset.mdPsize != null) {
@@ -3995,6 +4506,18 @@
   function onChange(e) {
     var el = e.target;
     if (!el) return;
+    /* 修改器栈的参数：checkBox = 启用/停用，select/number = 参数本身。
+     * 只在 change 上处理（input 会每敲一个字符重建一次面板，还会丢焦点）。 */
+    if (el.dataset.mdModon != null) {
+      modSetEnabled(Number(el.dataset.mdModon) || 0, !!el.checked);
+      return;
+    }
+    if (el.dataset.mdModp != null) {
+      var mv = el.type === 'number' ? Number(el.value) : el.value;
+      if (el.type === 'number' && !isFinite(mv)) return;
+      modSetParam(Number(el.dataset.mdModi) || 0, el.dataset.mdModp, mv);
+      return;
+    }
     if (el.id === 'mdBrushSel') {
       st.paint.brush = ['soft', 'hard', 'erase'].indexOf(el.value) >= 0 ? el.value : 'soft';
       var names = { soft: '圆形软笔', hard: '圆形硬笔', erase: '橡皮擦' };
@@ -4023,6 +4546,12 @@
     }
     if (el.tagName === 'SELECT' && el.id === 'mdShadeSel') {
       setShading(el.value);
+      return;
+    }
+    if (el.dataset.mdSlotf) {
+      var si = Number(el.dataset.mdSlot) || 0;
+      if (el.dataset.mdSlotf === 'name') slotRename(si, el.value);
+      else if (el.dataset.mdSlotf === 'color') slotSetColor(si, el.value);
       return;
     }
     if (el.tagName !== 'INPUT') return;
@@ -4271,6 +4800,7 @@
     switch (op) {
       case 'join': joinSelectedNodes(); return;
       case 'separate': separateActiveNode(); return;
+      case 'split-islands': splitSelectedIslands(); return;
       case 'boolean': booleanSelectedNodes(); return;
       case 'knife': setKnifeMode(); return;
       case 'loopcut':
@@ -4281,6 +4811,18 @@
         return;
       case 'tris-to-quads':
         trisToQuadsNow();
+        return;
+      case 'array':
+        /* 阵列也是 live 工具（数量 / 间距可反复预览），别用 runToolNow 立刻提交 */
+        if (beginTool('tool.array')) {
+          setStatus('阵列：在参数面板调数量 / 间距看预览，Enter 提交，Esc 取消');
+        }
+        return;
+      case 'subdivide-once':
+        subdivideOnceNow();
+        return;
+      case 'dissolve':
+        dissolveNow();
         return;
       case 'smooth':
         /* 平滑是整网格命令，不选点也能用 */
@@ -4694,6 +5236,9 @@
     }
     if (!act) return;
     switch (act) {
+      case 'slot-add': slotAdd(); break;
+      case 'slot-del': slotDelete(Number(t.dataset.mdSlot) || 0); break;
+      case 'slot-assign': slotAssignFaces(Number(t.dataset.mdSlot) || 0); break;
       case 'new': newDocument(); break;
       case 'open': showOpenDialog(); break;
       case 'save': save(); break;
@@ -4732,6 +5277,12 @@
       case 'tex': openTextureEditor(); break;
       case 'prim-create': createPrimitive(); break;
       case 'close-overlay': closeOverlay(); break;
+      /* 修改器栈（属性编辑器）：添加 / 排序 / 删除 / 应用 */
+      case 'mod-add': modAdd(t.dataset.mdMod); break;
+      case 'mod-del': modDelete(Number(t.dataset.mdModi) || 0); break;
+      case 'mod-up': modMove(Number(t.dataset.mdModi) || 0, -1); break;
+      case 'mod-down': modMove(Number(t.dataset.mdModi) || 0, 1); break;
+      case 'mod-apply': modApply(); break;
       default: break;
     }
   }
@@ -5154,268 +5705,28 @@
     else if (item && item.run) item.run();
   }
 
-  /* ---------------- 对象级编辑 ---------------- */
-  /* 统一入口：抓 before → 改文档 → 重建 → 抓 after → 一条历史。
-   * 复制/删除/隐藏都走这里，避免每个命令各写一遍快照逻辑。 */
-  function docEdit(label, fn) {
-    if (!st.doc) return false;
-    var before = snap();
-    /* ⚠ 重新解一次激活节点：st.node 是缓存，可能指着别的对象
-     * （用户在大纲/视口里换过激活，或 getState() 同步过）。
-     * 让 fn 改的是「当前激活对象」，不是缓存里的那个。 */
-    st.node = SeedModel.Scene.nodeOf(st.doc);
-    st.mesh = SeedModel.Scene.getMesh(st.doc);
-    var ok = fn();
-    if (ok === false) return false;
-    st.node = SeedModel.Scene.nodeOf(st.doc);
-    st.mesh = SeedModel.Scene.getMesh(st.doc);
-    rebuildModel(true);
-    var after = snap();
-    pushHistory(before, after, label);
-    paintAll();
-    return true;
-  }
-
-  function duplicateNode() { return dupNodes(1, 0.4); }
-
-  /* 复制 n 份，每份沿对象自身 X 轴错开 offset（0 就完全重合，肉眼看不出来） */
-  function dupNodes(count, offset) {
-    var doc = st.doc;
-    if (!doc) return false;
-    var src = SeedModel.Scene.nodeOf(doc);
-    if (!src) return false;
-    var mesh = SeedModel.Scene.getMesh(doc, src);
-    if (!mesh) return false;
-    count = Math.max(1, Math.min(20, Math.round(Number(count) || 1)));
-    offset = Math.max(0, Math.min(2, Number(offset) || 0));
-    var t = src.transform;
-    var q = new THREE.Quaternion().fromArray(t.rotation);
-    var step = new THREE.Vector3(offset, 0, 0).applyQuaternion(q);
-    var ok = docEdit(count > 1 ? '复制对象 ×' + count : '复制对象', function () {
-      var last = null;
-      for (var i = 1; i <= count; i++) {
-        last = SeedModel.Scene.addMeshNode(doc, {
-          name: src.name + ' 副本' + (count > 1 ? ' ' + i : ''),
-          mesh: SeedModel.Mesh.clone(mesh),
-          transform: {
-            position: [t.position[0] + step.x * i, t.position[1] + step.y * i, t.position[2] + step.z * i],
-            rotation: t.rotation.slice(),
-            scale: t.scale.slice()
-          }
-        });
-      }
-      if (!last) return false;
-      SeedModel.Scene.setActiveNode(doc, last.id);
-      st.autoName = false;
-      return true;
-    });
-    /* 复制完选择落在副本上：多选集合也要换过来，否则开启单独显示时
-     * 会把「原对象 + 副本」一起定格。 */
-    if (ok) {
-      var cur = SeedModel.Scene.nodeOf(doc);
-      st.nodeIds = cur ? [cur.id] : [];
-    }
-    return ok;
-  }
-
-  function deleteActiveNode() {
-    var doc = st.doc;
-    if (!doc) return false;
-    var node = SeedModel.Scene.nodeOf(doc);
-    if (!node) return false;
-    var ok = docEdit('删除对象', function () {
-      var removed = SeedModel.Scene.removeNode(doc, node.id);
-      if (!removed) return false;
-      var next = SeedModel.Scene.nodeOf(doc);
-      if (next) SeedModel.Scene.setActiveNode(doc, next.id);
-      return true;
-    });
-    /* 删到空场景也是合法状态：节点没了，多选 / 组件选择都要跟着清，别留下失主 id */
-    var next = SeedModel.Scene.nodeOf(doc);
-    st.nodeIds = next ? [next.id] : [];
-    st.sel = { vertexIds: [], edgeIds: [], faceIds: [] };
-    syncSelectionDoc();
-    paintSelection();
-    syncGizmo();
-    var left = SeedModel.Scene.nodesOf(doc).length;
-    setStatus(ok
-      ? (left ? '已删除对象（剩 ' + left + ' 个对象，Ctrl+Z 可撤销）'
-        : '已删除对象（场景已空，可用「新建」再建一个，Ctrl+Z 可撤销）')
-      : '删除失败');
-    return ok;
-  }
-
-  /* ---------------- 对象级算子：结合 / 分离 / 布尔 ---------------- */
-  function nodeMatrix(n) {
-    var q = new THREE.Quaternion().fromArray(n.transform.rotation || [0, 0, 0, 1]);
-    return new THREE.Matrix4().compose(
-      new THREE.Vector3().fromArray(n.transform.position || [0, 0, 0]),
-      q,
-      new THREE.Vector3().fromArray(n.transform.scale || [1, 1, 1])
-    );
-  }
-
-  function bakeMeshTo(mesh, matrix) {
-    var M = SeedModel.Mesh;
-    var out = M.clone(mesh);
-    M.ensureRawIndices(out);
-    var v = new THREE.Vector3();
-    for (var i = 0; i < out.positions.length; i += 3) {
-      v.set(out.positions[i], out.positions[i + 1], out.positions[i + 2]).applyMatrix4(matrix);
-      out.positions[i] = v.x; out.positions[i + 1] = v.y; out.positions[i + 2] = v.z;
-    }
-    M.bump(out);
-    return out;
-  }
-
-  function selectedOpNodes() {
-    var doc = st.doc;
-    if (!doc) return [];
-    var all = SeedModel.Scene.nodesOf(doc);
-    var ids = st.nodeIds && st.nodeIds.length ? st.nodeIds : [doc.activeNodeId];
-    var list = [];
-    for (var i = 0; i < all.length; i++) if (ids.indexOf(all[i].id) >= 0) list.push(all[i]);
-    if (!list.length) {
-      var act = SeedModel.Scene.nodeOf(doc);
-      if (act) list.push(act);
-    }
-    return list;
-  }
-
-  function clearComponentSelection() {
-    st.sel = { vertexIds: [], edgeIds: [], faceIds: [] };
-    syncSelectionDoc();
-    paintSelection();
-    syncGizmo();
-  }
-
-  function joinSelectedNodes() {
-    var doc = st.doc;
-    if (!doc) return false;
-    var list = selectedOpNodes();
-    if (list.length < 2) {
-      setStatus('结合：请在大纲中按住 Ctrl/Shift 多选至少两个对象', true);
-      return false;
-    }
-    var target = SeedModel.Scene.nodeOf(doc);
-    if (list.indexOf(target) < 0) target = list[0];
-    var targetInv = nodeMatrix(target).invert();
-    var merged = SeedModel.Mesh.clone(SeedModel.Scene.getMesh(doc, target));
-    for (var i = 0; i < list.length; i++) {
-      var n = list[i];
-      if (n.id === target.id) continue;
-      var m = SeedModel.Scene.getMesh(doc, n);
-      if (!m) continue;
-      var local = bakeMeshTo(m, new THREE.Matrix4().multiplyMatrices(targetInv, nodeMatrix(n)));
-      SeedModel.Mesh.append(merged, local);
-    }
-    var ok = docEdit('结合对象', function () {
-      for (var j = 0; j < list.length; j++) {
-        if (list[j].id !== target.id) SeedModel.Scene.removeNode(doc, list[j].id);
-      }
-      SeedModel.Scene.setMesh(doc, merged, target);
-      SeedModel.Scene.setActiveNode(doc, target.id);
-      return true;
-    });
-    if (!ok) return false;
-    st.nodeIds = [target.id];
-    st.node = SeedModel.Scene.nodeOf(doc);
-    st.mesh = SeedModel.Scene.getMesh(doc);
-    clearComponentSelection();
-    paintAll();
-    setStatus('已结合 ' + list.length + ' 个对象 → ' + target.name);
-    return true;
-  }
-
-  function separateActiveNode() {
-    var doc = st.doc;
-    var node = SeedModel.Scene.nodeOf(doc);
-    if (!node) return false;
-    var parts = SeedOps.splitLooseParts(SeedModel.Scene.getMesh(doc, node));
-    if (!parts || parts.length < 2) {
-      setStatus('分离：当前网格只有一个连通块', true);
-      return false;
-    }
-    var added = [];
-    var ok = docEdit('分离对象', function () {
-      SeedModel.Scene.setMesh(doc, parts[0], node);
-      var t = node.transform;
-      for (var i = 1; i < parts.length; i++) {
-        added.push(SeedModel.Scene.addMeshNode(doc, {
-          name: node.name + ' 分离 ' + (i + 1),
-          mesh: parts[i],
-          transform: {
-            position: t.position.slice(),
-            rotation: t.rotation.slice(),
-            scale: t.scale.slice()
-          }
-        }));
-      }
-      return true;
-    });
-    if (!ok) return false;
-    st.nodeIds = [node.id].concat(added.map(function (n) { return n.id; }));
-    st.node = SeedModel.Scene.nodeOf(doc);
-    st.mesh = SeedModel.Scene.getMesh(doc);
-    clearComponentSelection();
-    paintAll();
-    setStatus('已按连通块分离出 ' + parts.length + ' 个对象');
-    return true;
-  }
-
-  function booleanSelectedNodes() {
-    var doc = st.doc;
-    if (!doc) return false;
-    var list = selectedOpNodes();
-    if (list.length !== 2) {
-      setStatus('布尔：请在大纲中按住 Ctrl/Shift 选择恰好两个对象（激活对象为 A）', true);
-      return false;
-    }
-    var A = SeedModel.Scene.nodeOf(doc);
-    if (list.indexOf(A) < 0) A = list[0];
-    var B = list[0].id === A.id ? list[1] : list[0];
-    var meshA = SeedModel.Scene.getMesh(doc, A);
-    var meshB = SeedModel.Scene.getMesh(doc, B);
-    if (!meshA || !meshB) return false;
-    var bLocal = bakeMeshTo(meshB, new THREE.Matrix4().multiplyMatrices(nodeMatrix(A).invert(), nodeMatrix(B)));
-    var result = null;
-    try {
-      result = SeedOps.booleanMeshes(meshA, bLocal, 'subtract');
-    } catch (err) {
-      result = null;
-    }
-    if (!result) {
-      setStatus('布尔失败：对象需要是封闭网格，或结果面数超出上限', true);
-      return false;
-    }
-    var ok = docEdit('布尔差集', function () {
-      SeedModel.Scene.setMesh(doc, result, A);
-      SeedModel.Scene.removeNode(doc, B.id);
-      SeedModel.Scene.setActiveNode(doc, A.id);
-      return true;
-    });
-    if (!ok) return false;
-    st.nodeIds = [A.id];
-    st.node = SeedModel.Scene.nodeOf(doc);
-    st.mesh = SeedModel.Scene.getMesh(doc);
-    clearComponentSelection();
-    paintAll();
-    setStatus('已执行布尔差集：' + A.name + ' − ' + B.name);
-    return true;
-  }
-
-  function toggleActiveVisible() {
-    var doc = st.doc;
-    var node = doc && SeedModel.Scene.nodeOf(doc);
-    if (!node) return false;
-    var willHide = node.visible !== false;
-    var ok = docEdit(willHide ? '隐藏对象' : '显示对象', function () {
-      node.visible = !willHide;
-      return true;
-    });
-    if (ok) setStatus(willHide ? '对象已隐藏（H 再按一次显示）' : '对象已显示');
-    return ok;
-  }
+  /* ---------------- 对象级编辑 / 算子（已拆到 js/md-objops.js） ----------------
+   * 复制 / 删除 / 隐藏 / 结合 / 分离 / 布尔共用一条 docEdit 流水线：
+   * 抓快照 → 改文档 → 重建视口 → 记一条历史。
+   * 外壳保留同名门面，快捷键 / 热盒 / 菜单的调用点一行都不用改。 */
+  var OBJOPS = global.MDObjOps.create({
+    st: st, THREE: THREE,
+    SeedModel: global.SeedModel, SeedOps: global.SeedOps,
+    snap: snap, pushHistory: pushHistory, rebuildModel: rebuildModel,
+    paintAll: paintAll, paintSelection: paintSelection,
+    syncSelectionDoc: syncSelectionDoc, syncGizmo: syncGizmo,
+    modsBlockComponents: modsBlockComponents,
+    setStatus: setStatus
+  });
+  function docEdit(label, fn) { return OBJOPS.docEdit(label, fn); }
+  function duplicateNode() { return OBJOPS.duplicateNode(); }
+  function dupNodes(count, offset) { return OBJOPS.dupNodes(count, offset); }
+  function deleteActiveNode() { return OBJOPS.deleteActiveNode(); }
+  function joinSelectedNodes() { return OBJOPS.joinSelectedNodes(); }
+  function separateActiveNode() { return OBJOPS.separateActiveNode(); }
+  function splitSelectedIslands() { return OBJOPS.splitSelectedIslands(); }
+  function booleanSelectedNodes() { return OBJOPS.booleanSelectedNodes(); }
+  function toggleActiveVisible() { return OBJOPS.toggleActiveVisible(); }
 
   function toggleGrid() {
     if (global.SeedViewFlags) {
@@ -5768,7 +6079,7 @@
       var geo = geos.length === 1 ? geos[0] : concatImportGeometries(geos);
       if (geos.length > 1) geos.forEach(function (x) { x.dispose(); });
       var mesh;
-      try { mesh = SeedModel.Mesh.fromBufferGeometry(geo, { slot: g.slot }); }
+      try { mesh = SeedModel.Mesh.fromBufferGeometry(geo, { slot: g.slot, quadOpts: { tolDeg: 40, shapeTol: 80 } }); }
       catch (e) { throw new Error((g.name || '网格') + '：' + ((e && e.message) || e)); }
       geo.dispose();
       /* 合并后的节点用去掉后缀的原名；单独一块就保留它自己的名字 */
@@ -6161,6 +6472,9 @@
     try {
       if (!st.doc.assetId) st.doc.assetId = genId();
       if (!st.doc.materials.textureConfigKey) st.doc.materials.textureConfigKey = st.doc.assetId;
+      /* 首次保存才拿到资产 id：把本会话攒下的纹理混合配置迁到这个 key，
+       * 不然关掉页面就丢（模型库那边也靠同一个 key 读配置）。 */
+      if (MIX) MIX.rekey(st.doc, st.doc.materials.textureConfigKey);
       if (!st.doc.materials.slotNames.length) {
         st.doc.materials.slotNames = ['默认材质'];
         st.doc.materials.slotColors = ['#c9ccd4'];
@@ -6303,7 +6617,9 @@
     setStatus: setStatus, updateChrome: updateChrome, updateHud: updateHud,
     undo: undo, redo: redo, snap: snap, pushHistory: pushHistory,
     paintAll: paintAll, paintSelection: paintSelection, applyShading: applyShading,
-    syncSelectionDoc: syncSelectionDoc, islandFacesOf: islandFacesOf
+    syncSelectionDoc: syncSelectionDoc, islandFacesOf: islandFacesOf,
+    /* UV 编辑器直接改 st.mesh.uvs：有修改器时 st.mesh 是求值结果，必须挡在门外 */
+    nodeModsActive: nodeModsActive
   });
   function openUVEditor() { return UVED.open(); }
   function closeUVEditor() { return UVED.close(); }

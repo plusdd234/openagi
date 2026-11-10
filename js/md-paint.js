@@ -158,7 +158,10 @@
       var mats = (st.doc && st.doc.materials) || {};
       var url = (mats.slotMaps || [])[slot] || '';
       var img = null;
-      if (url) {
+      /* 底图优先问纹理混合模块：有烘焙贴图时，笔迹要画在烘焙图上，
+       * 而不是回到导入时的原始贴图（两者可能不是同一张）。 */
+      if (ctx.baseImageFor) img = ctx.baseImageFor(slot) || null;
+      if (!img && url) {
         var t0 = sharedTexture(url);
         if (t0 && t0.image && t0.image.width) img = t0.image;
       }
@@ -180,30 +183,11 @@
       /* 标成共享：材质释放时不能顺手把它 dispose 掉（它归绘画工具箱所有） */
       tex.userData.mdShared = true;
       p.doc = st.doc; p.slot = slot; p.tex = tex; p.canvas = cv; p.ctx = c2;
-      applyPaintTexture(tex, slot);
+      /* 交给纹理混合模块决定材质上挂哪张图：
+       * 有混合层就挂「基础画布 + 图层」的合成图，没有才直接挂这张画布。 */
+      if (ctx.onPaintBase) ctx.onPaintBase(slot);
+      else if (ctx.applySlotTexture) ctx.applySlotTexture(slot, tex);
       return tex;
-    }
-
-    /* 把绘制贴图挂到当前对象所有使用该槽的材质上（含平涂缓存材质） */
-    function applyPaintTexture(tex, slot) {
-      if (!st.pivot) return;
-      st.pivot.traverse(function (o) {
-        if (!o.userData || o.userData.mdPart !== 'solid') return;
-        if (o.material) {
-          var arr = Array.isArray(o.material) ? o.material : [o.material];
-          var m = arr[slot];
-          if (m) {
-            if (!m.userData.mdPaintOrig) m.userData.mdPaintOrig = m.map || null;
-            m.map = tex;
-            m.userData.mdBaseMap = tex;
-            m.needsUpdate = true;
-          }
-        }
-        if (o.userData.mdFlatMats) {
-          var fm = o.userData.mdFlatMats[slot];
-          if (fm) { fm.map = tex; fm.userData.mdBaseMap = tex; fm.needsUpdate = true; }
-        }
-      });
     }
 
     /* 把画布编码回文档：slotMaps 是贴图真源，保存 GLB 时随 seedModel 一起走 */
@@ -247,6 +231,8 @@
       st.paint.slot = -1; st.paint.doc = null;
       rebuildModel(true);
       paintAll();
+      /* 工作副本没了：让纹理混合按「解码后的基础贴图」重新合成 */
+      if (ctx.onPaintReset) ctx.onPaintReset(patch.slot);
     }
 
     function paintRgba(hex, a) {
@@ -282,6 +268,8 @@
       c2.fill();
       c2.restore();
       p.tex.needsUpdate = true;
+      /* 有混合层时，笔迹要参与合成：让纹理混合模块在本帧重烘一次 */
+      if (ctx.onPaintInk) ctx.onPaintInk(p.slot);
     }
 
     function paintStampUV(u, v) {
@@ -299,6 +287,11 @@
         return false;
       }
       if (!st.mesh.uvs || !st.mesh.uvs.length) {
+        /* 修改器生效时 st.mesh 是求值结果：在这里补 UV 会写坏 evaluator 的缓存 */
+        if (ctx.nodeModsActive && ctx.nodeModsActive(st.node)) {
+          setStatus('绘画：该对象有修改器且没有 UV，先「应用修改器」或展开 UV 再画', true);
+          return false;
+        }
         /* 没有 UV 的网格（基础体、刚导入的部分资产）先铺一层默认展开，
          * 否则笔刷无处落点；生成的 UV 会写进文档，和 UV 编辑器里看到的一致。 */
         SeedModel.Mesh.ensureUV(st.mesh);
@@ -311,6 +304,8 @@
       if (!hit) { setStatus('绘画：这里没点到模型', true); return false; }
       var tex = paintEnsureTarget(hit.slot);
       if (!tex) return false;
+      /* 工具箱的「纹理混合」跟着落笔的槽切换：用户画哪一槽就想调哪一槽 */
+      if (ctx.onPaintSlot) ctx.onPaintSlot(hit.slot);
       /* 岛遮罩：clip 在整笔期间有效，落笔的岛就是这一笔的可画范围 */
       paintClipBegin(hit.faceId);
       st.paint.stroke = {
@@ -360,7 +355,7 @@
       paintClipRelease();
     }
 
-    return { begin: begin, move: move, end: end, cancel: cancel, applyPatch: applyPaintPatch };
+    return { begin: begin, move: move, end: end, cancel: cancel, applyPatch: applyPaintPatch, rayHit: paintRayHit };
   }
 
   global.MDPaint = { create: create };

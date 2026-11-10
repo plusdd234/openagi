@@ -40,7 +40,10 @@ const DESK_GLYPH = {
   mv: '<rect x="8.4" y="8.4" width="7.2" height="7.2" rx="1.6"/><path d="M12 2.6v3.4M12 18v3.4M2.6 12h3.4M18 12h3.4"/>',
   /* 建模用「线框立方体 + 顶点手柄」：立方体是 3D 资产，四个小圆点表示可编辑顶点。
    * 别复用 modelLib 的立方体——那个是「存模型」，这里是「改模型」。 */
-  modeler: '<path d="M12 3 20 7.5v9L12 21 4 16.5v-9L12 3Z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/><circle cx="12" cy="3" r="1.1"/><circle cx="20" cy="7.5" r="1.1"/><circle cx="4" cy="7.5" r="1.1"/><circle cx="12" cy="21" r="1.1"/>'
+  modeler: '<path d="M12 3 20 7.5v9L12 21 4 16.5v-9L12 3Z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/><circle cx="12" cy="3" r="1.1"/><circle cx="20" cy="7.5" r="1.1"/><circle cx="4" cy="7.5" r="1.1"/><circle cx="12" cy="21" r="1.1"/>',
+  /* 图像工坊用「画框 + 滑杆」：画框表示图像，右侧两条带圆点的线表示调色/滤镜。
+   * 不能只画一张图——那和图库、文生图的图标会撞；带参数线才像「编辑工作站」。 */
+  ps: '<rect x="3" y="4" width="12.5" height="16" rx="2.2"/><path d="M4 16.2 6.6 13a1.6 1.6 0 0 1 2.4 0l1.5 1.6 1.2-1.2a1.6 1.6 0 0 1 2.3 0l.7.7"/><circle cx="12" cy="8.2" r="1"/><path d="M18 8.2h3M18 12h3M18 15.8h3"/><circle cx="16.7" cy="8.2" r="1.2"/><circle cx="19.3" cy="12" r="1.2"/><circle cx="16.7" cy="15.8" r="1.2"/>'
 };
 function deskSvg(kind){
   return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (DESK_GLYPH[kind] || DESK_GLYPH.flow) + '</svg>';
@@ -74,6 +77,11 @@ const DESK_APPS = [
   /* 图库 / 模型库：资产的去处。挨着两个引擎图标，形成「造东西的」和「存东西的」两排。 */
   { id:'gallery', name:'图库', glyph:'gallery', type:'system', open: () => { if(typeof openLibrary === 'function') openLibrary('image'); } },
   { id:'modelLib', name:'模型库', glyph:'modelLib', type:'system', open: () => { if(typeof openLibrary === 'function') openLibrary('model'); } },
+  /* 图像工坊：图片的「深加工」去处。图库负责收，它负责改——
+   * 多图层、选区、滤镜和大尺寸瓦片渲染，和上一代只做快速修正的图片编辑器分工不同。 */
+  { id:'imglab', name:'图像工坊', glyph:'ps', type:'system', open: () => {
+    if(typeof window.psLab !== 'undefined' && typeof window.psLab.open === 'function') window.psLab.open();
+  } },
   /* 建模：网格资产工作站。摆在模型库旁边——一个是「造」，一个是「存」。
    * MVP-1 用可编辑 face-vertex 网格；点线面工具随后续里程碑接入。 */
   { id:'modeldesk', name:'建模', glyph:'modeler', type:'system', open: () => {
@@ -442,6 +450,7 @@ const DESK_APP_META = {
   comfy:    { title: '本地生图', sub: 'ComfyUI 引擎',        win: 'comfyWin'  },
     gallery:  { title: '图库',     sub: '生成结果与素材',      win: 'libWin'    },
     modelLib: { title: '模型库',   sub: '本机模型文件',        win: 'libWin'    },
+    imglab:   { title: '图像工坊', sub: '图层 · 选区 · 滤镜 · 瓦片大图', win: 'imgLabWin' },
     modeldesk: { title: '建模',    sub: '网格资产工作站 · 变换 · 材质槽',      win: 'modelDeskWin' },
     player:   { title: '播放器',   sub: '本地的视频与音频',    win: 'playerWin' },
     multiview:{ title: '多视图',   sub: '模型转三视图 / 六视图 / 八视图', win: 'mvWin' },

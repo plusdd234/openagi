@@ -572,6 +572,23 @@
     return start;
   }
 
+  /* 直接写 UV 的面搬运（分割出来的子面要自己算中点 / 中心 UV，rawIndices 指回本网格）。
+   * 与 pushFaceRaw 的区别：那份只抄「原角 UV」，这里收已经是目标 UV 的每角一对。 */
+  function pushFaceUVs(out, verts, uvs, faceId, slot) {
+    if (!verts || verts.length < 3) return -1;
+    var start = out.faceIndices.length, i;
+    for (i = 0; i < verts.length; i++) out.faceIndices.push(verts[i]);
+    out.faceOffsets.push(out.faceIndices.length);
+    out.faceIds.push(faceId != null ? faceId : out.nextFaceId++);
+    out.faceSlots.push(slot != null ? slot : 0);
+    for (i = 0; i < verts.length; i++) {
+      out.rawIndices.push(start + i);
+      var uv = uvs && uvs[i] ? uvs[i] : null;
+      out.uvs.push(uv && isFinite(uv[0]) ? uv[0] : 0, uv && isFinite(uv[1]) ? uv[1] : 0);
+    }
+    return start;
+  }
+
   /* 沿顶点法线外推（整网格，无选择）：从质心指向顶点的方向 */
   function inflateAll(mesh, d) {
     var M = meshCore();
@@ -1144,6 +1161,60 @@
     return parts;
   }
 
+  /* ---------------- 按面集合拆成两份（UV 岛拆分） ----------------
+   * 把 faceIds 指定的面拆成一个独立网格：
+   *   part —— 只含选中面（顶点紧凑重排，保留原 vertexId / faceId / faceSlot / UV）
+   *   keep —— 原网格去掉这些面（顺带清掉不再被引用的孤立顶点）
+   * 面集合为空 / 覆盖整份网格 / 没有一个合法面 → null（调用方据此提示，不产生半成品）。
+   * ID 沿用原值：两块网格的顶点 / 面 ID 天然不重复，之后「结合」回一起也不会撞号。 */
+  function extractFaces(mesh, faceIds) {
+    var M = meshCore();
+    if (!M || !mesh) return null;
+    var fIdx = faceIndicesOf(mesh, faceIds);
+    if (!fIdx.length || fIdx.length >= mesh.faceIds.length) return null;
+
+    var src = M.clone(mesh);
+    M.ensureRawIndices(src);
+
+    var part = M.create();
+    part.nextFaceId = src.nextFaceId;
+    part.positions = [];
+    part.vertexIds = [];
+    part.faceOffsets = [0];
+    part.faceIndices = [];
+    part.faceIds = [];
+    part.faceSlots = [];
+    part.uvs = [];
+    part.rawIndices = [];
+
+    var remap = Object.create(null);
+    var maxVertexId = 0;
+    for (var i = 0; i < fIdx.length; i++) {
+      var fi = fIdx[i];
+      var s0 = src.faceOffsets[fi], e0 = src.faceOffsets[fi + 1];
+      var verts = [], corners = [];
+      for (var k = s0; k < e0; k++) {
+        var old = src.faceIndices[k];
+        if (remap[old] == null) {
+          remap[old] = part.positions.length / 3;
+          part.positions.push(src.positions[old * 3], src.positions[old * 3 + 1], src.positions[old * 3 + 2]);
+          var vid = src.vertexIds[old];
+          part.vertexIds.push(vid);
+          if (vid > maxVertexId) maxVertexId = vid;
+        }
+        verts.push(remap[old]);
+        corners.push(src.rawIndices[k]);
+      }
+      pushFaceRaw(part, src, -1, verts, src.faceIds[fi], corners, src.faceSlots[fi]);
+    }
+    part.nextVertexId = maxVertexId + 1;
+    M.bump(part);
+
+    var keep = deleteFaces(src, { faceIds: faceIds, clean: true });
+    if (!keep) return null;
+    return { part: part, keep: keep };
+  }
+
   /* ---------------- 多切割（平面切） ----------------
    * 用一个局部平面切整个网格：每个被切面沿两个交点分成两个多边形。
    * 交点多于 2 个的面（非凸 / 自交）跳过，保证不产生碎面。 */
@@ -1237,8 +1308,206 @@
 
   /* ---------------- 布尔（BSP / CSG） ----------------
    * 稳定的凸多面体布尔子集：三角形进 BSP，输出多边形面。
-   * 两个网格必须已在同一坐标系里（由外壳先把 B 烘进 A 的局部空间）。 */
+   * 两个网格必须已在同一坐标系里（由外壳先把 B 烘进 A 的局部空间）。
+   *
+   * 2026-11 加强：BSP 对坏输入会静默吐碎片（非封闭体切出悬空面、自交体互相穿插、
+   * 两张面近乎共面时切出零厚度薄片）。这类结果比「失败」更糟 —— 用户看不出模型已经坏了。
+   * 所以进 BSP 之前先体检，失败时返回 null 并写 SeedOps.lastOpError（中文原因），
+   * 外壳读它就能提示具体问题，而不是一句笼统的「布尔失败」。 */
   var CSG_EPS = 1e-6;
+  var lastOpError = '';
+  function setOpError(msg) {
+    lastOpError = msg || '';
+    if (global.SeedOps) global.SeedOps.lastOpError = lastOpError;
+    return null;
+  }
+
+  function meshBoundsOf(mesh) {
+    var min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    for (var i = 0; i < mesh.positions.length; i += 3) {
+      for (var a = 0; a < 3; a++) {
+        var v = mesh.positions[i + a];
+        if (v < min[a]) min[a] = v;
+        if (v > max[a]) max[a] = v;
+      }
+    }
+    var dx = max[0] - min[0], dy = max[1] - min[1], dz = max[2] - min[2];
+    return { min: min, max: max, diag: Math.sqrt(dx * dx + dy * dy + dz * dz) || 1 };
+  }
+
+  /* 面 → 三角形（扇形三角化，与 meshToPolys 保持一致）。
+   * 顺带判退化：零面积三角形进 BSP 会得到 NaN 平面。 */
+  function meshTris(mesh, eps) {
+    var tris = [], degenerate = 0, bad = new Set();
+    for (var f = 0; f < mesh.faceIds.length; f++) {
+      var s0 = mesh.faceOffsets[f], e0 = mesh.faceOffsets[f + 1];
+      if (e0 - s0 < 3) { bad.add(f); continue; }
+      for (var k = 1; k + 1 < e0 - s0; k++) {
+        var ia = mesh.faceIndices[s0], ib = mesh.faceIndices[s0 + k], ic = mesh.faceIndices[s0 + k + 1];
+        if (ia === ib || ib === ic || ic === ia) { degenerate++; continue; }
+        var p0 = [mesh.positions[ia * 3], mesh.positions[ia * 3 + 1], mesh.positions[ia * 3 + 2]];
+        var p1 = [mesh.positions[ib * 3], mesh.positions[ib * 3 + 1], mesh.positions[ib * 3 + 2]];
+        var p2 = [mesh.positions[ic * 3], mesh.positions[ic * 3 + 1], mesh.positions[ic * 3 + 2]];
+        var ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2];
+        var vx = p2[0] - p0[0], vy = p2[1] - p0[1], vz = p2[2] - p0[2];
+        var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        var len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (len < eps) { degenerate++; continue; }
+        var n = [nx / len, ny / len, nz / len];
+        tris.push({
+          p: [p0, p1, p2], n: n, w: dot3(n, p0), ids: [ia, ib, ic],
+          min: [Math.min(p0[0], p1[0], p2[0]), Math.min(p0[1], p1[1], p2[1]), Math.min(p0[2], p1[2], p2[2])],
+          max: [Math.max(p0[0], p1[0], p2[0]), Math.max(p0[1], p1[1], p2[1]), Math.max(p0[2], p1[2], p2[2])]
+        });
+      }
+    }
+    return { tris: tris, degenerate: degenerate, badFaces: bad };
+  }
+
+  function aabbHit(a, b, eps) {
+    for (var i = 0; i < 3; i++) {
+      if (a.min[i] > b.max[i] + eps || b.min[i] > a.max[i] + eps) return false;
+    }
+    return true;
+  }
+
+  /* 三角形在平面 n·x = w 上的截线段；共面时返回整个三角形 */
+  function triPlaneSegment(p, n, w, eps) {
+    var d = [], i;
+    for (i = 0; i < 3; i++) d.push(dot3(n, p[i]) - w);
+    if (Math.abs(d[0]) <= eps && Math.abs(d[1]) <= eps && Math.abs(d[2]) <= eps) return p.slice();
+    var pts = [];
+    for (i = 0; i < 3; i++) {
+      var j = (i + 1) % 3;
+      if (Math.abs(d[i]) <= eps) pts.push(p[i]);
+      if ((d[i] > eps && d[j] < -eps) || (d[i] < -eps && d[j] > eps)) {
+        var t = d[i] / (d[i] - d[j]);
+        pts.push([p[i][0] + (p[j][0] - p[i][0]) * t, p[i][1] + (p[j][1] - p[i][1]) * t, p[i][2] + (p[j][2] - p[i][2]) * t]);
+      }
+    }
+    return pts;
+  }
+
+  /* 点在三角形内（投影到丢弃法线最大分量的平面，避免退化）。
+   * 边上的点不算命中：两个体面贴面接触不是穿插，不能误判成自交。 */
+  function pointInTri(pt, tri, n, eps) {
+    var drop = dropAxisOf(n);
+    return baryInside(project2D(pt, drop), project2D(tri[0], drop), project2D(tri[1], drop), project2D(tri[2], drop), eps);
+  }
+  function project2D(p, dropAxis) {
+    return dropAxis === 0 ? [p[1], p[2]] : (dropAxis === 1 ? [p[0], p[2]] : [p[0], p[1]]);
+  }
+  function dropAxisOf(n) {
+    var ax = Math.abs(n[0]), ay = Math.abs(n[1]), az = Math.abs(n[2]);
+    return ax >= ay && ax >= az ? 0 : (ay >= az ? 1 : 2);
+  }
+  function baryInside(q, a, b, c, eps) {
+    var d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+    if (Math.abs(d) < 1e-20) return false;
+    var u = ((b[1] - c[1]) * (q[0] - c[0]) + (c[0] - b[0]) * (q[1] - c[1])) / d;
+    var v = ((c[1] - a[1]) * (q[0] - c[0]) + (a[0] - c[0]) * (q[1] - c[1])) / d;
+    var w = 1 - u - v;
+    return u > eps && v > eps && w > eps;
+  }
+  function orient2D(a, b, c) {
+    return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  }
+  /* 真穿越（不含端点擦碰 / 共线重叠）：接触不算，重叠才算 */
+  function segCross2D(a, b, c, d, eps) {
+    var o1 = orient2D(a, b, c), o2 = orient2D(a, b, d);
+    var o3 = orient2D(c, d, a), o4 = orient2D(c, d, b);
+    return ((o1 > eps && o2 < -eps) || (o1 < -eps && o2 > eps)) &&
+           ((o3 > eps && o4 < -eps) || (o3 < -eps && o4 > eps));
+  }
+
+  /* 非共面三角形是否真的互相穿过：两个方向的「平面截线端点是否落入对方三角形」 */
+  function triTriCross(t1, t2, eps) {
+    var d = [], i;
+    for (i = 0; i < 3; i++) d.push(dot3(t2.n, t1.p[i]) - t2.w);
+    if ((d[0] > eps && d[1] > eps && d[2] > eps) || (d[0] < -eps && d[1] < -eps && d[2] < -eps)) return false;
+    for (i = 0; i < 3; i++) d[i] = dot3(t1.n, t2.p[i]) - t1.w;
+    if ((d[0] > eps && d[1] > eps && d[2] > eps) || (d[0] < -eps && d[1] < -eps && d[2] < -eps)) return false;
+    var segA = triPlaneSegment(t2.p, t1.n, t1.w, eps);
+    for (i = 0; i < segA.length; i++) if (pointInTri(segA[i], t1.p, t1.n, eps)) return true;
+    var segB = triPlaneSegment(t1.p, t2.n, t2.w, eps);
+    for (i = 0; i < segB.length; i++) if (pointInTri(segB[i], t2.p, t2.n, eps)) return true;
+    return false;
+  }
+
+  /* 同一网格内的自交：跨连通块的面互相穿插。共享顶点的相邻面按设计接触，跳过。 */
+  function meshSelfIntersects(tris, eps) {
+    if (tris.length > 4000) return false;     /* 10 万级三角形做 O(n²) 会卡死界面，保留体检上限 */
+    var order = tris.slice().sort(function (a, b) { return a.min[0] - b.min[0]; });
+    for (var i = 0; i < order.length; i++) {
+      var A = order[i];
+      for (var j = i + 1; j < order.length && order[j].min[0] <= A.max[0] + eps; j++) {
+        var B = order[j];
+        if (!aabbHit(A, B, eps)) continue;
+        if ((A.ids[0] === B.ids[0] || A.ids[0] === B.ids[1] || A.ids[0] === B.ids[2]) ||
+            (A.ids[1] === B.ids[0] || A.ids[1] === B.ids[1] || A.ids[1] === B.ids[2]) ||
+            (A.ids[2] === B.ids[0] || A.ids[2] === B.ids[1] || A.ids[2] === B.ids[2])) continue;
+        if (Math.abs(dot3(A.n, B.n)) > 0.9999 && Math.abs(A.w - B.w) <= eps) continue;  /* 共面另查 */
+        if (triTriCross(A, B, eps)) return true;
+      }
+    }
+    return false;
+  }
+
+  /* A、B 之间是否存在「近乎共面且真重叠」的面：共面切分是 BSP 最容易吐薄片的地方 */
+  function meshesCoplanarOverlap(ta, tb, eps) {
+    if (ta.length > 4000 || tb.length > 4000) return false;
+    var order = tb.slice().sort(function (a, b) { return a.min[0] - b.min[0]; });
+    for (var i = 0; i < ta.length; i++) {
+      var A = ta[i];
+      for (var j = 0; j < order.length && order[j].min[0] <= A.max[0] + eps; j++) {
+        var B = order[j];
+        if (B.max[0] < A.min[0] - eps) continue;
+        if (!aabbHit(A, B, eps)) continue;
+        if (Math.abs(dot3(A.n, B.n)) < 0.9999) continue;
+        if (Math.abs(A.w - B.w) > eps) continue;
+        var drop = dropAxisOf(A.n), k;
+        var a2 = A.p.map(function (p) { return project2D(p, drop); });
+        var b2 = B.p.map(function (p) { return project2D(p, drop); });
+        for (k = 0; k < 3; k++) if (baryInside(b2[k], a2[0], a2[1], a2[2], 1e-4)) return true;
+        for (k = 0; k < 3; k++) if (baryInside(a2[k], b2[0], b2[1], b2[2], 1e-4)) return true;
+        /* 两个三角形可能只是边相交、没有顶点落进对方（平移后共面就是这种情况） */
+        for (k = 0; k < 3; k++) {
+          var k2 = (k + 1) % 3;
+          for (var m = 0; m < 3; m++) {
+            if (segCross2D(a2[k], a2[k2], b2[m], b2[(m + 1) % 3], 1e-9)) return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  /* 进 BSP 前的体检：结构 → 封闭流形 → 退化面 → 自交。
+   * 返回 { err: 原因字符串 | null, tris }；err 非空时调用方直接失败，不碰 BSP。 */
+  function inspectBooleanInput(mesh, label) {
+    var M = meshCore();
+    var errs = M.validate(mesh);
+    if (errs.length) return { err: label + ' 网格数据损坏：' + errs[0], tris: [] };
+    var tbl = M.ensureEdges(mesh);
+    var open = 0, nonManifold = 0;
+    for (var e = 0; e < tbl.edges.length; e++) {
+      if (tbl.edges[e].faces.length < 2) open++;
+      else if (tbl.edges[e].faces.length > 2) nonManifold++;
+    }
+    if (open || nonManifold) {
+      return { err: label + ' 不是封闭流形（边界边 ' + open + ' 条 / 非流形边 ' + nonManifold + ' 条），布尔会切出悬空面', tris: [] };
+    }
+    /* 长度容差按包围盒对角线缩放；面积容差取其平方，小零件不会被误判退化 */
+    var distEps = Math.max(1e-9, meshBoundsOf(mesh).diag * 1e-6);
+    var info = meshTris(mesh, distEps * distEps);
+    if (info.badFaces.size) return { err: label + ' 有少于 3 个顶点的面', tris: [] };
+    if (info.degenerate) return { err: label + ' 含 ' + info.degenerate + ' 个零面积 / 退化三角形，无法稳定求交', tris: [] };
+    if (!info.tris.length) return { err: label + ' 没有可用的三角形', tris: [] };
+    if (meshSelfIntersects(info.tris, distEps)) {
+      return { err: label + ' 存在自交（面互相穿插），请先修好网格再布尔', tris: [] };
+    }
+    return { err: null, tris: info.tris };
+  }
   function polyNormal(poly) {
     var n = [0, 0, 0];
     var v = poly.verts;
@@ -1299,8 +1568,10 @@
           f.push(vv); b.push(vv);
         }
       }
-      if (f.length >= 3) front.push(makePoly(f, poly.slot, plane));
-      if (b.length >= 3) back.push(makePoly(b, poly.slot, plane));
+      /* 切出来的碎片仍在**原多边形**的平面上，不是切割平面上 —— 这里必须用 poly.plane。
+       * 用切割平面会让碎片的法线 / 平面互相矛盾，下一层 BSP 反复分类不收敛（栈溢出）。 */
+      if (f.length >= 3) front.push(makePoly(f, poly.slot, poly.plane));
+      if (b.length >= 3) back.push(makePoly(b, poly.slot, poly.plane));
     }
   }
   function CsgNode(polys) {
@@ -1634,11 +1905,435 @@
     return out;
   }
 
+  /* ---------------- 细分一遍（simple 1-to-4） ----------------
+   * 纯拓扑细分：只插边中点 / 面中心，不移动原顶点（simple=true）。
+   *   四边面 → 4 个四边面（用中心点，不是把四边形切成三角）
+   *   三角面 → 4 个三角面（标准 1-to-4）
+   *   n 边面 → n 个四边面（角 + 两条边中点 + 中心）
+   * 共享边只插一次中点（同一顶点 ID），相邻面不会留 T 形缝；
+   * 中点 UV 按该面自己的两个角插值，所以 UV 缝两侧各自的 UV 仍然正确。
+   * simple=false 需要 Catmull-Clark 的位置平滑，本算子只做拓扑，明确拒绝而不是给错结果。 */
+  function subdivideOnce(mesh, opts) {
+    var M = meshCore();
+    if (!M || !mesh || !mesh.faceIds.length) return null;
+    opts = opts || {};
+    if (opts.simple === false) return null;
+
+    var src = M.clone(mesh);
+    M.ensureRawIndices(src);
+    var out = newShell(src);
+    if (src.uvSeams) Object.keys(src.uvSeams).forEach(function (k) { out.uvSeams[k] = 1; });
+    var hasUv = !!(src.uvs && src.uvs.length === src.faceIndices.length * 2);
+
+    var midV = Object.create(null);
+    function uvOf(c) {
+      if (!hasUv) return [0, 0];
+      var u = src.uvs[c * 2], v = src.uvs[c * 2 + 1];
+      return [isFinite(u) ? u : 0, isFinite(v) ? v : 0];
+    }
+    function midUv(a, b) { return [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5]; }
+    function midpoint(a, b) {
+      var key = a < b ? a + '_' + b : b + '_' + a;
+      var got = midV[key];
+      if (got != null) return got;
+      var a3 = a * 3, b3 = b * 3;
+      got = addVertex(out,
+        (src.positions[a3] + src.positions[b3]) * 0.5,
+        (src.positions[a3 + 1] + src.positions[b3 + 1]) * 0.5,
+        (src.positions[a3 + 2] + src.positions[b3 + 2]) * 0.5);
+      midV[key] = got;
+      return got;
+    }
+
+    for (var f = 0; f < src.faceIds.length; f++) {
+      var s0 = src.faceOffsets[f], e0 = src.faceOffsets[f + 1];
+      var n = e0 - s0;
+      if (n < 3) continue;
+      var verts = [], uvs = [], mids = [], midUvs = [], k;
+      for (k = 0; k < n; k++) { verts.push(src.faceIndices[s0 + k]); uvs.push(uvOf(src.rawIndices ? src.rawIndices[s0 + k] : -1)); }
+      for (k = 0; k < n; k++) {
+        mids.push(midpoint(verts[k], verts[(k + 1) % n]));
+        midUvs.push(midUv(uvs[k], uvs[(k + 1) % n]));
+      }
+      var slot = src.faceSlots[f];
+      if (n === 3) {
+        /* 三角面：三个角各一片 + 中间倒三角，四片全是三角面 */
+        pushFaceUVs(out, [verts[0], mids[0], mids[2]], [uvs[0], midUvs[0], midUvs[2]], src.faceIds[f], slot);
+        pushFaceUVs(out, [verts[1], mids[1], mids[0]], [uvs[1], midUvs[1], midUvs[0]], out.nextFaceId++, slot);
+        pushFaceUVs(out, [verts[2], mids[2], mids[1]], [uvs[2], midUvs[2], midUvs[1]], out.nextFaceId++, slot);
+        pushFaceUVs(out, [mids[0], mids[1], mids[2]], [midUvs[0], midUvs[1], midUvs[2]], out.nextFaceId++, slot);
+        continue;
+      }
+      /* 四边 / n 边：面中心 + 每个角一片四边面 */
+      var cx = 0, cy = 0, cz = 0, cu = 0, cv = 0;
+      for (k = 0; k < n; k++) {
+        cx += src.positions[verts[k] * 3]; cy += src.positions[verts[k] * 3 + 1]; cz += src.positions[verts[k] * 3 + 2];
+        cu += uvs[k][0]; cv += uvs[k][1];
+      }
+      var center = addVertex(out, cx / n, cy / n, cz / n);
+      var cuv = [cu / n, cv / n];
+      for (k = 0; k < n; k++) {
+        var prev = (k - 1 + n) % n;
+        pushFaceUVs(out, [verts[k], mids[k], center, mids[prev]],
+          [uvs[k], midUvs[k], cuv, midUvs[prev]],
+          k === 0 ? src.faceIds[f] : out.nextFaceId++, slot);
+      }
+    }
+    M.bump(out);
+    return out;
+  }
+
+  /* ---------------- 溶解（点 / 边 / 面） ----------------
+   * 溶解不是删面：它把「选中元素周围的一圈面」并成一张**多边形**（n 边面），
+   * 中间被吃掉的边 / 点直接消失。这里按「面记录」重排：
+   *   ① 先把源网格拆成面记录（顶点密集下标 + 原角号 + 面 ID + 材质槽）；
+   *   ② 按 kind 合并记录（面区域 / 单条边 / 顶点周围的扇形）；
+   *   ③ 最后统一压掉没有被任何面引用的孤点（ID 不重排，保留原 vertexId）。
+   * 合并成的那张面沿用参与合并的第一张面的 faceId，其余面 ID 消失 —— 选择 / 历史能对上。
+   *
+   * 约束（做不到就返回 null，让外壳提示而不是吐坏网格）：
+   *   面溶解：区域必须有**唯一一条简单边界环**（区域 ≥2 张面，单张面等同删面）；
+   *   边溶解：边必须恰好被 2 张面共用，且两侧环方向相反（非流形 / 同向重叠拒绝）；
+   *   点溶解：顶点必须是**闭合扇形**（每条过它的边都被两张面共用），且并集边界唯一；
+   *   边界环里同一个顶点出现两次（8 字形）一律拒绝，因为拼出来的面会自交。
+   * ids：vertex 用顶点 ID，edge 用 Mesh.ensureEdges 的边 ID，face 用面 ID。 */
+
+  function recordOfFace(src, f) {
+    var verts = [], corners = [];
+    for (var k = src.faceOffsets[f]; k < src.faceOffsets[f + 1]; k++) {
+      verts.push(src.faceIndices[k]);
+      corners.push(src.rawIndices ? src.rawIndices[k] : k);
+    }
+    return { verts: verts, corners: corners, faceId: src.faceIds[f], slot: src.faceSlots[f] };
+  }
+
+  /* 一组面记录的并集外边界：返回 { verts, corners } 或 null（非简单 / 多条环） */
+  function recordBoundary(records, list) {
+    var use = Object.create(null), bad = false;
+    for (var li = 0; li < list.length; li++) {
+      var r = records[list[li]];
+      if (!r) return null;
+      var n = r.verts.length;
+      for (var k = 0; k < n; k++) {
+        var a = r.verts[k], b = r.verts[(k + 1) % n];
+        if (a === b) return null;
+        var key = a < b ? a + '_' + b : b + '_' + a;
+        (use[key] || (use[key] = [])).push({ a: a, b: b, c: r.corners[k] });
+      }
+    }
+    var dirs = [];
+    Object.keys(use).forEach(function (key) {
+      var list2 = use[key];
+      if (list2.length === 1) dirs.push(list2[0]);
+      else if (list2.length > 2) bad = true;      /* 三张面共用一条边：非流形 */
+    });
+    if (bad || dirs.length < 3) return null;
+
+    /* 边界环的每个顶点只能有一条出边 / 一条入边，否则就是 8 字形或多条环 */
+    var next = Object.create(null), prev = Object.create(null);
+    for (var d = 0; d < dirs.length; d++) {
+      if (next[dirs[d].a] || prev[dirs[d].b]) return null;
+      next[dirs[d].a] = dirs[d];
+      prev[dirs[d].b] = dirs[d];
+    }
+    var start = dirs[0], cur = start, out = [], guard = 0;
+    do {
+      out.push({ v: cur.a, c: cur.c });
+      cur = next[cur.b];
+      if (!cur) return null;
+    } while (cur.a !== start.a && guard++ < dirs.length + 1);
+    if (out.length !== dirs.length) return null;   /* 还有第二条环：拒绝（否则会把洞填上） */
+    var uniq = Object.create(null);
+    for (var o = 0; o < out.length; o++) {
+      if (uniq[out[o].v]) return null;
+      uniq[out[o].v] = 1;
+    }
+    return out;
+  }
+
+  /* 把面记录落到输出网格：孤点清零，其余顶点 / 面 ID 原样保留 */
+  function emitRecords(src, records) {
+    var M = meshCore();
+    var out = M.create();
+    out.nextVertexId = src.nextVertexId;
+    out.nextFaceId = src.nextFaceId;
+    if (src.uvSeams) Object.keys(src.uvSeams).forEach(function (k) { out.uvSeams[k] = 1; });
+
+    var keep = Object.create(null), fi, k;
+    for (fi = 0; fi < records.length; fi++) {
+      var r = records[fi];
+      if (!r) continue;
+      for (k = 0; k < r.verts.length; k++) keep[r.verts[k]] = 1;
+    }
+    var remap = new Array(src.vertexIds.length);
+    for (var v = 0; v < src.vertexIds.length; v++) {
+      if (!keep[v]) { remap[v] = -1; continue; }
+      remap[v] = out.positions.length / 3;
+      out.positions.push(src.positions[v * 3], src.positions[v * 3 + 1], src.positions[v * 3 + 2]);
+      out.vertexIds.push(src.vertexIds[v]);
+    }
+    for (fi = 0; fi < records.length; fi++) {
+      var r2 = records[fi];
+      if (!r2) continue;
+      var verts = [];
+      for (k = 0; k < r2.verts.length; k++) {
+        var rv = remap[r2.verts[k]];
+        if (rv == null || rv < 0) { verts = null; break; }
+        verts.push(rv);
+      }
+      if (!verts || verts.length < 3) continue;
+      pushFaceRaw(out, src, -1, verts, r2.faceId, r2.corners, r2.slot);
+    }
+    M.bump(out);
+    return out;
+  }
+
+  function dissolve(mesh, opts) {
+    var M = meshCore();
+    if (!M || !mesh || !mesh.faceIds.length) return null;
+    opts = opts || {};
+    var kind = opts.kind;
+    var ids = opts.ids || [];
+    if (!ids.length || (kind !== 'vertex' && kind !== 'edge' && kind !== 'face')) return null;
+
+    var src = M.clone(mesh);
+    M.ensureRawIndices(src);
+    var records = [], f;
+    for (f = 0; f < src.faceIds.length; f++) records.push(recordOfFace(src, f));
+
+    var vidToDense = Object.create(null);
+    for (var v = 0; v < src.vertexIds.length; v++) vidToDense[src.vertexIds[v]] = v;
+
+    var changed = false;
+
+    if (kind === 'face') {
+      var sel = faceIndicesOf(src, ids);
+      if (!sel.length) return null;
+      /* 单张面：等同于删面（区域边界就是它自己，回填只会得到同一张面） */
+      if (sel.length === 1) {
+        records[sel[0]] = null;
+        changed = true;
+      } else {
+        var loop = recordBoundary(records, sel);
+        if (!loop) return null;
+        var first = records[sel[0]];
+        for (var si = 0; si < sel.length; si++) records[sel[si]] = null;
+        var rv = [], rc = [];
+        for (var lp = 0; lp < loop.length; lp++) { rv.push(loop[lp].v); rc.push(loop[lp].c); }
+        records[sel[0]] = { verts: rv, corners: rc, faceId: first.faceId, slot: first.slot };
+        changed = true;
+      }
+    } else if (kind === 'edge') {
+      for (var ei = 0; ei < ids.length; ei++) {
+        var eid = Number(ids[ei]);
+        if (!isFinite(eid)) return null;
+        var aId = Math.floor(eid / M.EDGE_STRIDE), bId = eid - aId * M.EDGE_STRIDE;
+        var a = vidToDense[aId], b = vidToDense[bId];
+        if (a == null || b == null) return null;
+        /* 找同时含 a→b 与 b→a 的两张面（同向 = 重叠面，拒绝） */
+        var fwd = -1, rev = -1;
+        for (var ri = 0; ri < records.length; ri++) {
+          var rec = records[ri];
+          if (!rec) continue;
+          var n = rec.verts.length, found = 0;
+          for (var k = 0; k < n; k++) {
+            var p = rec.verts[k], q = rec.verts[(k + 1) % n];
+            if (p === a && q === b) found = 1;
+            else if (p === b && q === a) found = 2;
+          }
+          if (found === 1) { if (fwd >= 0) return null; fwd = ri; }
+          else if (found === 2) { if (rev >= 0) return null; rev = ri; }
+        }
+        if (fwd < 0 || rev < 0) return null;
+
+        /* A 从 b 绕到 a，B 从 a 绕到 b，拼起来去掉共享边的两个重复端点 */
+        var A = records[fwd], B = records[rev];
+        var ia = 0, ib = 0, k2;
+        for (k2 = 0; k2 < A.verts.length; k2++) if (A.verts[k2] === a && A.verts[(k2 + 1) % A.verts.length] === b) ia = k2;
+        for (k2 = 0; k2 < B.verts.length; k2++) if (B.verts[k2] === b && B.verts[(k2 + 1) % B.verts.length] === a) ib = k2;
+        var mergedV = [], mergedC = [];
+        for (k2 = 0; k2 < A.verts.length; k2++) {
+          var ai = (ia + 1 + k2) % A.verts.length;
+          mergedV.push(A.verts[ai]); mergedC.push(A.corners[ai]);
+        }
+        /* A 的链已从 b 绕到 a；B 的链是 a→…→b，a 与 b 都已出现，
+         * 所以只取 B 的「第二个角到最后一个角」补在 A 的末尾 */
+        for (k2 = 2; k2 < B.verts.length; k2++) {
+          var bi = (ib + k2) % B.verts.length;
+          mergedV.push(B.verts[bi]); mergedC.push(B.corners[bi]);
+        }
+        var uniq = Object.create(null);
+        for (k2 = 0; k2 < mergedV.length; k2++) {
+          if (uniq[mergedV[k2]]) return null;
+          uniq[mergedV[k2]] = 1;
+        }
+        if (mergedV.length < 3) return null;
+        records[fwd] = { verts: mergedV, corners: mergedC, faceId: A.faceId, slot: A.slot };
+        records[rev] = null;
+        changed = true;
+      }
+    } else {
+      for (var vi = 0; vi < ids.length; vi++) {
+        var dense = vidToDense[Number(ids[vi])];
+        if (dense == null) return null;
+        var incident = [], edgeUse = Object.create(null);
+        for (var rj = 0; rj < records.length; rj++) {
+          var r3 = records[rj];
+          if (!r3) continue;
+          var n3 = r3.verts.length, at = -1;
+          for (var k3 = 0; k3 < n3; k3++) if (r3.verts[k3] === dense) at = k3;
+          if (at < 0) continue;
+          incident.push(rj);
+          var nxt = r3.verts[(at + 1) % n3], prv = r3.verts[(at - 1 + n3) % n3];
+          var ka = dense < nxt ? dense + '_' + nxt : nxt + '_' + dense;
+          var kb = dense < prv ? dense + '_' + prv : prv + '_' + dense;
+          edgeUse[ka] = (edgeUse[ka] || 0) + 1;
+          edgeUse[kb] = (edgeUse[kb] || 0) + 1;
+        }
+        if (incident.length < 3) return null;
+        /* 闭合扇形：过该点的每条边都恰好被两张入射面共用；否则是网格边界 / 非流形 */
+        var closedFan = true;
+        for (var ek in edgeUse) if (edgeUse[ek] !== 2) { closedFan = false; break; }
+        if (!closedFan) return null;
+        var loop3 = recordBoundary(records, incident);
+        if (!loop3) return null;
+        var seenV = false;
+        for (var l3 = 0; l3 < loop3.length; l3++) if (loop3[l3].v === dense) { seenV = true; break; }
+        if (seenV) return null;                   /* 边界还带着被删的点：说明扇形没闭合 */
+        var first3 = records[incident[0]];
+        var nv = [], nc = [];
+        for (var q3 = 0; q3 < loop3.length; q3++) { nv.push(loop3[q3].v); nc.push(loop3[q3].c); }
+        for (var ir = 0; ir < incident.length; ir++) records[incident[ir]] = null;
+        records[incident[0]] = { verts: nv, corners: nc, faceId: first3.faceId, slot: first3.slot };
+        changed = true;
+      }
+    }
+    if (!changed) return null;
+    return emitRecords(src, records);
+  }
+
+  /* ---------------- 阵列（线性 / 圆周） ----------------
+   * count 是**总份数（含原件）**，与 Blender 的 Array「Count」一致：
+   *   count=3 且 merge=false → 顶点 / 面各乘 3，三份共用一份网格。
+   * mode='linear'：第 i 份平移 i * offset。
+   * mode='radial'：绕 axis 轴（默认 y）每份转 angle 度；pivot 默认原点（模型离轴越远，
+   *   环越明显 —— 转轴穿过模型自身中心时各份会原地打转，这是圆周阵列的固有语义，不是 bug）。
+   * merge=true 时把「位置重合（1e-5）」的顶点焊成一份，并丢掉 360° 整圈回环的最后一份，
+   *   避免在合并上留下两份完全重叠的面。
+   * 结果永远是一份网格：ID 从 nextVertexId / nextFaceId 续编，不会与原件冲突；
+   * 第一份沿用原顶点 / 面 ID（选择与历史才对得上），后续份领新 ID。 */
+  function arrayMesh(mesh, opts) {
+    var M = meshCore();
+    if (!M || !mesh || !mesh.faceIds.length) return null;
+    opts = opts || {};
+    var mode = opts.mode === 'radial' ? 'radial' : 'linear';
+    var count = Math.round(Number(opts.count));
+    if (!isFinite(count) || count < 1) return null;
+    count = Math.min(200, count);
+    var merge = opts.merge === true;
+
+    var step = [0, 0, 0], axis = null, cosA = 1, sinA = 0, pivot = [0, 0, 0];
+    if (mode === 'linear') {
+      var off = opts.offset || [];
+      step = [Number(off[0]) || 0, Number(off[1]) || 0, Number(off[2]) || 0];
+      if (!step[0] && !step[1] && !step[2]) return null;
+    } else {
+      var angle = Number(opts.angle);
+      if (!isFinite(angle) || !angle) return null;
+      var ax = opts.axis == null ? 'y' : opts.axis;
+      if (typeof ax === 'string') {
+        ax = ax === 'x' ? [1, 0, 0] : (ax === 'z' ? [0, 0, 1] : [0, 1, 0]);
+      }
+      var axx = Number(ax[0]) || 0, axy = Number(ax[1]) || 0, axz = Number(ax[2]) || 0;
+      var alen = Math.sqrt(axx * axx + axy * axy + axz * axz);
+      if (alen < 1e-12) return null;
+      axis = [axx / alen, axy / alen, axz / alen];
+      var rad = angle * Math.PI / 180;
+      cosA = Math.cos(rad); sinA = Math.sin(rad);
+      if (opts.pivot) pivot = [Number(opts.pivot[0]) || 0, Number(opts.pivot[1]) || 0, Number(opts.pivot[2]) || 0];
+    }
+
+    /* 360° 整圈：最后一份会落回第一份的位置，合并模式直接不建它 */
+    var instances = count;
+    if (merge && mode === 'radial' && count > 1) {
+      var span = Math.abs(angle) * (count - 1) % 360;
+      if (span < 1e-6 || 360 - span < 1e-6) instances = count - 1;
+    }
+
+    var src = M.clone(mesh);
+    M.ensureRawIndices(src);
+    var out = M.create();
+    out.nextVertexId = src.nextVertexId;
+    out.nextFaceId = src.nextFaceId;
+    out.positions = [];
+    out.vertexIds = [];
+    out.uvs = [];
+    out.rawIndices = [];
+    if (src.uvSeams) Object.keys(src.uvSeams).forEach(function (k) { out.uvSeams[k] = 1; });
+
+    /* 焊接表：位置量化键 → 已存在顶点下标。只在 merge 时查它 */
+    var weldMap = Object.create(null);
+    function weldKey(x, y, z) {
+      return Math.round(x * 1e5) + ',' + Math.round(y * 1e5) + ',' + Math.round(z * 1e5);
+    }
+    function place(x, y, z) {
+      if (!merge) return addVertex(out, x, y, z);
+      var key = weldKey(x, y, z);
+      var at = weldMap[key];
+      if (at != null) return at;
+      at = addVertex(out, x, y, z);
+      weldMap[key] = at;
+      return at;
+    }
+    /* 绕 axis 转 a 弧度（罗德里格斯公式）；pivot 让环心可以不在原点 */
+    function rotate(x, y, z, ca, sa) {
+      var px = x - pivot[0], py = y - pivot[1], pz = z - pivot[2];
+      var ux = axis[0], uy = axis[1], uz = axis[2];
+      var d = px * ux + py * uy + pz * uz;
+      var cx = uy * pz - uz * py, cy = uz * px - ux * pz, cz = ux * py - uy * px;
+      return [
+        pivot[0] + px * ca + cx * sa + ux * d * (1 - ca),
+        pivot[1] + py * ca + cy * sa + uy * d * (1 - ca),
+        pivot[2] + pz * ca + cz * sa + uz * d * (1 - ca)
+      ];
+    }
+
+    for (var inst = 0; inst < instances; inst++) {
+      var vmap = new Array(src.vertexIds.length);
+      for (var v = 0; v < src.vertexIds.length; v++) {
+        var x = src.positions[v * 3], y = src.positions[v * 3 + 1], z = src.positions[v * 3 + 2];
+        if (mode === 'linear') { x += step[0] * inst; y += step[1] * inst; z += step[2] * inst; }
+        else if (inst) { var q = rotate(x, y, z, cosA, sinA); x = q[0]; y = q[1]; z = q[2]; }
+        if (inst === 0) {
+          /* 第一份原样继承：位置 / ID / 顺序都不动，撤销与选择集才对得上 */
+          vmap[v] = v;
+          out.positions.push(x, y, z);
+          out.vertexIds.push(src.vertexIds[v]);
+          if (merge) weldMap[weldKey(x, y, z)] = v;
+        } else {
+          vmap[v] = place(x, y, z);
+        }
+      }
+      for (var f = 0; f < src.faceIds.length; f++) {
+        var s0 = src.faceOffsets[f], e0 = src.faceOffsets[f + 1];
+        if (e0 - s0 < 3) continue;
+        var verts = [], corners = [];
+        for (var k = s0; k < e0; k++) {
+          verts.push(vmap[src.faceIndices[k]]);
+          corners.push(src.rawIndices ? src.rawIndices[k] : k);
+        }
+        pushFaceRaw(out, src, -1, verts, inst === 0 ? src.faceIds[f] : null, corners, src.faceSlots[f]);
+      }
+    }
+    M.bump(out);
+    return out;
+  }
+
   /* 三角转四边（Tris to Quads）
    * 判据复用导入时的 Mesh.mergeQuads：共享边两侧都是三角面、同一材质槽、
-   * 合并后是凸四边形、共享顶点 UV 一致，并且「共面 ≤ tolDeg」或「UV 成 2×2 矩形」。
-   * 默认 40° 对齐 Blender 的 tris_to_quads：曲面上相邻三角也能并，
-   * 但 UV 接缝（两端 UV 不一致）会被拒绝，不会把贴图压成畸变四边形。
+   * 合并后是凸四边形、共享顶点 UV 一致，并且「共面 ≤ tolDeg」或「UV 成平行四边形」，
+   * 形状偏离矩形不超过 shapeTol。默认 40° / 80° 对齐 Blender 的 tris_to_quads：
+   * 曲面上相邻三角也能并，但 UV 接缝（两端 UV 不一致）会被拒绝，不会把贴图压成畸变四边形。
    * 一对都并不上时返回 null —— 外壳据此提示「没有可合并的三角面」，而不是静默成功。 */
   function trisToQuads(mesh, opts) {
     var M = meshCore();
@@ -1648,6 +2343,7 @@
     var before = out.faceIds.length;
     M.mergeQuads(out, {
       tolDeg: opts.tolDeg != null ? Number(opts.tolDeg) : 40,
+      shapeTol: opts.shapeTol != null ? Number(opts.shapeTol) : 80,
       uv: opts.uv !== false
     });
     if (out.faceIds.length >= before) return null;
@@ -1655,26 +2351,44 @@
     return out;
   }
 
-  /* op: union / intersect / subtract */
+  /* op: union / intersect / subtract（其余值按 subtract，保持老调用方行为） */
   function booleanMeshes(meshA, meshB, op) {
     var M = meshCore();
-    if (!M || !meshA || !meshB) return null;
-    var pa = meshToPolys(meshA), pb = meshToPolys(meshB);
-    if (!pa.length || !pb.length) return null;
-    var A = new CsgNode(pa), B = new CsgNode(pb);
-    if (op === 'union') {
-      A.clipTo(B); B.clipTo(A); B.invert(); B.clipTo(A); B.invert();
-      A.build(B.allPolygons());
-    } else if (op === 'intersect') {
-      A.invert(); B.clipTo(A); B.invert(); A.clipTo(B); B.clipTo(A);
-      A.build(B.allPolygons()); A.invert();
-    } else {
-      A.invert(); A.clipTo(B); B.clipTo(A); B.invert(); B.clipTo(A); B.invert();
-      A.build(B.allPolygons()); A.invert();
+    setOpError('');
+    if (!M || !meshA || !meshB) return setOpError('布尔缺少网格输入');
+    var ia = inspectBooleanInput(meshA, 'A');
+    if (ia.err) return setOpError(ia.err);
+    var ib = inspectBooleanInput(meshB, 'B');
+    if (ib.err) return setOpError(ib.err);
+    var eps = Math.max(1e-9, Math.max(meshBoundsOf(meshA).diag, meshBoundsOf(meshB).diag) * 1e-6);
+    if (meshesCoplanarOverlap(ia.tris, ib.tris, eps)) {
+      return setOpError('A 与 B 存在近共面重叠面，BSP 会切出零厚度薄片；请错开或先合并平面');
     }
-    var polys = A.allPolygons();
-    if (!polys.length || polys.length > 40000) return null;
-    return polysToMesh(polys);
+
+    var pa = meshToPolys(meshA), pb = meshToPolys(meshB);
+    if (!pa.length || !pb.length) return setOpError('布尔输入没有有效的多边形');
+    var polys;
+    try {
+      var A = new CsgNode(pa), B = new CsgNode(pb);
+      if (op === 'union') {
+        A.clipTo(B); B.clipTo(A); B.invert(); B.clipTo(A); B.invert();
+        A.build(B.allPolygons());
+      } else if (op === 'intersect') {
+        A.invert(); B.clipTo(A); B.invert(); A.clipTo(B); B.clipTo(A);
+        A.build(B.allPolygons()); A.invert();
+      } else {
+        A.invert(); A.clipTo(B); B.clipTo(A); B.invert(); B.clipTo(A); B.invert();
+        A.build(B.allPolygons()); A.invert();
+      }
+      polys = A.allPolygons();
+    } catch (err) {
+      return setOpError('布尔运算内部失败：' + ((err && err.message) || err));
+    }
+    if (!polys.length) return setOpError('布尔结果为空（两个体可能没有交叠）');
+    if (polys.length > 40000) return setOpError('布尔结果多边形数 ' + polys.length + ' 超过上限 40000');
+    var mesh = polysToMesh(polys);
+    if (!mesh) return setOpError('布尔结果没有有效面（输入可能贴合 / 退化）');
+    return mesh;
   }
 
   global.SeedOps = {
@@ -1693,7 +2407,13 @@
     targetWeld: targetWeld,
     createQuadFace: createQuadFace,
     splitLooseParts: splitLooseParts,
+    extractFaces: extractFaces,
     knifePlaneCut: knifePlaneCut,
-    booleanMeshes: booleanMeshes
+    booleanMeshes: booleanMeshes,
+    arrayMesh: arrayMesh,
+    dissolve: dissolve,
+    subdivideOnce: subdivideOnce,
+    /* 上一次布尔失败的中文原因（成功 / 未调用时为空串）。外壳提示用，不改 booleanMeshes 返回值 */
+    lastOpError: ''
   };
 })(typeof window !== 'undefined' ? window : this);

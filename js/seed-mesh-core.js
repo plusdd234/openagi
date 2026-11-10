@@ -441,18 +441,22 @@
     }
     /* 三角化是一切几何的通用格式，但建模软件里「面」是多边形：
      * 导入后立刻把三角对合并回四边形（盒子 12 面 → 6 面），否则点选永远只选到半个面。
-     * 判据见 mergeQuads：共面 或 UV 成矩形，且合并后是凸四边形。 */
+     * 判据见 mergeQuads：共面 或 UV 成平行四边形，合并后是凸四边形，且形状不能太不像矩形。
+     * tolDeg / shapeTol 由调用方给：外部模型导入用 40° / 80°（对标 Blender 的 tris_to_quads），
+     * 程序化基础体保持默认的严格值，免得球体两极的三角也被并成怪四边。 */
     if (opts.quads !== false) mergeQuads(mesh, opts.quadOpts);
     bump(mesh);
     return mesh;
   }
 
   /* ---------------- 三角化 → 多边形（合并四边形） ----------------
-   * 为什么需要两道判据：
-   *   ① 平面体（盒 / 平面 / 圆柱端盖）三角对**严格共面**，法线点积 ≈ 1；
-   *   ② 曲面体（球 / 圆柱侧面）三角对**不共面**，但它们的四个角在 UV 里正好是一个矩形
-   *      （lat-long 网格天然如此）。所以「共面」不够时再看 UV 是否为矩形。
-   * 另外必须要求合并后是**凸四边形**，否则会把凹形或扭转的两片硬拼在一起。 */
+   * 判据分两层：
+   *   ① 能不能并：共享边、同材质槽、共享边两端 UV 一致（否则是 UV 接缝）、合并后凸四边形，
+   *      并且「共面 ≤ tolDeg」或「UV 成平行四边形」（曲面体靠这一条）；
+   *   ② 先并谁：按 quadShapeDeg 从小到大（越像矩形越先并）。
+   * 第②层不是锦上添花：任意两片相邻三角都能拼出合法凸四边形，包括跨两个原始四边面的
+   * 「风筝形」。没有这一层时它会先抢走别人家的三角，留下大量孤儿三角 —— 这正是
+   * 「导入后四边面全被三角化」的主因（实测同一份模型：跨面错配 3799 → 727）。 */
   function triLoop(mesh, f) {
     var s = mesh.faceOffsets[f], e = mesh.faceOffsets[f + 1];
     if (e - s !== 3) return null;
@@ -492,7 +496,7 @@
            * 合并后一个顶点只能有一份 UV，会把两个贴图位置压成一个（实测把立方体压成 4 个畸变四边面）。 */
           if (hasUV(mesh) && (!uvSame(mesh, p.c, pB.c) || !uvSame(mesh, q.c, qB.c))) return null;
           var loop = [p, y, q, x];          /* 去掉共享边后的外轮廓 */
-          if (isConvexQuad(mesh, loop) && (isCoplanar(mesh, f1, f2, cosTol) || (useUV && isUVRect(mesh, loop)))) {
+          if (isConvexQuad(mesh, loop) && (isCoplanar(mesh, f1, f2, cosTol) || (useUV && isUVQuad(mesh, loop)))) {
             return loop;
           }
           return null;
@@ -534,43 +538,104 @@
     return true;
   }
 
+  /* 四边形「像不像矩形」：四个内角偏离 90° 的最大值（度），0 = 完美矩形。
+   * 三角对合并时用它排序 —— Blender 的 Tris to Quads 也是以「最均匀的矩形四边形」为目标。
+   * 为什么需要它：任意两片相邻三角都能拼出一个合法凸四边形，包括**跨两个四边面**的那种
+   * 「风筝形」（两个很尖的角）。按面序号 / 就近合并时这种错误配对会先发生，把原本该并的
+   * 两对都拆散（实测 1/4 的输出四边面是跨面拼的）。真正的原始四边面四角接近 90°，
+   * 先并「最像矩形」的那些就能把错误配对排到最后。 */
+  function quadShapeDeg(mesh, loop) {
+    var P = mesh.positions;
+    var pts = loop.map(function (o) { return [P[o.v * 3], P[o.v * 3 + 1], P[o.v * 3 + 2]]; });
+    var nx = 0, ny = 0, nz = 0, i;
+    for (i = 0; i < 4; i++) {
+      var a0 = pts[i], b0 = pts[(i + 1) % 4];
+      nx += (a0[1] - b0[1]) * (a0[2] + b0[2]);
+      ny += (a0[2] - b0[2]) * (a0[0] + b0[0]);
+      nz += (a0[0] - b0[0]) * (a0[1] + b0[1]);
+    }
+    var nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (nl < 1e-12) return 180;
+    nx /= nl; ny /= nl; nz /= nl;
+    /* 在四边形自己的平面上建基：u 取第一条边（去掉法线分量），v = n × u */
+    var ex = pts[1][0] - pts[0][0], ey = pts[1][1] - pts[0][1], ez = pts[1][2] - pts[0][2];
+    var dn = ex * nx + ey * ny + ez * nz;
+    ex -= nx * dn; ey -= ny * dn; ez -= nz * dn;
+    var ul = Math.sqrt(ex * ex + ey * ey + ez * ez);
+    if (ul < 1e-12) return 180;
+    var ux = ex / ul, uy = ey / ul, uz = ez / ul;
+    var vx = ny * uz - nz * uy, vy = nz * ux - nx * uz, vz = nx * uy - ny * ux;
+    var q = pts.map(function (p) {
+      var dx = p[0] - pts[0][0], dy = p[1] - pts[0][1], dz = p[2] - pts[0][2];
+      return [dx * ux + dy * uy + dz * uz, dx * vx + dy * vy + dz * vz];
+    });
+    var worst = 0;
+    for (i = 0; i < 4; i++) {
+      var p0 = q[i], p1 = q[(i + 1) % 4], p2 = q[(i + 2) % 4];
+      var ax = p1[0] - p0[0], ay = p1[1] - p0[1];
+      var bx = p2[0] - p1[0], by = p2[1] - p1[1];
+      var cross = ax * by - ay * bx;
+      var dot = ax * bx + ay * by;
+      /* atan2 给的是 p1 处的外角，它离 90° 的偏差 = 内角离 90° 的偏差 */
+      var dev = Math.abs(Math.atan2(Math.abs(cross), dot) * 180 / Math.PI - 90);
+      if (dev > worst) worst = dev;
+    }
+    return worst;
+  }
+
   function isCoplanar(mesh, f1, f2, cosTol) {
     var n1 = [0, 0, 0], n2 = [0, 0, 0];
     if (!triNormal(mesh, f1, n1) || !triNormal(mesh, f2, n2)) return false;
     return (n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2]) >= cosTol;
   }
 
-  /* UV 是否构成矩形：两个不同 u × 两个不同 v */
-  function isUVRect(mesh, loop) {
+  /* UV 是否「没被压扁」：四个角的 UV 构成凸平行四边形。
+   * 判据用「对角线互相平分」而不是「两个 u × 两个 v」：
+   * 后者只认轴对齐的矩形，UV 岛整体转过 45°（导出工具很常见）就全判成不是矩形，
+   * 曲面上的四边面因此永远并不上。平行四边形判据对旋转 / 平移不敏感。
+   * 再加一道 2D 凸性检查，挡住 UV 折叠（四个角是平行四边形但顺序拧成麻花）的情况。 */
+  function isUVQuad(mesh, loop) {
     if (!hasUV(mesh)) return false;
-    var us = [], vs = [], pts = [], EPS = 1e-5;
-    loop.forEach(function (o) {
-      var u = mesh.uvs[o.c * 2], v = mesh.uvs[o.c * 2 + 1];
-      if (!us.some(function (x) { return Math.abs(x - u) <= EPS; })) us.push(u);
-      if (!vs.some(function (x) { return Math.abs(x - v) <= EPS; })) vs.push(v);
-      pts.push(u.toFixed(5) + ',' + v.toFixed(5));
-    });
-    /* 必须是 2×2 的**四个不同角**：只数“2 个 u、2 个 v”会把两个角重合成同一点的情况也放过 */
-    var uniq = Object.create(null);
-    pts.forEach(function (k) { uniq[k] = 1; });
-    return us.length === 2 && vs.length === 2 && Object.keys(uniq).length === 4;
+    var uv = loop.map(function (o) { return [mesh.uvs[o.c * 2], mesh.uvs[o.c * 2 + 1]]; });
+    var EPS = 1e-5, i, j;
+    /* 退化：任意两角重合（面积 0 的「四边」没有意义） */
+    for (i = 0; i < 4; i++) {
+      for (j = i + 1; j < 4; j++) {
+        if (Math.abs(uv[i][0] - uv[j][0]) <= EPS && Math.abs(uv[i][1] - uv[j][1]) <= EPS) return false;
+      }
+    }
+    /* loop 顺序是 p,y,q,x：对角线是 (p,q) 与 (y,x)，平行四边形要求两对角线中点重合 */
+    if (Math.abs((uv[0][0] + uv[2][0]) - (uv[1][0] + uv[3][0])) > EPS * 4) return false;
+    if (Math.abs((uv[0][1] + uv[2][1]) - (uv[1][1] + uv[3][1])) > EPS * 4) return false;
+    var sign = 0;
+    for (i = 0; i < 4; i++) {
+      var a = uv[i], b = uv[(i + 1) % 4], c = uv[(i + 2) % 4];
+      var cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+      if (Math.abs(cross) <= 1e-12) return false;
+      var sgn = cross > 0 ? 1 : -1;
+      if (!sign) sign = sgn; else if (sign !== sgn) return false;
+    }
+    return true;
   }
 
   function mergeQuads(mesh, opts) {
     opts = opts || {};
     if (!mesh || !mesh.faceIds.length) return mesh;
     var cosTol = Math.cos((opts.tolDeg != null ? opts.tolDeg : 1.2) * Math.PI / 180);
+    /* 形状容差：合并出来的四边形，四个内角离 90° 的最大偏差（度）。
+     * 导入用 80°（很宽松，只挡真正离谱的风筝形）；基础体默认 30°，够挡掉球体极点的怪四边。 */
+    var shapeTol = opts.shapeTol != null ? opts.shapeTol : 30;
     var useUV = opts.uv !== false;
     var guard = 0;
     while (guard++ < 6) {
-      var mergedCount = mergeQuadPass(mesh, cosTol, useUV);
+      var mergedCount = mergeQuadPass(mesh, cosTol, shapeTol, useUV);
       if (!mergedCount) break;
       bump(mesh);
     }
     return mesh;
   }
 
-  function mergeQuadPass(mesh, cosTol, useUV) {
+  function mergeQuadPass(mesh, cosTol, shapeTol, useUV) {
     var fCount = mesh.faceIds.length;
     var edgeMap = Object.create(null);
     var f, s, k;
@@ -583,18 +648,47 @@
         (edgeMap[key] || (edgeMap[key] = [])).push(f);
       }
     }
-    var taken = Object.create(null), pairs = [];
+    /* 先收集所有能并的三角对，再按「越像矩形越优先」挑。
+     * 为什么不能边遍历边占位：任意两片相邻三角都能拼出合法凸四边形，包括**跨两个四边面**
+     * 的「风筝形」。先到先得会让这种错误配对抢走本来该并的两个三角，各留一个孤儿三角。
+     * 原始四边面四角接近 90°，所以按 quadShapeDeg 从小到大配，同分再选更共面的。 */
+    var cands = [];
     Object.keys(edgeMap).forEach(function (key) {
       var list = edgeMap[key];
       if (list.length !== 2) return;
       var f1 = list[0], f2 = list[1];
-      if (taken[f1] || taken[f2]) return;
       if (mesh.faceSlots[f1] !== mesh.faceSlots[f2]) return;
       var loop = quadOf(mesh, f1, f2, cosTol, useUV);
       if (!loop) return;
-      taken[f1] = loop; taken[f2] = true;
-      pairs.push(f1);
+      var shape = quadShapeDeg(mesh, loop);
+      if (shape > shapeTol) return;
+      var n1 = [0, 0, 0], n2 = [0, 0, 0];
+      var score = (triNormal(mesh, f1, n1) && triNormal(mesh, f2, n2))
+        ? n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2] : -1;
+      cands.push({ f1: f1, f2: f2, loop: loop, score: score, shape: shape });
     });
+    /* 候选度（一个三角有几个合法搭档）只用来打破平局：只有唯一搭档的先定下来。
+     * 主排序必须是形状，不能用候选度 —— 孤儿三角恰好只有一个搭档，按候选度排序会让它
+     * 优先抢走别人家的三角，错误配对反而最先发生（这正是之前 1/4 四边面是跨面对的原因）。 */
+    var deg = Object.create(null);
+    cands.forEach(function (c) {
+      deg[c.f1] = (deg[c.f1] || 0) + 1;
+      deg[c.f2] = (deg[c.f2] || 0) + 1;
+    });
+    cands.sort(function (a, b) {
+      if (Math.abs(a.shape - b.shape) > 1e-6) return a.shape - b.shape;
+      if (b.score !== a.score) return b.score - a.score;
+      var da = deg[a.f1] + deg[a.f2], db = deg[b.f1] + deg[b.f2];
+      if (da !== db) return da - db;
+      return (a.f1 - b.f1) || (a.f2 - b.f2);
+    });
+    var taken = Object.create(null), pairs = [];
+    for (var ci = 0; ci < cands.length; ci++) {
+      var cd = cands[ci];
+      if (taken[cd.f1] || taken[cd.f2]) continue;
+      taken[cd.f1] = cd.loop; taken[cd.f2] = true;
+      pairs.push(cd.f1);
+    }
     if (!pairs.length) return 0;
 
     /* 重建面表：被合并的那一对里，第一个面写四边形（沿用它的 faceId），第二个面丢弃 */

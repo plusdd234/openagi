@@ -18,7 +18,7 @@ const path = require('path');
 const zlib = require('zlib');
 
 const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';
-const GLB = path.join(__dirname, '..', 'assets', 'models', 'mvv9621p-9e37196e.glb');
+const GLB = path.join(__dirname, '..', 'assets', 'models', 'mvyfd48a-8e2b846b.glb');
 const TMP = path.join(__dirname, '_texblend');
 
 let pass = 0, fail = 0;
@@ -316,7 +316,178 @@ const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
   check('刷新后还原成「2 层混合」', restored.twoLayers, JSON.stringify(restored));
   check('刷新后遮罩也在', restored.oneMask, JSON.stringify(restored));
 
-  console.log('=== 6. 页面零错误 ===');
+  console.log('=== 6. 绘制颜色（UV 岛遮罩） ===');
+  await clickText('纹理混合');
+  await page.waitForTimeout(400);
+  const hasPaintEntry = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('button')).some(b => b.textContent.trim() === '✎ 绘制颜色'));
+  check('纹理混合面板有「绘制颜色」入口', hasPaintEntry);
+  await clickText('✎ 绘制颜色');
+  await page.waitForTimeout(700);
+
+  const paintUi = await page.evaluate(() => {
+    const wrap = document.querySelector('[data-mask-paint]');
+    const txt = wrap ? wrap.innerText : '';
+    return {
+      open: !!wrap,
+      title: txt.indexOf('颜色绘制') >= 0,
+      color: !!(wrap && wrap.querySelector('input[type=color]')),
+      clipOn: txt.indexOf('岛遮罩：开') >= 0
+    };
+  });
+  check('进入「颜色绘制」工具条', paintUi.open && paintUi.title, JSON.stringify(paintUi));
+  check('工具条有取色器', paintUi.color);
+  check('岛遮罩默认开启', paintUi.clipOn);
+
+  /* 岛遮罩开关：点一下变关、再点回开 */
+  await clickText('岛遮罩：开');
+  await page.waitForTimeout(200);
+  const clipOff = await page.evaluate(() => document.querySelector('[data-mask-paint]').innerText.indexOf('岛遮罩：关') >= 0);
+  check('「岛遮罩」可以关掉', clipOff);
+  await clickText('岛遮罩：关');
+  await page.waitForTimeout(200);
+
+  /* 笔刷拉到最大：只有笔刷大到能盖住好几个岛，「岛遮罩」才有可验证的差别 */
+  const bigBrushStroke = async () => {
+    await page.evaluate(() => {
+      const r = document.querySelector('[data-mask-paint] input[type=range]');
+      r.value = r.max;
+      r.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const r = await page.evaluate(() => {
+      const wrap = document.querySelector('[data-mask-paint]');
+      const cvs = wrap && wrap.parentElement ? wrap.parentElement.querySelector('canvas') : null;
+      const b = cvs.getBoundingClientRect();
+      return { x: b.x, y: b.y, w: b.width, h: b.height };
+    });
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx + 24, cy + 8, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(250);
+  };
+  /* 点「完成」后读配置 + 这一层入库的 PNG */
+  const commitLayer = async () => {
+    await clickText('完成');
+    await page.waitForTimeout(1200);
+    return page.evaluate(() => {
+      const cfg = JSON.parse(localStorage.getItem('openagi_model_tex_v1') || '{}');
+      const m = cfg['test-model-1'] || {};
+      const k = Object.keys(m)[0];
+      const ls = (m[k] && m[k].layers) || [];
+      const top = ls[ls.length - 1] || {};
+      const put = (window.__put || []).filter(p => p.asset && String(p.asset.name || '').indexOf('手绘颜色') >= 0).pop();
+      return {
+        layers: ls.length, name: top.name, id: top.id, data: put ? put.data : '',
+        rows: document.querySelectorAll('[data-mix-root] input[type=range]').length
+      };
+    });
+  };
+  /* 数笔迹：总不透明像素 + 落在「选的那个颜色」上的像素 */
+  const inkOf = (dataURL) => page.evaluate(async (d) => {
+    if (!d) return null;
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = d; });
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    const x = c.getContext('2d');
+    x.drawImage(img, 0, 0);
+    const px = x.getImageData(0, 0, img.width, img.height).data;
+    let ink = 0, colored = 0;
+    for (let p = 0; p < px.length; p += 4) {
+      if (px[p + 3] < 200) continue;          /* 只看实心笔迹，忽略抗锯齿边 */
+      ink++;
+      if (Math.abs(px[p] - 224) < 70 && Math.abs(px[p + 1] - 90) < 70 && Math.abs(px[p + 2] - 60) < 70) colored++;
+    }
+    return { ink, colored, w: img.width, h: img.height };
+  }, dataURL);
+
+  await bigBrushStroke();
+  const onShot = await commitLayer();
+  const onInk = await inkOf(onShot.data);
+  check('完成后面板多出「手绘颜色」层并入库', onShot.layers === 3 && onShot.name === '手绘颜色' && !!onShot.id,
+    JSON.stringify({ layers: onShot.layers, name: onShot.name, id: onShot.id }));
+  check('这一层和普通贴图层一样有比例滑杆', onShot.rows === 3, String(onShot.rows));
+  check('真的画上了颜色（笔迹像素就是选的颜色）',
+    !!onInk && onInk.ink > 300 && onInk.colored >= onInk.ink * 0.9,
+    JSON.stringify(onInk && { ink: onInk.ink, colored: onInk.colored, size: onInk.w + 'x' + onInk.h }));
+
+  /* 同一笔、同样最大笔刷，把岛遮罩关掉再画一遍：不剪裁的笔迹会明显更大 */
+  await clickText('✎ 绘制颜色');
+  await page.waitForTimeout(500);
+  await clickText('岛遮罩：开');
+  await page.waitForTimeout(200);
+  await bigBrushStroke();
+  const offShot = await commitLayer();
+  const offInk = await inkOf(offShot.data);
+  check('关掉岛遮罩再画一层（第 4 层）', offShot.layers === 4, String(offShot.layers));
+  check('岛遮罩生效：开启后笔迹被收缩到单个 UV 岛范围内',
+    !!onInk && !!offInk && onInk.ink * 2 < offInk.ink && onInk.ink < onInk.w * onInk.h * 0.08,
+    JSON.stringify({ on: onInk && onInk.ink, off: offInk && offInk.ink, total: onInk && onInk.w * onInk.h }));
+
+  /* 取消：新层整层撤掉，层数回到 4 */
+  await clickText('✎ 绘制颜色');
+  await page.waitForTimeout(400);
+  await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('[data-mask-paint] button')).find(x => x.textContent.trim() === '取消');
+    if (b) b.click();
+  });
+  await page.waitForTimeout(500);
+  const afterCancel = await page.evaluate(() => {
+    const cfg = JSON.parse(localStorage.getItem('openagi_model_tex_v1') || '{}');
+    const m = cfg['test-model-1'] || {};
+    const k = Object.keys(m)[0];
+    return {
+      layers: ((m[k] && m[k].layers) || []).length,
+      paintBar: !!document.querySelector('[data-mask-paint]'),
+      panel: (document.querySelector('[data-slot-panel]') || document.body).innerText
+    };
+  });
+  check('取消后整层撤掉、回到 4 层', afterCancel.layers === 4 && !afterCancel.paintBar, JSON.stringify(afterCancel));
+  check('面板摘要仍是「4 层混合」', afterCancel.panel.indexOf('4 层混合') >= 0,
+    afterCancel.panel.replace(/\s+/g, ' ').slice(0, 200));
+
+  console.log('=== 7. 画遮罩回归（岛＋ 整岛填充） ===');
+  /* 选没遮罩的那一层（列表最后一行），免得旧遮罩干扰面积判断 */
+  await page.evaluate(() => {
+    const bs = Array.from(document.querySelectorAll('button')).filter(x => x.textContent.trim() === '画遮罩');
+    if (bs.length) bs[bs.length - 1].click();
+  });
+  await page.waitForTimeout(700);
+  await clickText('岛＋');
+  await page.waitForTimeout(200);
+  const mRect = await page.evaluate(() => {
+    const wrap = document.querySelector('[data-mask-paint]');
+    const cvs = wrap && wrap.parentElement ? wrap.parentElement.querySelector('canvas') : null;
+    const b = cvs.getBoundingClientRect();
+    return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+  });
+  await page.mouse.click(mRect.x, mRect.y);
+  await page.waitForTimeout(400);
+  await clickText('完成');
+  await page.waitForTimeout(1200);
+  const maskPix = await page.evaluate(async () => {
+    const put = (window.__put || []).filter(p => p.asset && String(p.asset.name || '').indexOf('手绘遮罩') >= 0).pop();
+    if (!put) return null;
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = put.data; });
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    const x = c.getContext('2d');
+    x.drawImage(img, 0, 0);
+    const px = x.getImageData(0, 0, img.width, img.height).data;
+    let white = 0;
+    for (let p = 0; p < px.length; p += 4) {
+      if (px[p + 3] > 200 && px[p] > 240 && px[p + 1] > 240 && px[p + 2] > 240) white++;
+    }
+    return { white, total: img.width * img.height };
+  });
+  check('「岛＋」点一下把整个岛填成遮罩（改 Path2D 后仍然有效）',
+    !!maskPix && maskPix.white > 500 && maskPix.white < maskPix.total * 0.08,
+    JSON.stringify(maskPix));
+
+  console.log('=== 8. 页面零错误 ===');
   check('无未捕获异常', errors.length === 0, errors.slice(0, 3).join(' | '));
 
   await browser.close();
