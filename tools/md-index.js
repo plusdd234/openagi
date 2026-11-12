@@ -11,6 +11,8 @@
  *   node tools/md-index.js --find save 按名字找函数（含分节与行号）
  *   node tools/md-index.js --orphan   没归入任何分节的函数（真正的「找不到」区）
  *   node tools/md-index.js --cost     每块抽成工厂要传多少 ctx（越少越该先抽）
+ *                                     顺带报「碰了几个 st 域」（域才是所有权单位，
+ *                                     域少说明这块可以不碰别人的状态）
  *
  * ⚠ 它只读不写。要改结构请照 MODELDESK.md 的「工厂模块」约定：
  *   这个文件是单 IIFE 闭包，296 个函数共享 st / $ / THREE，
@@ -85,6 +87,13 @@ if (flag('orphan')) {
  * 噪声：函数形参与顶层同名时会被算成依赖（少数），所以看排序不看绝对值。
  */
 if (flag('cost')) {
+  /* st 的域归属表与 tools/st-own.js 共用同一份（tools/st-own.map.js）——
+   * 两个工具各自维护一份域划分，迟早对不上，而对不上时两边都会报绿。 */
+  let OWN = { domains: {} };
+  try { OWN = require('./st-own.map.js'); } catch (e) { /* 缺表就只报 ctx，不报域 */ }
+  const keyDom = new Map();
+  for (const [d, cfg] of Object.entries(OWN.domains)) for (const k of cfg.keys) keyDom.set(k, d);
+
   const noStr = t => t
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/'(?:\\.|[^'\\])*'/g, "''")
@@ -114,6 +123,14 @@ if (flag('cost')) {
     (body.match(/^  (?:var|let|const|function) ([A-Za-z_$][\w$]*)/gm) || [])
       .forEach(d => own.add(d.replace(/^  (?:var|let|const|function) /, '')));
     const out = [...used].filter(x => !own.has(x));
+    /* 这一块碰了哪几个 st 域。比「碰了几个键」更有意义：
+     * 碰 5 个键但都在 tools 域 → 内部状态，可以整域搬走；
+     * 碰 3 个键却横跨 doc / selection / quad → 它是编排层，搬不走。 */
+    const doms = new Set();
+    (body.match(/\bst\.([A-Za-z_$][\w$]*)/g) || []).forEach(x => {
+      const d = keyDom.get(x.slice(3));
+      if (d) doms.add(d);
+    });
     /* 反向：别处有多少块在用它的名字（抽走后要不要留门面） */
     const fans = sections.filter((_, j) => j !== k).filter((_, j) => {
       const jj = j >= k ? j + 1 : j;
@@ -121,18 +138,27 @@ if (flag('cost')) {
       const other = noStr(lines.slice(sections[jj].line - 1, bounds[jj + 1] - 1).join('\n'));
       return [...own].some(nm => new RegExp('\\b' + nm + '\\b').test(other));
     }).length;
-    rows.push({ title: s.title, from, to, line: to - from + 1, fn: funcs.filter(f => f.line >= from && f.line < bounds[k + 1]).length, deps: out.length, fans, names: out });
+    rows.push({ title: s.title, from, to, line: to - from + 1, fn: funcs.filter(f => f.line >= from && f.line < bounds[k + 1]).length, deps: out.length, fans, names: out, doms: [...doms] });
   });
 
-  console.log('抽成工厂的成本（ctx 项数 = 这块伸出去抓了多少顶层名字）\n');
-  console.log('  ' + pad('行数', 7) + pad('函数', 6) + pad('ctx', 6) + pad('被用', 6) + '分节');
-  rows.forEach(r => console.log('  ' + pad(r.line, 7) + pad(r.fn, 6) + pad(r.deps, 6) + pad(r.fans, 6) + r.title));
-  console.log('\n按 ctx 从小到大（前 6 名就是最该先抽的）：');
-  [...rows].sort((a, b) => a.deps - b.deps || b.line - a.line).slice(0, 6)
-    .forEach(r => console.log('  ctx=' + pad(r.deps, 4) + pad(r.line + ' 行', 8) + r.title));
+  console.log('抽成工厂的成本（ctx = 这块伸出去抓了多少顶层名字；域 = 碰了几个 st 子域）\n');
+  console.log('  ' + pad('行数', 7) + pad('函数', 6) + pad('ctx', 6) + pad('域', 4) + pad('被用', 6) + '分节');
+  rows.forEach(r => console.log('  ' + pad(r.line, 7) + pad(r.fn, 6) + pad(r.deps, 6) + pad(r.doms.length, 4) + pad(r.fans, 6) + r.title));
+  /* 排序：域多的重罚。愿因是「域」才是以后要搬走的状态量 ——
+   * ctx 只是门面上的连线，域数才是真正的搬家成本。 */
+  const score = r => r.deps + r.doms.length * 4;
+  console.log('\n最该先抽（ctx + 域×4 升序，前 6 名）：');
+  [...rows].sort((a, b) => score(a) - score(b) || b.line - a.line).slice(0, 6)
+    .forEach(r => console.log('  ' + pad(score(r), 5) + '  ctx=' + pad(r.deps, 3) + '域=' + pad(r.doms.length, 3) + pad(r.line + ' 行', 9) + r.title));
+  console.log('\n域多的块（搬走要连状态一起搬，先别动）：');
+  [...rows].sort((a, b) => b.doms.length - a.doms.length).slice(0, 4)
+    .forEach(r => console.log('  域=' + pad(r.doms.length, 3) + pad(r.line + ' 行', 9) + r.title + '   [' + r.doms.join(',') + ']'));
   const pick = val('cost', '');
   const one = rows.find(r => r.title.includes(pick));
-  if (one) console.log('\n「' + one.title + '」要传：' + one.names.join(', '));
+  if (one) {
+    console.log('\n「' + one.title + '」要传：' + one.names.join(', '));
+    console.log('  碰到的域：' + (one.doms.join(', ') || '（不碰 st）'));
+  }
   process.exit(0);
 }
 

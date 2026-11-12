@@ -27,6 +27,7 @@
     "test:ns": "node tools/ns-guard.js",
     "test:conf": "node tools/conf-guard.js",
     "test:busy": "node tools/chat-busy.js",
+    "test:st": "node tools/st-own.js",
     "md:index": "node tools/md-index.js"
   },
   "dependencies": {
