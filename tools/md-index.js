@@ -10,6 +10,7 @@
  *   node tools/md-index.js --big 25   最长的 25 个函数（拆分的候选目标）
  *   node tools/md-index.js --find save 按名字找函数（含分节与行号）
  *   node tools/md-index.js --orphan   没归入任何分节的函数（真正的「找不到」区）
+ *   node tools/md-index.js --cost     每块抽成工厂要传多少 ctx（越少越该先抽）
  *
  * ⚠ 它只读不写。要改结构请照 MODELDESK.md 的「工厂模块」约定：
  *   这个文件是单 IIFE 闭包，296 个函数共享 st / $ / THREE，
@@ -73,6 +74,65 @@ if (flag('orphan')) {
   const orph = funcs.filter(f => f.section === '（无分节）');
   console.log('没归入任何分节的函数：' + orph.length + ' 个 / ' + orph.reduce((s, f) => s + f.n, 0) + ' 行\n');
   orph.forEach(f => console.log('  L' + String(f.line).padStart(5) + '  ' + pad(f.name, 28) + f.n + ' 行'));
+  process.exit(0);
+}
+
+/* --cost：算「把这一块抽成全局工厂，ctx 里得传几项」
+ *
+ * 判据不是「这块多少行」，而是「这块伸出去抓了多少个别人家的东西」。
+ * 伸出去的每一样都要写进 create(ctx) 的 ctx，也是以后出 bug 要跨文件追的路径。
+ * 只统计**本文件顶层声明过**的名字，所以 Math / document / THREE 这类外部全局不会混进来。
+ * 噪声：函数形参与顶层同名时会被算成依赖（少数），所以看排序不看绝对值。
+ */
+if (flag('cost')) {
+  const noStr = t => t
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/'(?:\\.|[^'\\])*'/g, "''")
+    .replace(/"(?:\\.|[^"\\])*"/g, '""');
+  const whole = noStr(lines.join('\n'));
+  const idents = t => (t.match(/[A-Za-z_$][\w$]*/g) || []);
+  const KEY = new Set(('function var let const if else for while return new typeof instanceof in of try catch '
+    + 'finally throw switch case break continue this null undefined true false void delete do use strict').split(' '));
+
+  /* 顶层声明：行首两个空格的 var / function（本文件全部如此），外加 global.Xxx = 导出面 */
+  const top = new Set();
+  lines.forEach(l => {
+    let m;
+    if ((m = l.match(/^  (?:var|let|const) ([A-Za-z_$][\w$]*)/))) top.add(m[1]);
+    else if ((m = l.match(/^  function ([A-Za-z_$][\w$]*)/))) top.add(m[1]);
+    else if ((m = l.match(/^  global\.([A-Za-z_$][\w$]*)\s*=/))) top.add(m[1]);
+  });
+
+  const bounds = sections.map(s => s.line).concat([total + 1]);
+  const rows = [];
+  sections.forEach((s, k) => {
+    const from = s.line, to = bounds[k + 1] - 1;
+    const body = noStr(lines.slice(from - 1, to).join('\n'));
+    const used = new Set(idents(body).filter(x => !KEY.has(x) && top.has(x)));
+    /* 这一块自己定义的名字不算依赖 */
+    const own = new Set();
+    (body.match(/^  (?:var|let|const|function) ([A-Za-z_$][\w$]*)/gm) || [])
+      .forEach(d => own.add(d.replace(/^  (?:var|let|const|function) /, '')));
+    const out = [...used].filter(x => !own.has(x));
+    /* 反向：别处有多少块在用它的名字（抽走后要不要留门面） */
+    const fans = sections.filter((_, j) => j !== k).filter((_, j) => {
+      const jj = j >= k ? j + 1 : j;
+      if (jj >= bounds.length - 1) return false;
+      const other = noStr(lines.slice(sections[jj].line - 1, bounds[jj + 1] - 1).join('\n'));
+      return [...own].some(nm => new RegExp('\\b' + nm + '\\b').test(other));
+    }).length;
+    rows.push({ title: s.title, from, to, line: to - from + 1, fn: funcs.filter(f => f.line >= from && f.line < bounds[k + 1]).length, deps: out.length, fans, names: out });
+  });
+
+  console.log('抽成工厂的成本（ctx 项数 = 这块伸出去抓了多少顶层名字）\n');
+  console.log('  ' + pad('行数', 7) + pad('函数', 6) + pad('ctx', 6) + pad('被用', 6) + '分节');
+  rows.forEach(r => console.log('  ' + pad(r.line, 7) + pad(r.fn, 6) + pad(r.deps, 6) + pad(r.fans, 6) + r.title));
+  console.log('\n按 ctx 从小到大（前 6 名就是最该先抽的）：');
+  [...rows].sort((a, b) => a.deps - b.deps || b.line - a.line).slice(0, 6)
+    .forEach(r => console.log('  ctx=' + pad(r.deps, 4) + pad(r.line + ' 行', 8) + r.title));
+  const pick = val('cost', '');
+  const one = rows.find(r => r.title.includes(pick));
+  if (one) console.log('\n「' + one.title + '」要传：' + one.names.join(', '));
   process.exit(0);
 }
 
