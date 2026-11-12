@@ -23,10 +23,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 (async () => {
   const errors = [];
+  /* 本地服务（8787 中转 / 8794 桥 / 8791 网关）没起时，页面探活会是 ERR_CONNECTION_REFUSED。
+   * 那是「探到了没人应答」这个**正常结果**，不是 JS 异常 —— 而且浏览器直开 file:// 就是常态。
+   * 只放行这一个 code：真·缺文件会是 ERR_FILE_NOT_FOUND，真·JS 异常走 pageerror，一个都跑不掉。 */
+  const isProbeNoise = t => /net::ERR_CONNECTION_REFUSED/.test(t);
   const browser = await chromium.launch({ channel: 'msedge' });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.on('pageerror', e => errors.push(String(e && e.message)));
-  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('console', m => { if (m.type() === 'error' && !isProbeNoise(m.text())) errors.push('console: ' + m.text()); });
 
   const url = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';
   await page.goto(url, { waitUntil: 'load' });
