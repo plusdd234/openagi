@@ -15,7 +15,7 @@
  *   OPENAGI_WT_ROOT   worktree 放哪儿（默认 <仓库的上级目录>/openagi-wt，即仓库外面）
  *   OPENAGI_BASE      基线分支（默认 main）
  *
- * 三条设计原则（都踩过或差点踩到）：
+ * 四条设计原则（都踩过或差点踩到）：
  *  ① **worktree 放在仓库外面**。放里面会让 `grep -r` / 文件树 / electron 打包白名单
  *     全部看见两份代码，而且 `.worktrees/` 忘加 .gitignore 就进库了。
  *  ② **node_modules 用 junction 共享**，不重复 npm install（electron 一个就 200MB+）。
@@ -24,6 +24,8 @@
  *     node_modules 一起端掉——这是这个脚本里唯一有破坏性的地方。
  *  ③ **合并时 manifest 必然冲突**（每个分支都重算过 `apps/manifest.js`）。
  *     它本来就是生成物，所以冲突只用「挑一边 + 重新生成」解决，绝不让人手工解。
+ *  ④ **vendor/ 被 .gitignore 挡着**，worktree 里天然没有 → 建的时候要把「主仓有、这边缺」的补过去，
+ *     否则打开就是一片 ERR_FILE_NOT_FOUND（图标丢、模型加载器 undefined）。
  */
 'use strict';
 const fs = require('fs');
@@ -95,6 +97,34 @@ function linkNodeModules(dest) {
   try { fs.symlinkSync(src, dest, 'junction'); return true; } catch (e) { return false; }
 }
 
+/* ---------------- 被忽略、但运行时必须有的静态资源 ----------------
+ * `.gitignore` 里 `vendor/*` 只放行了 GLTFExporter.js，而 index.html 还引了
+ * three.min.js / 三个 Loader / fflate / 模型商店的羊驼头。
+ * worktree 是「从提交里长出来的」，这些文件**根本不存在** → 打开就是一片
+ * ERR_FILE_NOT_FOUND（图标丢失、模型加载器 undefined）。
+ * 不去改 .gitignore（那些是几百 KB 的第三方二进制，本来就不该进仓库），
+ * 而是在建 worktree 时把**主仓有、这边缺**的文件补过去。 */
+const IGNORED_ASSETS = ['vendor'];
+
+function syncIgnoredAssets(wtPath) {
+  let copied = 0;
+  const walk = (rel) => {
+    const srcDir = path.join(REPO, rel);
+    if (!fs.existsSync(srcDir)) return;
+    fs.readdirSync(srcDir, { withFileTypes: true }).forEach(d => {
+      const childRel = path.join(rel, d.name);
+      if (d.isDirectory()) { walk(childRel); return; }
+      const dst = path.join(wtPath, childRel);
+      if (fs.existsSync(dst)) return;            /* 已跟踪的（GLTFExporter.js）不覆盖 */
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      fs.copyFileSync(path.join(REPO, childRel), dst);
+      copied++;
+    });
+  };
+  IGNORED_ASSETS.forEach(walk);
+  return copied;
+}
+
 /* ---------------- new ---------------- */
 function cmdNew(id, flags) {
   needId(id);
@@ -129,6 +159,7 @@ function cmdNew(id, flags) {
   }
 
   const linked = linkNodeModules(path.join(wt, 'node_modules'));
+  const assets = syncIgnoredAssets(wt);
   if (flags.withStore && fs.existsSync(path.join(REPO, 'openagi-store.json'))) {
     fs.copyFileSync(path.join(REPO, 'openagi-store.json'), path.join(wt, 'openagi-store.json'));
     console.log('· 已复制 openagi-store.json（含密钥，只在本机，永不提交）');
@@ -138,6 +169,7 @@ function cmdNew(id, flags) {
   console.log('   目录  ' + wt);
   console.log('   分支  ' + br + '  ← 从 ' + base + ' 长出来');
   console.log('   依赖  ' + (linked ? 'node_modules 已 junction 到主仓（不重复 install）' : '⚠ 没能建 junction，需要自己 npm install'));
+  console.log('   资源  ' + (assets ? '补了 ' + assets + ' 个被 .gitignore 挡住但运行时必需的文件（vendor/）' : 'vendor/ 已齐'));
   console.log('\n   ⚠ 别在主仓和 worktree 里同时跑 `npm run dev`：Electron 有单实例锁，后起的会静默退出。');
 
   console.log('\n' + '-'.repeat(72));

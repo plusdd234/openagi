@@ -159,15 +159,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log('\n=== 7. 防护：错用要拦在注册那一刻 ===');
   const s7 = await page.evaluate(() => {
     const out = { noId: null, dup: null, clash: null };
+    /* 先记下「现在有几个」再故意注册错的：断言的是「没被污染」，不是「刚好等于某个数」。
+     * 曾经写死 `=== 15`，于是**每加一个 App 都要改测试** —— 而加 App 正是这套机制的目的。 */
+    out.before = DESK_APPS.length;
     try { registerApp({ name: 'x' }); } catch (e) { out.noId = String(e.message || e); }
     out.dup = registerApp({ id: 'hello', name: 'x' });
     out.clash = registerApp({ id: 'store', name: 'x' });
-    return { noId: out.noId, dup: out.dup === null, clash: out.clash === null, apps: DESK_APPS.length };
+    return { noId: out.noId, dup: out.dup === null, clash: out.clash === null, before: out.before, apps: DESK_APPS.length };
   });
   check(/缺 id/.test(s7.noId || ''), '缺 id 直接抛错', s7.noId);
   check(s7.dup === true, '重复注册同一个 id 被拒（返回 null）');
   check(s7.clash === true, 'id 撞内置 App 被拒');
-  check(s7.apps === 15, '被拒的注册没有污染 DESK_APPS', s7.apps);
+  check(s7.apps === s7.before, '被拒的注册没有污染 DESK_APPS', s7.apps + ' / ' + s7.before);
 
   console.log('\n=== 8. 清单与目录一致（并行开发时这条最容易失守） ===');
   let scanOut = '';
