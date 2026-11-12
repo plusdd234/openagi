@@ -102,10 +102,16 @@ if (problems.length) {
   process.exit(1);
 }
 
-const prev = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8') : '';
+/* 比较前先归一换行：本机 core.autocrlf 会把检出的文件写成 CRLF，
+ * 而这里生成的是 LF。直接用字节比 → 每次 git checkout / reset / merge 之后
+ * `--check` 都会假红（"清单不一致"，可内容和提交里一模一样，git diff 是空的）。
+ * 这是最坑的一种失败：它看起来像「有人手改了 manifest」，
+ * 实际只是工作区换行风格，任何人都会先去怀疑自己。 */
+const norm = s => String(s).replace(/\r\n/g, '\n');
+const prev = fs.existsSync(OUT) ? norm(fs.readFileSync(OUT, 'utf8')) : '';
 
 if (CHECK) {
-  if (prev !== next) {
+  if (prev !== norm(next)) {
     console.error('❌ apps/manifest.js 与 apps/ 不一致，跑一次 node tools/app-scan.js');
     process.exit(1);
   }
