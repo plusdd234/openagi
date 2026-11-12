@@ -96,15 +96,19 @@ node server/chat.js                   # 交流社区
 
 ```
 index.html            静态入口（无打包器，浏览器可直开）
+apps/                 ★ 一个目录 = 一个 App：apps/<id>/{app.js, app.css, body.js}
+  hello/              模板，照着复制就是新 App
+  manifest.js         生成物（node tools/app-scan.js），别手改
 css/01-base … 12-media 样式按 App 切成 12 份，<link> 顺序即层叠顺序，不可调换
   （另有 multiview.css 给独立工具页共用、settings.css 给设置面板）
 js/
+  app-registry.js     ★ registerApp()：造窗口 / 按需注入 css / 写进三张表
   node-defs.js        ★ 节点注册表：新增节点只改这一个文件
   node-registry.js      引脚类型解析的唯一来源
   blueprint-core.js     画布数据模型
   blueprint-runtime.js  执行引擎
   editor.js             视图手势
-  desk-shell.js         桌面与 App 外壳（图标 / 翻页 / 窗口挂载）
+  desk-shell.js         桌面与 App 外壳（图标 / 翻页 / 窗口挂载 / 顶栏标签条）
   flow-canvas.js        流程画布（坐标 / 连线 / 存档）
   flow-node-view.js     节点 DOM（参数控件 / 引脚 / 渲染）
   desk-chat-core.js     AI 对话：状态 / 模型清单 / 自绘下拉 / 配置
@@ -128,18 +132,25 @@ server/
 tools/                  测试与探针（playwright-core）
 ```
 
-### 三条架构铁律
+### 四条架构铁律
 
 1. **一个节点只写一处。** 新增节点只在 `js/node-defs.js` 追加 `registerNode({...})`，
    不允许往 desktop / runtime / validate / flow-gen 里加 `if(n.type === ...)` 分支。
 2. **引脚解析只有一份。** 全部走 `node-registry.js` 的 `pinTypeOf` 系列，编辑器只是薄封装。
 3. **默认值唯一来源。** `seedNodeData` 是默认值的唯一出处；取值优先级：连线 → 就地值 → `paramFallback`。
+4. **一个 App 只写一个目录。** 新增 App 就 `cp -r apps/hello apps/<id>`，不碰 `index.html` 和 `js/`；
+   跑 `node tools/app-scan.js` 生成清单。细则和六条禁令见 [`apps/README.md`](apps/README.md)。
 
 ## 测试
 
 ```bash
 node tools/desk-chat.js          # 对话 + App 化
 node tools/desk.js               # 桌面翻页
+node tools/app-scan.js --check   # App 清单与目录同步
+node tools/app-registry.js       # 注册表体检（注册 / 幂等 / 关闭 / 防护）
+node tools/apps-all.js           # 14 个 App 逐个打开
+node tools/desk-tabs.js          # 顶栏标签条
+node tools/ns-guard.js           # 跨文件重名 / 重复 id（并行开发必跑）
 node tools/engine-autostart.js   # 引擎自动启动（纯 node）
 node tools/engine-keepalive.js   # 驻留保活器（纯 node）
 node tools/runtime-bridge.js     # 本地引擎桥

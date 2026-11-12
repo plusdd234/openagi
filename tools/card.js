@@ -80,16 +80,17 @@ async function openCard(page){
   const opened = await page.evaluate(() => {
     const win = document.getElementById('cardWin');
     const host = document.getElementById('deskAppHost');
-    const head = document.querySelector('.dapp-head');
+    /* 页头（.dapp-head）早就删了，现在 App 名只出现在顶栏标签上 */
+    const tab = document.querySelector('#appbarTabs .abt.on');
     return {
       visible: !!win && !win.classList.contains('hidden'),
       inHost: !!win && win.parentElement === host,
-      headText: head ? head.textContent.replace(/\s+/g, ' ').trim() : ''
+      headText: tab ? tab.textContent.replace(/\s+/g, ' ').trim() : ''
     };
   });
   check(opened.visible, '窗口可见');
   check(opened.inHost, '窗口被搬进 #deskAppHost（App 页）');
-  check(/名片/.test(opened.headText), 'App 页头显示「名片」', opened.headText.slice(0, 40));
+  check(/名片/.test(opened.headText), '顶栏标签显示「名片」', opened.headText.slice(0, 40));
 
   /* ================= ③ 内容 ================= */
   console.log('\n— ③ 内容渲染 —');

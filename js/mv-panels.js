@@ -124,6 +124,7 @@
     if (state.busy === 'render') { el.textContent = '渲染中…'; return; }
     if (state.busy === 'loading') { el.textContent = '读取模型…'; return; }
     if (state.busy === 'saving') { el.textContent = '存入图库…'; return; }
+    if (state.busy === 'proj') { el.textContent = '投射纹理中…'; return; }
     if (state.error) { el.textContent = state.error; el.classList.add('is-err'); return; }
     el.classList.remove('is-err');
     if (!state.out) { el.textContent = ''; return; }
@@ -193,7 +194,7 @@
    * 这里只反映状态。 */
   function paintExport() {
     var has = !!state.cur && !!state.cur.src && !state.busy;
-    ['mvExPreview', 'mvExColor', 'mvExDepth', 'mvExMask'].forEach(function (id) {
+    ['mvExPreview', 'mvExColor', 'mvExDepth', 'mvExMask', 'mvProj'].forEach(function (id) {
       var b = $(id);
       if (b) b.disabled = !has;
     });

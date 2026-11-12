@@ -153,14 +153,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   console.log('\n=== 4. 回来 & 二次打开（热路径） ===');
   await page.evaluate(() => { window.__flipFrames.length = 0; });
-  await page.click('#deskAppBack');
+  await page.click('#btnDeskHome');
   await page.waitForTimeout(700);
   await page.evaluate(() => { window.__flipFrames.length = 0; openDeskApp('gallery'); });
   await page.waitForTimeout(1300);
   const warm = await page.evaluate(() => ({
     frames: window.__flipFrames.slice(),
     loading: document.getElementById('libWin').classList.contains('app-loading'),
-    title: document.getElementById('deskAppTitle').textContent.trim(),
+    /* 页头（#deskAppTitle）已删，App 名只在顶栏标签上（.abt-name 才不含关闭「×」） */
+    title: ((document.querySelector('#appbarTabs .abt.on .abt-name') || {}).textContent || '').trim(),
   }));
   const wf = warm.frames.slice(0, Math.round(520 / 16.7));
   const warmMaxFlip = wf.length ? Math.round(Math.max.apply(null, wf)) : 0;
@@ -171,7 +172,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log('\n=== 5. 对照：旧路径（翻页与加载同一帧） ===');
   // 直接调模块入口 = 旧行为：deskMountApp 立刻搬节点，紧接着同步建卡。量它的长帧。
   await page.evaluate(() => { window.__flipFrames.length = 0; });
-  await page.evaluate(() => { document.getElementById('deskAppBack').click(); });
+  await page.evaluate(() => { document.getElementById('btnDeskHome').click(); });
   await page.waitForTimeout(700);
   await page.evaluate(() => { window.__flipFrames.length = 0; });
   const oldStart = await page.evaluate(async () => {

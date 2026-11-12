@@ -18,7 +18,12 @@
     "test:gateway": "node tools/gateway.js",
     "test:gateway-client": "node tools/gateway-client.js",
     "chat": "node server/chat.js",
-    "test:chat": "node tools/chat.js"
+    "test:chat": "node tools/chat.js",
+    "app:scan": "node tools/app-scan.js",
+    "test:apps": "node tools/app-registry.js",
+    "test:apps-all": "node tools/apps-all.js",
+    "test:tabs": "node tools/desk-tabs.js",
+    "test:ns": "node tools/ns-guard.js"
   },
   "dependencies": {
     "playwright-core": "^1.64.1"
@@ -41,6 +46,7 @@
       "multiview.html",
       "css/**",
       "js/**",
+      "apps/**",
       "vendor/**",
       "img/**"
     ],

@@ -128,8 +128,13 @@
     };
   }
 
-  /* 事实卡：每次请求重建，字段固定。模型核对状态用它，不用去翻历史。 */
-  function factsText(state) {
+  /* 事实卡：每次请求重建，字段固定。模型核对状态用它，不用去翻历史。
+   * custom 是给别的领域（编码 App）用的覆盖出口：传函数就整个替换这一段。
+   * 必须有这个口子 —— 否则编码任务会收到一张「viewBox / paths / closed」的卡，
+   * 和它正在干的事毫无关系，纯属浪费上下文并误导模型。 */
+  function factsText(state, custom) {
+    if (typeof custom === 'function') return String(custom(state) || '');
+    if (typeof custom === 'string') return custom;
     const d = state.draft || {};
     const val = state.lastValidate;
     const gate = val && val.gate;
@@ -153,8 +158,8 @@
     ].join('\n');
   }
 
-  function stateText(state) {
-    const parts = [factsText(state)];
+  function stateText(state, customFacts) {
+    const parts = [factsText(state, customFacts)];
     if (state.ledger.length) {
       parts.push('<WORK_LOG>\n' + state.ledger.join('\n') + '\n</WORK_LOG>');
     }
@@ -179,19 +184,29 @@
 
   /* 窗口 = 首条任务 + 最近一轮 assistant(tool_calls) + 该轮的 tool 结果。
      更早轮次只在账本里留一行，不再逐条重发。 */
-  function buildWindow(history, state, imageMsg) {
+  /* 窗口 = 首条任务 + 最近 keep 轮的 assistant(tool_calls) 与该轮 tool 结果。
+     更早轮次只在账本里留一行，不再逐条重发。
+
+     keepRounds 这个参数是被真实轨迹逼出来的：原来固定只留 1 轮，对 SVG 够用
+     （工作流固定，模型靠账本就能续上）；但编码任务里模型会**丢掉「我已经改完了」**
+     这个认知，于是应用完 diff 又去 ws_read / ws_tree / ws_search 反复确认，
+     实测多花 7 轮、两分钟，最后撞上轮次上限而不是正常收尾。
+     留 2 轮就能让它看见「上一轮读了、这一轮改了」。 */
+  function buildWindow(history, state, imageMsg, customFacts, keepRounds) {
     const base = history[0];
-    let lastAssistant = -1;
+    const keep = Math.max(1, Math.min(4, Number(keepRounds) || 1));
+    const marks = [];
     for (let i = history.length - 1; i >= 1; i--) {
       if (history[i].role === 'assistant' && Array.isArray(history[i].tool_calls)) {
-        lastAssistant = i; break;
+        marks.push(i);
+        if (marks.length >= keep) break;
       }
     }
-    if (lastAssistant < 0) return history.slice();
-    const tools = history.slice(lastAssistant + 1).filter(m => m.role === 'tool');
-    const win = [imageMsg || base, history[lastAssistant]].concat(tools);
-    const mem = stateText(state);
-    if (tools.length) {
+    if (!marks.length) return history.slice();
+    const start = marks[marks.length - 1];
+    const win = [imageMsg || base].concat(history.slice(start));
+    const mem = stateText(state, customFacts);
+    if (win[win.length - 1].role === 'tool') {
       win[win.length - 1] = appendText(win[win.length - 1], mem);
     } else {
       win[0] = appendText(win[0], mem);
@@ -199,7 +214,11 @@
     return win;
   }
 
-  async function runTool(call, hooks) {
+  /* executor：把「工具怎么执行」从循环里剥出来。
+   * 不传就是原来的 SVG 链路（svgToolRun），行为一个字节都不变；
+   * 传了就用它执行，循环本身（轮次上限、记忆压缩、负面记忆、工具消息回填）
+   * 全部复用 —— 编码 App 和 SVG 共用同一份循环，不另写一套。 */
+  async function runTool(call, hooks, executor) {
     const name = call.function.name;
     const t0 = Date.now();
     let args = parseArgs(call.function.arguments);
@@ -208,8 +227,9 @@
       if (hooks.onTool) hooks.onTool({ name: name, args: {}, result: result, error: result.error, ms: 0 });
       return result;
     }
-    /* 模型经常忘记带 draft_id。这里补上当前草稿，既省 token 也避免它凭空编一个 id。 */
-    if (!args.draft_id && typeof global.svgDraftCurrentId === 'function') {
+    /* 模型经常忘记带 draft_id。这里补上当前草稿，既省 token 也避免它凭空编一个 id。
+     * 只在 SVG 链路做：别的领域没有 draft 概念，塞进去反而让模型以为要传它。 */
+    if (!executor && !args.draft_id && typeof global.svgDraftCurrentId === 'function') {
       const id = global.svgDraftCurrentId();
       if (id) args.draft_id = id;
     }
@@ -217,8 +237,12 @@
     if (hooks.onToolStart) hooks.onToolStart({ name: name, args: args });
     let result, error = '';
     try {
-      if (typeof global.svgToolRun !== 'function') throw new Error('工具层未加载（svg-tools.js）');
-      result = await global.svgToolRun(name, args);
+      if (executor) {
+        result = await executor(name, args, hooks);
+      } else {
+        if (typeof global.svgToolRun !== 'function') throw new Error('工具层未加载（svg-tools.js）');
+        result = await global.svgToolRun(name, args);
+      }
     } catch (e) {
       error = (e && e.message) || String(e);
       result = { error: error };
@@ -242,6 +266,11 @@
     const keepImageRounds = Math.max(0, Number(o.keepImageRounds) || 0);
     const history = Array.isArray(o.messages) ? o.messages.slice() : [];
     const hooks = { onTool: o.onTool, onToolStart: o.onToolStart };
+    const executor = (typeof o.executor === 'function') ? o.executor : null;
+    /* 账本摘要同样可覆盖：默认那套是 SVG 工具的字段名，
+     * 换个领域就全是空串（账本变成「r1 ws_read：」这种没信息量的行） */
+    const pickDigest = (typeof o.digest === 'function') ? o.digest : digest;
+    const pickArgsDigest = (typeof o.digestArgs === 'function') ? o.digestArgs : argsDigest;
 
     const state = {
       round: 0, maxRounds: maxRounds, remaining: maxRounds,
@@ -268,7 +297,8 @@
       const sendMsgs = (memoryOn && round > 0)
         ? buildWindow(history, state,
           (round >= keepImageRounds && typeof o.imageForRound === 'function')
-            ? o.imageForRound(state, history[0]) : null)
+            ? o.imageForRound(state, history[0]) : null,
+          o.facts, o.keepRounds)
         : history.slice();
 
       const reqOpts = { conn: o.conn, signal: o.signal };
@@ -296,19 +326,19 @@
 
       for (const call of normalized) {
         const args = parseArgs(call.function.arguments);
-        const result = await runTool(call, hooks);
+        const result = await runTool(call, hooks, executor);
         callsLog.push({ name: call.function.name, args: call.function.arguments, result: result });
         history.push({ role: 'tool', tool_call_id: call.id, content: safeStringify(result) });
 
         const name = call.function.name;
         if (result && result.error) {
-          const det = argsDigest(name, args);
+          const det = pickArgsDigest(name, args);
           state.negatives.push('r' + (round + 1) + ' ' + name + (det ? ' ' + det : '')
             + '：' + String(result.error).slice(0, 80));
           if (state.negatives.length > NEG_MAX) state.negatives.shift();
           state.ledger.push('r' + (round + 1) + ' ' + name + '：失败（原因见 REJECTED）');
         } else {
-          state.ledger.push('r' + (round + 1) + ' ' + name + '：' + digest(name, result));
+          state.ledger.push('r' + (round + 1) + ' ' + name + '：' + pickDigest(name, result));
           if (name === 'trace_region') state.paths += (result.path_count || 0);
           if (name === 'draw_paths') state.paths = result.total_paths || state.paths;
           if (name === 'render_svg_compare' && result) state.lastCompare = result;

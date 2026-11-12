@@ -64,6 +64,20 @@ protocol.registerSchemesAsPrivileged([{
    * bypassCSP:true 是因为页面 CSP 里没有这个源，字幕 / 封面都要从这儿取。 */
   scheme: 'openagi-media',
   privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true }
+}, {
+  /* 工作区预览：把「用户选的那个文件夹」当成一个网站来服务。
+   *
+   * **必须是一个独立 scheme，不能挂在 app:// 下面。**
+   * app://openagi 里 preload 已经把 openagiDesktop 挂到了 window 上，
+   * 同源 iframe 里一行 `parent.openagiDesktop.codeWrite(...)` 就能绕过
+   * 「人点确认才落盘」这条唯一的安全线。独立 scheme = 独立 origin，
+   * 同源策略替我们把这条路堵死，不需要我们自己记得去检查。
+   *
+   * host 固定 `ws`：同一个项目的 html 和它引用的 css / js / json 必须同源，
+   * 否则 fetch 同目录数据、读 localStorage 全会崩，预览就成了「只能看静态图」。
+   * bypassCSP 同理——工作区里的页面有自己的 CSP，跟主应用没关系。 */
+  scheme: 'openagi-preview',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true, corsEnabled: true }
 }]);
 
 let mainWin = null;
@@ -76,6 +90,11 @@ let chatPort = 8792;
 /* 媒体库实例（electron/media-store.js）。协议处理器和 media:* IPC 都用它，
  * 在 ready 里创建——因为它的根目录要用 app.getPath('userData')。 */
 let MEDIA = null;
+/* 工作区实例。协议处理器比它的创建位置先注册（协议要赶在窗口加载前挂好），
+ * 而工作区实例的 stateFile 要用 app.getPath('userData')，只能在 ready 之后建。
+ * 所以走一个模块级引用：注册时是空，用户真去预览时早就有值了。
+ * 直接闭包引 const codeWs 会踩 TDZ —— 表现为「一打开预览就报加载失败」。 */
+let CODE_WS = null;
 
 // ---- Ollama 引擎管理（检测 / 下载 / 静默安装 / 启动）----
 //
@@ -594,6 +613,147 @@ function serveContent(req){
   })).catch(() => new Response('not found: ' + rel, { status: 404 }));
 }
 
+/* ---------- 工作区预览协议 ----------
+ *
+ * 把用户选的那个文件夹当成一个网站来服务，供编码 App 里的预览面板 iframe 加载。
+ * 三条不能改的约束：
+ *
+ *   ① **独立 scheme**。挂在 app:// 下就是同源，而 app://openagi 里 preload
+ *      已经把 openagiDesktop 挂到了 window 上 —— 同源 iframe 一行
+ *      `parent.openagiDesktop.codeWrite(...)` 就能绕过「人点确认才落盘」。
+ *      独立 scheme 独立 origin，同源策略替我们把这条路堵死。
+ *
+ *   ② **路径校验只走 codeWs._absOf**。这里再写一套前缀判断，就等于有两套规则，
+ *      迟早出现「一个拦一个不拦」。沙箱是那个模块的唯一职责，别在协议层复制。
+ *
+ *   ③ **HTML 必须注入错误钩子**。不注入的话，页面白屏就是唯一的信息 ——
+ *      模型看不见，用户也说不清哪儿坏了，只能靠猜。
+ */
+const PREVIEW_MIME = Object.assign({}, {
+  '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.wasm': 'application/wasm',
+  '.txt': 'text/plain; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
+  '.glb': 'model/gltf-binary',
+  '.gltf': 'model/gltf+json'
+});
+
+/* 注入到预览页里的钩子。约束：只监听不干预（不能改变页面行为）、
+ * 不依赖任何外部文件（一个 404 的 <script src> 会让错误列表自己污染自己）、
+ * 跨源也能用（parent.postMessage 不需要同源）。
+ *
+ * 资源错误用 capture 才能拿到：img/script/css 的 error 事件不冒泡，
+ * 只在捕获阶段经过 window。漏了 capture 就只会看到 JS 报错，看不到 404。 */
+const PREVIEW_HOOK = '<script>!function(){'
+  + 'function P(o){try{o.__ogi=1;parent.postMessage(o,"*")}catch(e){}}'
+  + 'addEventListener("error",function(e){'
+  + 'var t=e.target;'
+  + 'if(t&&t!==window&&t.tagName){P({t:"res",tag:String(t.tagName).toLowerCase(),url:String(t.src||t.href||"")});return}'
+  + 'P({t:"err",msg:String(e.message||""),at:(e.filename||"")+":"+(e.lineno||0)+":"+(e.colno||0)})'
+  + '},true);'
+  + 'addEventListener("unhandledrejection",function(e){'
+  + 'var r=e.reason;P({t:"rej",msg:String((r&&r.message)||r||"")})'
+  + '});'
+  + 'function ready(){P({t:"ready",title:document.title||""})}'
+  + 'if(document.readyState!=="loading")ready();else addEventListener("DOMContentLoaded",ready)'
+  + '}();</script>';
+
+/* 插入点：能进 <head> 就进 head（最早，能捕获 head 里的 script 报错）；
+ * 没有 head 就紧跟 <html>；再没有就贴在最前面。
+ * 绝不能插在 <!DOCTYPE> 之前 —— 那会让浏览器退到怪异模式，布局全变，
+ * 用户看到的是「预览效果和真浏览器不一样」。 */
+function injectPreviewHook(html){
+  const mHead = /<head[^>]*>/i.exec(html);
+  if(mHead){ const i = mHead.index + mHead[0].length; return html.slice(0, i) + PREVIEW_HOOK + html.slice(i); }
+  const mHtml = /<html[^>]*>/i.exec(html);
+  if(mHtml){ const i = mHtml.index + mHtml[0].length; return html.slice(0, i) + PREVIEW_HOOK + html.slice(i); }
+  const mDoc = /^\s*<!doctype[^>]*>/i.exec(html);
+  if(mDoc){ const i = mDoc.index + mDoc[0].length; return html.slice(0, i) + PREVIEW_HOOK + html.slice(i); }
+  return PREVIEW_HOOK + html;
+}
+
+async function serveWorkspacePreview(req){
+  try{
+    if(!CODE_WS) return new Response('工作区未就绪', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+    const u = new URL(req.url);
+    // host 固定 ws：其他 host 一律拒，避免用 host 影响路径解析
+    if(u.host !== 'ws') return new Response('bad host', { status: 404 });
+
+    let rel = '';
+    try { rel = decodeURIComponent(u.pathname || '/').replace(/^\/+/, ''); }
+    catch(e){ return new Response('bad path', { status: 400 }); }
+    if(rel === '') rel = 'index.html';
+
+    let abs;
+    try { abs = CODE_WS._absOf(rel); }
+    catch(e){ return new Response('越出工作区：' + (e.message || e), { status: 403 }); }
+
+    let st = await fsp.stat(abs).catch(() => null);
+    // 目录 → 目录下的 index.html（静态站最常见的入口约定）
+    if(st && st.isDirectory()){
+      rel = rel.replace(/\/+$/, '') + '/index.html';
+      try { abs = CODE_WS._absOf(rel); } catch(e){ return new Response('forbidden', { status: 403 }); }
+      st = await fsp.stat(abs).catch(() => null);
+    }
+    if(!st || !st.isFile()){
+      return new Response('找不到：' + rel, {
+        status: 404,
+        headers: { 'content-type': 'text/plain; charset=utf-8' }
+      });
+    }
+
+    const ext = path.extname(abs).toLowerCase();
+    const headers = {
+      'content-type': PREVIEW_MIME[ext] || 'application/octet-stream',
+      // 文件随时会被编辑器或助手改，缓存住就是「改了不生效」这种最难查的问题
+      'cache-control': 'no-store'
+    };
+    if(req.method === 'HEAD') return new Response(null, { headers });
+
+    if(ext === '.html' || ext === '.htm'){
+      const text = await fsp.readFile(abs, 'utf8');
+      return new Response(injectPreviewHook(text), { headers });
+    }
+    /* 其余直接流式给。图片和视频不该整个读进内存 ——
+     * 一张 8K 截图在一个 iframe 里轮询刷新几次就能把主进程吃满。 */
+    const stream = fs.createReadStream(abs);
+    stream.on('error', e => logLine('[preview] 读取出错 ' + rel + '：' + ((e && e.message) || e)));
+    if(typeof ReadableStream !== 'undefined' && typeof require('stream').Readable.toWeb === 'function'){
+      return new Response(require('stream').Readable.toWeb(stream), { headers });
+    }
+    const buf = await fsp.readFile(abs);
+    return new Response(buf, { headers });
+  }catch(e){
+    const msg = String((e && e.message) || e);
+    logLine('[preview] ' + msg + ' ← ' + req.url);
+    return new Response('预览出错：' + msg, { status: 500, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  }
+}
+
 /* ---------- 窗口 ---------- */
 async function createWindow(){
   const win = new BrowserWindow({
@@ -787,6 +947,9 @@ if(!gotLock){
       res.then(r => { if(r.status >= 400) logLine('[app] ' + r.status + ' ' + req.url); }).catch(e => logLine('[app] 读取失败 ' + req.url + ' ' + e.message));
       return res;
     });
+
+    /* 工作区预览：独立 origin，见 serveWorkspacePreview 上面的说明 */
+    protocol.handle('openagi-preview', req => serveWorkspacePreview(req));
 
     /* 媒体库落点：开发态放仓库下 media/（直接看文件方便），打包后放 userData/media/。 */
     const mediaRoot = app.isPackaged
@@ -1257,6 +1420,101 @@ if(!gotLock){
     comfyCancel = true;
     return { ok: true };
   });
+
+  /* ---- 编码工作区：把一个文件夹变成可读写的工作区 ----
+   * 只存 root 一个字段（userData/code-workspace.json），内容一律不缓存：
+   * 工作区是用户自己的目录，应用不拥有它，缓存只会让"磁盘上是真相"这件事失真。
+   * 沙箱、原子写、乐观锁都在 code-workspace.js 里，这里只做 IPC 转接。 */
+  const codeWs = CODE_WS = require('./code-workspace').createCodeWorkspace(
+    path.join(app.getPath('userData'), 'code-workspace.json')
+  );
+
+  ipcMain.handle('code:info', () => codeWs.info());
+  ipcMain.handle('code:clear', () => codeWs.clear());
+  ipcMain.handle('code:pick-dir', async event => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const r = await dialog.showOpenDialog(win || undefined, {
+      title: '选择要编辑的代码文件夹',
+      buttonLabel: '用这个文件夹',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if(r.canceled || !r.filePaths || !r.filePaths[0]) return codeWs.info();
+    return codeWs.setRoot(r.filePaths[0]);
+  });
+  ipcMain.handle('code:list', (e, rel) => codeWs.list(rel));
+  ipcMain.handle('code:tree', (e, rel, opts) => codeWs.tree(rel || '', opts || {}));
+  ipcMain.handle('code:read', (e, rel) => codeWs.read(rel));
+  ipcMain.handle('code:write', (e, req) => {
+    const o = req || {};
+    return codeWs.write(o.rel, o.text, { expectSha:o.expectSha, force:o.force === true });
+  });
+  ipcMain.handle('code:search', (e, q, opts) => codeWs.search(q, opts || {}));
+  /* 二进制落盘。同样要人点确认 —— 确认在渲染层做（卡片里能看缩略图），
+   * 这里只负责「确认之后的写」。分开的好处是主进程不需要知道 UI 长什么样。 */
+  ipcMain.handle('code:put-bin', (e, req) => {
+    const o = req || {};
+    return codeWs.putBinary(o.rel, o.b64, { expectSha:o.expectSha, force:o.force === true });
+  });
+  ipcMain.handle('code:exists', (e, rel) => codeWs.exists(rel));
+  /* 用系统默认程序打开（HTML 就是默认浏览器）。
+   * 和预览面板并行存在的理由：面板里的 iframe 是隔离环境，装不了插件、
+   * 也没有真 devtools，调 CSS / 看 network 还是得真浏览器。
+   *
+   * ⚠ 只放行页面类扩展名。shell.openPath 对 .exe / .bat / .ps1 是**直接执行**，
+   * 而工作区是用户从别处拿来的代码 —— 一条"用浏览器打开"的按钮
+   * 不该变成任意程序的启动器。 */
+  const OPEN_EXT = /\.(html?|svg|png|jpe?g|webp|gif|pdf|md|txt)$/i;
+  ipcMain.handle('code:open-external', async (e, rel) => {
+    try{
+      if(!OPEN_EXT.test(String(rel || ''))) return { ok:false, message:'只支持用浏览器打开页面 / 图片类文件' };
+      const abs = codeWs._absOf(rel || '', { mustExist:true });
+      const err = await shell.openPath(abs);
+      if(err) return { ok:false, message: err };
+      return { ok:true, abs };
+    }catch(err){
+      return { ok:false, message: String((err && err.message) || err) };
+    }
+  });
+  /* 仅测试用：应用内选目录会弹系统对话框，自动化点不了。
+   * 只在 OPENAGI_TEST=1 时注册 —— 生产包里根本没有这条通道，
+   * 否则渲染层就能把工作区指到任意目录，等于绕过"由用户选目录"这个前提。 */
+  if(process.env.OPENAGI_TEST === '1'){
+    ipcMain.handle('code:set-root', (e, dir) => codeWs.setRoot(String(dir || '')));
+  }
+  ipcMain.handle('code:reveal', (e, rel) => {
+    const abs = codeWs._absOf(rel || '');
+    shell.showItemInFolder(abs);
+    return true;
+  });
+
+  /* ---- 命令执行：白名单 + cwd 锁工作区 + 超时杀进程树 ----
+   * 输出走流式事件（code:run-output），否则跑一次 npm test 要等到结束才看到东西，
+   * 用户没法判断是「在跑」还是「卡住了」。 */
+  const codeRunner = require('./code-runner').createCodeRunner({
+    getRoot: () => codeWs.info().root
+  });
+
+  ipcMain.handle('code:run', async (event, req) => {
+    const sender = event.sender;
+    /* 发起窗口关闭时把它自己的命令停掉：不留孤儿进程。
+     * 不做的话，用户关窗后 npm test 会继续跑几分钟，输出再也看不到。
+     * 按 sender 逐个绑而不是全局 cancelAll —— devtools 也是个 webContents，
+     * 全局清会把正在跑的命令顺手杀掉。 */
+    if(!sender.__codeRunHooked){
+      sender.__codeRunHooked = true;
+      sender.once('destroyed', () => { codeRunner.cancelAll(); });
+    }
+    const res = await codeRunner.run(req || {}, ev => {
+      try {
+        if(!sender.isDestroyed()) sender.send('code:run-output', ev);
+      } catch(e){ /* 窗口没了就不发 */ }
+    });
+    return res;
+  });
+  ipcMain.handle('code:run-cancel', (event, runId) => {
+    return { ok: codeRunner.cancel(String(runId || '')) };
+  });
+  ipcMain.handle('code:run-status', () => codeRunner.status());
 
   /* ---- 资产库：图片 / 3D 模型落盘 ----
    * 开发态放仓库下 assets/（方便直接看文件、也方便连 assets 一起备份），

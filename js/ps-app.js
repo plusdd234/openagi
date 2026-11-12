@@ -581,7 +581,8 @@
 
   function bindEvents() {
     var e = app.els;
-    var closeBtn = $id('btnImgLabClose');
+    /* 窗口迁到 apps/imglab/app.js 后由 registerApp 生成，id 统一成 btn<窗口id>Close */
+    var closeBtn = $id('btnImgLabWinClose');
     if (closeBtn) {
       closeBtn.addEventListener('click', function () {
         if (typeof global.deskCloseWin === 'function') global.deskCloseWin($id('imgLabWin'));

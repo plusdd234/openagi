@@ -10,6 +10,9 @@
  *   改名前先搜一遍另外两个文件。
  */
 const DESK_GLYPH = {
+  /* 编码：一对尖括号夹一条斜杠，就是 </> 的最小写法。
+   * 别用「终端窗口 + 光标」——那和本地生图的三节点图标在 20px 下几乎分不清。 */
+  code: '<path d="m8.4 8-4.6 4 4.6 4"/><path d="m15.6 8 4.6 4-4.6 4"/><path d="m13.4 5.4-2.8 13.2"/>',
   chat: '<path d="M4 5h16v10H9l-5 4V5Z"/>',
   /* 裸聊用「一个气泡 + 一条横线」：和 AI 对话的气泡同源，但气泡里只有一句话，
    * 表达「单轮、无记忆」。别再加省略号三个点——那会被读成「正在输入」。 */
@@ -49,69 +52,21 @@ function deskSvg(kind){
   return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (DESK_GLYPH[kind] || DESK_GLYPH.flow) + '</svg>';
 }
 
+/* 桌面 App 的注册表。
+ *
+ * ⚠ **这里现在是空的，而且应该一直空着。** 全部 App 都迁到了 apps/<id>/app.js，
+ * 由 registerApp() 在自己执行时 push 进来（顺序由各自声明的 order 决定）。
+ *
+ * 往这里加一项 = 又制造一个「多个 AI 并行开发时会撞车」的位置，而且窗口 DOM 还得回
+ * index.html 里手写。加 App 的做法见 apps/README.md：建目录 + node tools/app-scan.js。
+ *
+ * 数组本身留着是因为 desk-shell 的渲染/拖拽/标签全按 DESK_APPS 遍历，
+ * registerApp 也只是往里 push —— 空数组就是「还没注册任何 App」的正常初始态。 */
 const DESK_APPS = [
-  /* AI 对话：和其他 App 一样双击图标翻到 App 页，不再是独立的「第二页」。
-   * 原来它有一套自己的翻页规则（.desk-wall.chat-open + .desk-page-2），
-   * 返回按钮、动效、页头全和别的 App 对不上——用户提出的就是这个不一致。
-   * 统一成 App 之后：翻页动效、<< 返回按钮、标题栏全都跟其他 App 同一套。 */
-  { id:'chat', name:'AI 对话', glyph:'chat', type:'system', open: () => { if(typeof window.deskChat !== 'undefined' && typeof window.deskChat.open === 'function') window.deskChat.open(); } },
-  /* 裸聊：摆在 AI 对话旁边，因为它就是「同一条链路的最小对照」。
-   * 它不带 system、不带上下文、不带历史，输入 token ≈ 你打的字；
-   * 打开时只需聚焦输入框——窗口本身由 openDeskApp 按 DESK_APP_META 挂载。 */
-  { id:'bare', name:'裸聊', glyph:'bare', type:'system', open: () => {
-    if(typeof window.bareChatApp !== 'undefined' && typeof window.bareChatApp.focus === 'function') window.bareChatApp.focus();
-  } },
-  /* 图像转 SVG：模型只看得到工具摘要，SVG 草稿留在本地。
-   * 摆在裸聊旁边——两者是同一条链路的两端：裸聊测「一句话能返回什么」，
-   * 这里测「模型能不能靠工具把图还原成分层矢量」。 */
-  { id:'img2svg', name:'图像转 SVG', glyph:'i2s', type:'system', open: () => {
-    if(typeof window.img2svgApp !== 'undefined' && typeof window.img2svgApp.open === 'function') window.img2svgApp.open();
-  } },
-  /* 模型商店用 Ollama 的羊驼头做图标：这张图是「本地模型」这件事的通用符号，
-   * 比再画一个抽象图标更容易一眼认出来。png 放在 vendor 里随内容包一起分发。 */
-  { id:'store', name:'模型商店', icon:'<img class="desk-app-img" src="vendor/ollama-llama.png" alt="" draggable="false">', type:'system', open: () => { if(typeof openModelStore === 'function') openModelStore(); } },
-  /* ComfyUI 单独成 app：它自带安装/启动/端口/网页界面，塞在模型控制台的小方块里
-   * 用户既不知道点哪里也看不清状态。装生图模型前先把这个引擎跑起来是最自然的顺序，
-   * 所以摆在模型商店旁边。 */
-  { id:'comfy', name:'本地生图', glyph:'comfy', type:'system', open: () => { if(typeof openComfyApp === 'function') openComfyApp(); } },
-  /* 图库 / 模型库：资产的去处。挨着两个引擎图标，形成「造东西的」和「存东西的」两排。 */
-  { id:'gallery', name:'图库', glyph:'gallery', type:'system', open: () => { if(typeof openLibrary === 'function') openLibrary('image'); } },
-  { id:'modelLib', name:'模型库', glyph:'modelLib', type:'system', open: () => { if(typeof openLibrary === 'function') openLibrary('model'); } },
-  /* 图像工坊：图片的「深加工」去处。图库负责收，它负责改——
-   * 多图层、选区、滤镜和大尺寸瓦片渲染，和上一代只做快速修正的图片编辑器分工不同。 */
-  { id:'imglab', name:'图像工坊', glyph:'ps', type:'system', open: () => {
-    if(typeof window.psLab !== 'undefined' && typeof window.psLab.open === 'function') window.psLab.open();
-  } },
-  /* 建模：网格资产工作站。摆在模型库旁边——一个是「造」，一个是「存」。
-   * MVP-1 用可编辑 face-vertex 网格；点线面工具随后续里程碑接入。 */
-  { id:'modeldesk', name:'建模', glyph:'modeler', type:'system', open: () => {
-    if(typeof window.modelDesk !== 'undefined' && typeof window.modelDesk.open === 'function') window.modelDesk.open();
-  } },
-  /* 播放器：和图库配对——图库里是「造出来的图」，播放器里是「攒下来的影音」。
-   * 它只播本地已有的文件（媒体库目录），不负责去网上抓内容。 */
-  { id:'player', name:'播放器', glyph:'video', type:'system', open: () => {
-    if(typeof window.playerApp !== 'undefined' && typeof window.playerApp.open === 'function') window.playerApp.open();
-  } },
   /* 「对话 / 文生图 / 图生图」三个单步工具 App 与「基线工具」界面已整块移除：
    * 对话有底部 AI 输入条（翻页即对话页）、生图有工作流节点与本地 ComfyUI，
-   * 再留一套单步面板是重复入口。 */
-  /* 「工作流」App 已移除：左侧固定列表就是全部工作流，再摆一个桌面 App 是重复入口 */
-  { id:'models', name:'模型',  glyph:'model', type:'system', open: () => {
-    const m = DESK_APP_META.models;
-    deskMountApp($('modelsWin'), m.title, m.sub);
-    if(typeof renderModelsConsole === 'function') renderModelsConsole();
-  } },
-  /* 多视图：挨着「模型」放——模型是输入，多视图是把它摊开看的工具。
-   * 它也是唯一一个**同时有独立页**的 App（multiview.html，双击就能用、不需要桌面），
-   * 两边的 DOM 与逻辑共用，别在这里另写一套。 */
-  { id:'multiview', name:'多视图', glyph:'mv', type:'system', open: () => {
-    if(typeof window.multiview !== 'undefined' && typeof window.multiview.open === 'function') window.multiview.open();
-  } },
-  /* 名片：放最后一位。它不是「做东西」的 App，是「关于这个人」的 App——
-   * 按使用频率排最后，但位置要固定，否则用户每次都要找。 */
-  { id:'card', name:'名片', glyph:'card', type:'system', open: () => {
-    if(typeof window.devCard !== 'undefined' && typeof window.devCard.open === 'function') window.devCard.open();
-  } }
+   * 再留一套单步面板是重复入口。
+   * 「工作流」App 已移除：左侧固定列表就是全部工作流，再摆一个桌面 App 是重复入口。 */
 ];
 function deskAppById(id){ return DESK_APPS.find(a => a.id === id); }
 
@@ -442,20 +397,10 @@ function closeModelsWin(){
  * 各 App 的内部实现仍是原来的 .os-win（模块里按 id 取元素、按 closest('.os-win')
  * 找容器，都不依赖它在 DOM 的哪一层），这里只负责把窗口节点搬进 #deskAppHost
  * 并在关闭时原样放回，所以打开逻辑与内容代码一行都不用改。 */
+/* App 页标题 / 窗口 id 的映射。**同样应该一直空着** —— 全部由 registerApp() 写进来。
+ * 留在 desk-shell 里是因为 deskMountApp / deskTabTouch / 标签反查都按它查窗口 id。 */
 const DESK_APP_META = {
-  chat:     { title: 'AI 对话', sub: '问点什么，或让它画一张', win: 'chatWin'  },
-  bare:     { title: '裸聊',   sub: '无 system / 无上下文 / 无历史', win: 'bareWin' },
-  img2svg:  { title: '图像转 SVG', sub: '工具调用 + 本地分层草稿', win: 'img2svgWin' },
-  store:    { title: '模型商店', sub: '安装 / 删除本地模型', win: 'storeWin'  },
-  comfy:    { title: '本地生图', sub: 'ComfyUI 引擎',        win: 'comfyWin'  },
-    gallery:  { title: '图库',     sub: '生成结果与素材',      win: 'libWin'    },
-    modelLib: { title: '模型库',   sub: '本机模型文件',        win: 'libWin'    },
-    imglab:   { title: '图像工坊', sub: '图层 · 选区 · 滤镜 · 瓦片大图', win: 'imgLabWin' },
-    modeldesk: { title: '建模',    sub: '网格资产工作站 · 变换 · 材质槽',      win: 'modelDeskWin' },
-    player:   { title: '播放器',   sub: '本地的视频与音频',    win: 'playerWin' },
-    multiview:{ title: '多视图',   sub: '模型转三视图 / 六视图 / 八视图', win: 'mvWin' },
-    card:     { title: '名片',     sub: '作者与联系方式',      win: 'cardWin'   },
-  models:   { title: '模型',     sub: '引擎与 Provider',     win: 'modelsWin' }
+  /* 空。加 App 请见 apps/README.md，不要往这里加回来。 */
 };
 let deskAppWin = null;                    // 当前挂在 App 页里的窗口
 const deskAppHome = new WeakMap();        // 窗口节点 → 原来的父节点 / 下一个兄弟
@@ -487,6 +432,9 @@ function deskMountApp(win, title, sub){
     wall.classList.add('app-open');
   }
   deskHomeBtn(true);
+  /* 顶栏切换条：这里记一笔（而不是在 openDeskApp 里记）——
+     模块自己也会调 deskMountApp（图库 / 播放器 / 多视图 / 名片），只挂在 openDeskApp 上会漏掉它们。 */
+  deskTabTouch(win, title);
   return true;
 }
 
@@ -531,6 +479,7 @@ function deskAppLeave(){
   const wall = $('deskWall');
   if(wall) wall.classList.remove('app-open');
   deskHomeBtn(false);
+  deskTabRender();              // 桌面上不显示切换条，但标签表要留着（回来还能点）
   deskCancelRestore();
   deskRestoreRaf = requestAnimationFrame(() => {
     deskRestoreRaf = 0;
@@ -544,14 +493,170 @@ function deskCloseWin(win){
   if(!win) return;
   /* 全屏中的窗口被关掉：先把全屏退掉，否则窗口藏了、屏幕还是被它占着 */
   if(document.fullscreenElement === win) document.exitFullscreen().catch(() => {});
+  /* 「关闭」和「返回桌面」是两件事：关闭要划掉顶栏那个标签，返回保留（见 deskTabs 的说明）。
+     deskTabClose 自己也会调到这儿，重复 forget 只是 findIndex 返回 -1，无副作用。 */
+  deskTabForget(win.id);
   if(win === deskAppWin) deskAppLeave();
   else win.classList.add('hidden');
+  deskTabRender();
+}
+
+/* ---------------- 顶栏 App 切换条 ----------------
+ * 为什么「跳转」很便宜：App 页同一时刻只挂一个窗口，换 App 时上一个被 deskAppRestore
+ * 搬回桌面层并加 .hidden —— **内容一点没丢**。所以切标签只要把节点搬回来（deskMountApp），
+ * 不需要重跑模块的 open()。反过来，重跑 open() 会重新探测引擎 / 重扫图库 / 重置画布，
+ * 「切个标签」变成一次刷新，还把滚动位置和选中状态一起冲掉。
+ *
+ * 这张表是「打开过的 App」的唯一真源：
+ *   · 挂进 App 页 → 记一条（写在 deskMountApp 里，任何调用方都覆盖得到）；
+ *   · 被关闭（deskCloseWin）→ 划掉；
+ *   · 返回桌面（deskAppLeave）→ **不**划掉。返回只是离开，不是关闭，
+ *     回来还要能点回刚才那个 App。
+ *
+ * ⚠ 窗口和 App 不是一一对应：图库 / 模型库共用 #libWin。所以表的键取**窗口 id**，
+ *   名字取挂载时传进来的 title（openLibrary 会按 mode 传「图库」或「模型库」）。
+ *   若按 DESK_APP_META[appId].title 反查，libWin 永远只会显示成「图库」。
+ */
+let deskTabs = [];   // [{ win:'modelDeskWin', appId:'modeldesk', name:'建模' }]
+
+function deskTabFind(winId){ return deskTabs.find(t => t.win === winId) || null; }
+
+/* 按窗口 id 反查是哪个 App 开的。一个窗口挂多个 App 时（libWin）用标题区分。 */
+function deskTabAppOf(winId, title){
+  const ids = Object.keys(DESK_APP_META).filter(k => DESK_APP_META[k].win === winId);
+  if(!ids.length) return '';
+  if(ids.length === 1) return ids[0];
+  return ids.find(k => DESK_APP_META[k].title === title) || ids[0];
+}
+
+/* 记一条（同窗口只更新，不重复追加）—— 名字跟着最近一次挂载走 */
+function deskTabTouch(win, name){
+  if(!win || !win.id) return;
+  const appId = deskTabAppOf(win.id, name);
+  const label = name || (appId ? DESK_APP_META[appId].title : '') || win.id;
+  const rec = deskTabFind(win.id);
+  if(rec){ rec.appId = appId || rec.appId; rec.name = label; }
+  else deskTabs.push({ win: win.id, appId: appId, name: label });
+  deskTabRender();
+}
+
+function deskTabForget(winId){
+  const i = deskTabs.findIndex(t => t.win === winId);
+  if(i >= 0) deskTabs.splice(i, 1);
+}
+
+/* 什么时候显示：只要有标签、且工作台这一页在场就显示——**包括桌面首页**。
+ * 「返回主页」只是把当前 App 放回桌面层，打开的 App 并没有关掉，藏起切换条等于
+ * 让用户以为它们都没了，还得回桌面逐个双击图标把窗口重新翻出来。桌面上没有「当前 App」，
+ * 这一条就只是把现有标签平铺出来，点哪个进哪个。
+ * 唯一要挡的是工作流编辑器：从左栏点进 bp 视图时 #homeView 会被 .hidden 掉，
+ * 而 .desk-wall 上的 app-open 不跟着撤 —— 那时标签点一下只是把窗口搬进一个看不见的页面，
+ * 什么反应都没有（见 blueprint-core.js 的 settle()）。
+ * 每次重绘都整段重建（最多十几个按钮），换来的是状态永远和 deskTabs / deskAppWin 一致。 */
+function deskTabRender(){
+  const bar = $('appbarTabs');
+  if(!bar) return;
+  const home = $('homeView');
+  const show = deskTabs.length > 0 && !!home && !home.classList.contains('hidden');
+  bar.classList.toggle('show', show);
+  if(!show){ bar.innerHTML = ''; return; }
+  const keep = bar.scrollLeft;          // 标签多时重绘会把横向滚动位置冲掉
+  bar.innerHTML = deskTabs.map(t => {
+    const app = deskAppById(t.appId) || {};
+    const on = $(t.win) === deskAppWin;
+    /* 图标跟桌面图标同源（app.icon 优先，模型商店用的是羊驼头图片）；
+       类名换掉是因为 .desk-app-icon .desk-app-img 那套尺寸只在桌面图标里成立。 */
+    const ico = (app.icon || deskSvg(app.glyph)).replace('class="desk-app-img"', 'class="abt-img"');
+    return '<button type="button" class="abt' + (on ? ' on' : '') + '" data-win="' + t.win + '"' +
+      ' role="tab" aria-selected="' + (on ? 'true' : 'false') + '" title="' + t.name + '">' +
+      '<span class="abt-ico">' + ico + '</span>' +
+      '<span class="abt-name">' + t.name + '</span>' +
+      '<span class="abt-x" title="关闭">×</span>' +
+    '</button>';
+  }).join('');
+  bar.scrollLeft = keep;
+  /* 当前标签必须在可视区内：标签多到装不下时，切过去的那个很可能在右边看不见，
+     高亮就白给了。只做最小位移，不把它推到最中间（那样每次切换整条都在晃）。 */
+  const onEl = bar.querySelector('.abt.on');
+  if(onEl){
+    const br = bar.getBoundingClientRect(), or = onEl.getBoundingClientRect();
+    if(or.left < br.left) bar.scrollLeft -= (br.left - or.left) + 10;
+    else if(or.right > br.right) bar.scrollLeft += (or.right - br.right) + 10;
+  }
+}
+
+/* 切到某个 App：纯搬节点 + 广播，不重跑 open()（理由见本节开头） */
+function deskSwitchApp(winId){
+  const win = $(winId);
+  if(!win || win === deskAppWin) return false;
+  const rec = deskTabFind(winId);
+  const meta = (rec && rec.appId && DESK_APP_META[rec.appId]) || {};
+  const ok = deskMountApp(win, meta.title || (rec ? rec.name : ''), meta.sub || '');
+  if(ok) deskTabRender();
+  return ok;
+}
+
+/* 关掉一个标签：关的是当前这个就切到相邻标签（像浏览器），
+ * 只有它是最后一个时才退回桌面——比「关掉就跳回桌面、还得再双击图标」少一步。 */
+function deskTabClose(winId){
+  const i = deskTabs.findIndex(t => t.win === winId);
+  if(i < 0) return;
+  const win = $(winId);
+  const active = !!win && win === deskAppWin;
+  deskTabs.splice(i, 1);
+  if(!win){ deskTabRender(); return; }
+  if(!active){ win.classList.add('hidden'); deskTabRender(); return; }
+  const nb = deskTabs[i] || deskTabs[i - 1];   // 已经删掉一条，同下标的元素就是「右边那个」
+  if(nb && $(nb.win)) deskSwitchApp(nb.win);
+  else deskCloseWin(win);
+  deskTabRender();
 }
 
 (function bindDeskAppPage(){
   /* 返回主页：App 页没有自己的页头了，回桌面只有顶栏这一个入口 */
   const home = $('btnDeskHome');
   if(home) home.addEventListener('click', () => deskAppLeave());
+
+  /* 标签条用事件委托：重绘会换掉所有按钮，逐个绑监听等于每次重绘都漏一批。
+     .abt-x 是 span 不是 button —— button 里套 button 是非法嵌套，浏览器会自己拆结构。 */
+  const tabs = $('appbarTabs');
+  if(tabs){
+    tabs.addEventListener('click', e => {
+      const hit = e.target && e.target.closest ? e.target : null;
+      if(!hit) return;
+      const x = hit.closest('.abt-x');
+      if(x){ const b = x.closest('.abt'); if(b) deskTabClose(b.dataset.win); return; }
+      const b = hit.closest('.abt');
+      if(b) deskSwitchApp(b.dataset.win);
+    });
+    /* 中键关闭：和浏览器标签的习惯一致，手比点那个小叉快 */
+    tabs.addEventListener('auxclick', e => {
+      if(e.button !== 1) return;
+      const b = e.target && e.target.closest ? e.target.closest('.abt') : null;
+      if(!b) return;
+      e.preventDefault();
+      deskTabClose(b.dataset.win);
+    });
+    /* 竖向滚轮横向翻标签：这条只横向溢出，Chromium 不会把 deltaY 自动转过去，
+       没有触控板的话标签一多就只能拖着走。 */
+    tabs.addEventListener('wheel', e => {
+      if(Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      if(tabs.scrollWidth <= tabs.clientWidth) return;
+      tabs.scrollLeft += e.deltaY;
+      e.preventDefault();
+    }, { passive: false });
+  }
+
+  /* Ctrl+Tab / Ctrl+Shift+Tab 轮换当前打开的 App。
+     写成捕获阶段 + preventDefault：不然焦点在输入框里时会被浏览器/输入法先吃掉。 */
+  window.addEventListener('keydown', e => {
+    if(!e.ctrlKey || e.key !== 'Tab' || deskTabs.length < 2) return;
+    e.preventDefault();
+    const cur = deskTabs.findIndex(t => $(t.win) === deskAppWin);
+    const step = e.shiftKey ? -1 : 1;
+    const next = deskTabs[((cur < 0 ? 0 : cur) + step + deskTabs.length) % deskTabs.length];
+    if(next) deskSwitchApp(next.win);
+  }, true);
 })();
 
 $('deskWall').addEventListener('pointerdown', e => {

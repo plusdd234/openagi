@@ -304,6 +304,60 @@
   .appbar-home { display: none; }
   .appbar-home.show { display: grid; }
 
+  /* ---- 顶栏 App 切换条 ----
+     打开过的 App 各占一个标签，点一下切过去（窗口内容还在，只是被搬回了桌面层）。
+     桌面上也显示：返回主页不等于关掉 App，藏起来会让人以为它们都没了。
+     左右两侧固定、由这条吃掉剩余空间并横向滚动：标签再多也不会把「资产」和齿轮挤出去。 */
+  .appbar-left, .appbar-right { flex: 0 0 auto; }
+  .appbar-tabs {
+    display: none;                       /* 没有打开过的 App 时整条不占位，见 deskTabRender */
+    flex: 1 1 auto; min-width: 0; height: 100%;
+    align-items: center; gap: 4px; padding: 0 18px;
+    overflow-x: auto; overflow-y: hidden;
+    /* 52px 高的条上再挂一条滚动条会把内容顶歪；滚动本身靠触控板/滚轮与 Ctrl+Tab */
+    scrollbar-width: none;
+    /* 两端淡出：标签多到溢出时，被裁掉的那半个标签会紧贴「The seed」和「资产」，
+       看着像撞上去了；一层渐变把它化掉，顺带提示「这边还有」。 */
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+            mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+  }
+  .appbar-tabs.show { display: flex; }
+  .appbar-tabs::-webkit-scrollbar { height: 0; }
+
+  .abt {
+    display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+    max-width: 168px; height: 28px; padding: 0 3px 0 8px;
+    border-radius: 8px; border: 1px solid transparent;
+    /* 未选中也要有一层极淡的底：桌面上没有当前 App 时，全是文字的标签看着像纯装饰，
+       点不点得动全靠猜。这层底让它一眼是「一排可点的块」。 */
+    background: rgba(28,38,60,.045);
+    color: #5a6068; font: inherit; font-size: 11.5px; cursor: pointer;
+    transition: background .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease;
+  }
+  .abt:hover { background: rgba(28,38,60,.085); color: #1f2328; }
+  /* 当前 App：白底浮起 + 底边一道金黄——顶栏本身是白到浅灰的渐变，
+     只给白底的话几乎看不出选中，那道黄边才是「我现在在这儿」的信号。 */
+  .abt.on {
+    background: #fff; border-color: #e4e7ec; color: #1f2328; font-weight: 600;
+    box-shadow:
+      0 1px 3px rgba(28,38,60,.10),
+      inset 0 1px 0 #fff,
+      inset 0 -2px 0 #f0b429;
+  }
+  .abt:active { box-shadow: inset 0 1px 2px rgba(28,38,60,.10); }
+  .abt-ico { flex: none; width: 15px; height: 15px; display: grid; place-items: center; color: #8a9098; }
+  .abt-ico svg, .abt-ico img { width: 15px; height: 15px; display: block; object-fit: contain; }
+  .abt.on .abt-ico { color: #c47a00; }
+  .abt-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 关闭块常驻低透明度：触屏没有 hover，藏到 hover 才出现等于点不到 */
+  .abt-x {
+    flex: none; width: 16px; height: 16px; display: grid; place-items: center;
+    border-radius: 5px; color: #9aa0a8; font-size: 13px; line-height: 1;
+    opacity: .3; transition: opacity .12s ease, background .12s ease, color .12s ease;
+  }
+  .abt:hover .abt-x { opacity: .85; }
+  .abt-x:hover { background: rgba(28,38,60,.10); color: #1f2328; opacity: 1; }
+
   /* 灰底圆角画布：和第一页的 .desk-canvas 同一套观感，左右与页面留 20px，
      内容（.os-win）缩在里面，露出这一圈灰底当边框 */
   .dapp-canvas {

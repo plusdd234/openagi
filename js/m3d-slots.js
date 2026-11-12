@@ -37,6 +37,24 @@
    * OBJ 走传统约定（flipY=true）。合成贴图必须跟槽里原有贴图保持一致——
    * 槽里没有贴图时按模型格式兜底，否则 GLB 模型贴图会上下颠倒。
    */
+  /* 槽记录合并规则（纯函数）：模型库只懂 `layers` / `baked`，
+   * 别的模块写进同一条记录的字段（v4 的 `ops` = 建模 App 的编辑层栈）**必须原样保留**。
+   * 抽成纯函数是因为这条规则必须能被直接测：它一旦失手，用户会在
+   * 「模型库随手点一次保存」之后丢掉全部笔迹，而且全程没有任何报错。 */
+  function mergeSlotRec(prev, next) {
+    var hasOps = !!(prev && Array.isArray(prev.ops) && prev.ops.length);
+    if (!next) {
+      /* 没有图层也没有 baked —— 但只要别人存了 ops，记录就不能删 */
+      if (!hasOps) return null;
+      return { v: 4, layers: [], baked: null, ops: prev.ops };
+    }
+    if (hasOps) {
+      next.ops = prev.ops;
+      next.v = 4;
+    }
+    return next;
+  }
+
   function setupSlotPanel(deps) {
     var model = deps.model, stage = deps.stage, bar = deps.bar;
     var mkBtn = deps.mkBtn, hint = deps.hint;
@@ -109,7 +127,15 @@
         id: String(l.id), name: String(l.name || ''), flipY: !!l.flipY,
         opacity: clampNum(l.opacity, 0, 1), blend: l.blend || 'normal'
       };
-      if (l.mask && l.mask.id) {
+      /* 「重载颜色」层：kind 标记它是可绘制的颜色层，islands 是这一层锁定的 UV 岛。
+       * 只存岛 id、不存第二张遮罩图 —— 岛形状任何时候都能从模型几何重算，
+       * 配置也不会因为多一张 2K 图而膨胀。
+       * 锁定时遮罩由 islands 说了算，手绘 mask 就不写进配置（避免两套口径打架）。 */
+      if (l.kind === 'color') o.kind = 'color';
+      if (Array.isArray(l.islands) && l.islands.length) {
+        o.islands = l.islands.map(Number).filter(function (n) { return isFinite(n) && n >= 0; });
+      }
+      if (!(o.islands && o.islands.length) && l.mask && l.mask.id) {
         o.mask = {
           id: String(l.mask.id), name: String(l.mask.name || ''),
           flipY: !!l.mask.flipY, invert: !!l.mask.invert,
@@ -133,16 +159,22 @@
       var ls = [], arr = slot.layers || [];
       for (var i = 0; i < arr.length; i++) if (arr[i] && arr[i].id) ls.push(layerRec(arr[i]));
       var k = slotKey(slot);
+      /* 旧记录里可能有本查看器不认识的字段（v4 的 ops：建模 App 的编辑层栈）。
+       * 这里只负责图层与烘焙图，**别人的字段原样搬回去** —— 一次「保存」就把
+       * 「模型库看不懂的东西」删掉，等于用户的笔迹莫名其妙消失了。 */
+      var prev = (m[k] && typeof m[k] === 'object') ? m[k] : null;
       /* v3 只多一件事：槽可以有一张「烘焙后的基础贴图」。
        * 它替掉模型自带的图，所以哪怕图层是空的也要留记录——
        * v2 的「没层就删」会把烘焙结果一起删掉，下次打开又回到原始贴图。 */
       var baked = (slot.__baked && slot.__baked.id) ? slot.__baked : null;
+      var rec = null;
       if (baked) {
-        m[k] = { v: 3, layers: ls, baked: {
+        rec = { v: 3, layers: ls, baked: {
           id: String(baked.id), name: String(baked.name || ''), flipY: baked.flipY !== false
         } };
-      } else if (ls.length) m[k] = { v: 2, layers: ls };
-      else delete m[k];
+      } else if (ls.length) rec = { v: 2, layers: ls };
+      rec = mergeSlotRec(prev, rec);
+      if (rec) m[k] = rec; else delete m[k];
       if (Object.keys(m).length) all[assetId] = m;
       else delete all[assetId];
       writeTexCfg(all);
@@ -316,6 +348,76 @@
       bakeBtn.style.cursor = can ? 'pointer' : 'not-allowed';
     }
 
+    /* ---------------- UV 岛遮罩（层级别） ----------------
+     * 「起笔岛 clip」只管一笔；层锁定要的是：一组选中的 UV 岛变成这一层
+     * 存档里的一部分，刷新还原 / 导出 GLB 之后仍然只在这些岛上生效。
+     * 岛形状由模型几何现算，配置里只存岛 id；绘制期和还原期共用这一份算法，
+     * 免得「画的时候对、重开之后歪了」。
+     */
+    var islandCache = null;
+    function islandAnalysis() {
+      if (islandCache) return islandCache;
+      if (!global.ModelTex || typeof global.ModelTex.analyzeRoot !== 'function') return null;
+      try {
+        model.root.updateMatrixWorld(true);
+        islandCache = global.ModelTex.analyzeRoot(model.root);
+      } catch (e) { return null; }
+      return islandCache;
+    }
+    function islandPathOf(a, id, W, H, flip) {
+      var isl = a && a.islands[id];
+      if (!isl) return null;
+      var p = new Path2D();
+      for (var i = 0; i < isl.tris.length; i++) {
+        var ref = isl.tris[i], part = a.parts[ref.part];
+        if (!part || !part.uv) continue;
+        var ix = part.idx;
+        for (var k = 0; k < 3; k++) {
+          var vi = ix ? ix.getX(ref.t * 3 + k) : ref.t * 3 + k;
+          var x = part.uv.getX(vi) * W;
+          var y = (flip ? (1 - part.uv.getY(vi)) : part.uv.getY(vi)) * H;
+          if (k === 0) p.moveTo(x, y); else p.lineTo(x, y);
+        }
+        p.closePath();
+      }
+      return p;
+    }
+    /* 白色岛形状 + 透明底 = 现成的 alpha 遮罩，TexBlend.maskAlpha 会直接取用 */
+    function islandMaskCanvas(ids, W, H, flip) {
+      var a = islandAnalysis();
+      if (!a || !ids || !ids.length) return null;
+      var cv = document.createElement('canvas');
+      cv.width = W; cv.height = H;
+      var c = cv.getContext('2d');
+      c.fillStyle = '#ffffff';
+      var n = 0;
+      for (var i = 0; i < ids.length; i++) {
+        var p = islandPathOf(a, Number(ids[i]) || 0, W, H, flip);
+        if (p) { c.fill(p); n++; }
+      }
+      return n ? cv : null;
+    }
+    /* 层上的 islands → 合成能用的 mask。没锁定就把上一次自动生成的岛遮罩撤掉，
+     * 用户手绘/上传的遮罩（带 id）不动。 */
+    function syncLayerIslandMask(slot, layer) {
+      var ids = layer.islands || [];
+      var sz = mixSize(slot);
+      var cv = islandMaskCanvas(ids, sz.w, sz.h, layer.flipY !== false);
+      if (cv) layer.mask = { img: cv, __direct: true, islandMask: true, name: 'UV 岛遮罩' };
+      else if (layer.mask && layer.mask.islandMask) layer.mask = null;
+    }
+    function lockPathOf(layer, W, H, flip) {
+      var ids = layer.islands || [];
+      var a = islandAnalysis();
+      if (!a || !ids.length) return null;
+      var p = new Path2D(), n = 0;
+      for (var i = 0; i < ids.length; i++) {
+        var ip = islandPathOf(a, Number(ids[i]) || 0, W, H, flip);
+        if (ip) { p.addPath(ip); n++; }
+      }
+      return n ? p : null;
+    }
+
     /* 打开模型时把上次的混合层贴回去。资产被删掉的那层直接丢，并改写配置，
      * 否则每次打开都白读一次、还看不出少了一层。 */
     async function restoreTextures() {
@@ -355,9 +457,11 @@
             var layer = {
               id: String(L.id), name: L.name || '', flipY: L.flipY !== false, img: img,
               opacity: (L.opacity == null ? 1 : clampNum(L.opacity, 0, 1)),
-              blend: L.blend || 'normal', mask: null
+              blend: L.blend || 'normal', mask: null,
+              kind: L.kind === 'color' ? 'color' : '',
+              islands: Array.isArray(L.islands) ? L.islands.map(Number) : []
             };
-            if (L.mask && L.mask.id) {
+            if (!layer.islands.length && L.mask && L.mask.id) {
               try {
                 layer.mask = {
                   id: String(L.mask.id), name: L.mask.name || '',
@@ -378,6 +482,11 @@
         }
         if (kept.length !== recs.length) dirty = true;
         slot.layers = kept;
+        /* 岛遮罩由配置里的 islands 现算：不依赖资产库里有没有那张图。
+         * 必须等 slot.layers 挂好再算 —— mixSize 会拿第一张层图定合成尺寸。 */
+        for (var ki = 0; ki < kept.length; ki++) {
+          if (kept[ki].islands && kept[ki].islands.length) syncLayerIslandMask(slot, kept[ki]);
+        }
         if (kept.length) { applyMix(slot); restored++; }
       }
       if (dirty) for (var k = 0; k < slots.length; k++) persistSlot(slots[k]);
@@ -813,7 +922,12 @@
           var ls = st.slot.layers || [];
           var i = ls.indexOf(st.layer);
           if (st.fresh && i >= 0) ls.splice(i, 1);
-          else st.layer.img = st.prevImg;
+          else {
+            st.layer.img = st.prevImg;
+            /* 锁定岛也是这次编辑动过的，取消要一起回滚，否则「取消」还留半套遮罩 */
+            st.layer.islands = st.prevIslands.slice();
+            syncLayerIslandMask(st.slot, st.layer);
+          }
         } else {
           st.layer.mask = st.prev;
         }
@@ -917,6 +1031,9 @@
       var THREEx = global.THREE;
       var ray = new THREEx.Raycaster();
       var ndc = new THREEx.Vector2();
+      /* 工具条构建时才拿得到的两个引用：吸管取完色要回写笔色、自动切回绘制。
+       * 严格模式下块内的函数声明不会提升到 startPaint 作用域，必须先留位置。 */
+      var setInk = null, paintModeBtn = null;
       var st = {
         layer: layer, slot: slot, cv: cv, ctx: ctx, W: W, H: H, flip: flip, prev: prev,
         kind: kind, fresh: !!(opts && opts.fresh), prevImg: prevImg,
@@ -934,6 +1051,12 @@
         a: null, meshList: null, triOff: null,
         /* 岛分组：只影响编辑手感，不决定遮罩像素；随遮罩配置一起存 */
         groups: [],
+        /* 模糊笔刷：起笔时算一次「原图 + alpha 加权羽化」快照，拖动只做局部插值。
+         * 快照跟着每一笔重算，先画几笔再模糊也拿得到最新内容。 */
+        blurData: null, srcData: null, feather: 4, blurMix: 0.65,
+        /* 层锁定的 UV 岛：写进存档的硬边界，比「起笔岛」更严格。
+         * 绘制时用它 clip，合成时由 syncLayerIslandMask 生成 mask。 */
+        lockPath: null, prevIslands: (layer.islands || []).slice(), lastPicked: '',
         /* 每岛遮罩状态 on / off / partial，由遮罩图像素采样得出（左栏大纲的眼睛用） */
         states: [], areaTotal: 0
       };
@@ -943,6 +1066,46 @@
       painting = st;
       if (controls) controls.enabled = false;
       canvas.style.cursor = 'crosshair';
+
+      /* ---------------- 吸管：从「对应的纹理槽贴图」里取色 ----------------
+       * 样本优先用该槽的基础贴图（模型自带 / 烘焙结果）；没有贴图时用
+       * 「除当前层外」的合成结果 —— 否则会吸到自己刚画上去的笔迹。
+       * UV → 画布像素的换算与 uvPx 完全一致，所以吸到的就是鼠标底下那一点。 */
+      var sampleCv = null;
+      function sampleBase() {
+        if (sampleCv) return sampleCv;
+        var base = st.slot.baseTex && st.slot.baseTex.image;
+        if (base && base.width) {
+          sampleCv = document.createElement('canvas');
+          sampleCv.width = st.W; sampleCv.height = st.H;
+          sampleCv.getContext('2d').drawImage(base, 0, 0, st.W, st.H);
+        } else {
+          var ls = (st.slot.layers || []).filter(function (l) { return l !== st.layer; });
+          sampleCv = TB.compose({
+            w: st.W, h: st.H, baseImg: null, layers: ls, baseColor: '#ffffff'
+          });
+        }
+        return sampleCv;
+      }
+      function pickInk(px) {
+        if (!isColor || !setInk) return false;
+        try {
+          var sc = sampleBase();
+          var x = Math.min(st.W - 1, Math.max(0, Math.round(px.x)));
+          var y = Math.min(st.H - 1, Math.max(0, Math.round(px.y)));
+          var d = sc.getContext('2d').getImageData(x, y, 1, 1).data;
+          if (d[3] < 8) { hint.textContent = '这一点在贴图上是透明的，换一处再吸'; return false; }
+          var hex = '#' + [d[0], d[1], d[2]].map(function (v) {
+            return ('0' + v.toString(16)).slice(-2);
+          }).join('');
+          setInk(hex);
+          st.lastPicked = hex;
+          return true;
+        } catch (e) {
+          hint.textContent = '吸色失败：' + ((e && e.message) || e);
+          return false;
+        }
+      }
 
       function uvPx(uv) {
         /* UV 可以超出 0–1（贴图重复），先折回一格，笔刷才落在对应的平铺上 */
@@ -972,14 +1135,12 @@
        * 所以射线命中的 mesh 在那个顺序里的下标，就是 part 下标。 */
       function islandData() {
         if (st.a) return st.a;
-        if (!window.ModelTex || typeof ModelTex.analyzeRoot !== 'function') {
-          hint.textContent = 'UV 岛功能不可用（缺少 modeltex.js）';
+        /* 与层遮罩共用同一份岛分析：绘制剪裁和合成遮罩必须出自同一套几何 */
+        var a = islandAnalysis();
+        if (!a) {
+          hint.textContent = 'UV 岛功能不可用（缺少 modeltex.js 或分析失败）';
           return null;
         }
-        model.root.updateMatrixWorld(true);
-        var a;
-        try { a = ModelTex.analyzeRoot(model.root); }
-        catch (e) { hint.textContent = 'UV 岛分析失败：' + ((e && e.message) || e); return null; }
         var ms = [];
         model.root.traverse(function (o) {
           if (o.isMesh && o.geometry && o.geometry.attributes.position) ms.push(o);
@@ -1123,19 +1284,73 @@
         if (st.clipPath) ctx.restore();
       }
 
+      /* ---------------- 模糊笔刷：修 UV 接缝 ----------------
+       * 从「起笔快照 srcData」与「同一次算出的羽化图 blurData」插值，用
+       * putImageData 直接写非预乘像素。不能用 drawImage + 半透明渐变：canvas 的
+       * source-over 是预乘混合，出血像素的 RGB 会被自己的 alpha 再乘一次，
+       * 缝没修好反而多一条暗边。
+       * 圆外像素回填快照原值：同一位置反复涂是幂等的，不会越涂越散。 */
+      var dabData = null;
+      function blurDab(x, y, r) {
+        if (!st.blurData || !st.srcData) return;
+        var W = st.W, H = st.H;
+        var x0 = Math.max(0, Math.floor(x - r)), y0 = Math.max(0, Math.floor(y - r));
+        var x1 = Math.min(W, Math.ceil(x + r)), y1 = Math.min(H, Math.ceil(y + r));
+        var w = x1 - x0, h = y1 - y0;
+        if (w <= 0 || h <= 0) return;
+        if (!dabData || dabData.width !== w || dabData.height !== h) {
+          dabData = ctx.createImageData(w, h);
+        }
+        var s = st.srcData.data, b = st.blurData.data, o = dabData.data;
+        var rr = r * r, mix = st.blurMix;
+        for (var yy = 0; yy < h; yy++) {
+          var gy = y0 + yy;
+          for (var xx = 0; xx < w; xx++) {
+            var gx = x0 + xx;
+            var dx = gx - x, dy = gy - y;
+            var d2 = dx * dx + dy * dy;
+            var sp = (gy * W + gx) * 4, op = (yy * w + xx) * 4;
+            if (d2 > rr) {
+              /* 圆外保持快照：笔刷软边之外不改动，也不留上一笔的残影 */
+              o[op] = s[sp]; o[op + 1] = s[sp + 1];
+              o[op + 2] = s[sp + 2]; o[op + 3] = s[sp + 3];
+              continue;
+            }
+            /* 中心到 0.62r 满强度，再线性衰减到 0，跟 dab() 的软边口径一致 */
+            var t = mix * Math.min(1, (1 - Math.sqrt(d2) / r) / 0.38);
+            /* 必须在「预乘 alpha」空间插值：透明像素的 RGB 是 0，逐通道直接
+             * 线性插值会把出血颜色乘上 t，缝没修好反而多一条暗边。
+             * 这里颜色由有色像素说了算，只有 alpha 随笔刷强度缩放。 */
+            var sa = s[sp + 3], ba = b[sp + 3];
+            var wa = sa + (ba - sa) * t;
+            if (wa > 0.5) {
+              for (var c = 0; c < 3; c++) {
+                var sc = s[sp + c] * sa, bc = b[sp + c] * ba;
+                o[op + c] = Math.max(0, Math.min(255, (sc + (bc - sc) * t) / wa));
+              }
+              o[op + 3] = wa;
+            } else {
+              o[op] = o[op + 1] = o[op + 2] = o[op + 3] = 0;
+            }
+          }
+        }
+        ctx.putImageData(dabData, x0, y0);
+      }
+
       function strokeTo(px) {
         var r = st.size;
-        if (!st.lastOk) dab(px.x, px.y, r);
+        var put = st.mode === 'blur' ? blurDab : dab;
+        if (!st.lastOk) put(px.x, px.y, r);
         else {
           var dx = px.x - st.lastX, dy = px.y - st.lastY;
           var dist = Math.sqrt(dx * dx + dy * dy);
           if (dist > Math.max(r * 8, 160)) {
             /* UV 缝两侧在贴图上离得很远：插值会把整张图拉出一条长线，所以这里只落一个点 */
-            dab(px.x, px.y, r);
+            put(px.x, px.y, r);
           } else {
             var step = Math.max(1, r * 0.3);
             var n = Math.max(1, Math.ceil(dist / step));
-            for (var i = 1; i <= n; i++) dab(st.lastX + dx * i / n, st.lastY + dy * i / n, r);
+            for (var i = 1; i <= n; i++) put(st.lastX + dx * i / n, st.lastY + dy * i / n, r);
           }
         }
         st.lastX = px.x; st.lastY = px.y; st.lastOk = true;
@@ -1144,6 +1359,16 @@
 
       function onDown(e) {
         if (!painting || e.button !== 0 || e.target !== canvas) return;
+        /* Alt = 临时吸管；「吸管」模式点一下取完色自动回到绘制，不改变笔迹 */
+        if (isColor && (st.mode === 'pick' || e.altKey)) {
+          var pk = hitPx(e);
+          if (!pk) { hint.textContent = '点在模型上才能吸取颜色'; return; }
+          var ok = pickInk(pk);
+          if (st.mode === 'pick' && paintModeBtn) paintModeBtn.click();
+          if (ok) hint.textContent = '已吸取 ' + st.lastPicked +
+            '（来自「' + slotLabel(st.slot) + '」的贴图），可以继续上色；按 Alt 随时再吸';
+          return;
+        }
         st.down = true; st.lastOk = false; st.lastIsland = -1;
         st.pointerId = e.pointerId;
         try { canvas.setPointerCapture(e.pointerId); } catch (err) { }
@@ -1153,9 +1378,27 @@
         }
         var px = hitPx(e);
         if (!px) { hint.textContent = '点在模型上才能' + (st.kind === 'color' ? '上色' : '画遮罩'); return; }
-        /* 岛遮罩认「起笔那个岛」：一笔之内不换岛，拖到 UV 缝上就自然停住 */
+        /* 模糊笔刷必须能跨 UV 缝：起笔岛 / 锁定岛的硬 clip 会把出血挡在岛内，
+         * 那样反而修不了缝。这里显式让开，并按当前图层重算一次羽化快照。 */
         st.clipPath = null; st.clipId = -1;
-        if (st.islandClip) {
+        if (st.mode === 'blur') {
+          try {
+            st.srcData = ctx.getImageData(0, 0, st.W, st.H);
+            st.blurData = TB.featherData(st.cv, st.feather);
+          } catch (e2) {
+            st.down = false;
+            hint.textContent = '模糊笔刷读不到图层像素：' + ((e2 && e2.message) || e2);
+            return;
+          }
+          if (!st.blurData) {
+            st.down = false;
+            hint.textContent = '模糊笔刷初始化失败（羽化算法不可用）';
+            return;
+          }
+        } else if (st.lockPath) {
+          /* 优先用「层锁定岛」：它是写进存档的硬边界，笔刷跨岛也溢不出去。 */
+          st.clipPath = st.lockPath; st.clipId = -2;
+        } else if (st.islandClip) {
           st.clipId = islandAt(e);
           if (st.clipId >= 0) {
             st.clipPath = islandPath(st.clipId);
@@ -1164,13 +1407,17 @@
           }
         }
         strokeTo(px);
-        if (st.mode === 'erase') {
+        if (st.mode === 'blur') {
+          hint.textContent = '模糊中：沿 UV 接缝拖动，颜色按 alpha 加权晕开并向透明区出血 '
+            + st.feather + 'px（跨岛生效，岛遮罩已让开；反复涂可加强）';
+        } else if (st.mode === 'erase') {
           hint.textContent = st.kind === 'color'
             ? '擦除中：抹掉的地方露出下面的层'
             : '擦除中：抹掉的地方这一层就隐藏';
         } else {
           hint.textContent = (st.kind === 'color' ? '上色中：涂到的地方这一层盖上去' : '绘制中：涂到的地方这一层显示')
-            + (st.clipId >= 0 ? '（只在岛 #' + (st.clipId + 1) + ' 内）' : '');
+            + (st.clipId === -2 ? '（只在锁定的 ' + (st.layer.islands || []).length + ' 个岛内）'
+              : st.clipId >= 0 ? '（只在岛 #' + (st.clipId + 1) + ' 内）' : '');
         }
       }
       function onMove(e) {
@@ -1189,8 +1436,10 @@
         st.clipPath = null; st.clipId = -1;
         try { canvas.releasePointerCapture(st.pointerId); } catch (err) { }
         st.pointerId = null;
-        /* 一笔画完再重算岛状态：眼睛跟着笔画走，描边时不做无谓的采样 */
-        if (st.a && (st.mode === 'paint' || st.mode === 'erase')) {
+        st.blurData = null; st.srcData = null; dabData = null;
+        /* 一笔画完再重算岛状态：眼睛跟着笔画走，描边时不做无谓的采样。
+         * 模糊也会改 alpha（出血），所以同样要刷新，否则左栏眼睛是旧的。 */
+        if (st.a && (st.mode === 'paint' || st.mode === 'erase' || st.mode === 'blur')) {
           refreshStates();
           paintEyes();
         }
@@ -1214,6 +1463,7 @@
       var rowEls = {}, groupEyes = [], selIds = [];
       var outBody = null, outSub = null, footInfo = null, btnMake = null;
       var outEl = null, pillEl = null, chipEls = [], searchEl = null;
+      var lockInfo = null, lockBtn = null;   // 颜色层专属：把选中的岛锁成这一层的硬遮罩
 
       function mkEl(tag, css, text) {
         var e = document.createElement(tag);
@@ -1455,6 +1705,12 @@
       function updateFoot() {
         if (!footInfo) return;
         footInfo.textContent = selIds.length ? '已选 ' + selIds.length + ' 个岛' : '点岛名多选，可成组';
+        if (lockInfo) {
+          var n = ((st.layer && st.layer.islands) || []).length;
+          lockInfo.textContent = n ? '已锁定 ' + n + ' 个岛' : '未锁定（可画到整槽）';
+          lockInfo.style.color = n ? '#b6e2c6' : '#8b90a0';
+        }
+        if (lockBtn) lockBtn.style.borderColor = ((st.layer && st.layer.islands) || []).length ? '#2f6b45' : '#2c303a';
         if (btnMake) {
           btnMake.style.opacity = selIds.length ? '1' : '.45';
           btnMake.style.pointerEvents = selIds.length ? 'auto' : 'none';
@@ -1542,6 +1798,43 @@
         clr.onclick = function () { selIds = []; renderOut(); updateFoot(); };
         foot.appendChild(footInfo); foot.appendChild(btnMake); foot.appendChild(clr);
         o.appendChild(head); o.appendChild(outBody); o.appendChild(foot);
+
+        /* 颜色层专属：把左栏多选的 UV 岛固化成这一层的遮罩。
+         * 和「起笔岛剪裁」的区别 —— 那个只管一笔，这个写进存档、
+         * 合成 / 导出 GLB / 刷新还原都照样只在这些岛上生效。 */
+        if (isColor) {
+          var lockRow = mkEl('div', 'flex:0 0 auto;display:flex;align-items:center;gap:5px;' +
+            'padding:6px 8px;border-top:1px solid #262a33;');
+          lockInfo = mkEl('span', 'flex:1;min-width:0;color:#8b90a0;font-size:10.5px;', '');
+          lockBtn = mkEl('button', btnCss(false), '锁定选中岛');
+          lockBtn.type = 'button';
+          lockBtn.title = '把多选的 UV 岛变成这一层的硬遮罩：笔刷与合成都只在它们上面生效';
+          lockBtn.onclick = function () {
+            if (!selIds.length) { hint.textContent = '先在左栏点岛名选几个岛，再点「锁定选中岛」'; return; }
+            st.layer.islands = selIds.slice();
+            syncLayerIslandMask(st.slot, st.layer);
+            st.lockPath = lockPathOf(st.layer, st.W, st.H, st.flip);
+            scheduleMix(st.slot);
+            updateFoot();
+            hint.textContent = '已锁定 ' + st.layer.islands.length +
+              ' 个 UV 岛：这一层的铺色 / 笔刷只在它们上面生效，导出后仍然有效';
+          };
+          var unlockBtn = mkEl('button', btnCss(false), '解除');
+          unlockBtn.type = 'button';
+          unlockBtn.title = '解除 UV 岛锁定，这一层可以画到整个材质槽';
+          unlockBtn.onclick = function () {
+            st.layer.islands = [];
+            syncLayerIslandMask(st.slot, st.layer);
+            st.lockPath = null;
+            scheduleMix(st.slot);
+            updateFoot();
+            hint.textContent = '已解除 UV 岛锁定：这一层可以画到整个材质槽';
+          };
+          lockRow.appendChild(lockInfo);
+          lockRow.appendChild(lockBtn);
+          lockRow.appendChild(unlockBtn);
+          o.appendChild(lockRow);
+        }
         return o;
       }
 
@@ -1557,8 +1850,8 @@
       h1.style.cssText = 'font-weight:600;color:#e8eaf0;font-size:13px;';
       var h2 = document.createElement('div');
       h2.textContent = isColor
-        ? '在模型上按住拖动上色 · 这一层会自动加进混合栈'
-        : '在模型上按住拖动 · 白=显示，擦除处隐藏';
+        ? '拖动上色 · 「模糊」沿 UV 缝晕开色边 / 「修复接缝」一键出血'
+        : '拖动绘制 · 白=显示 · 「模糊」把遮罩边缘晕开';
       h2.style.cssText = 'color:#8b90a0;font-size:11px;margin-top:-4px;line-height:1.5;';
       ui.appendChild(h1); ui.appendChild(h2);
 
@@ -1576,12 +1869,13 @@
         clrIn.style.cssText = 'flex:0 0 34px;height:22px;padding:0;border:1px solid #2c303a;border-radius:5px;' +
           'background:#191c22;cursor:pointer;';
         var swatches = [];
-        function setInk(hex) {
+        /* 赋给外层变量：onDown 里吸管取完色要回写笔色（严格模式块内函数不提升） */
+        setInk = function (hex) {
           st.ink = hex;
           st.inkRgb = hexRgb(hex);
           clrIn.value = hex;
           swatches.forEach(function (s) { s.style.outlineColor = s.dataset.ink === hex ? '#e8eaf0' : 'transparent'; });
-        }
+        };
         clrIn.oninput = function () { setInk(clrIn.value); };
         clrRow.appendChild(clrIn);
         ['#e05a3c', '#e8b13a', '#5fa86a', '#4a86c8', '#8f6fd0', '#f2f4f8', '#1a1d24'].forEach(function (hex) {
@@ -1616,6 +1910,29 @@
       rng.oninput = function () { st.size = Math.max(2, Number(rng.value) || 2); rv.textContent = String(st.size); };
       sizeRow.appendChild(lb); sizeRow.appendChild(rng); sizeRow.appendChild(rv);
 
+      /* 柔化半径：模糊笔刷与「修复接缝」共用，单位是贴图像素。
+       * 太大会把花纹晕开，1–6px 足够盖住 GPU 双线性采样跨出去的那一圈。 */
+      var featherRow = document.createElement('div');
+      featherRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+      var flb = document.createElement('span');
+      flb.textContent = '柔化';
+      flb.title = '模糊笔刷 / 一键「修复接缝」的出血半径（贴图像素）';
+      flb.style.cssText = 'flex:0 0 auto;color:#c9cede;font-size:11px;';
+      var frng = document.createElement('input');
+      frng.type = 'range';
+      frng.min = '1'; frng.max = '16'; frng.step = '1';
+      frng.value = String(st.feather);
+      frng.style.cssText = 'flex:1;min-width:90px;height:16px;accent-color:#4a86c8;';
+      var fv = document.createElement('b');
+      fv.textContent = st.feather + 'px';
+      fv.style.cssText = 'flex:0 0 34px;text-align:right;color:#e8eaf0;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;';
+      frng.oninput = function () {
+        st.feather = Math.max(1, Math.min(16, Number(frng.value) || 1));
+        fv.textContent = st.feather + 'px';
+        st.blurData = null;             /* 半径变了，下一笔重算快照 */
+      };
+      featherRow.appendChild(flb); featherRow.appendChild(frng); featherRow.appendChild(fv);
+
       function mkStyle(b, on) {
         b.style.cssText = 'flex:0 0 auto;padding:4px 9px;border-radius:6px;border:1px solid ' +
           (on ? '#a3345e' : '#2c303a') + ';background:' + (on ? '#3a1c28' : '#191c22') +
@@ -1628,11 +1945,14 @@
       var MODE_HINT = isColor ? {
         paint: '上色中：涂到的地方这一层盖上去',
         erase: '擦除中：抹掉的地方露出下面的层',
+        blur: '模糊笔刷：沿 UV 接缝拖动，颜色按 alpha 加权晕开并向透明区出血；跨岛生效，不受岛遮罩限制',
+        pick: '吸管：点模型从这一槽的贴图吸一个颜色（也可以按住 Alt 临时吸）',
         add: '拾取 UV 岛：点模型把整个岛填上当前颜色（拖动可连续选）',
         sub: '拾取 UV 岛：点模型把整个岛的颜色清掉（拖动可连续选）'
       } : {
         paint: '绘制中：涂到的地方这一层显示',
         erase: '擦除中：抹掉的地方这一层就隐藏',
+        blur: '模糊遮罩：把遮罩边缘晕开，跨 UV 缝生效（岛遮罩自动让开）',
         add: '拾取 UV 岛：点模型把整个岛加进遮罩（拖动可连续选）',
         sub: '拾取 UV 岛：点模型把整个岛从遮罩去掉（拖动可连续选）'
       };
@@ -1651,13 +1971,24 @@
           st.mode = key;
           modeBtns.forEach(function (x) { mkStyle(x, x.dataset.mvMode === key); });
           hint.textContent = MODE_HINT[key];
+          /* 模糊笔刷刻意跨 UV 缝，岛剪裁这时候不生效；开关还亮着会误导，
+           * 直接置灰并把旁边那行说明改成真实口径。 */
+          if (clipBtn) {
+            var isBlur = key === 'blur';
+            clipBtn.disabled = isBlur;
+            clipBtn.style.opacity = isBlur ? '.5' : '1';
+            clipNote.textContent = isBlur ? '模糊跨 UV 缝，岛遮罩自动让开' : '笔刷不会溢到相邻岛';
+          }
         };
         modeBtns.push(b);
         modeRow.appendChild(b);
         return b;
       }
-      modeBtn('绘制', 'paint');
+      paintModeBtn = modeBtn('绘制', 'paint');
       modeBtn('擦除', 'erase');
+      var blurBtn = modeBtn('模糊', 'blur');
+      blurBtn.title = '沿 UV 接缝拖动：颜色向透明区出血、边缘硬色晕开（跨岛生效）';
+      if (isColor) modeBtn('吸管', 'pick');
       modeBtn('岛＋', 'add');
       modeBtn('岛－', 'sub');
 
@@ -1676,6 +2007,36 @@
         ctx.clearRect(0, 0, st.W, st.H);
         if (st.a) { refreshStates(); paintEyes(); }
         scheduleMix(st.slot);
+      });
+      /* 「重载颜色」：一层 = 一个能盖住槽色的基色，再往上画细节。
+       * 有锁定岛时只铺在锁定的岛上，其余区域保持原贴图。 */
+      if (isColor) actBtn('铺满颜色', function () {
+        ctx.save();
+        if (st.lockPath) ctx.clip(st.lockPath);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = st.ink;
+        ctx.fillRect(0, 0, st.W, st.H);
+        ctx.restore();
+        if (st.a) { refreshStates(); paintEyes(); }
+        scheduleMix(st.slot);
+        hint.textContent = st.lockPath
+          ? '已用 ' + st.ink + ' 重载锁定的 ' + (st.layer.islands || []).length + ' 个 UV 岛'
+          : '已用 ' + st.ink + ' 重载整个材质槽（「清空」或橡皮擦可露出底图）';
+      });
+      /* 「修复接缝」：一键把整层所有 UV 岛边缘的颜色向外出血。
+       * 笔刷适合局部补，上千个岛的缝得靠这一下全处理掉；
+       * 内部完全不透明的像素逐字节不动，花纹不会被整张糊掉。 */
+      actBtn('修复接缝', function () {
+        var bd = null;
+        try { bd = TB.seamBleedData(st.cv, st.feather); } catch (e3) { }
+        if (!bd) { hint.textContent = '接缝修复失败：读不到图层像素'; return; }
+        ctx.putImageData(bd, 0, 0);
+        st.blurData = null; st.srcData = null; dabData = null;
+        if (st.a) { refreshStates(); paintEyes(); }
+        scheduleMix(st.slot);
+        hint.textContent = '已把颜色向 UV 岛外出血 ' + st.feather + 'px（内部不透明像素未改，细节保留）'
+          + (st.layer.mask && st.layer.mask.islandMask
+            ? '；锁定岛遮罩之外仍会被裁掉，要修岛外黑边请先「解除」' : '');
       });
       actBtn('取消', function () { stopPaint(false); });
       actBtn('完成', function () { stopPaint(true); }, true);
@@ -1718,7 +2079,8 @@
       tip.textContent = (isColor ? '颜色层 ' : '遮罩 ') + W + '×' + H
         + ' · 只在「' + slotLabel(slot) + '」上画';
       tip.style.cssText = 'color:#7d8291;font-size:10.5px;';
-      ui.appendChild(sizeRow); ui.appendChild(modeRow); ui.appendChild(actRow); ui.appendChild(tip);
+      ui.appendChild(sizeRow); ui.appendChild(featherRow);
+      ui.appendChild(modeRow); ui.appendChild(actRow); ui.appendChild(tip);
 
       /* 一层不拦事件的包裹层：左栏 + 右侧工具条都挂它下面，收尾只删一个节点 */
       var wrap = document.createElement('div');
@@ -1749,6 +2111,12 @@
         outBody.appendChild(mkEl('div', 'color:#8b90a0;font-size:11px;line-height:1.7;padding:8px 2px;',
           '这个模型没有可用的 UV 岛数据（网格缺 UV，或没加载 modeltex.js）。左栏用不了，笔刷绘制不受影响。'));
       }
+      /* 继续画一张「已经有锁定岛」的颜色层时，硬 clip 与合成遮罩都要按存档重建，
+       * 否则只在本次会话新建层时锁定有效，重开就散了。 */
+      if (isColor) {
+        st.lockPath = lockPathOf(st.layer, st.W, st.H, st.flip);
+        syncLayerIslandMask(st.slot, st.layer);
+      }
       updateFoot();
 
       /* 绘制时把两层 UI 都收起来，把画布整块让出来 */
@@ -1756,8 +2124,8 @@
       panel.style.display = 'none';
       if (typeof deps.onPanelClose === 'function') deps.onPanelClose();
       hint.textContent = isColor
-        ? '颜色绘制：在模型上按住拖动上色；「岛遮罩」开着时一笔只落在一个 UV 岛内'
-        : '遮罩绘制：在模型上按住拖动，白色=显示，擦除=隐藏；左栏可按岛分组开关';
+        ? '颜色绘制：拖动上色；接缝处切「模糊」笔刷晕开，或用「修复接缝」一键出血'
+        : '遮罩绘制：拖动绘制，白色=显示，擦除=隐藏；「模糊」可柔化遮罩边缘';
     }
 
     /* '#rrggbb' → 'r,g,b'：笔刷的径向渐变要按这个格式拼 rgba() */
@@ -1770,13 +2138,24 @@
       return ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255);
     }
 
-    /* ---------------- 绘制颜色 ----------------
+    /* ---------------- 绘制颜色 / 重载颜色层 ----------------
      * 纹理混合里加一层「手绘颜色」，直接在模型表面涂：
      * 以前想补一块锈斑 / 脏迹，只能先去画图软件画一张再上传；
      * 这里把笔刷接到这一层自己的贴图上，涂完它就是普通混合层，
      * 比例 / 混合模式 / 遮罩都能接着调。
-     * UV 岛遮罩：贴图上相邻岛往往只差几像素，笔刷一大就糊到隔壁，
-     * 所以每笔按「起笔那个岛」的轮廓剪裁（可关）。 */
+     *
+     * 这一层同时是「重载颜色层」：
+     *   ① 吸管 —— 在模型上点一下，按 UV 从本槽的基础贴图吸颜色当笔色（Alt 临时吸）；
+     *   ② 铺满 —— 用当前笔色盖满这一层，等于把槽色重载掉，再往上画细节；
+     *   ③ UV 岛遮罩分两级：
+     *      「起笔岛剪裁」逐笔防止笔刷溢到相邻岛（只管一笔，不存档）；
+     *      「锁定选中岛」把一组岛 id 写进这一层（kind/islands），生成合成用的
+     *      mask，笔刷、铺色、导出 GLB、刷新还原都只在锁定的岛上生效。
+     *   ④ 模糊笔刷 / 修复接缝（TexBlend.featherData / seamBleedData）：
+     *      UV 岛边缘颜色硬切 + 透明 texel 被双线性采样吃到 = 3D 上的 UV 接缝。
+     *      按 alpha 加权羽化，让颜色向透明区出血、边缘晕开；模糊笔刷刻意
+     *      绕开岛 clip（否则出血被挡在岛内，缝反而修不了），一键版只改
+     *      边缘像素，岛内 alpha=255 的花纹逐字节不动。 */
     function startColorPaint(slot) {
       if (!slot) return;
       if (painting) stopPaint(true);
@@ -1795,7 +2174,10 @@
       cv.width = sz.w; cv.height = sz.h;
       var layer = {
         id: '', name: '手绘颜色', flipY: conventionFlipY(slot),
-        opacity: 1, blend: 'normal', img: cv
+        opacity: 1, blend: 'normal', img: cv,
+        /* 「重载颜色层」：既能整层铺一个颜色把槽色重载掉，也能用笔刷局部画。
+         * islands 非空时，这一层只在锁定的那些 UV 岛上生效。 */
+        kind: 'color', islands: [], mask: null
       };
       ls.push(layer);
       applyMix(slot);
@@ -1861,7 +2243,9 @@
       line1.appendChild(thBox);
 
       var nm = document.createElement('div');
-      nm.textContent = l.name || ('图层 ' + (idx + 1));
+      nm.textContent = (l.name || ('图层 ' + (idx + 1))) +
+        (l.kind === 'color' ? ' · 重载颜色' : '') +
+        ((l.islands && l.islands.length) ? ' · 岛 ' + l.islands.length : '');
       nm.title = nm.textContent;
       nm.style.cssText = 'flex:1;min-width:0;color:#e8eaf0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
       line1.appendChild(nm);
@@ -2084,7 +2468,7 @@
       var paintRow = document.createElement('div');
       paintRow.style.cssText = 'display:flex;gap:8px;';
       var paintB = mkBtn('✎ 绘制颜色', function () { startColorPaint(slot); });
-      paintB.title = '新建一层手绘颜色，直接在模型表面涂（可开 UV 岛遮罩，笔刷不会溢到相邻岛）';
+      paintB.title = '新建一层「重载颜色」：可用吸管从本槽贴图取色、铺满整槽、笔刷局部画；左栏能把选中的 UV 岛锁成这一层的硬遮罩，避免画到其他区域';
       paintB.style.flex = '1 1 auto';
       paintB.style.height = '30px';
       paintB.style.borderColor = '#6b5530';
@@ -2184,4 +2568,6 @@
   }
 
   M.setupSlotPanel = setupSlotPanel;
+  /* 纯函数，供探针 / 其他模块复用（没有副作用） */
+  global.M3DSlots = { mergeSlotRec: mergeSlotRec };
 })(window);

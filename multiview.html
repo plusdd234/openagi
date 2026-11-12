@@ -25,179 +25,32 @@
     <div class="mv-top-hint">拖入 glb / obj · <kbd>空格</kbd> 重新渲染 · <kbd>1</kbd>–<kbd>4</kbd> 切模式</div>
   </header>
 
-  <div class="mv-wrap">
-
-    <!-- ================= 左：模型来源 ================= -->
-    <aside class="mv-side">
-      <div class="mv-side-head">
-        <span class="mv-side-t">模型</span>
-        <button type="button" class="mv-mini" id="mvOpenFile" title="打开本机的 glb / gltf / obj">＋ 文件</button>
-      </div>
-      <div class="mv-list" id="mvList"></div>
-      <div class="mv-side-foot">
-        <button type="button" class="mv-mini wide" id="mvOpenLib">打开模型库</button>
-      </div>
-      <input type="file" id="mvFile" class="hidden" accept=".glb,.gltf,.obj">
-    </aside>
-
-    <!-- ================= 右：参数 + 舞台 ================= -->
-    <section class="mv-main">
-
-      <div class="mv-ctl">
-        <div class="mv-row">
-          <span class="mv-lab">视图</span>
-          <div class="mv-chips" id="mvPresets"></div>
-          <div class="mv-chips" id="mvViews"></div>
-        </div>
-        <div class="mv-row">
-          <span class="mv-lab">模式</span>
-          <div class="mv-seg" id="mvModes"></div>
-          <span class="mv-lab">相机</span>
-          <div class="mv-seg" id="mvCams"></div>
-          <span class="mv-lab">画布</span>
-          <div class="mv-seg" id="mvSizes"></div>
-        </div>
-      </div>
-
-      <details class="mv-more" id="mvMore">
-        <summary title="画布级参数：列数、间距、留白、线宽——它们不属于任何一层">画布</summary>
-        <div class="mv-more-body">
-          <div class="mv-field"><span>列数</span><div class="mv-seg" id="mvCols"></div></div>
-          <div class="mv-field"><span>铺满</span><div class="mv-seg" id="mvCompacts"></div></div>
-          <div class="mv-field"><span>间距</span><input type="range" id="mvGap" min="0" max="48" step="2"><b id="mvGapV">0</b></div>
-          <div class="mv-field"><span>留白</span><input type="range" id="mvMargin" min="100" max="160" step="2"><b id="mvMarginV">108</b></div>
-          <div class="mv-field"><span>线宽</span><input type="range" id="mvLineW" min="4" max="60" step="2"><b id="mvLineWV">14</b></div>
-        </div>
-      </details>
-
-      <div class="mv-stage-wrap" id="mvStageHost">
-        <div class="mv-stage" id="mvStage">
-          <div class="mv-empty" id="mvEmpty">
-            <div class="mv-empty-t">把 glb / obj 拖进来</div>
-            <div class="mv-empty-s">也可以点左上「＋ 文件」。obj 的四边形面会按原始拓扑画线框，不会出现三角化的对角线。</div>
-          </div>
-          <img id="mvOut" alt="多视图结果" draggable="false" class="hidden">
-          <div class="mv-pick hidden" id="mvPick"></div>
-        </div>
-      </div>
-
-      <div class="mv-bar">
-        <span class="mv-info" id="mvInfo"></span>
-        <button type="button" class="btn sm" id="mvPreview">3D 预览</button>
-        <button type="button" class="btn sm" id="mvSplit" disabled>AI 拆件</button>
-        <button type="button" class="btn sm" id="mvSaveLib">存入图库</button>
-        <button type="button" class="btn sm" id="mvDlCell" disabled>下载这格</button>
-        <button type="button" class="btn sm" id="mvDlAll" disabled>下载整图</button>
-        <button type="button" class="btn sm primary" id="mvRender">重新渲染</button>
-      </div>
-
-    </section>
-
-    <!-- ================= 右：导出面板（竖排） ================= -->
-    <!-- 画布固定正方形 2K/4K，深度 / 遮罩供 AI 回流，与 AIGC工具包 口径一致 -->
-      <aside class="mv-right">
-        <div class="mv-layers">
-          <div class="mv-ly-head">图层<span class="mv-ly-hint" title="点一行展开它自己的属性面板；拖动可以任意换序，3D 和 2D 之间也能互换">点行调属性 · 随便拖</span></div>
-          <div class="mv-ly-list" id="mvLayerList"></div>
-        </div>
-        <!-- 图层的眼睛驱动这些 input；留在这里是为了「state 只有一条写入口」 -->
-        <div class="mv-hidden-checks">
-  <input type="checkbox" id="mvWire">
-  <input type="checkbox" id="mvAngleWire">
-  <input type="checkbox" id="mvUvEdge">
-  <input type="checkbox" id="mvUvIsland">
-  <input type="checkbox" id="mvOutline">
-  <input type="checkbox" id="mvDepthEdge">
-  <input type="checkbox" id="mvDepthGray">
-  <input type="checkbox" id="mvLabels">
-  <input type="checkbox" id="mvBg">
-  <input type="checkbox" id="mvGrade">
-        </div>
-        <!-- 层参数的控件都住在这里，被选中/展开的那一层才搬进它自己的面板。
-             不另建一套 input：id 仍是 FIELDS 认的那一个，写入口只有一条。 -->
-        <div class="mv-prop-pool" id="mvPropPool">
-      <div class="mv-field"><span>背景色</span><input type="color" id="mvBgColor" value="#ffffff"></div>
-      <div class="mv-field"><span>折角</span><input type="range" id="mvWireAngle" min="0" max="90" step="1"><b id="mvWireAngleV">30°</b></div>
-      <div class="mv-field" title="角度线框的整体粗细（相对「线宽」的倍率）。只想让结构线更醒目、又不想把普通线框一起加粗时用它"><span>角度粗细</span><input type="range" id="mvCreaseWidth" min="20" max="300" step="10"><b id="mvCreaseWidthV">1.0×</b></div>
-      <div class="mv-field" title="随折角的粗细梯度：0% 所有结构线等宽；100% 折得越狠越粗（90° 硬边最粗，刚过阈值的平缓边约 1/4 宽）"><span>随角度</span><input type="range" id="mvCreaseTaper" min="0" max="100" step="5"><b id="mvCreaseTaperV">50%</b></div>
-      <div class="mv-field" title="角度线框的颜色：换个颜色才分得清「哪几条是结构线、哪几条是普通线框」"><span>角度线色</span><input type="color" id="mvCreaseColor" value="#2b2b2b"></div>
-      <div class="mv-field" title="相邻像素的深度差阈值（占整个视锥深度的百分比）：往左描得更多，往右只留最强的边。分辨率变了会自动补偿，换单格尺寸不用重调"><span>深度差</span><input type="range" id="mvDepthThresh" min="0" max="100" step="1"><b id="mvDepthThreshV">1.1%</b></div>
-      <div class="mv-field" title="深度灰的映射窗口：100% 用模型完整的前后跨度，调小只保留靠近相机的一段（远处压成黑）。模型前后差得小、灰图看不出一层一层时，把它调小"><span>深度范围</span><input type="range" id="mvDepthGrayRange" min="10" max="100" step="5"><b id="mvDepthGrayRangeV">100%</b></div>
-      <div class="mv-field" title="「无限远」的颜色：背景（没有表面）和格间距都填它。默认黑，跟「近白远黑」接得上；改成白就得到反过来的那一版（近黑远白）"><span>远景色</span><input type="color" id="mvDepthGrayBg" value="#000000"></div>
-      <div class="mv-field" title="饱和度：0 是黑白，100% 是原样，200% 是色彩更艳。后期处理层调的是最终输出图像"><span>饱和度</span><input type="range" id="mvGradeSat" min="0" max="200" step="5"><b id="mvGradeSatV">100%</b></div>
-      <div class="mv-field" title="对比度：100% 是原样，往上更硬朗、往下更灰雾"><span>对比度</span><input type="range" id="mvGradeContrast" min="0" max="200" step="5"><b id="mvGradeContrastV">100%</b></div>
-      <div class="mv-field" title="亮度：正值提亮、负值压暗，范围 ±100"><span>亮度</span><input type="range" id="mvGradeBright" min="-100" max="100" step="5"><b id="mvGradeBrightV">0</b></div>
-        </div>
-    <aside class="mv-export">
-      <div class="mv-ex-head">导出</div>
-      <div class="mv-ex-row">
-        <select class="mv-sel" id="mvExSize" title="画布尺寸（正方形）· 预览与导出一致">
-          <option value="2048">2K · 2048</option>
-          <option value="4096">4K · 4096</option>
-        </select>
-        <select class="mv-sel" id="mvExGap" title="格间距">
-          <option value="0">无间距</option>
-          <option value="16">16 px</option>
-          <option value="32">32 px</option>
-          <option value="64">64 px</option>
-        </select>
-      </div>
-      <div class="mv-ex-info" id="mvExInfo"></div>
-      <div class="mv-ex-stats" id="mvExStats"></div>
-      <button type="button" class="btn sm primary" id="mvExPreview" disabled>预览导出结果</button>
-      <button type="button" class="btn sm" id="mvExColor" disabled>导出视图 PNG</button>
-      <button type="button" class="btn sm" id="mvExDepth" disabled>导出深度图</button>
-      <button type="button" class="btn sm" id="mvExMask" disabled>导出遮罩图</button>
-    </aside>
-      </aside>
-
-      <!-- AI 拆件弹层：遮住整个 .mv-wrap。里面的控件 id 与 index.html 必须完全一致 -->
-      <div class="mv-split hidden" id="mvSplitPanel">
-        <div class="mv-split-card">
-          <div class="mv-split-head">
-            <span class="mv-split-title">AI 拆件</span>
-            <span class="mv-split-sub" id="mvSplitSub"></span>
-            <button type="button" class="mv-split-x" id="mvSplitClose" aria-label="关闭">×</button>
-          </div>
-          <div class="mv-split-body">
-            <div class="mv-split-row">
-              <span class="mv-split-lab">分成</span>
-              <input type="text" id="mvSplitParts" class="mv-split-in" placeholder="面部和脖子、头发和头饰、身体">
-              <span class="mv-split-lab">候选岛</span>
-              <input type="range" id="mvSplitMax" min="20" max="240" step="10" value="120">
-              <b id="mvSplitMaxV">120</b>
-              <button type="button" class="btn sm primary" id="mvSplitRun">开始拆件</button>
-            </div>
-            <div class="mv-split-note" id="mvSplitInfo"></div>
-            <div class="mv-split-imgs">
-              <div class="mv-split-pane">
-                <span class="mv-split-cap">候选 UV 岛（编号给 AI 寻址）</span>
-                <img id="mvSplitAtlas" alt="候选 UV 岛图" class="hidden">
-              </div>
-              <div class="mv-split-pane">
-                <span class="mv-split-cap">拆件结果（颜色对应部件）</span>
-                <img id="mvSplitViews" alt="拆件结果预览" class="hidden">
-              </div>
-            </div>
-            <div class="mv-split-list" id="mvSplitList"></div>
-            <div class="mv-split-foot">
-              <button type="button" class="btn sm" id="mvSplitDlGlb" disabled>下载整件 GLB</button>
-              <button type="button" class="btn sm" id="mvSplitSaveLib" disabled>存入模型库</button>
-            </div>
-          </div>
-        </div>
-      </div>
-  </div>
+  <!-- 窗口 DOM 与桌面 App 共用 apps/multiview/body.js，由下面的脚本填进来 -->
 </div>
 
 <!-- three.js 与解析器都是本地 vendor，双击这个文件就能用，不需要起服务 -->
+<!-- 窗口 DOM 与桌面 App 共用这一份，别再在这里抄一遍。
+     insertAdjacentHTML 而不是包一层宿主 div：.mv-wrap 必须是 #mvWin 的直接子元素，
+     布局（flex 撑高）挂在 .mv-standalone .mv-wrap 这条链上，多一层就会塌。 -->
+<script src="apps/multiview/body.js"></script>
+<script>
+  document.getElementById("mvWin").insertAdjacentHTML("beforeend", window.MV_BODY);
+</script>
+
 <script src="vendor/three.min.js"></script>
 <script src="vendor/GLTFLoader.js"></script>
 <script src="vendor/OBJLoader.js"></script>
+<!-- FBX 三件套：Model3D.ready() 要求 GLTFLoader / OBJLoader / FBXLoader 齐全，
+     少一个就整页「three.js 没加载上」，一个模型都渲不出来 -->
+<script src="vendor/fflate.js"></script>
+<script src="vendor/NURBSUtils.js"></script>
+<script src="vendor/NURBSCurve.js"></script>
+<script src="vendor/FBXLoader.js"></script>
 <script src="vendor/OrbitControls.js"></script>
 <script src="vendor/GLTFExporter.js"></script>
 <script src="js/model3d.js"></script>
 <script src="js/tex-blend.js"></script>
+<script src="js/texpaint.js"></script>
 <script src="js/m3d-slots.js"></script>
 <script src="js/m3d-preview.js"></script>
 <script src="js/modeltex.js"></script>
@@ -210,6 +63,7 @@
 <script src="js/mv-layer-panel.js"></script>
 <script src="js/mv-panels.js"></script>
 <script src="js/mv-bind.js"></script>
+<script src="js/mv-project.js"></script>
 <script src="js/multiview.js"></script>
 <script src="js/model-split.js"></script>
 <script>

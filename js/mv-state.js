@@ -39,6 +39,7 @@
     pick: -1,
     selLayer: '',         // 图层面板里选中的那一层（只影响参数区，不进存档）
     openLayer: '',        // 属性面板展开的是哪一层（同上，纯界面状态）
+    proj: null,           // 投射纹理结果 { png, canvas, size, painted, occCount, pct, islands, perView, root }
     busy: '',
     error: '',
     loaded: false

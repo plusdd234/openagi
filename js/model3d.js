@@ -1063,6 +1063,22 @@
     return cam;
   }
 
+  /* 投射纹理要拿「和 viewGrid 一模一样」的相机去反投：裁出来的格子和视锥
+   * 差一点，整张贴图就错位。这里把 viewGrid 里那三行（margin → frameSize →
+   * viewCamera）原样收成一个入口，改视锥口径只动一处。 */
+  function gridCameras(model, names, opts) {
+    opts = opts || {};
+    var aspect = (opts.cellW > 0 && opts.cellH > 0) ? opts.cellW / opts.cellH : 1;
+    var camMargin = opts.margin == null ? 1.08 : clampNum(opts.margin, 1, 2.4);
+    var frameL = frameSize(model, names, camMargin, aspect);
+    return names.map(function (k) {
+      return viewCamera(model, k, {
+        cam: opts.cam === 'persp' ? 'persp' : 'ortho',
+        margin: camMargin
+      }, frameL, aspect);
+    });
+  }
+
   // 素模：把所有网格换成同一个中性材质，靠打光看结构
   function clayify(model, color) {
     var mat = new THREE.MeshStandardMaterial({
@@ -1929,6 +1945,38 @@ function orderedLayers(order) {
     }
   }
 
+  /* 把一张图挂成模型所有网格的贴图（投射纹理的「上色预览」用）。
+   * 材质是 load() 克隆出来的副本，改了不脏缓存；OBJ 的默认 Phong 也能挂 map。
+   *
+   * ⚠ 两条「颜色变暗 / 多了立体感」的坑（实测踩过，别改回去）：
+   *   ① 必须用 **unlit**（MeshBasicMaterial）：material 模式的 litScene 会给模型
+   *      打主光/补光/轮廓光，PBR 一上明暗，平涂的 AI 插画立刻变成灰模立体感。
+   *   ② 贴图**不要**标 sRGB：渲染器输出是线性直通，标了 sRGB 会被解码一次
+   *      却不再编码回来，颜色整体掉一档。烘焙那头同样字节直通，两边正好 1:1。
+   * flipY 保持 three 默认（true）：烘焙画布是标准方向（上 = v1），glTF 与 OBJ
+   * 两种 UV 口径采样出来都对得上，别按「glTF 不翻 Y」的直觉去改它。 */
+  function applyTexMap(model, img) {
+    return new Promise(function (resolve, reject) {
+      if (img && img.naturalWidth) { resolve(img); return; }
+      var im = new Image();
+      im.onload = function () { resolve(im); };
+      im.onerror = function () { reject(new Error('贴图读不出来')); };
+      im.src = String(img);
+    }).then(function (im2) {
+      var tex = new THREE.Texture(im2);
+      tex.needsUpdate = true;
+      /* 故意不设 colorSpace / encoding：见上面 ② */
+      var flat = new THREE.MeshBasicMaterial({
+        map: tex, color: 0xffffff, side: THREE.DoubleSide
+      });
+      model.root.traverse(function (o) {
+        if (!o.isMesh || !o.geometry) return;
+        o.material = flat;
+      });
+      return tex;
+    });
+  }
+
   async function viewGrid(src, opts) {
     opts = opts || {};
     if (!ready()) throw new Error('three.js 未就绪');
@@ -1941,6 +1989,12 @@ function orderedLayers(order) {
     if (['line', 'solid', 'shaded', 'material'].indexOf(mode) < 0) mode = 'line';
 
     var model = await load(src);
+
+    /* 投射纹理的上色预览：opts.texMap（dataURL）贴到所有网格再走材质模式。
+     * 贴不上就按无贴图渲，不让预览整张失败。 */
+    if (opts.texMap) {
+      try { await applyTexMap(model, opts.texMap); } catch (e2) { /* 降级：当没贴图 */ }
+    }
 
     /* 单格上限放到 4096：4K 整图导出 2 列布局单格 ≈ 2040，1 视图 4K 会顶到 4096。
      * 下面 totalW/H 的钳制已经守住 WebGL 纹理上限，这里不用再卡 2048。
@@ -2407,6 +2461,7 @@ function orderedLayers(order) {
     closePreview: function () { return M.closePreview(); },
     VIEWS: VIEWS,
     VIEW_KEYS: VIEW_KEYS,
-    QUAD_NAMES: QUAD_NAMES
+    QUAD_NAMES: QUAD_NAMES,
+    gridCameras: gridCameras
   };
 })(window);

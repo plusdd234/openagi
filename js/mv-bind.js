@@ -154,6 +154,50 @@
       ModelSplit.open(state.cur);
     });
 
+    /* 投射纹理：入口在导出面板，弹层按钮与关闭都交给 MVProject（js/mv-project.js） */
+    var pjBtn = $('mvProj');
+    var pjFile = $('mvProjFile');
+    if (pjBtn && pjFile) pjBtn.addEventListener('click', function () { pjFile.click(); });
+    if (pjFile) pjFile.addEventListener('change', function () {
+      var f = pjFile.files && pjFile.files[0];
+      pjFile.value = '';        // 同一文件选第二次也要触发 change
+      if (f && window.MVProject) MVProject.fromFile(f);
+    });
+    var pjClose = $('mvProjClose');
+    if (pjClose) pjClose.addEventListener('click', function () {
+      if (window.MVProject) MVProject.close();
+    });
+    var pjDl = $('mvProjDl');
+    if (pjDl) pjDl.addEventListener('click', function () {
+      if (window.MVProject) MVProject.downloadPNG();
+    });
+    var pjGlb = $('mvProjGlb');
+    if (pjGlb) pjGlb.addEventListener('click', function () {
+      if (window.MVProject) MVProject.downloadGLB();
+    });
+    var pjLib = $('mvProjLib');
+    if (pjLib) pjLib.addEventListener('click', function () {
+      if (window.MVProject) MVProject.saveLib();
+    });
+
+    /* 生图结果常直接躺在剪贴板里（截图 / 生图页复制）：Ctrl+V 也能投。
+     * 焦点在输入框里不抢粘贴。 */
+    document.addEventListener('paste', function (ev) {
+      if (!state.open || !window.MVProject) return;
+      var t = ev.target;
+      if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      var items = ev.clipboardData && ev.clipboardData.items;
+      if (!items) return;
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (it && it.kind === 'file' && it.type && it.type.indexOf('image/') === 0) {
+          var f = it.getAsFile();
+          if (f) { ev.preventDefault(); MVProject.fromFile(f); }
+          return;
+        }
+      }
+    });
+
     /* 导出条：画布尺寸是预览和导出共用的（改了要重渲预览），
      * 间距只改导出口径，不动屏幕画布 */
     var exSize = $('mvExSize');
@@ -221,6 +265,11 @@
     document.addEventListener('keydown', function (ev) {
       if (!state.open) return;
       if (ev.key !== 'Escape') return;
+      // 投射纹理弹层开着时先关它
+      if (window.MVProject && MVProject.isOpen()) {
+        MVProject.close();
+        return;
+      }
       // 有导出预览弹层时先关它
       if (MV.isOverlayOpen()) {
         MV.closeExportOverlay();

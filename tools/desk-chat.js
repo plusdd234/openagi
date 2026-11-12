@@ -300,8 +300,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       p1opacity: cs1.opacity, p1transform: cs1.transform, p1pointer: cs1.pointerEvents,
       p3opacity: cs3.opacity, p3transform: cs3.transform,
       p3rect: { x: Math.round(r3.x), w: Math.round(r3.width) },
-      appTitle: (document.getElementById('deskAppTitle') || {}).textContent,
-      hasBackBtn: !!document.getElementById('deskAppBack'),
+      /* 页头（#deskAppTitle / #deskAppBack）已删：App 名只在顶栏标签上，回桌面只剩顶栏箭头。
+         读 .abt-name 而不是整个 .abt —— 后者还含关闭用的「×」。 */
+      appTitle: ((document.querySelector('#appbarTabs .abt.on .abt-name') || {}).textContent || '').trim(),
+      hasBackBtn: !!document.getElementById('btnDeskHome'),
       logMsgs: document.querySelectorAll('#deskChatLog .dchat-msg').length,
       modelLabel: (document.getElementById('deskChatModel') || {}).textContent,
       ctxLabel: (document.getElementById('deskChatCtx') || {}).textContent
@@ -314,8 +316,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check(Math.abs(state.p3rect.x - Math.round(wallBox.x)) <= 2 && Math.abs(state.p3rect.x + state.p3rect.w - 1440) <= 2,
     'App 页铺满整个工作台（不是侧边栏）', JSON.stringify(state.p3rect) + ' wall.x=' + Math.round(wallBox.x));
   check(state.winMounted && !state.winHidden, '对话窗口已挂进 App 页（和其他 App 同一套机制）');
-  check(state.appTitle === 'AI 对话', 'App 页标题显示「AI 对话」', state.appTitle);
-  check(state.hasBackBtn, '有统一的 << 返回按钮');
+  check(state.appTitle === 'AI 对话', '顶栏标签显示「AI 对话」', state.appTitle);
+  check(state.hasBackBtn, '顶栏有统一的「返回主页」按钮');
   check(state.inChat, '输入条迁移进对话窗口底部');
   check(state.logMsgs >= 1, '聊天日志有消息（' + state.logMsgs + ' 条）');
   check(!!state.modelLabel, '对话区显示当前模型：' + state.modelLabel);
@@ -371,8 +373,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check(bubbles && bubbles.userAvatarText === '我' && bubbles.userAvatarRight, '用户头像在气泡右侧', bubbles && bubbles.userAvatarText);
   check(bubbles && bubbles.aiAvatarLeft, 'AI 头像在气泡左侧');
 
-  console.log('\n=== 6. 回到第一页（统一的 << 返回按钮） ===');
-  await page.click('#deskAppBack');
+  console.log('\n=== 6. 回到第一页（顶栏的返回主页按钮） ===');
+  await page.click('#btnDeskHome');
   await sleep(700);
   const back = await page.evaluate(() => ({
     open: document.getElementById('deskWall').classList.contains('app-open'),

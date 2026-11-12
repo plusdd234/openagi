@@ -22,6 +22,7 @@
     var applyPaintPatch = ctx.applyPaintPatch;
     var applyMixPatch = ctx.applyMixPatch;
     var applyMatsPatch = ctx.applyMatsPatch;
+    var applyTexPatch = ctx.applyTexPatch;
     var rebuildModel = ctx.rebuildModel, paintAll = ctx.paintAll;
     var updateChrome = ctx.updateChrome, setStatus = ctx.setStatus;
 
@@ -137,6 +138,9 @@
     function apply(entry, target) {
       /* 画笔历史是「贴图补丁」，没有网格 / 节点快照 */
       if (entry.patch) { applyPaintPatch(entry.patch, target); return; }
+      /* 编辑层栈（投射层 / 固化）：只换 ops 数组，必要时连 slotMaps 一起换。
+       * 不能并进 patch（那是整张贴图），也不能并进 mats（会覆盖槽名槽色）。 */
+      if (entry.tex) { if (applyTexPatch) applyTexPatch(entry.tex, target); }
       /* 纹理混合历史是「配置快照」：不含图，也不该走 Scene 快照
        * （Scene.snapshot 里根本没有 materials，走那边等于什么都没撤） */
       if (entry.mix) { if (applyMixPatch) applyMixPatch(entry.mix, target); return; }

@@ -183,7 +183,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       appOpen: document.getElementById('deskWall').classList.contains('app-open'),
       p1Opacity: getComputedStyle(p1).opacity,
       p3Transform: getComputedStyle(p3).transform,
-      head: document.getElementById('deskAppTitle').textContent,
+      /* 页头（#deskAppTitle）已删：App 名现在只出现在顶栏标签上。
+         读 .abt-name 而不是整个 .abt —— 后者还含关闭用的「×」。 */
+      head: ((document.querySelector('#appbarTabs .abt.on .abt-name') || {}).textContent || '').trim(),
       insets: [Math.round(wr.x - cr.x), Math.round(wr.y - cr.y), Math.round(cr.right - wr.right), Math.round(cr.bottom - wr.bottom)],
       radius: parseFloat(cs.borderTopLeftRadius) || 0,
       canvasBg: cs.backgroundColor + '|' + cs.backgroundImage.slice(0, 40),
@@ -202,45 +204,43 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const _flat = /^matrix\(1, 0, 0, 1/.test(r5b.p3Transform)
     || (_v.length === 16 && Math.abs(_v[2]) < .06 && Math.abs(_v[8]) < .06 && Math.abs(_v[0]) > .99);
   check(_flat, '第三页转正（rotateY 归零）', r5b.p3Transform);
-  check(r5b.head === '模型商店', '页头显示 App 名称', r5b.head);
+  check(r5b.head === '模型商店', '顶栏标签显示 App 名称', r5b.head);
   check(r5b.insets.every(v => v >= 12), '窗口缩在灰底画布里，四边露出边框', JSON.stringify(r5b.insets));
   check(r5b.radius >= 16, '灰底画布是圆角矩形', String(r5b.radius));
   check(/gradient/.test(r5b.canvasBg), '画布是灰底（不是白底）', r5b.canvasBg.slice(0, 60));
-  check(r5b.barHidden === true, '窗口自带的标题栏隐藏（由页头顶替，避免双标题）');
+  check(r5b.barHidden === true, '窗口自带的标题栏隐藏（避免和顶栏标签双标题）');
 
-  console.log('\n=== 5d. 应用页头部：<<< 换到左边、名称换到右边 ===');
+  console.log('\n=== 5d. 返回主页入口在顶栏（页头已删） ===');
   await sleep(300);   // 骨架淡出 200ms + 收 hidden，等它走完再断言「已收起」
   const r5d = await page.evaluate(() => {
-    const head = document.querySelector('#deskPageApps .dapp-head');
-    const back = document.getElementById('deskAppBack');
-    const title = document.getElementById('deskAppTitle');
-    const sub = document.getElementById('deskAppSub');
-    const b = back.getBoundingClientRect(), t = title.getBoundingClientRect();
+    const home = document.getElementById('btnDeskHome');
+    const tabs = document.getElementById('appbarTabs');
+    const hb = home.getBoundingClientRect(), tb = tabs.getBoundingClientRect();
     const sk = document.getElementById('deskAppSkel');
     return {
-      firstIsBack: head.firstElementChild === back,
-      backLeft: Math.round(b.left), titleLeft: Math.round(t.left),
-      backMid: Math.round(b.top + b.height / 2), titleMid: Math.round(t.top + t.height / 2),
-      backText: (back.textContent || '').trim(),
-      chev: back.querySelectorAll('.dab-ch').length,
-      aria: back.getAttribute('aria-label') || '',
-      titleAfterSub: !!(sub && title.compareDocumentPosition(sub) & 4),
+      shown: getComputedStyle(home).display !== 'none',
+      inBar: !!home.closest('.appbar'),
+      homeRight: Math.round(hb.right), tabsLeft: Math.round(tb.left),
+      text: (home.textContent || '').trim(),
+      aria: home.getAttribute('aria-label') || '',
+      /* 页头三件套（.dapp-head / #deskAppBack / #deskAppTitle / #deskAppSub）已彻底删除。
+         这条是防腐断言：谁再把它们加回来，双入口/双标题就会重现。 */
+      legacy: document.querySelectorAll('.dapp-head,#deskAppBack,#deskAppTitle,#deskAppSub').length,
       skHidden: !sk || sk.hidden,
       skAnim: sk ? getComputedStyle(sk.querySelector('.sk-row'), '::after').animationName : '',
     };
   });
-  check(r5d.firstIsBack === true, '返回按钮是页头第一个元素（位置换到左侧）');
-  check(r5d.backLeft < r5d.titleLeft, '界面名称在返回按钮右侧', 'back=' + r5d.backLeft + ' title=' + r5d.titleLeft);
-  // 比中线而不是比 top：按钮 30 高、标题行高 19，比 top 天生差半个行距
-  check(Math.abs(r5d.backMid - r5d.titleMid) <= 2, '两者同一行居中对齐', r5d.backMid + '/' + r5d.titleMid);
-  check(r5d.chev === 3, '返回图标是三枚 chevron（<<<）', String(r5d.chev));
-  check(r5d.backText === '', '返回按钮只留图标、没有文字');
-  check(r5d.aria === '回到桌面', '图标按钮带无障碍名称', r5d.aria);
+  check(r5d.shown === true, 'App 页里顶栏出现「返回主页」按钮');
+  check(r5d.inBar === true, '按钮长在顶栏里（不是画布里的浮层）');
+  check(r5d.homeRight <= r5d.tabsLeft, '按钮在标签条左侧', 'home=' + r5d.homeRight + ' tabs=' + r5d.tabsLeft);
+  check(r5d.text === '', '返回按钮只留图标、没有文字');
+  check(r5d.aria === '返回主页', '图标按钮带无障碍名称', r5d.aria);
+  check(r5d.legacy === 0, '旧页头结构已清除（回不到双标题）', String(r5d.legacy));
   check(r5d.skHidden === true, '加载完成后骨架已收起');
   check(r5d.skAnim === 'skShimmer', '骨架动画是 transform 关键帧（不靠 background-position）', r5d.skAnim);
 
   const r5c = await page.evaluate(async () => {
-    document.getElementById('deskAppBack').click();
+    document.getElementById('btnDeskHome').click();
     await new Promise(r => setTimeout(r, 60));
     const win = document.getElementById('storeWin');
     return {
@@ -250,7 +250,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       backInWall: win.parentElement.id === 'deskWall'
     };
   });
-  check(r5c.appOpen === false, '「回到桌面」把整页翻回去');
+  check(r5c.appOpen === false, '「返回主页」把整页翻回去');
   check(r5c.hostKids === 0, '窗口从 App 页里撤出');
   check(r5c.hidden === true, '窗口关闭（隐藏）');
   check(r5c.backInWall === true, '窗口放回桌面层原位，下次还能正常打开');

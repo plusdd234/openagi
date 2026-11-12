@@ -104,5 +104,40 @@ contextBridge.exposeInMainWorld('openagiDesktop', {
   onMediaProgress: cb => {
     if(typeof cb !== 'function') return;
     ipcRenderer.on('media:progress', (_e, info) => cb(info));
-  }
+  },
+  /* 编码工作区：用户选的那个文件夹。所有 rel 都是相对路径，绝对路径不外泄到渲染层。
+   * 写盘必须带 expectSha（读的时候拿到的哈希）—— 主进程会拿它做乐观锁，
+   * 文件在编辑期间被外部改过就拒绝，不会静默覆盖别人的改动。 */
+  codeInfo: () => ipcRenderer.invoke('code:info'),
+  codePickDir: () => ipcRenderer.invoke('code:pick-dir'),
+  codeClear: () => ipcRenderer.invoke('code:clear'),
+  codeList: rel => ipcRenderer.invoke('code:list', rel || ''),
+  codeTree: (rel, opts) => ipcRenderer.invoke('code:tree', rel || '', opts || {}),
+  codeRead: rel => ipcRenderer.invoke('code:read', rel),
+  codeWrite: req => ipcRenderer.invoke('code:write', req || {}),
+  codeSearch: (q, opts) => ipcRenderer.invoke('code:search', q, opts || {}),
+  codeReveal: rel => ipcRenderer.invoke('code:reveal', rel),
+  /* 二进制写：base64 进、文件出。图片 / 字体 / 音频走这条，
+   * 因为它们没法参与 text 的 diff，所以确认卡片的样子也不一样。 */
+  codePutBin: req => ipcRenderer.invoke('code:put-bin', req || {}),
+  codeExists: rel => ipcRenderer.invoke('code:exists', rel),
+  codeOpenExternal: rel => ipcRenderer.invoke('code:open-external', rel),
+  /* 预览地址是主进程的协议，渲染层只拼路径 —— 不要把 scheme 写死在两处，
+   * 以后要换端口 / 换 scheme 只改这里一处。 */
+  codePreviewUrl: rel => 'openagi-preview://ws/' + String(rel || '').replace(/^\/+/, '')
+    .split('/').map(encodeURIComponent).join('/'),
+  /* 命令执行：白名单 + cwd 锁工作区 + 超时杀进程树，全在主进程判定。
+   * 输出走 code:run-output 流式事件 —— 跑 npm test 要几十秒，
+   * 攒到结束才回传的话界面上看不出「在跑」还是「卡住了」。 */
+  codeRun: req => ipcRenderer.invoke('code:run', req || {}),
+  codeRunCancel: runId => ipcRenderer.invoke('code:run-cancel', runId),
+  codeRunStatus: () => ipcRenderer.invoke('code:run-status'),
+  onCodeRunOutput: cb => {
+    if(typeof cb !== 'function') return () => {};
+    const h = (_e, info) => cb(info);
+    ipcRenderer.on('code:run-output', h);
+    return () => ipcRenderer.removeListener('code:run-output', h);
+  },
+  /* 只在测试环境（OPENAGI_TEST=1）有对应 handler，正常运行时调用会 reject */
+  codeSetRoot: dir => ipcRenderer.invoke('code:set-root', dir)
 });

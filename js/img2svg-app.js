@@ -963,7 +963,9 @@
     const sendBtn = el('img2svgSend');
     const ta = el('img2svgText');
     const clearBtn = el('img2svgClear');
-    const closeBtn = el('btnImg2SvgClose');
+    /* 窗口迁到 apps/img2svg/app.js 后由 registerApp 生成，关闭按钮 id 统一成
+       btn<窗口id>Close —— 原来是 btnImg2SvgClose（大小写和 Win 都对不上）。 */
+    const closeBtn = el('btnImg2svgWinClose');
     const win = el('img2svgWin');
 
     if (pick && file) pick.addEventListener('click', () => file.click());

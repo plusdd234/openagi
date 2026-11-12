@@ -1,14 +1,16 @@
-/* 绘画工具箱：把笔刷颜色画进材质槽的基础色贴图
+/* 绘画工具箱：把笔刷颜色画成材质槽上的一层「笔迹」
  *
- * 贴图真源是 doc.materials.slotMaps（data URL）。笔刷落在 UV 坐标上：
- * 工作副本是一张 canvas（打开时把已有贴图解码进来），笔画结束再编码回文档。
- * 这样不用改材质系统，也天然跟着 seedModel 存进 GLB。
+ * 贴图真源是「底座 + 编辑层栈」（js/tex-stack.js）。**一笔 = 一个 stroke 层**：
+ *   - 工作副本 canvas 只用于视口预览（底座 ⊕ 已有层 ⊕ 这一笔，边画边看）；
+ *   - 同时有一张**透明底**的 ink canvas 只收这一笔的像素，抬笔时作为增量图入栈。
+ * 以前是抬笔就把整张工作副本编码回 doc.materials.slotMaps，于是
+ * 「画一笔 = 丢一笔可编辑性 + 一次 2048² PNG 重编码 + 把投射层/混合层烙进基础图」。
  *
  * 为什么拆出来：这段是「射线求交 + UV 岛剪裁 + canvas 工作区 + 贴图历史」
  * 一条完整链路，只依赖外壳的材质/重建动作，不该继续长在 model-desk.js 里。
  *
  * 分工：
- *   - 本模块：落笔判定、笔画、提交、撤销补丁
+ *   - 本模块：落笔判定、笔画、提交（推层）、撤销补丁
  *   - 外壳：右侧工具箱 UI、指针事件路由、材质重建
  *
  * 对外（window.MDPaint）：create(ctx) → { begin, move, end, cancel, applyPatch }
@@ -28,7 +30,7 @@
     var HISTORY_BUDGET = ctx.historyBudget;
     var visibleMesh = ctx.visibleMesh;
 
-    var PAINT_MAX = 1024;
+    var PAINT_MAX = (global.TexStack && global.TexStack.MAX_SIDE) || 2048;
 
     /* 屏幕点 → 网格局部射线 → 最近三角形，返回面的材质槽 + 重心插值出来的 UV。
      * 网格取自视口可见性：面级隔离时只剩替身网格里的面，画不到被藏起来的部分。 */
@@ -149,7 +151,10 @@
       p.clipCtx = null; p.clipped = false; p.clipPolys = 0;
     }
 
-    /* 取（或建）某材质槽的绘制工作区：已有贴图解码进 canvas，没有就铺底色 */
+    /* 取（或建）某材质槽的绘制工作区。
+     * 两张画布成对存在，尺寸必须完全一致（层回放时按 1:1 贴回去）：
+     *   p.canvas 预览用：底座 ⊕ 已有层 —— 边画边看
+     *   p.ink   增量用：透明底，只收这一笔 —— 抬笔时作为 stroke 层入栈 */
     function paintEnsureTarget(slot) {
       var p = st.paint;
       paintClipRelease();
@@ -157,13 +162,32 @@
       paintCommit();
       var mats = (st.doc && st.doc.materials) || {};
       var url = (mats.slotMaps || [])[slot] || '';
+      /* 底图统一问 TexSource（baked → slotMaps → 混合模块的解码缓存 → live）。
+       * 以前这里是「ctx.baseImageFor → sharedTexture → liveSlotImage」三段手写顺序，
+       * 与投射烘焙、UV 编辑器三处各不相同 —— 同一个槽能读出三张不同的图。
+       * 注意：无论取到哪张，它都是**未合成**的底座，笔迹写回 slotMaps 后
+       * 混合层照旧叠在上面，不会双份。 */
       var img = null;
-      /* 底图优先问纹理混合模块：有烘焙贴图时，笔迹要画在烘焙图上，
-       * 而不是回到导入时的原始贴图（两者可能不是同一张）。 */
-      if (ctx.baseImageFor) img = ctx.baseImageFor(slot) || null;
-      if (!img && url) {
-        var t0 = sharedTexture(url);
-        if (t0 && t0.image && t0.image.width) img = t0.image;
+      /* 先看有没有编辑层（投射）：有的话底图必须是「已投射的样子」，
+       * 否则用户画的时候看不到之前投上去的那几块，一落笔还会把它盖掉。 */
+      if (global.TexStack && global.TexStack.has(st.doc, slot)) {
+        if (global.TexSource) {
+          var r0 = global.TexSource.resolveBase(slot);
+          img = global.TexStack.edited(st.doc, slot, { base: r0.img, baseKey: r0.from + '|' + r0.url }) || null;
+        }
+      }
+      if (!img && global.TexSource) {
+        img = global.TexSource.resolveBase(slot).img;
+      } else if (!global.TexSource) {
+        if (ctx.baseImageFor) img = ctx.baseImageFor(slot) || null;
+        if (!img && url) {
+          var t0 = sharedTexture(url);
+          if (t0 && t0.image && t0.image.width) img = t0.image;
+        }
+        if (!img && ctx.liveSlotImage) {
+          var lv = ctx.liveSlotImage(slot);
+          if (lv && (lv.width || lv.naturalWidth)) img = lv;
+        }
       }
       var w = PAINT_MAX, h = PAINT_MAX;
       if (img && img.width && img.height) {
@@ -182,7 +206,11 @@
       tex.anisotropy = 4;
       /* 标成共享：材质释放时不能顺手把它 dispose 掉（它归绘画工具箱所有） */
       tex.userData.mdShared = true;
+      /* 增量层画布：透明底，尺寸与预览画布一致 */
+      var ink = document.createElement('canvas');
+      ink.width = w; ink.height = h;
       p.doc = st.doc; p.slot = slot; p.tex = tex; p.canvas = cv; p.ctx = c2;
+      p.ink = ink; p.inkCtx = ink.getContext('2d'); p.inkDirty = false; p.inkErase = false;
       /* 交给纹理混合模块决定材质上挂哪张图：
        * 有混合层就挂「基础画布 + 图层」的合成图，没有才直接挂这张画布。 */
       if (ctx.onPaintBase) ctx.onPaintBase(slot);
@@ -190,25 +218,103 @@
       return tex;
     }
 
-    /* 把画布编码回文档：slotMaps 是贴图真源，保存 GLB 时随 seedModel 一起走 */
-    function paintCommit() {
+    /* 增量画布按需分配。**一笔一张**，绝不复用已被推进栈的那张 ——
+     * 复用的话下一笔的 clearRect 会把上一笔已经提交的像素擦掉
+     * （症状：画第二笔时第一笔凭空消失）。 */
+    function paintEnsureInk(w, h) {
       var p = st.paint;
-      if (!p.canvas || p.slot < 0 || !st.doc) return;
-      var mats = st.doc.materials || (st.doc.materials = {});
-      var arr = mats.slotMaps || (mats.slotMaps = []);
-      while (arr.length <= p.slot) arr.push('');
-      try { arr[p.slot] = p.canvas.toDataURL('image/png'); } catch (e) {}
-      SeedModel.Scene.revision(st.doc, 'current');
+      if (p.ink && p.ink.width === w && p.ink.height === h) return p.ink;
+      var cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      p.ink = cv;
+      p.inkCtx = cv.getContext('2d');
+      p.inkDirty = false;
+      p.inkErase = false;
+      return cv;
     }
 
-    /* 一笔 = 一条历史。只存前后两张贴图 URL，不掺网格快照：
-     * 每笔都复制整份网格既慢又会把历史预算吃光。 */
-    function paintPushHistory(slot, before, after) {
-      if (before === after) return false;
+    /* 丢掉工作区（含增量图）：下次落笔重新从「底座 ⊕ 已有层」解码出来。
+     * 撤销一笔 / 丢笔都要走这里 —— 不丢的话画布上还留着已经不在栈里的像素，
+     * 下一次合成会把它当成底座（真实症状：撤销后笔迹还在，再画一笔变成双份）。 */
+    function paintDropTarget() {
+      var p = st.paint;
+      p.tex = null; p.canvas = null; p.ctx = null;
+      p.ink = null; p.inkCtx = null; p.inkDirty = false; p.inkErase = false;
+      p.slot = -1; p.doc = null;
+    }
+
+    /* 抬笔：把这一笔作为**一个 stroke 层**推进栈，不再写 slotMaps。
+     *
+     * 三个直接好处（都是原来「写整图」的病灶）：
+     *   ① 底座不动 → 混合层不会被烙进基础图（不会被叠两次）
+     *   ② 底座为空也能画 → 不会把贴图洗成「槽位灰 + 几个岛」
+     *   ③ 历史里存的是一张增量图，不是前后两张 2048² PNG
+     * 只有没有 TexStack（老页面 / 脚本单测）时才退回老的写回路径。 */
+    function paintCommit() {
+      var p = st.paint;
+      if (!p.canvas || p.slot < 0 || !st.doc) return false;
+      if (!p.inkDirty || !p.ink || !p.ink.width) return false;
+      var doc = st.doc, slot = p.slot;
+      var TStack = global.TexStack;
+      if (!TStack) return paintCommitLegacy(doc, slot);
+      var before = TStack.ops(doc, slot).slice();
+      var inkW = p.ink.width, inkH = p.ink.height;
+      TStack.push(doc, slot, {
+        type: 'stroke', label: '画笔',
+        canvas: p.ink, w: inkW, h: inkH,
+        op: 1, mode: p.inkErase ? 'erase' : 'normal'
+      });
+      var after = TStack.ops(doc, slot).slice();
+      /* 这一笔的增量图已经归栈所有：立刻松手，下一笔重新分一张（见 paintEnsureInk） */
+      p.ink = null; p.inkCtx = null;
+      p.inkDirty = false;
+      SeedModel.Scene.revision(doc, 'current');
+      var ok = paintPushHistory(slot, before, after, inkW, inkH);
+      /* 提交换一次合成：视口不变（工作区里已经有这一笔），但落盘（v4 的 ops）要靠它触发，
+       * 同时混合层也要按新的层栈重算一次。 */
+      if (ctx.onPaintInk) ctx.onPaintInk(slot);
+      return ok;
+    }
+
+    /* 没有 TexStack 时的退路：老行为（整张写回 slotMaps）。
+     * 保留它是为了让「只加载了 md-paint 的探针」不至于整个失效。 */
+    function paintCommitLegacy(doc, slot) {
+      var p = st.paint;
+      var mats = doc.materials || (doc.materials = {});
+      var arr = mats.slotMaps || (mats.slotMaps = []);
+      while (arr.length <= slot) arr.push('');
+      var beforeUrl = arr[slot] || '';
+      var afterUrl = '';
+      try { afterUrl = p.canvas.toDataURL('image/png'); } catch (e) { return false; }
+      arr[slot] = afterUrl;
+      p.inkDirty = false;
+      /* 退路也要一笔一张：这张增量图已经用过，不能留给下一笔 */
+      p.ink = null; p.inkCtx = null;
+      SeedModel.Scene.revision(doc, 'current');
+      if (beforeUrl === afterUrl) return false;
+      st.history.undo.push({
+        patch: { slot: slot, before: beforeUrl, after: afterUrl },
+        label: '画笔', bytes: (beforeUrl.length + afterUrl.length) * 2
+      });
+      st.history.redo = [];
+      while (st.history.undo.length > 1 && totalBytes() > HISTORY_BUDGET) st.history.undo.shift();
+      syncBytes();
+      updateChrome();
+      return true;
+    }
+
+    /* 一笔 = 一条历史。存的是「栈 diff」（两个 ops 数组引用），不是两张贴图：
+     * 撤销 = 把栈换回去，底座（slotMaps）一个字都没动过 ——
+     * 所以撤一次是「没有这一笔」，而不是「没有贴图」。
+     *
+     * bytes 用增量图的面积估：层是稀疏的（大部分像素 alpha=0），PNG 压得很狠，
+     * 取 raw 的 1/16 作为保守估计。别在这儿 toDataURL 量真实大小 —— 那正是
+     * 我们要省掉的那次重编码（2048² 约 120ms）。 */
+    function paintPushHistory(slot, before, after, w, h) {
+      var est = Math.round((w || 0) * (h || 0) * 4 / 16);
       var entry = {
-        patch: { slot: slot, before: before, after: after },
-        label: '画笔',
-        bytes: (before.length + after.length) * 2
+        tex: { slot: slot, before: before, after: after },
+        label: '画笔', bytes: est
       };
       st.history.undo.push(entry);
       st.history.redo = [];
@@ -218,7 +324,8 @@
       return true;
     }
 
-    /* 撤销 / 重做一笔：把材质槽的基础色贴图换回旧 URL，并重建视口材质 */
+    /* 撤销 / 重做一笔：把材质槽的基础色贴图换回旧 URL，并重建视口材质。
+     * 仅用于老格式的 patch entry（新格式走外壳的 applyTexPatch → TexStack.setOps）。 */
     function applyPaintPatch(patch, side) {
       if (!st.doc || !patch) return;
       var mats = st.doc.materials || (st.doc.materials = {});
@@ -227,8 +334,7 @@
       arr[patch.slot] = patch[side] || '';
       SeedModel.Scene.revision(st.doc, 'current');
       /* 工作副本按 URL 建，旧的会过期：丢掉，下次落笔重新解码 */
-      st.paint.tex = null; st.paint.canvas = null; st.paint.ctx = null;
-      st.paint.slot = -1; st.paint.doc = null;
+      paintDropTarget();
       rebuildModel(true);
       paintAll();
       /* 工作副本没了：让纹理混合按「解码后的基础贴图」重新合成 */
@@ -243,7 +349,12 @@
       return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
     }
 
-    /* 一笔 = 一串圆点：软笔用径向渐变，硬笔把渐变起点推到 88%，橡皮用 destination-out */
+    /* 一笔 = 一串圆点：软笔用径向渐变，硬笔把渐变起点推到 88%，橡皮用 destination-out
+     * 同一个点要落**两处**：
+     *   p.ctx（预览画布）—— 立刻看得见，橡皮真的擦掉底座
+     *   p.inkCtx（增量层）—— 透明底，橡皮画成黑印记、标记 mode:'erase'，
+     *                        回放时用 destination-out 按 alpha 擦（透明底上直接擦是空操作）
+     */
     function paintStampAt(x, y) {
       var p = st.paint, c2 = p.ctx;
       if (!c2 || !p.canvas) return;
@@ -267,9 +378,35 @@
       c2.arc(x, y, rad, 0, Math.PI * 2);
       c2.fill();
       c2.restore();
+      /* 增量层：永远是 source-over（黑/本色都行，回放时只看 alpha） */
+      var ic = p.inkCtx;
+      if (ic && p.inkDirty !== undefined) {
+        var g2 = ic.createRadialGradient(x, y, hard ? rad * 0.88 : 0, x, y, rad);
+        var col = erase ? '0,0,0' : paintRgbaTriple(p.color);
+        g2.addColorStop(0, 'rgba(' + col + ',' + a + ')');
+        g2.addColorStop(1, 'rgba(' + col + ',0)');
+        ic.save();
+        ic.globalCompositeOperation = 'source-over';
+        ic.fillStyle = g2;
+        ic.beginPath();
+        ic.arc(x, y, rad, 0, Math.PI * 2);
+        ic.fill();
+        ic.restore();
+        p.inkDirty = true;
+        if (erase) p.inkErase = true;
+      }
       p.tex.needsUpdate = true;
       /* 有混合层时，笔迹要参与合成：让纹理混合模块在本帧重烘一次 */
       if (ctx.onPaintInk) ctx.onPaintInk(p.slot);
+    }
+
+    /* '#d94f4f' → '217,79,79'（给 rgba() 拼串用，不重复解析） */
+    function paintRgbaTriple(hex) {
+      var s = String(hex || '#d94f4f').replace('#', '');
+      if (s.length === 3) s = s[0] + s[0] + s[1] + s[1] + s[2] + s[2];
+      var n = parseInt(s, 16);
+      if (!isFinite(n)) n = 0xd94f4f;
+      return ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255);
     }
 
     function paintStampUV(u, v) {
@@ -304,14 +441,15 @@
       if (!hit) { setStatus('绘画：这里没点到模型', true); return false; }
       var tex = paintEnsureTarget(hit.slot);
       if (!tex) return false;
+      /* 每一笔的增量图都是全新的：上一笔那张已经进栈了，不能复用 */
+      var p = st.paint;
+      paintEnsureInk(p.canvas.width, p.canvas.height);
       /* 工具箱的「纹理混合」跟着落笔的槽切换：用户画哪一槽就想调哪一槽 */
       if (ctx.onPaintSlot) ctx.onPaintSlot(hit.slot);
       /* 岛遮罩：clip 在整笔期间有效，落笔的岛就是这一笔的可画范围 */
       paintClipBegin(hit.faceId);
       st.paint.stroke = {
-        slot: hit.slot, last: [hit.u, hit.v],
-        /* 抬笔时要和这一笔之前的贴图比对，所以起笔先记下旧的 data URL */
-        before: (st.doc.materials && st.doc.materials.slotMaps || [])[hit.slot] || ''
+        slot: hit.slot, last: [hit.u, hit.v]
       };
       paintStampUV(hit.u, hit.v);
       st.pickDown = { x: e.clientX, y: e.clientY, paint: true };
@@ -341,18 +479,25 @@
       var stroke = st.paint.stroke;
       st.paint.stroke = null;
       paintClipRelease();
-      paintCommit();
-      var after = (st.doc.materials && st.doc.materials.slotMaps || [])[stroke.slot] || '';
-      var recorded = paintPushHistory(stroke.slot, stroke.before || '', after);
+      /* paintCommit 内部记历史：一笔 = 一个 stroke 层 + 一条栈 diff */
+      var recorded = paintCommit();
       setStatus('绘画：笔画已写入贴图（保存后随 GLB 一起存' +
         (recorded ? '，Ctrl+Z 可撤销这一笔' : '') + '）' +
         (st.paint.mask ? '（UV 岛遮罩开）' : ''));
     }
 
-    /* 切页签 / 切换文档 / 失焦时丢笔：不提交、不记历史 */
+    /* 切页签 / 切换文档 / 失焦时丢笔：不提交、不记历史。
+     * 预览画布上已经落下的点必须一起丢掉 —— 那张画布是「底座 ⊕ 已有层」的
+     * 快照，留着不提交的话，下一次合成会把它当成底座（笔迹幽灵留在图上）。 */
     function cancel() {
+      var p = st.paint;
       st.paint.stroke = null;
       paintClipRelease();
+      if (p.inkDirty) {
+        var slot = p.slot;
+        paintDropTarget();
+        if (ctx.onPaintReset) ctx.onPaintReset(slot);
+      }
     }
 
     return { begin: begin, move: move, end: end, cancel: cancel, applyPatch: applyPaintPatch, rayHit: paintRayHit };

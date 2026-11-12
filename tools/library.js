@@ -287,15 +287,31 @@ function htmlOf(env){ return env.__els.libBody.innerHTML; }
     ok(/data-lib-kind="model"/.test(htmlOf(env)), '3D 卡片标了「这是模型、要渲染缩略图」');
     ok(!/data-lib-3d/.test(htmlOf(env)), '不用 data-lib-3d（dataset 读不到「-数字」形式的属性名，会静默走错分支）');
 
-    const holder = { dataset: { libKind: 'model' }, innerHTML: '' };
+    /* 磁贴壳要像真的元素：libLoadThumb 的 put() 会先 querySelector 保住「参考 / UV」
+       那两个快捷按钮，再 innerHTML='' + appendChild(img) 只换图。
+       以前这里给的是裸对象 { dataset, innerHTML }，第一次没走缓存看不出来，
+       第二次命中缓存走 put 就抛 "holder.querySelector is not a function"。 */
+    const mkHolder = () => {
+      const h = { dataset: { libKind: 'model' }, _html: '' };
+      Object.defineProperty(h, 'innerHTML', {
+        get() { return h._html; },
+        set(v) { h._html = String(v); }
+      });
+      h.querySelector = () => null;
+      h.appendChild = el => { h._html += '<' + String((el && el.tagName) || 'img').toLowerCase(); };
+      return h;
+    };
+
+    const holder = mkHolder();
     await env.libLoadThumb('b2_b', holder);
     eq(renderCount, 1, '没有缓存时渲染一次');
     ok(/<img/.test(holder.innerHTML), '渲染完把图塞进磁贴');
     ok(desk.calls.some(c => /^thumbSave:b2_b/.test(c)), '渲染结果存回磁盘（下次不用再渲染）');
 
-    const holder2 = { dataset: { libKind: 'model' }, innerHTML: '' };
+    const holder2 = mkHolder();
     await env.libLoadThumb('b2_b', holder2);
     eq(renderCount, 1, '第二次同类卡片不再重复渲染');
+    ok(/<img/.test(holder2.innerHTML), '第二次直接从缓存把图塞进去（也要塞得进去）');
   }
 
   console.log('\n=== M. 双击打开 ===');

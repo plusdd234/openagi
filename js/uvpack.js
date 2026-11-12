@@ -636,6 +636,294 @@
     });
   }
 
+  /* ---------------- 缝合碎岛：把「脱离主岛」的碎片 UV 拉回主岛 ----------------
+   * AI 生成模型自动展 UV 的典型遗留：一小片一小片的面在 UV 上被切出主岛，
+   * 碎片 UV 还被丢进主岛内部（重叠）。这些面本身有用——3D 顶点与主岛完全重合、
+   * 就贴在主表面上——不该删，也不能当独立岛参与逐岛处理：
+   * 逐岛投射 / 上色时碎片各自归到别的视图，表面就出一堆杂色小斑。
+   *
+   * 修法（只写 UV、不动 3D，主岛顶点一个不碰）：
+   *   · 碎片顶点位置与主岛顶点重合的（缝边），直接复制主岛侧顶点的 UV——
+   *     ModelTex 按「UV 数值」分岛，数值完全一致，重算后碎片自动并入主岛；
+   *   · 其余顶点在主岛表面上找最近点，按重心坐标插值 UV。
+   * opt: {
+   *   maxTris: 8,    面数 ≤ 它的岛算碎片（用户场景是 1–4 面的碎四边形）
+   *   minShare: 2,   与主岛至少共享几个 3D 顶点位置才缝（1 个可能是巧合重合，不碰）
+   * }
+   * → { ok, merged, skipped, rebuilt:[partIdx], notes:[] } */
+  function stitch(a, opt) {
+    opt = opt || {};
+    var maxTris = opt.maxTris == null ? 8 : Math.max(1, opt.maxTris | 0);
+    var minShare = opt.minShare == null ? 2 : Math.max(1, opt.minShare | 0);
+    var merged = 0, skipped = 0, skipShare = 0, skipFar = 0, rebuilt = [];
+    var notes = [];
+
+    /* 点到三角形最近点（Ericson 5.1.5），返回 { d2, l0, l1, l2 }（A/B/C 重心权重） */
+    function closestTri(px, py, pz, ax, ay, az, bx, by, bz, cx, cy, cz) {
+      var abx = bx - ax, aby = by - ay, abz = bz - az;
+      var acx = cx - ax, acy = cy - ay, acz = cz - az;
+      var apx = px - ax, apy = py - ay, apz = pz - az;
+      var d1 = abx * apx + aby * apy + abz * apz;
+      var d2 = acx * apx + acy * apy + acz * apz;
+      if (d1 <= 0 && d2 <= 0) return { d2: apx * apx + apy * apy + apz * apz, l0: 1, l1: 0, l2: 0 };
+      var bpx = px - bx, bpy = py - by, bpz = pz - bz;
+      var d3 = abx * bpx + aby * bpy + abz * bpz;
+      var d4 = acx * bpx + acy * bpy + acz * bpz;
+      if (d3 >= 0 && d4 <= d3) return { d2: bpx * bpx + bpy * bpy + bpz * bpz, l0: 0, l1: 1, l2: 0 };
+      var vc = d1 * d4 - d3 * d2;
+      if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+        var t = d1 / (d1 - d3);
+        var qx = ax + abx * t - px, qy = ay + aby * t - py, qz = az + abz * t - pz;
+        return { d2: qx * qx + qy * qy + qz * qz, l0: 1 - t, l1: t, l2: 0 };
+      }
+      var cpx = px - cx, cpy = py - cy, cpz = pz - cz;
+      var d5 = abx * cpx + aby * cpy + abz * cpz;
+      var d6 = acx * cpx + acy * cpy + acz * cpz;
+      if (d6 >= 0 && d5 <= d6) return { d2: cpx * cpx + cpy * cpy + cpz * cpz, l0: 0, l1: 0, l2: 1 };
+      var vb = d5 * d2 - d1 * d6;
+      if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+        var w = d2 / (d2 - d6);
+        var rx = ax + acx * w - px, ry = ay + acy * w - py, rz = az + acz * w - pz;
+        return { d2: rx * rx + ry * ry + rz * rz, l0: 1 - w, l1: 0, l2: w };
+      }
+      var va = d3 * d6 - d5 * d4;
+      if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+        var wb = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        var sx = bx + (cx - bx) * wb - px, sy = by + (cy - by) * wb - py, sz = bz + (cz - bz) * wb - pz;
+        return { d2: sx * sx + sy * sy + sz * sz, l0: 0, l1: 1 - wb, l2: wb };
+      }
+      var den = va + vb + vc;
+      var v = vb / den, w = vc / den;
+      var fx = ax + abx * v + acx * w - px, fy = ay + aby * v + acy * w - py, fz = az + abz * v + acz * w - pz;
+      return { d2: fx * fx + fy * fy + fz * fz, l0: 1 - v - w, l1: v, l2: w };
+    }
+
+    a.parts.forEach(function (part, pi) {
+      var isl = islandsOf(a, pi);
+      if (isl.length < 2) return;
+      var mains = [], smalls = [];
+      isl.forEach(function (it) { (it.tris.length <= maxTris ? smalls : mains).push(it); });
+      if (!smalls.length || !mains.length) return;
+
+      /* 碎片顶点要单独改 UV：若顶点被多个岛共享就先拆顶点（与 apply 同一机制） */
+      var owner = new Int32Array(part.pos.count);
+      owner.fill(-1);
+      var conflict = false;
+      isl.forEach(function (it) {
+        for (var j = 0; j < it.tris.length; j++) {
+          for (var k = 0; k < 3; k++) {
+            var v0 = vOf(part, it.tris[j], k);
+            if (owner[v0] >= 0 && owner[v0] !== it.id) conflict = true;
+            else owner[v0] = it.id;
+          }
+        }
+      });
+      if (conflict) {
+        var newGeo = deindexGeometry(part);
+        var mesh = meshOfGeometry(a).get(part.g);
+        if (mesh) mesh.geometry = newGeo;
+        part.g = newGeo;
+        part.pos = newGeo.attributes.position;
+        part.uv = newGeo.attributes.uv;
+        part.idx = null;
+        rebuilt.push(pi);
+      }
+
+      /* 主岛准备：每个主岛的包围盒（候选筛选）+ 容差空间哈希 + 三角形列表。
+       * 位置指纹不能用 1e-5 量化——OBJ 文本坐标过 float32 往返后在 1e-5 网格上
+       * 会跨格，缝边就对不上了（实测 1667 个碎岛只缝上 129 个）。
+       * 网格哈希 cell = 主岛包围盒对角线的 1e-3，匹配距离 ≤ cell/2，
+       * 远大于精度损失、又远小于真实网格顶点间距。 */
+      var x0p = 1e30, y0p = 1e30, z0p = 1e30, x1p = -1e30, y1p = -1e30, z1p = -1e30;
+      mains.forEach(function (it) {
+        for (var j = 0; j < it.tris.length; j++) {
+          for (var k = 0; k < 3; k++) {
+            var v = vOf(part, it.tris[j], k);
+            var x = part.pos.getX(v), y = part.pos.getY(v), z = part.pos.getZ(v);
+            if (x < x0p) x0p = x; if (x > x1p) x1p = x;
+            if (y < y0p) y0p = y; if (y > y1p) y1p = y;
+            if (z < z0p) z0p = z; if (z > z1p) z1p = z;
+          }
+        }
+      });
+      var diag = Math.sqrt((x1p - x0p) * (x1p - x0p) + (y1p - y0p) * (y1p - y0p) + (z1p - z0p) * (z1p - z0p));
+      var cell = Math.max(diag * 1e-3, 1e-9), half2 = (cell * 0.5) * (cell * 0.5);
+      var buckets = new Map();
+      function bKey(x, y, z) {
+        return Math.floor(x / cell) + ',' + Math.floor(y / cell) + ',' + Math.floor(z / cell);
+      }
+      /* 每个主岛：bbox（找候选）+ 顶点哈希（缝边精确复制 UV 用） */
+      var mainRecs = mains.map(function (it) {
+        var x0 = 1e30, y0 = 1e30, z0 = 1e30, x1 = -1e30, y1 = -1e30, z1 = -1e30;
+        for (var j = 0; j < it.tris.length; j++) {
+          for (var k = 0; k < 3; k++) {
+            var v = vOf(part, it.tris[j], k);
+            var x = part.pos.getX(v), y = part.pos.getY(v), z = part.pos.getZ(v);
+            if (x < x0) x0 = x; if (x > x1) x1 = x;
+            if (y < y0) y0 = y; if (y > y1) y1 = y;
+            if (z < z0) z0 = z; if (z > z1) z1 = z;
+          }
+        }
+        return { it: it, tris: it.tris, bbox: [x0, y0, z0, x1, y1, z1] };
+      });
+      mains.forEach(function (it, mi) {
+        for (var j = 0; j < it.tris.length; j++) {
+          for (var k = 0; k < 3; k++) {
+            var v = vOf(part, it.tris[j], k);
+            var key = bKey(part.pos.getX(v), part.pos.getY(v), part.pos.getZ(v));
+            var arr = buckets.get(key);
+            if (!arr) { arr = []; buckets.set(key, arr); }
+            arr.push({ v: v, mi: mi });
+          }
+        }
+      });
+      /* 27 邻域里找所有距离 ≤ cell/2 的主岛顶点（同位置的切缝副本全都会命中） */
+      function lookup(px, py, pz) {
+        var out = [];
+        var gx = Math.floor(px / cell), gy = Math.floor(py / cell), gz = Math.floor(pz / cell);
+        for (var dx = -1; dx <= 1; dx++) {
+          for (var dy = -1; dy <= 1; dy++) {
+            for (var dz = -1; dz <= 1; dz++) {
+              var arr = buckets.get((gx + dx) + ',' + (gy + dy) + ',' + (gz + dz));
+              if (!arr) continue;
+              for (var i = 0; i < arr.length; i++) {
+                var e = arr[i];
+                var ex = part.pos.getX(e.v) - px, ey = part.pos.getY(e.v) - py, ez = part.pos.getZ(e.v) - pz;
+                var d2 = ex * ex + ey * ey + ez * ez;
+                if (d2 <= half2) out.push({ v: e.v, mi: e.mi, d2: d2 });
+              }
+            }
+          }
+        }
+        return out;
+      }
+
+      var partMerged = 0;
+      /* 从最小的碎片开始缝：碎片群是「小碎片贴小碎片再贴主岛」的链，
+       * 先缝最小的，它并进主岛后，贴着它的碎片下一轮才有大邻居可缝 */
+      smalls.sort(function (p, q) { return p.tris.length - q.tris.length; });
+      smalls.forEach(function (sm) {
+        var pos = part.pos, uvA = part.uv;
+        var sVerts = [], seen = {}, matches = {}, cnt = {};
+        var sx0 = 1e30, sy0 = 1e30, sz0 = 1e30, sx1 = -1e30, sy1 = -1e30, sz1 = -1e30;
+        for (var j = 0; j < sm.tris.length; j++) {
+          for (var k = 0; k < 3; k++) {
+            var v = vOf(part, sm.tris[j], k);
+            if (!seen[v]) {
+              seen[v] = 1; sVerts.push(v);
+              var x = pos.getX(v), y = pos.getY(v), z = pos.getZ(v);
+              if (x < sx0) sx0 = x; if (x > sx1) sx1 = x;
+              if (y < sy0) sy0 = y; if (y > sy1) sy1 = y;
+              if (z < sz0) sz0 = z; if (z > sz1) sz1 = z;
+              matches[v] = lookup(x, y, z);
+              var hitIslands = {};
+              for (var h = 0; h < matches[v].length; h++) hitIslands[matches[v][h].mi] = 1;
+              for (var mi in hitIslands) cnt[mi] = (cnt[mi] || 0) + 1;
+            }
+          }
+        }
+        /* 候选主岛：① 有 ≥minShare 个碎片顶点精确贴上主岛顶点的；
+         * ② 兜底——碎片贴在主面的边/内部而不是顶点上时顶点匹配不到，
+         *    用「主岛 bbox（膨胀 2%）包含碎片 bbox」再筛一轮，交给投影择优。 */
+        var cands = [];
+        for (var m2 in cnt) {
+          if (cnt[m2] >= minShare) cands.push(+m2);
+        }
+        if (!cands.length) {
+          /* 兜底用「bbox 相交」而不是包含：贴在主岛边缘的碎片 bbox 常常
+           * 稍微越出主岛 bbox，包含判定会把大量贴面碎片误判成孤岛 */
+          var pad2 = diag * 0.02;
+          for (var mi2 = 0; mi2 < mainRecs.length; mi2++) {
+            var b2 = mainRecs[mi2].bbox;
+            if (sx0 <= b2[3] + pad2 && sx1 >= b2[0] - pad2 &&
+                sy0 <= b2[4] + pad2 && sy1 >= b2[1] - pad2 &&
+                sz0 <= b2[5] + pad2 && sz1 >= b2[2] - pad2) cands.push(mi2);
+          }
+        }
+        if (!cands.length) { skipped++; skipShare++; return; }
+
+        /* 对每个候选试算完整方案，取「顶点到主岛表面平均距离」最小者。
+         * 碎片顶点往往落在主面的边/内部，平均距离就是「这片碎片贴没贴着主岛」的判据。 */
+        var bestPlan = null, bestDist = Infinity, bestMi = -1;
+        for (var ci = 0; ci < cands.length; ci++) {
+          var cand = cands[ci];
+          var mrTris = mainRecs[cand].tris;
+          var plan = [], distSum = 0, failed = false;
+          for (var i2 = 0; i2 < sVerts.length; i2++) {
+            var v2 = sVerts[i2];
+            var px = pos.getX(v2), py = pos.getY(v2), pz = pos.getZ(v2);
+            var same = (matches[v2] || []).filter(function (e) { return e.mi === cand; });
+            var nu = null, nv = null, d3 = 0;
+            if (same.length) {
+              /* 缝边顶点：直接复制主岛侧的 UV。切缝两侧副本 UV 不同时，
+               * 取「与碎片原 UV 最近」的那个——碎片原来采样主岛内部，
+               * 靠得近的那份副本才是语义对应的，缝过去颜色不跳。 */
+              var ou = uvA.getX(v2), ov = uvA.getY(v2), bd = Infinity;
+              for (var h2 = 0; h2 < same.length; h2++) {
+                var du = uvA.getX(same[h2].v) - ou, dv = uvA.getY(same[h2].v) - ov;
+                var dd = du * du + dv * dv;
+                if (dd < bd) { bd = dd; nu = uvA.getX(same[h2].v); nv = uvA.getY(same[h2].v); }
+              }
+            } else {
+              /* 自由顶点：在主岛表面上找最近点，按重心坐标插值 UV */
+              var bd2 = Infinity, bl = null;
+              for (var j2 = 0; j2 < mrTris.length; j2++) {
+                var t3 = mrTris[j2];
+                var ia = vOf(part, t3, 0), ib = vOf(part, t3, 1), ic = vOf(part, t3, 2);
+                var r3 = closestTri(px, py, pz,
+                  pos.getX(ia), pos.getY(ia), pos.getZ(ia),
+                  pos.getX(ib), pos.getY(ib), pos.getZ(ib),
+                  pos.getX(ic), pos.getY(ic), pos.getZ(ic));
+                if (r3.d2 < bd2) {
+                  bd2 = r3.d2;
+                  bl = [
+                    uvA.getX(ia) * r3.l0 + uvA.getX(ib) * r3.l1 + uvA.getX(ic) * r3.l2,
+                    uvA.getY(ia) * r3.l0 + uvA.getY(ib) * r3.l1 + uvA.getY(ic) * r3.l2
+                  ];
+                }
+              }
+              if (!bl || !isFinite(bl[0]) || !isFinite(bl[1])) { failed = true; break; }
+              d3 = Math.sqrt(bd2);
+              nu = bl[0]; nv = bl[1];
+            }
+            distSum += d3;
+            plan.push([v2, nu, nv]);
+          }
+          if (failed) continue;
+          var avg = distSum / sVerts.length;
+          if (avg < bestDist) { bestDist = avg; bestPlan = plan; bestMi = cand; }
+        }
+        if (!bestPlan || bestDist > diag * 0.02) { skipped++; skipFar++; return; }
+        for (var i3 = 0; i3 < bestPlan.length; i3++) {
+          uvA.setXY(bestPlan[i3][0], bestPlan[i3][1], bestPlan[i3][2]);
+        }
+        /* 级联：碎片三角形、顶点、bbox 都并进主岛记录——贴在这片碎片上的
+         * 下一片碎片才有邻居可缝，碎片群才能一路收进主岛 */
+        var mr2 = mainRecs[bestMi];
+        for (var j3 = 0; j3 < sm.tris.length; j3++) mr2.tris.push(sm.tris[j3]);
+        for (var i4 = 0; i4 < sVerts.length; i4++) {
+          var v4 = sVerts[i4];
+          var key4 = bKey(pos.getX(v4), pos.getY(v4), pos.getZ(v4));
+          var arr4 = buckets.get(key4);
+          if (!arr4) { arr4 = []; buckets.set(key4, arr4); }
+          arr4.push({ v: v4, mi: bestMi });
+        }
+        var b3 = mr2.bbox;
+        if (sx0 < b3[0]) b3[0] = sx0; if (sx1 > b3[3]) b3[3] = sx1;
+        if (sy0 < b3[1]) b3[1] = sy0; if (sy1 > b3[4]) b3[4] = sy1;
+        if (sz0 < b3[2]) b3[2] = sz0; if (sz1 > b3[5]) b3[5] = sz1;
+        merged++; partMerged++;
+      });
+
+      if (partMerged || rebuilt.indexOf(pi) >= 0) part.uv.needsUpdate = true;
+    });
+
+    if (merged) notes.push('已缝合 ' + merged + ' 个碎岛（面数 ≤' + maxTris + '）');
+    if (skipFar) notes.push(skipFar + ' 个碎岛离最近的主岛太远，保持原样');
+    if (skipShare) notes.push(skipShare + ' 个碎岛周围没有主岛，保持原样');
+    return { ok: merged > 0, merged: merged, skipped: skipped, rebuilt: rebuilt, notes: notes };
+  }
+
   global.UvPack = {
     pack: pack,
     apply: apply,
@@ -644,6 +932,7 @@
     restore: restore,
     remapTextures: remapTextures,
     exportGLB: exportGLB,
+    stitch: stitch,
     groups: packGroups,
     PAD: PAD
   };

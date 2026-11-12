@@ -4,9 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>The seed</title>
-<!-- 样式按 App 分成 12 份（原 css/app.css 4177 行，一个 App 一屏就能翻到）。
-     ⚠ **顺序不能调**：这 12 份是从原文件按连续行号切出来的，08-theme 是给
-     01–07 打补丁的浅色覆盖，09/10 又给 08 再打一层。调换顺序 = 样式表互相打架。 -->
+<!-- 样式按 App 切成「编号份」（原 css/app.css 4177 行，一个 App 一屏就能翻到）。
+     ⚠ **顺序不能调**：01–12 是从原文件按连续行号切出来的，08-theme 是给
+     01–07 打补丁的浅色覆盖，09/10 又给 08 再打一层。调换顺序 = 样式表互相打架。
+     编号即挂载顺序，加新样式挑一个**没用过的号**（node tools/css-links.js 会验）。
+     ⚠ 曾经有两份都叫 12（12-media / 12-modeldesk），已把后者改成 15 挪到最后：
+     所有选择器都以 .os-win.modeldesk 开头，作用域独立，所以不影响层叠。 -->
 <link rel="stylesheet" href="css/01-base.css">
 <link rel="stylesheet" href="css/02-console.css">
 <link rel="stylesheet" href="css/03-store.css">
@@ -19,15 +22,17 @@
 <link rel="stylesheet" href="css/10-deskui.css">
 <link rel="stylesheet" href="css/11-chat.css">
 <link rel="stylesheet" href="css/12-media.css">
-<!-- 多视图的样式单独一份：它同时给桌面 App 和 multiview.html（独立工具页）用，
-     塞进 10-deskui 那边就引不到了 -->
-<link rel="stylesheet" href="css/multiview.css">
-<!-- 建模 App（MVP-0）的深色工作台样式：只作用于 .os-win.modeldesk -->
-<link rel="stylesheet" href="css/12-modeldesk.css">
-<!-- 设置面板的样式：新壳 .settings2 + 总览状态卡。旧 .settings.xp 那 133 行已随拆分删除 -->
-<link rel="stylesheet" href="css/settings.css">
 <!-- 图像工坊：PS 类多图层工作站，只作用于 .os-win.imglab -->
 <link rel="stylesheet" href="css/13-imagelab.css">
+<!-- 编码 App：新增 App 的独立样式，不是 app.css 拆出来的（同 13-imagelab 的情况） -->
+<link rel="stylesheet" href="css/14-code.css">
+<!-- 建模 App 的深色工作台样式：只作用于 .os-win.modeldesk -->
+<link rel="stylesheet" href="css/15-modeldesk.css">
+<!-- 下面两份**不参与编号**（编号会被当成顺序的一部分，混进来就排不出干净序列）：
+     多视图的样式同时给桌面 App 和 multiview.html（独立工具页）用，塞进 10-deskui 就引不到了；
+     settings 是新壳 .settings2 + 总览状态卡。两者选择器都自带作用域，放最后不影响别的 App。 -->
+<link rel="stylesheet" href="css/multiview.css">
+<link rel="stylesheet" href="css/settings.css">
 </head>
 <body>
 
@@ -48,6 +53,13 @@
       <div class="brand-name">The seed</div>
     </div>
   </div>
+  <!-- App 切换条：占住顶栏中间那段空白。
+       打开过的 App 各占一个标签，点一下切过去——窗口节点一直留着（换 App 只是被
+       deskAppRestore 搬回桌面层并隐藏，内容全在），所以「跳转」不需要重新加载。
+       桌面上也照常显示（「返回主页」只是离开、不是关闭，藏起来等于让人以为 App 都没了），
+       只有进工作流编辑器时随 #homeView 一起收起。
+       内容由 desk-shell.js 的 deskTabRender() 生成，不在这里写死。 -->
+  <div class="appbar-tabs" id="appbarTabs" role="tablist" aria-label="已打开的应用"></div>
   <div class="appbar-right">
     <!-- 语言 / 图像 / 3D 三个胶囊已撤掉：输入条上已经有模型选择器，同一件事显示两遍
          （而且顶部那个只是只读回显，点了也改不了）。这里只留「资产」这一个
@@ -223,517 +235,41 @@
         <div class="mv3-host" id="modelViewHost"></div>
       </div>
     </div>
-    <div class="os-win lib hidden" id="libWin">
-      <div class="os-win-bar">
-        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title" id="libWinTitle">图库</div>
-        <button class="os-win-close" id="btnLibWinClose" aria-label="关闭窗口" title="关闭">×</button>
-      </div>
-      <div class="os-win-body">
-        <div class="lib-body" id="libBody"></div>
-      </div>
-    </div>
-    <div class="os-win comfy hidden" id="comfyWin">
-      <div class="os-win-bar">
-        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title">本地生图 · ComfyUI</div>
-        <button class="os-win-close" id="btnComfyWinClose" aria-label="关闭窗口" title="关闭">×</button>
-      </div>
-      <div class="os-win-body">
-        <div class="cf-app" id="cfApp"></div>
-      </div>
-    </div>
-    <div class="os-win store hidden" id="storeWin">
-      <div class="os-win-bar">
-        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title">模型商店</div>
-        <button class="os-win-close" id="btnStoreWinClose" aria-label="关闭窗口" title="关闭">×</button>
-      </div>
-      <div class="os-win-body">
-        <div class="mc-store" id="mcStore"></div>
-      </div>
-    </div>
-    <div class="os-win hidden" id="modelsWin">
-      <div class="os-win-bar">
-        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title">模型控制台</div>
-        <button class="os-win-close" id="btnModelsWinClose" aria-label="关闭窗口" title="关闭">×</button>
-      </div>
-      <div class="os-win-body">
-        <div class="mc-hard" id="mcHard"></div>
-        <div class="mc-eng" id="mcEng"></div>
-        <div class="mc-eng" id="mcComfy"></div>
-        <div class="mc-kinds" id="mcKinds"></div>
-      </div>
-    </div>
+    <!-- 图库 / 模型库 / 本地生图 / 模型商店 / 模型 的窗口块已迁到 apps/：
+         窗口由 js/app-registry.js 的 registerApp() 生成，body 写在各自的
+         apps/<id>/app.js 里。加 / 改这些 App 不用再碰这个文件。 -->
     <!-- 裸聊 App：无 system、无上下文、无历史，每轮只发这一句。
          单独成 App 而不是给对话条加开关——它的用途是「基准线」：
          混在主链路里会带上 IMG_SYS / contextText / 全量历史，测出的差值就不干净了。
          界面里的气泡只是本地显示，从不回传，见 js/bare-chat.js。 -->
-    <div class="os-win bare hidden" id="bareWin">
-      <div class="os-win-bar">
-        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title">裸聊</div>
-        <button class="os-win-close" id="btnBareWinClose" aria-label="关闭窗口" title="关闭">×</button>
-      </div>
-      <div class="os-win-body">
-        <div class="bchat-meta" id="bareMeta"></div>
-        <div class="dchat-log" id="bareLog"></div>
-        <div class="bchat-bar" id="bareBar">
-          <textarea class="bchat-text" id="bareText" rows="1" placeholder="只发这一句，不带任何上下文…（Enter 发送，Shift+Enter 换行）"></textarea>
-          <button type="button" class="bchat-tplbtn" id="bareTplBtn" title="展开为 OpenAI 兼容的请求体（可编辑）">{ }</button>
-          <button type="button" class="dai-send" id="bareSend" title="发送（Enter）">Send</button>
-        </div>
-        <!-- OpenAI 兼容模板：把这一句展开成可直接编辑的请求体。
-             messages 里有什么就发什么，system 可自行加；model 可覆盖本次模型。 -->
-        <div class="bchat-tpl hidden" id="bareTpl">
-          <div class="bchat-tpl-head">
-            <span>OpenAI 兼容请求体（可编辑后直接发送）</span>
-            <button type="button" class="bchat-tpl-back" id="bareTplBack">收起</button>
-          </div>
-          <textarea class="bchat-tpl-text" id="bareTplText" spellcheck="false" wrap="off"></textarea>
-          <div class="bchat-tpl-foot">
-            <span class="bchat-tpl-note" id="bareTplNote">temperature 0.3 / stream true 由运行时固定</span>
-            <button type="button" class="dai-send" id="bareTplSend">Send</button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- 裸聊的窗口块已迁到 apps/bare/app.js（含 OpenAI 兼容模板那一整块）。 -->
 
     <!-- 图像转 SVG：本地工具 + function calling。
          图片只发一次，SVG 草稿留在本地（js/svg-tools.js），模型只拿到摘要。 -->
-    <div class="os-win isvg hidden" id="img2svgWin">
-      <div class="os-win-bar">
-        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title">图像转 SVG</div>
-        <button class="os-win-close" id="btnImg2SvgClose" aria-label="关闭窗口" title="关闭">×</button>
-      </div>
-      <div class="os-win-body isvg-body">
-        <div class="isvg-meta" id="img2svgMeta"></div>
-        <div class="isvg-src">
-          <button type="button" class="btn sm" id="img2svgPick">选择图片</button>
-          <img class="isvg-thumb hidden" id="img2svgThumb" alt="">
-          <div class="isvg-srcinfo" id="img2svgSrcInfo">未选择图片（也可以把图拖进窗口）</div>
-          <button type="button" class="btn sm isvg-clear hidden" id="img2svgClear">清除</button>
-          <input type="file" id="img2svgFile" accept="image/*" hidden>
-        </div>
-        <!-- 画布与图层面板并排：横屏时画布吃满剩余高度，面板跟着变高；
-             执行日志收成底部一条，不和画布抢纵向空间。 -->
-        <div class="isvg-work">
-          <!-- 实时画布：AI 每次写路径后立刻重绘，SVG 直接盖在原图上看「正在画什么」。
-               状态条常驻左上角：阶段 / 轮次 / 当前工具 / 分数 / 用时。 -->
-          <div class="isvg-stage" id="img2svgStage">
-            <div class="isvg-stage-status">
-              <span class="isvg-stage-badge idle" id="img2svgStageBadge">待开始</span>
-              <span class="isvg-stage-round" id="img2svgStageRound">—</span>
-              <span class="isvg-stage-tool" id="img2svgStageTool">选一张图，按 Send 开始</span>
-              <span class="isvg-stage-score hidden" id="img2svgStageScore"></span>
-              <span class="isvg-stage-time hidden" id="img2svgStageTime">00:00</span>
-            </div>
-            <div class="isvg-stage-stack">
-              <img class="isvg-stage-src" id="img2svgStageSrc" alt="">
-              <img class="isvg-stage-svg" id="img2svgStageSvg" alt="">
-              <div class="isvg-stage-empty" id="img2svgStageEmpty">选一张图，按 Send 开始</div>
-            </div>
-          </div>
-          <!-- 图层面板：四层可见性 / 隔离预览 / 每层统计 / 导出 / 消融。
-               内容全部由 img2svg-app.js 的 refreshLayers 生成，这里只放骨架。 -->
-          <aside class="isvg-layers" id="img2svgLayers">
-            <div class="isvg-layers-head">
-              <span class="isvg-layers-title">图层</span>
-              <button type="button" class="isvg-layers-toggle" id="img2svgUndo"
-                      disabled title="撤销上一次工具写入（每次调用一步）">撤销</button>
-              <button type="button" class="isvg-layers-toggle" id="img2svgLayersToggle"
-                      aria-pressed="false" title="收起 / 展开图层面板">收起</button>
-            </div>
-            <div class="isvg-layers-body" id="img2svgLayersBody"></div>
-          </aside>
-        </div>
-        <div class="dchat-log isvg-log" id="img2svgLog"></div>
-        <div class="bchat-bar" id="img2svgBar">
-          <textarea class="bchat-text" id="img2svgText" rows="1" placeholder="描述要求（可留空），Enter 发送，Shift+Enter 换行"></textarea>
-          <button type="button" class="dai-send" id="img2svgSend" title="发送（Enter）">Send</button>
-        </div>
-      </div>
-    </div>
+    <!-- 图像转 SVG 的窗口块已迁到 apps/img2svg/app.js（body 上那个额外的 isvg-body 也一起带过去了）。 -->
 
     <!-- AI 对话 App：和其他 App 一样是 .os-win，搬进 #deskAppHost 后保留自己的窗口标题栏。
          原来它是独立的第二页（.desk-page-2），翻页动效和返回按钮都跟别的 App 不一致，
          后来统一成 App；页头（返回 <<< + 应用名）已删，返回入口统一收到顶栏 The seed 左侧。 -->
-    <div class="os-win chat hidden" id="chatWin">
-      <div class="os-win-bar">
-        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title">AI 对话</div>
-        <button class="os-win-close" id="btnChatWinClose" aria-label="关闭窗口" title="关闭">×</button>
-      </div>
-      <div class="os-win-body">
-        <!-- 模型 / 上下文 / 生图来源：原来是第二页页头的一排角标。
-             页头删掉后，这三个角标留在对话区顶部——视觉上仍是一眼可扫的信息条。 -->
-        <div class="dchat-meta">
-          <span class="dchat-model" id="deskChatModel"></span>
-          <span class="dchat-ctx" id="deskChatCtx" title="当前对话上下文"></span>
-          <span class="dchat-imgsrc" id="deskChatImg" title="当前生图来源（点一下去设置）"></span>
-        </div>
-        <div class="dchat-log" id="deskChatLog"></div>
-        <!-- 把这一轮探索压成流程的入口。只在「跑通了且有可固化步骤」时出现，
-             不做弹窗强推 —— 它是筛选器，不是广告位。 -->
-        <div class="dchat-saveflow hidden" id="deskChatSaveFlow">
-          <span class="dcsf-text" id="deskChatSaveFlowText"></span>
-          <button type="button" class="btn sm" id="btnChatSaveFlow">存成流程</button>
-          <button type="button" class="dcsf-x" id="btnChatSaveFlowX" aria-label="这次不存" title="这次不存">×</button>
-        </div>
-        <div class="dchat-foot" id="deskChatFoot"></div>
-      </div>
-    </div>
+    <!-- AI 对话的窗口块已迁到 apps/chat/app.js。
+         注意：底部输入条 #deskAiWrap 不在那里面 —— 它是独立元素，按窗口归属搬运。 -->
     <!-- 播放器 App：播「已经攒到本地」的东西。
          文件不进浏览器存储（一集就几个 G），而是落在 userData/media，
          由主进程的 openagi-media:// 协议流式读——这样进度条能拖，内存也不涨。 -->
-    <div class="os-win player hidden" id="playerWin">
-      <div class="os-win-bar">
-        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title">播放器</div>
-        <button class="os-win-close" id="btnPlayerWinClose" aria-label="关闭窗口" title="关闭">×</button>
-      </div>
-      <div class="os-win-body">
-        <div class="pl-wrap">
-          <div class="pl-stage">
-            <div class="pl-screen" id="plScreen">
-              <video id="plVideo" playsinline preload="metadata"></video>
-              <div class="pl-empty" id="plEmpty">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2.6"/><path d="m10 9.4 5 2.6-5 2.6V9.4Z"/></svg>
-                <div class="pl-empty-t">还没有可播的东西</div>
-                <div class="pl-empty-s">用右边「导入文件夹」加一整部，或「＋ 直链」下一集进来</div>
-              </div>
-            </div>
-            <div class="pl-ctrl" id="plCtrl">
-              <button class="pl-btn" id="plPrev" title="上一集（PgUp）" aria-label="上一集">
-                <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M7 5h2.2v14H7zM19 5.6v12.8L9.6 12z"/></svg>
-              </button>
-              <button class="pl-btn pl-btn-main" id="plPlay" title="播放 / 暂停（空格）" aria-label="播放">
-                <svg class="pl-ico-play" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M8 5.4 19 12 8 18.6z"/></svg>
-                <svg class="pl-ico-pause hidden" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M7.5 5h3.2v14H7.5zM13.3 5h3.2v14h-3.2z"/></svg>
-              </button>
-              <button class="pl-btn" id="plNext" title="下一集（PgDn）" aria-label="下一集">
-                <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M14.8 5H17v14h-2.2zM5 5.6 14.4 12 5 18.4z"/></svg>
-              </button>
-              <span class="pl-time" id="plTime">0:00 / 0:00</span>
-              <input type="range" class="pl-seek" id="plSeek" min="0" max="1000" value="0" step="1" aria-label="播放进度">
-              <button class="pl-btn" id="plMute" title="静音（M）" aria-label="静音">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9.5h3L11 6v12L7 14.5H4z"/><path class="pl-ico-wave" d="M14.5 9.2a4 4 0 0 1 0 5.6M17.2 6.8a7.4 7.4 0 0 1 0 10.4"/><path class="pl-ico-mute hidden" d="m15 10 4 4m0-4-4 4"/></svg>
-              </button>
-              <input type="range" class="pl-vol" id="plVol" min="0" max="100" value="100" step="1" aria-label="音量">
-              <button class="pl-btn pl-rate" id="plRate" title="播放速度">1×</button>
-              <button class="pl-btn" id="plFull" title="全屏（F）" aria-label="全屏">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
-              </button>
-            </div>
-          </div>
-          <aside class="pl-side">
-            <div class="pl-side-head">
-              <div class="pl-folders" id="plFolders" role="tablist" aria-label="分组"></div>
-              <span class="pl-count" id="plCount"></span>
-            </div>
-            <div class="pl-list" id="plList" aria-label="播放列表"></div>
-            <div class="pl-dl hidden" id="plDl">
-              <input type="url" id="plDlUrl" class="pl-in" placeholder="粘贴视频直链（http/https，自己有权下载的）" aria-label="下载地址">
-              <input type="text" id="plDlName" class="pl-in" placeholder="保存名（可留空，自动取链接末尾）" aria-label="保存名">
-              <div class="pl-dl-row">
-                <button class="btn sm primary" id="plDlGo">下载到本地</button>
-                <button class="btn sm" id="plDlCancel">关闭</button>
-                <span class="pl-dl-hint">只下你有权保存的内容</span>
-              </div>
-            </div>
-            <div class="pl-prog hidden" id="plProg">
-              <div class="pl-prog-bar"><i id="plProgBar"></i></div>
-              <span class="pl-prog-txt" id="plProgTxt"></span>
-              <button class="pl-prog-x" id="plProgX" title="取消下载">取消</button>
-            </div>
-            <div class="pl-foot">
-              <button class="btn sm" id="plImport" title="从磁盘选文件（可多选）">导入文件</button>
-              <button class="btn sm" id="plImportDir" title="选一个文件夹，按子文件夹分组成剧集">导入文件夹</button>
-              <button class="btn sm" id="plDlOpen" title="粘贴直链下载">＋ 直链</button>
-              <button class="btn sm" id="plDir" title="在资源管理器里打开媒体库目录">目录</button>
-            </div>
-          </aside>
-        </div>
-        <!-- 浏览器里打开（没有 Electron 媒体库）时的降级入口：只能临时播内存里的文件 -->
-        <input type="file" id="plFile" class="hidden" multiple accept="video/*,audio/*">
-      </div>
-    </div>
+    <!-- 播放器的窗口块已迁到 apps/player/app.js（含播放条、列表、直链下载那一整块）。 -->
 
     <!-- 建模：网格资产工作站（MVP-1）。窗口常驻，内容由 js/model-desk.js 铺开。 -->
-    <div class="os-win modeldesk hidden" id="modelDeskWin">
-      <div class="os-win-bar">
-        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title">建模</div>
-        <button class="os-win-close" id="btnModelDeskClose" aria-label="关闭窗口" title="关闭">×</button>
-      </div>
-      <div class="os-win-body">
-        <div id="modelDeskHost" class="md-host"></div>
-      </div>
-    </div>
-
-    <!-- 图像工坊：对标 Photoshop 的多图层图像工作站。
-         窗口常驻，界面与像素逻辑由 js/ps-app.js / ps-core.js 等铺开。 -->
-    <div class="os-win imglab hidden" id="imgLabWin">
-      <div class="os-win-bar">
-        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title">图像工坊</div>
-        <button class="os-win-close" id="btnImgLabClose" aria-label="关闭窗口" title="关闭">×</button>
-      </div>
-      <div class="os-win-body">
-        <div class="ps-host" id="psHost"></div>
-      </div>
-    </div>
+    <!-- 建模 / 图像工坊 / 编码 的窗口块已迁到 apps/<id>/app.js（窗口由 registerApp 生成）。 -->
 
     <!-- 名片：「我是谁」这件事在桌面上有个正经去处。
          内容全部由 js/dev-card.js 的 CD 常量渲染，改文案只改那一处。 -->
-    <div class="os-win card hidden" id="cardWin">
-      <div class="os-win-bar">
-        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title">名片</div>
-        <button class="os-win-close" id="btnCardWinClose" aria-label="关闭窗口" title="关闭">×</button>
-      </div>
-      <div class="os-win-body">
-        <div class="cd-wrap">
-          <div class="cd-main">
-            <div class="cd-hero">
-              <div class="cd-ava">
-                <img id="cdAva" src="img/avatar.jpg" alt="虚幻茅场 的头像" draggable="false">
-                <span class="cd-ava-fb" aria-hidden="true">虚</span>
-              </div>
-              <div class="cd-id">
-                <div class="cd-name-row">
-                  <h1 class="cd-name" id="cdName">虚幻茅场</h1>
-                  <span class="cd-lv" id="cdLv">LV5</span>
-                </div>
-                <div class="cd-tag" id="cdTag"></div>
-                <div class="cd-uid">
-                  <span class="cd-uid-v" id="cdUid">UID 641892012</span>
-                  <button type="button" class="cd-copy" id="cdCopyUid" data-copy="641892012" title="复制 UID">复制</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="cd-stats" id="cdStats"></div>
-
-            <section class="cd-sec">
-              <h2 class="cd-h2">关于我</h2>
-              <div class="cd-about" id="cdAbout"></div>
-            </section>
-
-            <section class="cd-sec">
-              <h2 class="cd-h2">在做的四条线</h2>
-              <div class="cd-tracks" id="cdTracks"></div>
-            </section>
-
-            <section class="cd-sec">
-              <h2 class="cd-h2">合集与代表作<span class="cd-h2-note">右侧为该集播放量</span></h2>
-              <div class="cd-works" id="cdWorks"></div>
-            </section>
-          </div>
-
-          <aside class="cd-side">
-            <div class="cd-pay">
-              <div class="cd-pay-h" id="cdPayTitle">请我喝杯咖啡</div>
-              <div class="cd-qr" id="cdQrBox">
-                <img id="cdQr" src="img/pay-qr.png" alt="微信赞赏码" draggable="false">
-                <div class="cd-qr-fb" id="cdQrFb">把赞赏码放到 img/pay-qr.png</div>
-              </div>
-              <div class="cd-pay-s" id="cdPayS">微信扫码赞赏 · 感谢每一份充电</div>
-            </div>
-
-            <!-- 技术交流群：和赞赏码是同一类动作（扫码 / 找号码），所以并排放在一起 -->
-            <div class="cd-group">
-              <div class="cd-group-h" id="cdGroupName">虚幻引擎蓝图笔记3群</div>
-              <div class="cd-qr cd-qr-sm">
-                <img id="cdGroupQr" src="img/qq-group.png" alt="技术交流群 QQ 二维码" draggable="false">
-                <div class="cd-qr-fb" id="cdGroupFb">把 QQ 群二维码放到 img/qq-group.png</div>
-              </div>
-              <div class="cd-group-foot">
-                <span class="cd-group-id" id="cdGroupId">群号 1108459704</span>
-                <button type="button" class="cd-copy" id="cdCopyGroup" data-copy="1108459704" title="复制群号">复制</button>
-              </div>
-            </div>
-
-            <div class="cd-links" id="cdLinks"></div>
-
-            <div class="cd-foot" id="cdFoot"></div>
-          </aside>
-        </div>
-      </div>
-    </div>
+    <!-- 名片的窗口块已迁到 apps/card/app.js（含赞赏码 / 群 / 链接那一整块）。 -->
 
     <!-- 多视图 App。⚠ 里面的 id 跟 multiview.html（独立工具页）逐一对齐：
          两边共用 css/multiview.css 和 js/multiview.js，加控件必须两处一起加，
          tools/multiview.js 有一条断言在比对两边的 mv* id 集合。 -->
-    <div class="os-win mv hidden" id="mvWin">
-      <div class="os-win-bar">
-        <div class="os-win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="os-win-title">多视图</div>
-        <button class="os-win-close" id="btnMvWinClose" aria-label="关闭窗口" title="关闭">×</button>
-      </div>
-      <div class="os-win-body">
-        <div class="mv-wrap">
-
-          <aside class="mv-side">
-            <div class="mv-side-head">
-              <span class="mv-side-t">模型</span>
-              <button type="button" class="mv-mini" id="mvOpenFile" title="打开本机的 glb / gltf / obj">＋ 文件</button>
-            </div>
-            <div class="mv-list" id="mvList"></div>
-            <div class="mv-side-foot">
-              <button type="button" class="mv-mini wide" id="mvOpenLib">打开模型库</button>
-            </div>
-            <input type="file" id="mvFile" class="hidden" accept=".glb,.gltf,.obj">
-          </aside>
-
-          <section class="mv-main">
-            <div class="mv-ctl">
-              <div class="mv-row">
-                <span class="mv-lab">视图</span>
-                <div class="mv-chips" id="mvPresets"></div>
-                <div class="mv-chips" id="mvViews"></div>
-              </div>
-              <div class="mv-row">
-                <span class="mv-lab">模式</span>
-                <div class="mv-seg" id="mvModes"></div>
-                <span class="mv-lab">相机</span>
-                <div class="mv-seg" id="mvCams"></div>
-                <span class="mv-lab">画布</span>
-                <div class="mv-seg" id="mvSizes"></div>
-              </div>
-            </div>
-
-            <details class="mv-more" id="mvMore">
-              <summary title="画布级参数：列数、间距、留白、线宽——它们不属于任何一层">画布</summary>
-              <div class="mv-more-body">
-                <div class="mv-field"><span>列数</span><div class="mv-seg" id="mvCols"></div></div>
-                <div class="mv-field"><span>铺满</span><div class="mv-seg" id="mvCompacts"></div></div>
-                <div class="mv-field"><span>间距</span><input type="range" id="mvGap" min="0" max="48" step="2"><b id="mvGapV">0</b></div>
-                <div class="mv-field"><span>留白</span><input type="range" id="mvMargin" min="100" max="160" step="2"><b id="mvMarginV">108</b></div>
-                <div class="mv-field"><span>线宽</span><input type="range" id="mvLineW" min="4" max="60" step="2"><b id="mvLineWV">14</b></div>
-              </div>
-            </details>
-
-            <div class="mv-stage-wrap" id="mvStageHost">
-              <div class="mv-stage" id="mvStage">
-                <div class="mv-empty" id="mvEmpty">
-                  <div class="mv-empty-t">左边选一个模型，或拖一个 glb / obj 进来</div>
-                  <div class="mv-empty-s">OBJ 的四边形面按原始拓扑画线框，不会出现三角化的对角线。</div>
-                </div>
-                <img id="mvOut" alt="多视图结果" draggable="false" class="hidden">
-                <div class="mv-pick hidden" id="mvPick"></div>
-              </div>
-            </div>
-
-            <div class="mv-bar">
-              <span class="mv-info" id="mvInfo"></span>
-              <button type="button" class="btn sm" id="mvPreview">3D 预览</button>
-              <button type="button" class="btn sm" id="mvSplit" disabled>AI 拆件</button>
-              <button type="button" class="btn sm" id="mvSaveLib">存入图库</button>
-              <button type="button" class="btn sm" id="mvDlCell" disabled>下载这格</button>
-              <button type="button" class="btn sm" id="mvDlAll" disabled>下载整图</button>
-              <button type="button" class="btn sm primary" id="mvRender">重新渲染</button>
-            </div>
-          </section>
-
-          <!-- 右：导出面板（竖排）。画布固定正方形 2K/4K，深度 / 遮罩供 AI 回流 -->
-      <aside class="mv-right">
-        <div class="mv-layers">
-          <div class="mv-ly-head">图层<span class="mv-ly-hint" title="点一行展开它自己的属性面板；拖动可以任意换序，3D 和 2D 之间也能互换">点行调属性 · 随便拖</span></div>
-          <div class="mv-ly-list" id="mvLayerList"></div>
-        </div>
-        <!-- 图层的眼睛驱动这些 input；留在这里是为了「state 只有一条写入口」 -->
-        <div class="mv-hidden-checks">
-  <input type="checkbox" id="mvWire">
-  <input type="checkbox" id="mvAngleWire">
-  <input type="checkbox" id="mvUvEdge">
-  <input type="checkbox" id="mvUvIsland">
-  <input type="checkbox" id="mvOutline">
-  <input type="checkbox" id="mvDepthEdge">
-  <input type="checkbox" id="mvDepthGray">
-  <input type="checkbox" id="mvLabels">
-  <input type="checkbox" id="mvBg">
-  <input type="checkbox" id="mvGrade">
-        </div>
-        <!-- 层参数的控件都住在这里，被选中/展开的那一层才搬进它自己的面板。
-             不另建一套 input：id 仍是 FIELDS 认的那一个，写入口只有一条。 -->
-        <div class="mv-prop-pool" id="mvPropPool">
-      <div class="mv-field"><span>背景色</span><input type="color" id="mvBgColor" value="#ffffff"></div>
-      <div class="mv-field"><span>折角</span><input type="range" id="mvWireAngle" min="0" max="90" step="1"><b id="mvWireAngleV">30°</b></div>
-      <div class="mv-field" title="角度线框的整体粗细（相对「线宽」的倍率）。只想让结构线更醒目、又不想把普通线框一起加粗时用它"><span>角度粗细</span><input type="range" id="mvCreaseWidth" min="20" max="300" step="10"><b id="mvCreaseWidthV">1.0×</b></div>
-      <div class="mv-field" title="随折角的粗细梯度：0% 所有结构线等宽；100% 折得越狠越粗（90° 硬边最粗，刚过阈值的平缓边约 1/4 宽）"><span>随角度</span><input type="range" id="mvCreaseTaper" min="0" max="100" step="5"><b id="mvCreaseTaperV">50%</b></div>
-      <div class="mv-field" title="角度线框的颜色：换个颜色才分得清「哪几条是结构线、哪几条是普通线框」"><span>角度线色</span><input type="color" id="mvCreaseColor" value="#2b2b2b"></div>
-      <div class="mv-field" title="相邻像素的深度差阈值（占整个视锥深度的百分比）：往左描得更多，往右只留最强的边。分辨率变了会自动补偿，换单格尺寸不用重调"><span>深度差</span><input type="range" id="mvDepthThresh" min="0" max="100" step="1"><b id="mvDepthThreshV">1.1%</b></div>
-      <div class="mv-field" title="深度灰的映射窗口：100% 用模型完整的前后跨度，调小只保留靠近相机的一段（远处压成黑）。模型前后差得小、灰图看不出一层一层时，把它调小"><span>深度范围</span><input type="range" id="mvDepthGrayRange" min="10" max="100" step="5"><b id="mvDepthGrayRangeV">100%</b></div>
-      <div class="mv-field" title="「无限远」的颜色：背景（没有表面）和格间距都填它。默认黑，跟「近白远黑」接得上；改成白就得到反过来的那一版（近黑远白）"><span>远景色</span><input type="color" id="mvDepthGrayBg" value="#000000"></div>
-      <div class="mv-field" title="饱和度：0 是黑白，100% 是原样，200% 是色彩更艳。后期处理层调的是最终输出图像"><span>饱和度</span><input type="range" id="mvGradeSat" min="0" max="200" step="5"><b id="mvGradeSatV">100%</b></div>
-      <div class="mv-field" title="对比度：100% 是原样，往上更硬朗、往下更灰雾"><span>对比度</span><input type="range" id="mvGradeContrast" min="0" max="200" step="5"><b id="mvGradeContrastV">100%</b></div>
-      <div class="mv-field" title="亮度：正值提亮、负值压暗，范围 ±100"><span>亮度</span><input type="range" id="mvGradeBright" min="-100" max="100" step="5"><b id="mvGradeBrightV">0</b></div>
-        </div>
-          <aside class="mv-export">
-            <div class="mv-ex-head">导出</div>
-            <div class="mv-ex-row">
-              <select class="mv-sel" id="mvExSize" title="画布尺寸（正方形）· 预览与导出一致">
-                <option value="2048">2K · 2048</option>
-                <option value="4096">4K · 4096</option>
-              </select>
-              <select class="mv-sel" id="mvExGap" title="格间距">
-                <option value="0">无间距</option>
-                <option value="16">16 px</option>
-                <option value="32">32 px</option>
-                <option value="64">64 px</option>
-              </select>
-            </div>
-            <div class="mv-ex-info" id="mvExInfo"></div>
-            <div class="mv-ex-stats" id="mvExStats"></div>
-            <button type="button" class="btn sm primary" id="mvExPreview" disabled>预览导出结果</button>
-            <button type="button" class="btn sm" id="mvExColor" disabled>导出视图 PNG</button>
-            <button type="button" class="btn sm" id="mvExDepth" disabled>导出深度图</button>
-            <button type="button" class="btn sm" id="mvExMask" disabled>导出遮罩图</button>
-          </aside>
-      </aside>
-
-          <!-- AI 拆件弹层：遮住整个 .mv-wrap。里面的控件 id 与 multiview.html 必须完全一致 -->
-          <div class="mv-split hidden" id="mvSplitPanel">
-            <div class="mv-split-card">
-              <div class="mv-split-head">
-                <span class="mv-split-title">AI 拆件</span>
-                <span class="mv-split-sub" id="mvSplitSub"></span>
-                <button type="button" class="mv-split-x" id="mvSplitClose" aria-label="关闭">×</button>
-              </div>
-              <div class="mv-split-body">
-                <div class="mv-split-row">
-                  <span class="mv-split-lab">分成</span>
-                  <input type="text" id="mvSplitParts" class="mv-split-in" placeholder="面部和脖子、头发和头饰、身体">
-                  <span class="mv-split-lab">候选岛</span>
-                  <input type="range" id="mvSplitMax" min="20" max="240" step="10" value="120">
-                  <b id="mvSplitMaxV">120</b>
-                  <button type="button" class="btn sm primary" id="mvSplitRun">开始拆件</button>
-                </div>
-                <div class="mv-split-note" id="mvSplitInfo"></div>
-                <div class="mv-split-imgs">
-                  <div class="mv-split-pane">
-                    <span class="mv-split-cap">候选 UV 岛（编号给 AI 寻址）</span>
-                    <img id="mvSplitAtlas" alt="候选 UV 岛图" class="hidden">
-                  </div>
-                  <div class="mv-split-pane">
-                    <span class="mv-split-cap">拆件结果（颜色对应部件）</span>
-                    <img id="mvSplitViews" alt="拆件结果预览" class="hidden">
-                  </div>
-                </div>
-                <div class="mv-split-list" id="mvSplitList"></div>
-                <div class="mv-split-foot">
-                  <button type="button" class="btn sm" id="mvSplitDlGlb" disabled>下载整件 GLB</button>
-                  <button type="button" class="btn sm" id="mvSplitSaveLib" disabled>存入模型库</button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
+    <!-- 多视图的窗口块已迁到 apps/multiview/（DOM 在 body.js，注册在 app.js），
+         独立页 multiview.html 也从同一份 body.js 取 —— 两处不再各抄一份。 -->
     </div>
   </div>
 </section>
@@ -1568,10 +1104,15 @@
 <script src="js/seed-operators.js"></script>
 <script src="js/seed-uv.js"></script>
 <script src="js/model-transform-gizmo.js"></script>
+<!-- 纹理来源统一读取：必须排在所有「取底图」的模块之前（uv-editor / paint / proj-bake / texmix） -->
+<script src="js/tex-source.js"></script>
+<!-- 贴图编辑层栈：底座 + 可重放的编辑层（投射 / 笔迹），排在取图与各工具模块之前 -->
+<script src="js/tex-stack.js"></script>
 <!-- 外壳拆出的小模块必须排在 model-desk 之前 -->
 <script src="js/md-uv-editor.js"></script>
 <script src="js/md-isolate.js"></script>
 <script src="js/md-paint.js"></script>
+<script src="js/md-proj-bake.js"></script>
 <script src="js/md-texmix.js"></script>
 <script src="js/md-history.js"></script>
 <script src="js/md-viewcube.js"></script>
@@ -1625,6 +1166,15 @@
 <script src="js/node-cache.js"></script>
 <script src="js/trace-to-flow.js"></script>
 <script src="js/desk-shell.js"></script>
+<!-- App 注册表 + 清单。这两行是**永久**的，加 App 不再往这里加东西。
+     app-registry.js 提供 registerApp()（自己造窗口、按需注入样式与脚本、写进三张表）；
+     apps/manifest.js 是 node tools/app-scan.js 生成的，把 apps/<id>/app.js 内联进来。
+     ⚠ **必须紧跟 desk-shell.js**，排在所有会按 id 找窗口元素的脚本之前：
+       bind.js 要给 btnStoreWinClose / btnLibWinClose 这些按钮绑事件，
+       窗口生成晚了它就是 null，直接抛 TypeError。
+     App 的 open() 里用到的 llmConn / openLibrary 那些是运行时才调，不受这个顺序影响。 -->
+<script src="js/app-registry.js"></script>
+<script src="apps/manifest.js"></script>
 <script src="js/flow-canvas.js"></script>
 <script src="js/flow-node-view.js"></script>
 <script src="js/desk-image.js"></script>
@@ -1645,17 +1195,26 @@
 <script src="js/mv-layer-panel.js"></script>
 <script src="js/mv-panels.js"></script>
 <script src="js/mv-bind.js"></script>
+<script src="js/mv-project.js"></script>
 <script src="js/multiview.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/blueprint-runtime.js"></script>
 <script src="js/svg-tools.js"></script>
 <script src="js/svg-fixtures.js"></script>
 <script src="js/tool-loop.js"></script>
+<script src="js/code-trace.js"></script>
+<script src="js/code-diff.js"></script>
+<script src="js/code-agent.js"></script>
 <script src="js/img2svg-app.js"></script>
 <script src="js/flow-gen-panel.js"></script>
 <script src="js/flow-evolve-panel.js"></script>
 <script src="js/memory-panel.js"></script>
+<script src="js/code-app.js"></script>
 <script src="js/bind.js"></script>
+
+<!-- （App 注册表与清单的 <script> 已上移到 desk-shell.js 之后，
+     因为 bind.js 会按 id 找窗口里的关闭按钮 —— 窗口必须在所有绑定脚本之前就造好。） -->
+
 
 
 </body>

@@ -75,6 +75,7 @@
       ] },
       { k: '图像', items: [
         { t: '载入图片', c: 'imgLoad' }, { t: '清除图片', c: 'imgClear' }, { sep: 1 },
+        { t: '投射烘焙（从原画重采样）…', c: 'projbake' }, { sep: 1 },
         { t: '棋盘格底图', c: 'checkerToggle' }
       ] },
       { k: '纹理', items: [
@@ -590,25 +591,48 @@
     function uvSyncModelMap() {
       var mats = (st.doc && st.doc.materials) || {};
       var list = mats.slotMaps || [];
-      var url = '', idx = -1;
-      for (var i = 0; i < list.length; i++) {
-        if (list[i]) { url = list[i]; idx = i; break; }
+      /* 以前只认 slotMaps 里第一个非空 URL：贴图只挂在材质上（刚导入、或
+       * 纹理混合合成出来的那张）时，UV 编辑器底下一片空白 —— 对着空网格调 UV
+       * 根本看不出对应关系。现在统一问 TexSource，答案与绘画 / 混合 / 投射烘焙一致。 */
+      var url = '', idx = -1, got = null, from = '';
+      if (global.TexSource) {
+        var n = Math.max(list.length, (mats.slotNames || []).length, 1);
+        for (var i = 0; i < n; i++) {
+          var r = global.TexSource.resolveBase(i);
+          if (r.img) { got = r.img; url = r.url || ('live:' + i); idx = i; from = r.from; break; }
+          if (r.url && !url) { url = r.url; idx = i; }
+        }
+      } else {
+        for (var j = 0; j < list.length; j++) {
+          if (list[j]) { url = list[j]; idx = j; break; }
+        }
       }
-      if (!url) {
+      if (!url && !got) {
         st.uv.mapImg = null; st.uv.mapName = ''; st.uv.mapUrl = '';
         uvSyncTexButton();
         return;
       }
-      if (url === st.uv.mapUrl) { uvSyncTexButton(); return; }
-      st.uv.mapUrl = url;
+      /* key 带来源：同一个 URL 但来源从 live 变 slot 时也得重铺 */
+      var key = (from || '') + '|' + url;
+      if (key === st.uv.mapUrl) { uvSyncTexButton(); return; }
+      st.uv.mapUrl = key;
+      st.uv.mapName = (mats.slotNames && mats.slotNames[idx]) || '模型贴图';
+      /* 已经有像素（sharedTexture 命中 / 材质上挂着的那张）就直接用，不再发请求 */
+      if (got && (got.width || got.naturalWidth)) {
+        st.uv.mapImg = got;
+        uvSyncTexButton();
+        uvDraw();
+        return;
+      }
       var img = new Image();
       img.onload = function () {
+        if (st.uv.mapUrl !== key) return;
         st.uv.mapImg = img;
-        st.uv.mapName = (mats.slotNames && mats.slotNames[idx]) || '模型贴图';
         uvSyncTexButton();
         uvDraw();
       };
       img.onerror = function () {
+        if (st.uv.mapUrl !== key) return;
         st.uv.mapImg = null; st.uv.mapName = '';
         uvSyncTexButton();
       };
@@ -1511,6 +1535,8 @@
       var S = global.SeedUV;
       switch (cmd) {
         case 'close': closeUVEditor(); break;
+        /* 从这里跳到投射烘焙：调 UV 的时候多数就是想修某块的贴图，就近给个入口 */
+        case 'projbake': if (ctx.openProjBake) ctx.openProjBake(); break;
         case 'undo': undo(); break;
         case 'redo': redo(); break;
         case 'modePoint': st.uv.mode = 'point'; st.uv.hover = null; uvUpdateChrome(); uvDraw(); setStatus('UV 选择模式：点'); break;

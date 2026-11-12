@@ -2820,42 +2820,58 @@ Connections:  {
     send('pointerup', x + 40, y + 25);
     const end = API.getState();
     const after = (API.getDocument().materials.slotMaps || [])[0] || '';
+    /* 切片三之后：一笔 = 一个 stroke 层，slotMaps 一个字都不该动 */
+    const stack = window.TexStack ? window.TexStack.ops(API.getDocument(), end.paintSlot) : [];
+    let inkPx = 0;
+    if (stack.length) {
+      const ic = stack[stack.length - 1].canvas;
+      const d2 = ic.getContext('2d').getImageData(0, 0, ic.width, ic.height).data;
+      for (let i = 3; i < d2.length; i += 4) if (d2[i] > 8) inkPx++;
+    }
     return {
       face: bestFace, dot: Number(bestDot.toFixed(2)),
       maskOn: mid.paintMask, clipped: mid.paintClipped, clipPolys: mid.paintClipPolys,
       restored: !end.paintClipped,
-      beforeLen: before.length, afterLen: after.length, changed: before !== after, slot: end.paintSlot
+      beforeLen: before.length, afterLen: after.length, before, mapSame: before === after,
+      ops: stack.length, opType: stack.length ? stack[stack.length - 1].type : '', inkPx,
+      slot: end.paintSlot
     };
   });
-  check(paintStroke.changed && paintStroke.afterLen > 2000,
-    '在模型上画一笔，贴图编码回文档 slotMaps', JSON.stringify(paintStroke));
+  check(paintStroke.ops === 1 && paintStroke.opType === 'stroke' && paintStroke.inkPx > 0 && paintStroke.mapSame,
+    '在模型上画一笔 = 推一个 stroke 层（slotMaps 不动）',
+    JSON.stringify({ ops: paintStroke.ops, type: paintStroke.opType, inkPx: paintStroke.inkPx, mapSame: paintStroke.mapSame }));
   check(paintStroke.maskOn === true && paintStroke.clipped === true &&
     paintStroke.clipPolys >= 1 && paintStroke.restored === true,
     'UV 岛遮罩：落笔试加了岛剪裁，抬笔后释放',
     JSON.stringify({ mask: paintStroke.maskOn, clipped: paintStroke.clipped, polys: paintStroke.clipPolys, restored: paintStroke.restored }));
 
-  /* 画笔撤销：一笔 = 一条历史，撤销后 slotMaps 回到落笔前，重做后回到落笔后 */
+  /* 画笔撤销：一笔 = 一条历史；撤销少这一层，重做回来，贴图始终在 */
   const paintUndo = await page.evaluate(() => {
     const API = window.modelDesk;
-    const afterUrl = (API.getDocument().materials.slotMaps || [])[0] || '';
+    const doc = API.getDocument();
+    const slot = API.getState().paintSlot;
+    const map0 = (doc.materials.slotMaps || [])[0] || '';
+    const n0 = window.TexStack ? window.TexStack.ops(doc, slot).length : -1;
     const undoOk = API.undo();
-    const midUrl = (API.getDocument().materials.slotMaps || [])[0] || '';
+    const nMid = window.TexStack ? window.TexStack.ops(doc, slot).length : -1;
+    const mapMid = (doc.materials.slotMaps || [])[0] || '';
     const redoOk = API.redo();
-    const backUrl = (API.getDocument().materials.slotMaps || [])[0] || '';
+    const nBack = window.TexStack ? window.TexStack.ops(doc, slot).length : -1;
     const st = API.getState(), d = API.__debug();
     return {
-      undoOk, redoOk,
-      midLen: midUrl.length, backLen: backUrl.length, afterLen: afterUrl.length,
-      sameAfter: backUrl === afterUrl,
+      undoOk, redoOk, n0, nMid, nBack,
+      /* 底座没画过就是空串：判据是「没被写」，不是「非空」 */
+      mapSame: map0 === mapMid && mapMid === ((doc.materials.slotMaps || [])[0] || ''),
       undoLeft: st.undo, redoLeft: st.redo,
       /* 撤销重建了视口：绘画页签下手柄不能趁机复活 */
       gizmoHidden: !(d.gizmo && d.gizmo.target)
     };
   });
-  check(paintUndo.undoOk === true && paintUndo.midLen === paintStroke.beforeLen &&
-    paintUndo.redoOk === true && paintUndo.sameAfter === true && paintUndo.gizmoHidden === true,
-    '画笔笔画可撤销 / 重做（贴图前后两张切换，手柄保持收起）',
-    JSON.stringify({ undoOk: paintUndo.undoOk, midLen: paintUndo.midLen, beforeLen: paintStroke.beforeLen, redoOk: paintUndo.redoOk, sameAfter: paintUndo.sameAfter, gizmoHidden: paintUndo.gizmoHidden }));
+  check(paintUndo.undoOk === true && paintUndo.n0 === 1 && paintUndo.nMid === 0 &&
+    paintUndo.redoOk === true && paintUndo.nBack === 1 && paintUndo.mapSame === true &&
+    paintUndo.gizmoHidden === true,
+    '画笔笔画可撤销 / 重做（栈里少一层再回来，贴图始终在）',
+    JSON.stringify({ undoOk: paintUndo.undoOk, ops: paintUndo.n0 + '→' + paintUndo.nMid + '→' + paintUndo.nBack, mapSame: paintUndo.mapSame, gizmoHidden: paintUndo.gizmoHidden }));
 
   /* 单独显示（隔离所选）：只留当前对象，再点一次恢复；文档里的 node.visible 不受影响 */
   const iso = await page.evaluate(() => {

@@ -16,23 +16,33 @@ const check = (ok, name, extra) => {
   if (!ok) fails++;
 };
 
-/* 两份壳里所有 mv* 的 id 必须完全一致 */
+/* 收集某份源码里所有 mv* 的 id */
 function idsOf(html) {
   return [...html.matchAll(/\bid="(mv[A-Za-z0-9_]*)"/g)].map(m => m[1]).sort();
 }
 
 (async () => {
   const root = path.join(__dirname, '..');
+  const bodyJs = fs.readFileSync(path.join(root, 'apps/multiview/body.js'), 'utf8');
   const appHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const saHtml = fs.readFileSync(path.join(root, 'multiview.html'), 'utf8');
 
-  console.log('\n=== 1. 两份壳的 id 对齐 ===');
-  const a = idsOf(appHtml), s = idsOf(saHtml);
-  const onlyA = a.filter(x => s.indexOf(x) < 0);
-  const onlyS = s.filter(x => a.indexOf(x) < 0);
-  check(onlyA.length === 0, 'index.html 独有的 id', onlyA.length ? onlyA.join(',') : '无');
-  check(onlyS.length === 0, 'multiview.html 独有的 id', onlyS.length ? onlyS.join(',') : '无');
-  check(a.length >= 28, 'id 总数', String(a.length));
+  /* 这里原来是「index.html 与 multiview.html 两份壳的 id 必须逐一对齐」。
+     现在两份壳都不再各自持有 DOM —— 桌面侧由 apps/multiview/app.js 从 body.js 取，
+     独立页由 multiview.html 里的一小段脚本 insertAdjacentHTML 同一份 body.js。
+     所以断言改成正向的：**DOM 只有一份**，谁再抄回去就红。 */
+  console.log('\n=== 1. 窗口 DOM 只有一份（apps/multiview/body.js） ===');
+  const shared = idsOf(bodyJs);
+  const saIds = idsOf(saHtml);
+  const inIndex = idsOf(appHtml);
+  /* 独立页自己的壳只允许有 #mvWin 这一个 mv id */
+  const shellOwn = saIds.filter(x => shared.indexOf(x) < 0);
+  check(inIndex.length === 0, 'index.html 里没有任何 mv* id（窗口块已迁走）', inIndex.length ? inIndex.join(',') : '无');
+  check(shellOwn.length === 1 && shellOwn[0] === 'mvWin', '独立页自己只有 #mvWin，其余全来自共享 body', shellOwn.join(',') || '无');
+  check(shared.length >= 28, '共享 body 的 id 数', String(shared.length));
+  /* 独立页要真的把共享 body 插进去，否则 #mvWin 只是个空壳 */
+  check(/apps\/multiview\/body\.js/.test(saHtml), '独立页加载了共享 body.js');
+  check(/insertAdjacentHTML\([^)]*MV_BODY/.test(saHtml), '独立页把 MV_BODY 插进了 #mvWin');
 
   const browser = await chromium.launch({ channel: 'msedge' });
 

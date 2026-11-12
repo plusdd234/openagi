@@ -227,6 +227,28 @@
     dissolve: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M4 7.2 12 3.6 20 7.2v9.6L12 20.4 4 16.8z"/><path d="M4 7.2 12 11l8-3.8M12 11v9.4" opacity=".4"/><path d="M8.8 11h6.4" stroke="#d98b3f" stroke-width="1.9"/></svg>'
   };
 
+  /* 工具架图标：原来这里混着两种东西 —— 文字字形（▣ ◉ ▤ ▭ ◎ ▲ ✦ ◍ ◑ ✑ ◫ ❖ ✷ ◈）
+   * 和真 SVG。字形在不同字体里大小/粗细/基线都不一样，和 17px 的 SVG 排在一行时，
+   * 一眼就能看出"这一排没对齐"。这里把整排换成同一套线性 SVG（同 24 视框、同 1.25 描边），
+   * 顺带把"以后接入"的占位也画成图标 —— 占位不等于随便放个符号。 */
+  var SHELF_ICONS = {
+    box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"><path d="M12 2.9 20.6 7.4v9.2L12 21.1 3.4 16.6V7.4z"/><path d="M3.4 7.4 12 11.9l8.6-4.5M12 11.9v9.2" opacity=".5"/></svg>',
+    sphere: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><circle cx="12" cy="12" r="8.7"/><ellipse cx="12" cy="12" rx="3.6" ry="8.7" opacity=".55"/><path d="M3.6 9.2h16.8M3.6 14.8h16.8" opacity=".55"/></svg>',
+    cylinder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><ellipse cx="12" cy="6.2" rx="7" ry="2.9"/><path d="M5 6.2v11.6c0 1.6 3.1 2.9 7 2.9s7-1.3 7-2.9V6.2"/><path d="M5 12c0 1.6 3.1 2.9 7 2.9s7-1.3 7-2.9" opacity=".4"/></svg>',
+    plane: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M2.8 15.4 9.4 5.2h11.8l-6.6 10.2z"/><path d="M6.1 10.3h11.8M9.4 5.2 6.1 15.4M15.2 5.2l-3.3 10.2" opacity=".4"/></svg>',
+    torus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><ellipse cx="12" cy="12" rx="9" ry="6.4"/><ellipse cx="12" cy="12" rx="3.7" ry="2.2" opacity=".6"/><path d="M3.6 9.6c1.9 1.5 5 2.4 8.4 2.4s6.5-.9 8.4-2.4" opacity=".35"/></svg>',
+    cone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M12 3.2 20 17.6c0 1.6-3.6 2.9-8 2.9s-8-1.3-8-2.9z"/><ellipse cx="12" cy="17.6" rx="8" ry="2.9"/><path d="M8 10.4h8" opacity=".35"/></svg>',
+    retopo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M3.4 9.6 8 4.4h12.6l-4.6 5.2z" stroke-dasharray="2.4 2"/><path d="M3.4 9.6v9.8h12.6"/><path d="m16.6 17.4 4.6-5.2" stroke-dasharray="2.4 2" opacity=".6"/><circle cx="6.4" cy="14.4" r="1.3"/><circle cx="12.2" cy="17.6" r="1.3"/></svg>',
+    texture: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="3.2" y="4.4" width="17.6" height="15.2" rx="1.6"/><path d="M3.2 12.6h6.2v7H3.2zM9.4 4.4h6.2v8.2H9.4zM15.6 8.6h5.2v4.6h-5.2z" opacity=".45"/></svg>',
+    uv: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="3" y="3.2" width="18" height="17.6" rx="1.2" stroke-dasharray="2.8 2.2"/><path d="M7 15.6 11.4 6.8h2.2l4.4 8.8" stroke-width="1.5"/><path d="M8.6 12.6h6.8" stroke-width="1.5"/></svg>',
+    projbake: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M3.4 5.2h10.2v10.2H3.4z" opacity=".75"/><path d="M10.4 18.6h10.2V8.4" opacity=".75"/><path d="M13.4 15.4 18.6 10" stroke-dasharray="2.2 1.8"/><path d="m18.6 13.4-.2-3.6-3.6-.2" stroke-width="1.4"/></svg>',
+    curve: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M3.6 18.4C6 8 10 18 20.4 6.2"/><circle cx="3.6" cy="18.4" r="1.7"/><circle cx="20.4" cy="6.2" r="1.7"/><path d="M8 9.6 12 6.8M15 12.6l3.6-2.2" opacity=".45" stroke-dasharray="1.6 1.4"/></svg>',
+    surface: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M3.4 8c6-3.2 11.2-3.2 17.2 0"/><path d="M3.4 16.4c6-3.2 11.2-3.2 17.2 0"/><path d="M3.4 8v8.4M20.6 8v8.4M8.5 6.7v9.4M15.5 6.7v9.4" opacity=".4"/></svg>',
+    anim: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M3.4 16.4h4.2l4.4-8.8h3.6l4.9 8.8" stroke-dasharray="2.2 1.8"/><path d="M12 19.4v-4.2M9.9 17.3 12 19.4l2.1-2.1" opacity=".55"/><circle cx="7.6" cy="16.4" r="1.5"/><circle cx="16.4" cy="16.4" r="1.5" opacity=".55"/></svg>',
+    render: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><circle cx="12" cy="12" r="4"/><path d="M12 2.6v3.2M12 18.2v3.2M2.6 12h3.2M18.2 12h3.2M5.4 5.4l2.3 2.3M16.3 16.3l2.3 2.3M18.6 5.4l-2.3 2.3M7.7 16.3l-2.3 2.3" opacity=".65"/></svg>',
+    dyn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><circle cx="12" cy="12" r="2.4"/><ellipse cx="12" cy="12" rx="9.2" ry="4.2" transform="rotate(-32 12 12)"/><ellipse cx="12" cy="12" rx="9.2" ry="4.2" transform="rotate(32 12 12)" opacity=".55"/></svg>'
+  };
+
   /* 工具箱面板：Blender 式分组 + 行状按钮（图标 + 名称），和截图一致 */
   var OP_GROUPS = [
     { id: 'mesh', title: '网格', items: [
@@ -354,13 +376,16 @@
       '      <span class="md-stab">动力学</span>',
       '    </div>',
       '    <div class="md-shelf-grid">',
-      '      <button type="button" class="md-sico" style="--c:#c9a24e" title="立方体：新建并调尺寸" data-md-prim="box">▣</button>',
-      '      <button type="button" class="md-sico" style="--c:#7fa9d8" title="球体：新建并调半径 / 段数" data-md-prim="sphere">◉</button>',
-      '      <button type="button" class="md-sico" style="--c:#9ec27b" title="圆柱：新建并调上下半径 / 段数" data-md-prim="cylinder">▤</button>',
-      '      <button type="button" class="md-sico" style="--c:#c98fb3" title="平面：新建并调宽高" data-md-prim="plane">▭</button>',
-      '      <button type="button" class="md-sico" style="--c:#e0a13a" title="圆环：新建并调主半径 / 管半径" data-md-prim="torus">◎</button>',
-      '      <button type="button" class="md-sico" style="--c:#d8a15a" title="圆锥：新建并调底半径 / 高" data-md-prim="cone">▲</button>',
-      '      <span class="md-sico" style="--c:#b8b8b8" title="重新拓扑（后续接入）">✦</span>',
+      '      <button type="button" class="md-sico" style="--c:#c9a24e" title="立方体：新建并调尺寸" data-md-prim="box">' + SHELF_ICONS.box + '</button>',
+      '      <button type="button" class="md-sico" style="--c:#7fa9d8" title="球体：新建并调半径 / 段数" data-md-prim="sphere">' + SHELF_ICONS.sphere + '</button>',
+      '      <button type="button" class="md-sico" style="--c:#9ec27b" title="圆柱：新建并调上下半径 / 段数" data-md-prim="cylinder">' + SHELF_ICONS.cylinder + '</button>',
+      '      <button type="button" class="md-sico" style="--c:#c98fb3" title="平面：新建并调宽高" data-md-prim="plane">' + SHELF_ICONS.plane + '</button>',
+      '      <button type="button" class="md-sico" style="--c:#e0a13a" title="圆环：新建并调主半径 / 管半径" data-md-prim="torus">' + SHELF_ICONS.torus + '</button>',
+      '      <button type="button" class="md-sico" style="--c:#d8a15a" title="圆锥：新建并调底半径 / 高" data-md-prim="cone">' + SHELF_ICONS.cone + '</button>',
+      /* 分组分隔：二十多个图标连成一条时，用户要靠"数第几个"找工具。
+       * 三条分隔把工具架切成「基础体 / 建模编辑 / 贴图 / 占位」四段。 */
+      '      <span class="md-sico-sep" aria-hidden="true"></span>',
+      '      <span class="md-sico" style="--c:#b8b8b8" title="重新拓扑（后续接入）">' + SHELF_ICONS.retopo + '</span>',
       '      <button type="button" class="md-sico" style="--c:#8cb6a6" data-md-op="knife" title="多切割：视口拖线切割">' + OP_ICONS.knife + '</button>',
       '      <button type="button" class="md-sico" style="--c:#d8b06a" data-md-op="target-weld" title="目标焊接：最后选中的点作目标">' + OP_ICONS.targetWeld + '</button>',
       '      <button type="button" class="md-sico" style="--c:#9aa8c9" data-md-op="bridge" title="桥接：两个同边数面">' + OP_ICONS.bridge + '</button>',
@@ -371,13 +396,16 @@
       '      <button type="button" class="md-sico" style="--c:#8fb5b8" data-md-op="separate" title="分离（大纲多选后可用结合）">' + OP_ICONS.separate + '</button>',
       '      <button type="button" class="md-sico" style="--c:#8fb5b8" data-md-op="split-islands" title="拆分岛：把选中的 UV 岛拆成独立对象">' + OP_ICONS.islandSplit + '</button>',
       '      <button type="button" class="md-sico" style="--c:#c9b27c" data-md-op="smooth" title="平滑：选中顶点或整体">' + OP_ICONS.smooth + '</button>',
-      '      <span class="md-sico" style="--c:#c88a8a" title="纹理（M5 接入）">◍</span>',
-      '      <button type="button" class="md-sico" style="--c:#9fc0e0" data-md-act="uv" title="UV 编辑器：二维 UV 视图 / 选择 / 变换 / 展开排布">◒</button>',
-      '      <span class="md-sico" style="--c:#d0b080" title="曲线工具（后续接入）">✑</span>',
-      '      <span class="md-sico" style="--c:#b0b0b0" title="曲面放样（后续接入）">◫</span>',
-      '      <span class="md-sico" style="--c:#d8a15a" title="动画（M7 接入）">❖</span>',
-      '      <span class="md-sico" style="--c:#d8c45a" title="渲染设置（M8 接入）">✷</span>',
-      '      <span class="md-sico" style="--c:#8fa8b6" title="动力学（M8 接入）">◈</span>',
+      '      <span class="md-sico-sep" aria-hidden="true"></span>',
+      '      <span class="md-sico" style="--c:#c88a8a" title="纹理（M5 接入）">' + SHELF_ICONS.texture + '</span>',
+      '      <button type="button" class="md-sico" style="--c:#9fc0e0" data-md-act="uv" title="UV 编辑器：二维 UV 视图 / 选择 / 变换 / 展开排布">' + SHELF_ICONS.uv + '</button>',
+      '      <button type="button" class="md-sico" style="--c:#e0b06a" data-md-act="projbake" title="投射烘焙：把当前视角的 UV 岛拖到原画上重采样（修 AI 图糊掉的眼睛等细节）">' + SHELF_ICONS.projbake + '</button>',
+      '      <span class="md-sico-sep" aria-hidden="true"></span>',
+      '      <span class="md-sico" style="--c:#d0b080" title="曲线工具（后续接入）">' + SHELF_ICONS.curve + '</span>',
+      '      <span class="md-sico" style="--c:#b0b0b0" title="曲面放样（后续接入）">' + SHELF_ICONS.surface + '</span>',
+      '      <span class="md-sico" style="--c:#d8a15a" title="动画（M7 接入）">' + SHELF_ICONS.anim + '</span>',
+      '      <span class="md-sico" style="--c:#d8c45a" title="渲染设置（M8 接入）">' + SHELF_ICONS.render + '</span>',
+      '      <span class="md-sico" style="--c:#8fa8b6" title="动力学（M8 接入）">' + SHELF_ICONS.dyn + '</span>',
       '    </div>',
       '  </div>',
       '  <div class="md-hb" id="mdHotbox" aria-hidden="true"></div>',
@@ -448,7 +476,6 @@
       '          <b class="md-cube-turn right" data-md-turn="right" title="视图向右翻转 90°"></b>',
       '        </div>',
       '        <div class="md-hud" id="mdHud"></div>',
-      '        <div class="md-overlay" id="mdOverlay"></div>',
       '      </div>',
       '    </div>',
       '    <aside class="md-right">',
@@ -494,6 +521,12 @@
       '      </section>',
       '    </aside>',
       '  </div>',
+      /* 覆盖层（基础体 / 材质槽 / 打开列表）挂在 .md-app 上，**不是**挂在 .md-stage 里。
+       * 原来它在视口里，坐标参照系就是视口：1280 宽时视口只有 446px，
+       * 而「基础体」面板 min-width 420 + 两侧 padding 就撑破了，
+       * 表现是面板左半边被视口的 overflow:hidden 裁掉（标题只剩半句、第一个字段看不见）。
+       * 对话框本来就该盖住整个窗口，所以参照系必须是 .md-app。 */
+      '  <div class="md-overlay" id="mdOverlay"></div>',
       '  <div class="md-dock" id="mdDock">',
       '    <div class="md-dock-tabs">',
       '      <button type="button" class="md-dock-tab" data-md-dock="toggle" id="mdDockTab" title="展开 / 收起内容浏览器">内容浏览器<i>▴</i></button>',
@@ -548,7 +581,10 @@
       }
     }, true);
 
-    var closeBtn = $('btnModelDeskClose');
+    /* 窗口从 index.html 迁到 apps/modeldesk/app.js 后，关闭按钮由 registerApp 生成，
+       id 统一成 btn<窗口id>Close —— 原来是 btnModelDeskClose（少了 Win）。
+       这条绑定不能少：关窗之前要 closeOverlay() 把叠加层收掉。 */
+    var closeBtn = $('btnModelDeskWinClose');
     if (closeBtn) {
       closeBtn.addEventListener('click', function () {
         closeOverlay();
@@ -1670,6 +1706,8 @@
     /* 材质落点与纹理混合：笔迹画在基础画布上，材质上挂的是「合成结果」 */
     applySlotTexture: applySlotTexture,
     baseImageFor: function (slot) { return MIX ? MIX.baseImageFor(slot) : null; },
+    /* 底图兜底：材质上真正挂着的那张（贴图只挂在 map 上、slotMaps 是空的老资产） */
+    liveSlotImage: liveSlotImage,
     onPaintBase: function (slot) { if (MIX) MIX.schedule(slot); },
     onPaintInk: function (slot) { if (MIX) MIX.schedule(slot); },
     onPaintReset: function (slot) { if (MIX) MIX.schedule(slot); },
@@ -1701,6 +1739,7 @@
       setStatus: setStatus, updateChrome: updateChrome,
       sharedTexture: sharedTexture,
       applySlotTexture: applySlotTexture,
+      liveSlotImage: liveSlotImage,
       totalBytes: totalBytes, syncBytes: syncBytes, historyBudget: HISTORY_BUDGET,
       paintCanvasFor: function (slot) {
         var p = st.paint;
@@ -1713,6 +1752,25 @@
       /* 3D 遮罩绘制要走和画笔同一套射线：命中槽 / 面 / UV 的口径必须一致 */
       paintRayHit: function (x, y) { return PAINT.rayHit(x, y); },
       setMaskPaintMode: setMaskPaintMode
+    });
+  }
+
+  /* 纹理来源统一读取（js/tex-source.js）：把「这一槽的底图到底是哪张」收成一处。
+   * 绘画 / 混合 / 投射烘焙 / UV 编辑器四个读者都问它，不再各答各的 ——
+   * 以前的答案是四份不同的，同一个动作会因 slotMaps 空不空而走向相反的错误。 */
+  if (global.TexSource) {
+    global.TexSource.bind({
+      doc: function () { return st.doc; },
+      sharedTexture: sharedTexture,
+      liveSlotImage: liveSlotImage,
+      bakedOf: function (slot) { return MIX ? MIX.bakedImageFor(slot) : null; },
+      /* 合成图不能当底座（不透明、每帧都可能变），见 tex-source.js 第 4 步。
+       * ⚠ 返回的是 **image**，不是 Texture —— liveSlotImage 给的也是 image，
+       * 拿 Texture 和 image 比永远不相等，排除逻辑会静默失效。 */
+      composedOf: function (slot) {
+        var t = MIX && MIX.texFor(slot);
+        return (t && t.image) || null;
+      }
     });
   }
 
@@ -1736,6 +1794,31 @@
       textureConfigKey: m.textureConfigKey || ''
     };
   }
+  /* 编辑层栈补丁（投射 / 固化）：ops 数组整体替换，可选同时换一张 slotMaps。
+   * 与 mats 补丁分开的原因：mats 快照里带三份数组，用它来撤「投射」会顺手
+   * 覆盖槽名 / 槽色（applyMatsPatch 缺字段就清空），代价太大。 */
+  function applyTexPatch(patch, side) {
+    if (!st.doc || !patch) return;
+    if (global.TexStack && patch.slot != null) {
+      global.TexStack.setOps(st.doc, patch.slot, patch[side] || []);
+      var mapSide = patch[side + 'Map'];
+      if (mapSide != null) {
+        var m = st.doc.materials || (st.doc.materials = {});
+        var arr = m.slotMaps || (m.slotMaps = []);
+        while (arr.length <= patch.slot) arr.push('');
+        arr[patch.slot] = mapSide;
+      }
+    }
+    /* 绘画工作区必须跟着作废：那张画布是「底座 ⊕ 层」的快照，
+     * 栈变了它就不再成立。不作废的话撤销完笔迹还留在画布上，
+     * 下一次落笔又把它当底座提交一遍（症状：撤销后笔迹更浓）。 */
+    st.paint.tex = null; st.paint.canvas = null; st.paint.ctx = null;
+    st.paint.ink = null; st.paint.inkCtx = null; st.paint.inkDirty = false;
+    st.paint.slot = -1; st.paint.doc = null;
+    /* 同步重合成：撤销后不该等异步解码才看到结果 */
+    if (MIX) MIX.composeNow(patch.slot);
+  }
+
   function applyMatsPatch(patch, side) {
     if (!st.doc || !patch) return;
     var v = patch[side];
@@ -2683,6 +2766,26 @@
     });
   }
 
+  /* 「视口里这一槽现在真正显示的那张图」。
+   * 为什么不能只读 doc.materials.slotMaps：材质上的 map 还有别的来源 ——
+   * 纹理混合（MIX.texFor 合成出来的 canvas）、绘画工具写回、外部导入只挂了
+   * material.map 的老资产。烘焙 / 绘画工作区的**底图**必须是这一张：
+   * 取不到就会拿槽位底色起一张空画布，写回后整片贴图被洗掉。 */
+  function liveSlotImage(slot) {
+    var out = null;
+    eachViewPivot(function (pv) {
+      if (out) return;
+      pv.traverse(function (o) {
+        if (out || !o.userData || o.userData.mdPart !== 'solid') return;
+        var arr = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+        var m = arr[slot];
+        var img = m && m.map && m.map.image;
+        if (img && (img.width || img.naturalWidth)) out = img;
+      });
+    });
+    return out;
+  }
+
   function makeMaterials() {
     var mats = st.doc.materials || {};
     var names = mats.slotNames || [];
@@ -3210,6 +3313,7 @@
     applyPaintPatch: applyPaintPatch,
     applyMixPatch: applyMixPatch,
     applyMatsPatch: applyMatsPatch,
+    applyTexPatch: applyTexPatch,
     rebuildModel: rebuildModel, paintAll: paintAll,
     updateChrome: updateChrome, setStatus: setStatus
   });
@@ -5043,6 +5147,7 @@
     ] },
     { k: '窗口', items: [
       { t: 'UV 编辑器', c: 'uv' },
+      { t: '投射烘焙…', c: 'projbake' },
       { t: '材质槽', c: 'tex' },
       { sep: 1 },
       { t: '内容浏览器', c: 'dock' },
@@ -5108,6 +5213,7 @@
       case 'grid': clickAct('grid'); break;
       case 'quad': clickAct('quad'); break;
       case 'uv': clickAct('uv'); break;
+      case 'projbake': openProjBake(); break;
       case 'tex': clickAct('tex'); break;
       case 'dup': duplicateNode(); break;
       case 'del': deleteActiveNode(); break;
@@ -5136,7 +5242,7 @@
       case 'help': setStatus('W/E/R 移动/旋转/缩放 · F 框显 · H 隐藏 · F8–F12 对象/点/边/面/UV 岛 · Ctrl+Z/Y 撤销/重做 · Alt+左/中/右键 环绕/平移/推拉 · 空格 热盒'); break;
       case 'about': setStatus('The seed 建模 · MVP-1 · 桌面式建模工作台（UV 编辑器 / 拓扑算子 / 四视图已可用）'); break;
       case 'closeWin': {
-        var cb = $('btnModelDeskClose');
+        var cb = $('btnModelDeskWinClose');
         if (cb) cb.click();
         break;
       }
@@ -5274,6 +5380,7 @@
       case 'quad': toggleQuad(); break;
       case 'isolate': toggleIsolate(); break;
       case 'uv': openUVEditor(); break;
+      case 'projbake': openProjBake(); break;
       case 'tex': openTextureEditor(); break;
       case 'prim-create': createPrimitive(); break;
       case 'close-overlay': closeOverlay(); break;
@@ -6438,31 +6545,131 @@
       root.add(makePivotFor(n, mesh, false));
     });
     if (!root.children.length && st.mesh) root.add(makePivotFor(st.node, st.mesh, false));
-    /* 视口贴图只用于显示：真源在 seedModel.materials.slotMaps 里，GLB 主材质不再塞一份。
-     * 另外贴图是异步解码的，打开后立刻保存时 image 可能还没到，GLTFExporter 会直接抛
-     * 「No valid image data found」—— 导出前摘掉，两个问题一起解决。 */
+    /* 视口的 map 是 TextureLoader 异步解出来的：打开后立刻保存时 map.image 可能还是空的，
+     * 直接交给 GLTFExporter 会抛「No valid image data found」。所以先摘掉它，
+     * 再挂上「导出专用」的、同步有像素的贴图（见 prepareExportMaps）。
+     * ⚠ 别再只摘不挂：那样导出的 GLB 里 images/textures 全空，自家 App 靠
+     * extras.seedModel.slotMaps 能还原，但 Blender / 3D 查看器 / 任何标准 glTF 阅读器
+     * 打开都是白模 —— 用户说的「导出 glb 不带贴图」就是它。 */
+    var maps = GLB_MAPS || [];
     root.traverse(function (o) {
       if (!o.userData || o.userData.mdPart !== 'solid' || !o.material) return;
-      (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m) {
-        if (m && m.map) {
-          disposeMap(m);
-          m.map = null;
-          m.needsUpdate = true;
-        }
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m, mi) {
+        if (!m) return;
+        if (m.map) { disposeMap(m); m.map = null; m.needsUpdate = true; }
+        var t = maps[mi];
+        if (t) { m.map = t; m.needsUpdate = true; }
       });
     });
     return root;
   }
 
+  /* ---------------- 导出贴图：标准 glTF baseColorTexture ----------------
+   * 按 slotMaps 的 URL 预先解成 canvas，给每个槽备一张**同步有像素**的贴图。
+   * save() 里 glbTexSwap() 已经把「底座 ⊕ 投射层」的合成图临时写进 slotMaps，
+   * 所以这里读到的就是最终视觉；不固化文档，也不依赖 TEX_CACHE 的解码时机。
+   * flipY 与 sharedTexture 一致（three.js 默认 true）：GLTFExporter 会据此在写
+   * 出 PNG 时上下翻一次，外部查看器看到的才和视口一样。
+   * 解不出来的槽留空（宁可这一槽没贴图，也不能让整次保存失败）。 */
+  var GLB_MAPS = null;
+  async function prepareExportMaps() {
+    var mats = (st.doc && st.doc.materials) || {};
+    var arr = mats.slotMaps || [];
+    var n = Math.max(arr.length, (mats.slotNames || []).length, 1);
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      var img = null;
+      if (arr[i]) {
+        try {
+          img = await new Promise(function (res) {
+            var im = new Image();
+            im.onload = function () { res(im); };
+            im.onerror = function () { res(null); };
+            im.src = arr[i];
+          });
+        } catch (e) { img = null; }
+        if (img && !img.naturalWidth) img = null;
+      }
+      /* 老资产可能只在视口材质上挂了图、slotMaps 是空的；或者 URL 已经失效。
+       * 这时以「视口现在显示的那张」为准（liveSlotImage 是视口贴图的唯一真源），
+       * 不能让这一槽导出成白模。 */
+      if (!img) {
+        try {
+          var lv = liveSlotImage(i);
+          if (lv && (lv.naturalWidth || lv.width)) img = lv;
+        } catch (e) { /* 视口还没起来就跳过 */ }
+      }
+      if (!img) { out.push(null); continue; }
+      try {
+        var cv = document.createElement('canvas');
+        cv.width = img.naturalWidth || img.width;
+        cv.height = img.naturalHeight || img.height;
+        cv.getContext('2d').drawImage(img, 0, 0);
+        var tex = new THREE.CanvasTexture(cv);
+        if ('encoding' in tex && THREE.sRGBEncoding != null) tex.encoding = THREE.sRGBEncoding;
+        tex.flipY = true;
+        tex.userData.mdExport = true;
+        out.push(tex);
+      } catch (e) { out.push(null); /* 单槽失败不影响整次导出 */ }
+    }
+    return out;
+  }
+
   async function currentGLB() {
     /* 空场景也允许导出：GLB 里只有 scene 与 seedModel，重开时按空文档还原 */
     if (!st.doc) throw new Error('还没有文档');
+    /* exportBytes() 这条测试路径也走这里，所以贴图不能只挂在 save() 上 */
+    var owns = !GLB_MAPS;
+    if (owns) GLB_MAPS = await prepareExportMaps();
     var root = buildExportRoot();
     try {
       return await exportGLB(root);
     } finally {
       disposeObject(root);
+      if (owns) {
+        for (var i = 0; i < GLB_MAPS.length; i++) {
+          try { if (GLB_MAPS[i]) GLB_MAPS[i].dispose(); } catch (e) {}
+        }
+        GLB_MAPS = null;
+      }
     }
+  }
+
+  /* 导出期间临时把「底座 ⊕ 投射层」的合成图塞进 slotMaps。
+   * GLB 只能带一张 baseColor，层结构带不过去；但**不能顺手固化文档** ——
+   * 自动保存也会走 save()，固化一次用户就没法再调落位了。
+   * 所以：换上去 → 导出 / toSeedModel → 立刻换回来。 */
+  function glbTexSwap() {
+    if (!global.TexStack || !st.doc) return function () {};
+    var mats = st.doc.materials || (st.doc.materials = {});
+    var arr = mats.slotMaps || (mats.slotMaps = []);
+    var saved = [];
+    var n = Math.max((mats.slotNames || []).length, arr.length, 1);
+    for (var i = 0; i < n; i++) {
+      if (!global.TexStack.has(st.doc, i)) continue;
+      /* 这一槽原本有贴图、却读不出像素：宁可导出旧 URL，也**不许**写一张
+       * 「槽位灰 + 几个岛」的花图 —— 那正是「导出后贴图不见了」的形态。 */
+      var r0 = global.TexSource ? global.TexSource.resolveBase(i) : null;
+      var origUrl = arr[i] || '';
+      if (origUrl && (!r0 || r0.from !== 'slot')) continue;
+      var base = r0 ? r0.img : null;
+      var cv = global.TexStack.flatten(st.doc, i, {
+        base: base,
+        slotColor: (mats.slotColors || [])[i] || '#c9ccd4',
+        cap: global.TexStack.MAX_SIDE
+      });
+      if (!cv) continue;
+      try {
+        while (arr.length <= i) arr.push('');
+        saved.push({ i: i, url: arr[i] || '' });
+        arr[i] = cv.toDataURL('image/png');
+      } catch (e) {
+        if (saved.length && saved[saved.length - 1].i === i) saved.pop();
+      }
+    }
+    return function () {
+      for (var k = 0; k < saved.length; k++) arr[saved[k].i] = saved[k].url;
+    };
   }
 
   async function save() {
@@ -6481,8 +6688,15 @@
       }
       /* 把内存里的网格写回 meshes（现在真源是 doc.meshes；这步是幂等的） */
       SeedModel.Scene.setMesh(st.doc, st.mesh);
-      var buf = await currentGLB();
-      var docJson = SeedModel.Scene.toSeedModel(st.doc);
+      /* 投射层 → 合成图（见 glbTexSwap 的说明）。try/finally 保证异常也换回来 */
+      var restoreTex = glbTexSwap();
+      var buf, docJson;
+      try {
+        buf = await currentGLB();
+        docJson = SeedModel.Scene.toSeedModel(st.doc);
+      } finally {
+        restoreTex();
+      }
       var withExtras = SeedGLB.injectSeedModel(buf, docJson);
       var dataURL = SeedGLB.toDataURL(withExtras);
       var d = deskApi();
@@ -6618,6 +6832,8 @@
     undo: undo, redo: redo, snap: snap, pushHistory: pushHistory,
     paintAll: paintAll, paintSelection: paintSelection, applyShading: applyShading,
     syncSelectionDoc: syncSelectionDoc, islandFacesOf: islandFacesOf,
+    /* UV 窗口「图像 → 投射烘焙」跳转：函数声明提升，这里拿得到后面的 openProjBake */
+    openProjBake: openProjBake,
     /* UV 编辑器直接改 st.mesh.uvs：有修改器时 st.mesh 是求值结果，必须挡在门外 */
     nodeModsActive: nodeModsActive
   });
@@ -6630,6 +6846,38 @@
   function uvSelectedFaceIds() { return UVED.selectedFaceIds(); }
   function uvRefreshSolidGeometry() { return UVED.refreshSolidGeometry(); }
 
+  /* ---------------- 投射烘焙（已拆到 js/md-proj-bake.js） ----------------
+   * 只读网格 + 写材质槽贴图：不碰 uvs，所以不用 docEdit / applyMesh，
+   * 历史走「贴图补丁」（和绘画工具箱同一条出口 applyPaintPatch）。 */
+  var PB = global.MDProjBake ? global.MDProjBake.create({
+    st: st, $: $, THREE: THREE, SeedModel: SeedModel, esc: esc,
+    setStatus: setStatus, updateChrome: updateChrome,
+    paintAll: paintAll, rebuildModel: rebuildModel,
+    sharedTexture: sharedTexture, applySlotTexture: applySlotTexture,
+    /* 烘焙/绘画工作区的底图：取「视口里真实显示的那张」，不只是 slotMaps */
+    liveSlotImage: liveSlotImage,
+    /* 投射把结果推进编辑层栈之后，视口要靠混合管线重新合成才会更新
+     * （切片二：烘焙不再写 slotMaps，材质上挂的是合成图） */
+    mixRefresh: function (slot) { if (MIX) MIX.refreshSlot(slot, true); },
+    mixComposeNow: function (slot) { if (MIX) MIX.composeNow(slot); },
+    /* 这一槽当前材质上挂的是不是「混合合成图」：是的话不能当底座写回文档 */
+    mixComposed: function (slot) {
+      var t = MIX && MIX.texFor(slot);
+      return (t && t.image) || null;
+    },
+    /* 「重建 UV」要换整份网格：必须走 applyMesh（新 mesh + 一条历史），
+     * 不能在旧 mesh 上原地改 uvs —— 那会让指纹指向被改过的数据 */
+    applyMesh: applyMesh,
+    nodeModsActive: nodeModsActive,
+    totalBytes: totalBytes, syncBytes: syncBytes, historyBudget: HISTORY_BUDGET
+  }) : null;
+  function openProjBake() {
+    if (!PB) { setStatus('投射烘焙模块没加载（js/md-proj-bake.js）', true); return false; }
+    return PB.open();
+  }
+  /* 测试钩：探针要读模块内部状态（岛数 / 绑定 / 相机图 / 缓存尺寸） */
+  function projBakeModule() { return PB; }
+
 
   global.modelDesk = {
     open: open,
@@ -6640,6 +6888,13 @@
     redo: redo,
     /* M6 的算子入口：换一份新网格 + 记一条历史（不要在旧 mesh 上原地改） */
     applyMesh: applyMesh,
+    /* 把一张贴图挂到某一槽（探针 / 外部脚本用：模拟「贴图只在材质上、
+     * 不在 slotMaps 里」的老资产）。真源仍是 slotMaps，这里只改材质。 */
+    applySlotTexture: applySlotTexture,
+    /* 探针 / 外部脚本用：按「刚打开页面」的口径重新读取 v4 的编辑层栈。
+     * 页面自己不需要它（ensureSlot 会自动灌一次），但「刷新后笔迹还在不在」
+     * 只能靠这条显式路径验证。 */
+    rehydrateOps: function (slot) { return MIX ? MIX.rehydrate(slot) : Promise.resolve(0); },
     /* M5：基础体面板（菜单 / Shelf / 测试都从这里进） */
     openPrimitive: openPrimitiveDialog,
     createPrimitive: createPrimitive,
@@ -6764,6 +7019,8 @@
     },
     /* X5：UV 编辑器入口（Shelf 图标 / 探针 / 快捷键都走这里） */
     openUVEditor: openUVEditor,
+    openProjBake: openProjBake,
+    projBake: projBakeModule,
     closeUVEditor: closeUVEditor,
     uvCommand: uvCommand,
     uvState: function () {

@@ -85,6 +85,7 @@
     if (kind === 'render') el.textContent = '渲染中…';
     else if (kind === 'loading') el.textContent = '读取模型…';
     else if (kind === 'saving') el.textContent = '存入图库…';
+    else if (kind === 'proj') el.textContent = '投射纹理中…';
     else MV.paintInfo();
   }
 

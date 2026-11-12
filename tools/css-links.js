@@ -1,7 +1,7 @@
 /* 体检：样式表拆分后的「挂载完整性」
  * 用法：node tools/css-links.js
  *
- * 为什么需要它：样式拆成 12 份之后，最容易犯的错不是写错规则，而是
+ * 为什么需要它：样式拆成编号份之后，最容易犯的错不是写错规则，而是
  *   ① 新增 css/xx.css 忘了在 index.html 里挂 → 本地看不到效果，以为规则没生效
  *   ② 挂的顺序被调换 → 08-theme 跑到 01-base 前面，整站变回深色
  *   ③ 删了文件但 link 还在 → 每次加载 404（控制台红字，容易被忽略）
@@ -17,7 +17,7 @@ const check = (ok, name, extra) => {
   if (!ok) fails++;
 };
 
-/* 参与「按序挂载」的那 12 份：编号即顺序，必须有 */
+/* 参与「按序挂载」的那些：编号即顺序，必须有 */
 const ORDERED = /^(\d\d)-.+\.css$/;
 
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
@@ -38,7 +38,7 @@ console.log('\n=== 3. 编号文件按序挂载 ===');
 const orderedLinked = linked.filter(f => ORDERED.test(f));
 const orderedDisk = onDisk.filter(f => ORDERED.test(f)).sort();
 check(orderedLinked.length === orderedDisk.length,
-  '12 份编号样式全部挂上', orderedLinked.length + ' / ' + orderedDisk.length);
+  '编号样式全部挂上（' + orderedDisk.length + ' 份）', orderedLinked.length + ' / ' + orderedDisk.length);
 check(JSON.stringify(orderedLinked) === JSON.stringify(orderedDisk),
   '挂载顺序 = 编号顺序',
   JSON.stringify(orderedLinked) === JSON.stringify(orderedDisk) ? 'ok' : '实际：' + orderedLinked.join(','));
@@ -46,9 +46,21 @@ check(JSON.stringify(orderedLinked) === JSON.stringify(orderedDisk),
 const sorted = [...orderedLinked].sort();
 check(JSON.stringify(orderedLinked) === JSON.stringify(sorted),
   '没有被打乱顺序', orderedLinked.join(' → '));
+/* 编号必须唯一：曾有 12-media 和 12-modeldesk 两份都叫 12，
+ * 按字符串排序恰好 m<o 蒙对了顺序，测试全绿 —— 但下一个人该挑哪个号谁也不清楚。
+ * 编号即层叠顺序，撞号就是「顺序未定义」，必须硬失败。 */
+const nums = orderedDisk.map(f => f.slice(0, 2));
+const dupNums = nums.filter((n, i) => nums.indexOf(n) !== i);
+check(dupNums.length === 0, '编号不重复（撞号 = 层叠顺序未定义）',
+  dupNums.length ? '重复：' + [...new Set(dupNums)].join(',') : nums.join(' '));
 
 console.log('\n=== 4. 每份都有来源注释 ===');
+/* 规则 4 只对「从 app.css 拆出来的那些」有意义。
+ * 13-imagelab.css 是后来**新增的独立 App 样式**（图像工坊，作用域 .os-win.imglab），
+ * 它从来不是 app.css 的一部分，硬给它编一句「拆分来源」反而误导人 —— 白名单放行。 */
+const NOT_SPLIT = ['13-imagelab.css', '14-code.css'];
 const noHdr = orderedDisk.filter(f => {
+  if (NOT_SPLIT.indexOf(f) >= 0) return false;
   const head = fs.readFileSync(path.join(ROOT, 'css', f), 'utf8').slice(0, 200);
   return head.indexOf('app.css 拆分') < 0;
 });

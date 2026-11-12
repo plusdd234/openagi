@@ -101,13 +101,15 @@ async function openPlayer(page){
       visible: win && !win.classList.contains('hidden'),
       inHost: !!(win && win.parentElement && win.parentElement.id === 'deskAppHost'),
       appOpen: !!document.querySelector('#deskWall.app-open'),
-      title: (document.getElementById('deskAppTitle') || {}).textContent || '',
-      sub: (document.getElementById('deskAppSub') || {}).textContent || ''
+      /* 页头（#deskAppTitle / #deskAppSub）早就删了：App 名只在顶栏标签上，
+         副标题则在 DESK_APP_META 里（由 apps/player/app.js 的 registerApp 写入） */
+      title: (document.querySelector('#appbarTabs .abt.on') || {}).textContent || '',
+      sub: ((typeof DESK_APP_META !== 'undefined' && DESK_APP_META.player) || {}).sub || ''
     };
   });
   check(mounted.visible && mounted.inHost, '窗口搬进 App 页并显示');
   check(mounted.appOpen, '桌面翻到 App 页');
-  check(mounted.title === '播放器', 'App 页标题是「播放器」', mounted.title);
+  check(/播放器/.test(mounted.title), '顶栏标签是「播放器」', mounted.title);
   check(mounted.sub.indexOf('本地') >= 0, '副标题说明这是本地播放器', mounted.sub);
 
   console.log('\n— ② 列表只收影音 —');

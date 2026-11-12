@@ -1,0 +1,55 @@
+/* 你好 App 的样式。只有这个 App 打开时才注入（app-registry 的 appInjectCss 去重）。
+ *
+ * 这里能直接写 .hello-* —— 不会有别的 App 用这些名字。
+ *
+ * ⚠ 两条必踩的：
+ * ① **不要写 `#helloWin { width / height }`**。App 页里铺满靠的是
+ *    `.dapp-host .os-win { position:absolute; inset:0; width:auto }`，
+ *    而 id 选择器的特异性高于它，你一写尺寸窗口就缩成一个小卡片浮在左上角。
+ *    尺寸交给外层，内容用 flex 自适应。
+ * ② **不要再加一层大 padding**。`.dapp-host .os-win-body` 已经有 16/18/18，
+ *    在这里再来一遍就是双重留白，内容看着比别的 App 矮一截。
+ *
+ * 也别覆盖 .os-win / .os-win-body 这类公共类 —— 那会波及所有 App。 */
+
+.hello-wrap {
+  display: flex; flex-direction: column; gap: 12px;
+  height: 100%; min-height: 0;
+  max-width: 760px; margin: 0 auto;   /* 宽屏时不至于让输入框铺成一整片空白 */
+}
+
+.hello-head { flex: 0 0 auto; }
+.hello-h { font-size: 15px; font-weight: 600; color: #1f2328; letter-spacing: .2px; }
+.hello-p { margin-top: 4px; font-size: 12px; line-height: 1.6; color: #6b7280; }
+
+.hello-in {
+  flex: 1 1 auto; min-height: 96px; resize: none;
+  padding: 10px 12px; box-sizing: border-box;
+  border: 1px solid #dfe3e9; border-radius: 10px;
+  background: #fbfcfd; color: #1f2328;
+  font: inherit; font-size: 13px; line-height: 1.7;
+  outline: none; transition: border-color .15s ease, background .15s ease;
+}
+.hello-in:focus { border-color: #f0b429; background: #fff; }
+
+.hello-out {
+  flex: 0 0 auto; min-height: 52px; max-height: 120px; overflow: auto;
+  padding: 10px 12px; box-sizing: border-box;
+  border-radius: 10px; border: 1px dashed #e2e6eb;
+  background: #fff; color: #374151;
+  font-size: 13px; line-height: 1.7; white-space: pre-wrap; word-break: break-word;
+}
+
+.hello-foot { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.hello-meta { font-size: 11.5px; color: #9aa1ab; font-variant-numeric: tabular-nums; }
+
+.hello-btn {
+  height: 26px; padding: 0 12px; border-radius: 8px;
+  border: 1px solid #dfe3e9; background: #fff; color: #4b5563;
+  font: inherit; font-size: 12px; cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+.hello-btn:hover { background: #f6f8fa; border-color: #cfd5dd; }
+
+/* 没有深色主题：08-theme 那份把 01–07 统一覆盖成了浅色，全站只有一套。
+   所以这里用死色号是安全的；将来真加暗色时，改的是 08-theme 的覆盖，不是这里。 */

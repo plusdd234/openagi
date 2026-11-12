@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>建模 App · 纹理系统调研与整合方案（混合 / 绘制 / 映射）</title>
+<style>
+  :root{
+    --bg:#131519; --panel:#1b1e24; --panel2:#20242b; --line:#2c313a;
+    --txt:#e6e8ec; --dim:#a6adba; --mute:#7d8592;
+    --amber:#d9a441; --amber-dim:#8a6a2c; --blue:#5b8fd6; --red:#d96a6a; --green:#5fae7f;
+    --violet:#9b8cd6;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--txt);
+    font:14px/1.72 "Segoe UI","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 32px 110px}
+  header{border-bottom:1px solid var(--line);padding-bottom:26px;margin-bottom:34px}
+  .kicker{font-size:11px;letter-spacing:.18em;color:var(--amber);text-transform:uppercase;margin-bottom:12px}
+  h1{margin:0 0 14px;font-size:29px;line-height:1.35;font-weight:700}
+  .sub{color:var(--dim);font-size:13.5px;max-width:860px}
+  .meta{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px 22px;font-size:11.5px;color:var(--mute)}
+  .meta b{color:var(--dim);font-weight:600}
+  h2{margin:54px 0 6px;font-size:20px;letter-spacing:.02em;border-top:1px solid var(--line);padding-top:26px}
+  h2 .no{color:var(--amber);font-size:11px;letter-spacing:.16em;display:block;margin-bottom:7px}
+  .lead{color:var(--dim);font-size:13px;margin:0 0 18px}
+  h3{font-size:15px;margin:26px 0 8px}
+  h4{font-size:13px;margin:18px 0 6px;color:var(--amber)}
+  p{margin:10px 0}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  code{font-family:"Cascadia Code",Consolas,monospace;font-size:12px;background:#232830;border:1px solid #303743;
+    border-radius:3px;padding:1px 5px;color:#cfd6e2}
+  pre{background:#171a20;border:1px solid var(--line);border-radius:6px;padding:14px 16px;overflow:auto;margin:12px 0}
+  pre code{background:none;border:none;padding:0;font-size:12px;line-height:1.65;color:#cbd3e0;display:block;white-space:pre}
+  .c{color:#6f7a8b} .k{color:#c792ea} .s{color:#9ecb8a} .f{color:#82aaff} .n{color:#e5b567}
+
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:22px 0 8px}
+  .card{background:linear-gradient(180deg,#20242b,#1a1d23);border:1px solid var(--line);border-radius:6px;padding:16px 18px 15px}
+  .card .k{font-size:11px;letter-spacing:.1em;color:var(--mute);text-transform:uppercase}
+  .card .v{font-size:24px;font-weight:700;margin:7px 0 4px;line-height:1.25}
+  .card .v small{font-size:12px;font-weight:400;color:var(--mute)}
+  .card .d{font-size:12px;color:var(--dim);line-height:1.6}
+  .v-good{color:var(--green)} .v-warn{color:var(--amber)} .v-bad{color:var(--red)}
+
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:12.5px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#1d2127;color:var(--dim);font-weight:600;font-size:11.5px;letter-spacing:.03em}
+  td code{font-size:11.5px}
+  tr:nth-child(even) td{background:#191c22}
+  .pill{display:inline-block;font-size:10.5px;padding:1px 7px;border-radius:99px;border:1px solid;line-height:1.6;white-space:nowrap}
+  .p0{color:#f08a8a;border-color:#6d3535;background:#2a1b1b}
+  .p1{color:#e0b567;border-color:#6b5426;background:#251f15}
+  .p2{color:#8fb3d9;border-color:#33506e;background:#1a2129}
+  .ok{color:#7fcf9f;border-color:#2f5641;background:#16221b}
+  .no{color:#e08a8a;border-color:#6d3535;background:#241a1a}
+
+  .box{border:1px solid var(--line);border-left:3px solid var(--amber);background:#1b1f25;border-radius:4px;padding:12px 16px;margin:16px 0;font-size:13px;color:var(--dim)}
+  .box b{color:var(--txt)}
+  .box.red{border-left-color:var(--red)}
+  .box.blue{border-left-color:var(--blue)}
+  .box.green{border-left-color:var(--green)}
+
+  figure{margin:20px 0}
+  figure img{width:100%;border:1px solid var(--line);border-radius:5px;display:block}
+  figcaption{font-size:11.5px;color:var(--mute);margin-top:8px;line-height:1.6}
+
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:14px 0}
+  .cols .box{margin:0}
+  .tag{display:inline-block;font-size:10.5px;letter-spacing:.06em;color:var(--mute);border:1px solid var(--line);
+    border-radius:3px;padding:0 6px;margin-right:6px;vertical-align:1px}
+  .tag.hard{color:#8fd6a8;border-color:#2f5641}
+  .tag.soft{color:#d9b06a;border-color:#5d4a22}
+  .tag.code{color:#8fb3d9;border-color:#33506e}
+
+  .flow{background:#171a20;border:1px solid var(--line);border-radius:6px;padding:16px 10px;margin:18px 0}
+  .flow text{font-family:"Segoe UI","Microsoft YaHei UI",sans-serif}
+
+  .step{display:grid;grid-template-columns:52px 1fr;gap:14px;margin:18px 0;padding:14px 16px;background:#1a1e24;border:1px solid var(--line);border-radius:6px}
+  .step .sn{font-size:22px;font-weight:700;color:var(--amber-dim);line-height:1.2}
+  .step h4{margin:0 0 6px;font-size:14px;color:var(--txt)}
+  .step p{margin:6px 0;font-size:12.5px;color:var(--dim)}
+  .step ul{margin:6px 0;font-size:12.5px;color:var(--dim)}
+  footer{margin-top:64px;border-top:1px solid var(--line);padding-top:18px;font-size:11.5px;color:var(--mute)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Architecture Review · 2026-11-11</div>
+  <h1>建模 App 纹理系统调研<br>与编辑器整合 / 架构兼容方案</h1>
+  <div class="sub">
+    把「纹理混合（md-texmix）」「纹理绘制（md-paint）」「纹理映射（md-uv-editor + seed-uv + 投射烘焙）」三个子系统当成一个整体看：
+    它们共用同一份 <code>doc.materials.slotMaps</code>，却对这张图有三种互不兼容的定义。本文先给实测证据，再给一套能逐步落地、且不打断现有功能的整合方案。
+  </div>
+  <div class="meta">
+    <span><b>范围</b> js/md-texmix.js 1514 行 · md-paint.js 367 · md-proj-bake.js 3084 · md-uv-editor.js 1660 · tex-blend.js 217 · m3d-slots.js（模型库同一份配置）</span>
+    <span><b>证据</b> tools/_diag-tex-arch.js（可复跑）</span>
+  </div>
+</header>
+
+<h2><span class="no">§0 结论</span>三句话</h2>
+<p class="lead">先说结论，后面每一节都是它的证据与展开。</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="k">现状</div>
+    <div class="v v-warn">4 写 / 5 读<small> 挤在一个字段上</small></div>
+    <div class="d">绘画、混合烘焙、投射烘焙都在写 <code>slotMaps</code>；材质、烘焙工作区、绘制工作区、UV 编辑器、模型库各有一套「底图」取法。</div>
+  </div>
+  <div class="card">
+    <div class="k">实测缺陷</div>
+    <div class="v v-bad">同一操作两种结果</div>
+    <div class="d">同一个「拖岛→烘焙」，<code>slotMaps</code> 为空时把混合层永久烙进基础图（<b>R=128 G=254</b>），非空时又完全不含混合效果（<b>白底 99.4%</b>）。</div>
+  </div>
+  <div class="card">
+    <div class="k">方案</div>
+    <div class="v v-good">一个栈<small> + 两个入口</small></div>
+    <div class="d">贴图升级为 <code>base + ops[]</code> 的可重放栈；全工程只保留 <code>resolveTex()</code> 读、<code>commitTex()</code> 写；「烘焙」拆成「应用一层」与「固化为底图」两个动作。</div>
+  </div>
+</div>
+
+<div class="box blue">
+  <b>一句话诊断：</b>三个子系统其实都已经写对了自己的那一半，问题在于<b>没有任何一层定义「这个槽的图到底是什么」</b>。
+  于是每个功能各自回答一次，答案还不一样：绘画说「底图 + 笔迹」，混合说「基础图 + 材质层」，投射烘焙说「视口里那张」——
+  最后一个把「视口里那张」写回了 <code>slotMaps</code>，而它不是谁的基础图，它是<b>别人合成的结果</b>。
+</div>
+
+<h2><span class="no">§1 现状盘点</span>数据从哪来、到哪去</h2>
+
+<h3>1.1 三处真源，各自为政</h3>
+<table>
+  <tr><th style="width:150px">真源</th><th style="width:220px">存在哪</th><th>里面到底是什么</th><th style="width:120px">谁写</th></tr>
+  <tr>
+    <td><code>doc.materials</code></td>
+    <td>随 seedModel 进 GLB / IndexedDB</td>
+    <td><code>slotNames</code> / <code>slotColors</code> / <code>slotMaps</code>（贴图 dataURL）/ <code>textureConfigKey</code></td>
+    <td>绘画、投射烘焙、材质槽面板</td>
+  </tr>
+  <tr>
+    <td><code>openagi_model_tex_v1</code></td>
+    <td>localStorage，按「资产 key + 槽名」索引</td>
+    <td><code>v3 = { layers:[{id,blend,opacity,mask}], baked:{id} }</code>；只存 id/参数，图在资产库</td>
+    <td>纹理混合（建模 App 与模型库<b>共用</b>）</td>
+  </tr>
+  <tr>
+    <td>资产库（桌面桥）</td>
+    <td><code>openagiDesktop.assetPut/assetRead</code></td>
+    <td>混合层的原图、烘焙产物，只按 id 被引用</td>
+    <td>混合面板、模型库</td>
+  </tr>
+</table>
+
+<h3>1.2 三条写入路径 —— 同一个字段，三种语义</h3>
+<table>
+  <tr>
+    <th style="width:120px">写者</th><th>写什么</th><th style="width:150px">底图取法</th><th style="width:90px">分辨率</th><th style="width:150px">撤销格式</th>
+  </tr>
+  <tr>
+    <td><b>绘制</b><br><code>md-paint.js:199</code></td>
+    <td><code>slotMaps[slot] = 工作区 canvas</code>（底图 + 笔迹，<b>不含</b>混合层）</td>
+    <td><code>baseImageFor()</code>：baked → slotMaps → live</td>
+    <td>1024（<code>PAINT_MAX</code>）</td>
+    <td><code>{patch:{slot,before,after}}</code></td>
+  </tr>
+  <tr>
+    <td><b>混合烘焙</b><br><code>md-texmix.js:770</code></td>
+    <td>合成图 <b>不写</b> <code>slotMaps</code>；写成 <code>cfg.baked</code>（资产 id）+ 清空 layers</td>
+    <td>compose 时：绘画工作区 → baked → slotMaps</td>
+    <td>2048（<code>MAX_SIDE</code>）</td>
+    <td><code>{mix:{key,before,after}}</code> 配置快照</td>
+  </tr>
+  <tr>
+    <td><b>投射烘焙</b><br><code>md-proj-bake.js:1905</code></td>
+    <td><code>slotMaps[slot] = 工作区 canvas</code>（底图 + 岛的重采样，底图可能<b>已含</b>混合层）</td>
+    <td><code>slotBaseImage()</code>：baseImg → sharedTexture → live</td>
+    <td>1024 起 / 2048 封顶</td>
+    <td><code>{patch:{slot,before,after}}</code></td>
+  </tr>
+</table>
+
+<div class="box red">
+  <b>冲突点就在「底图取法」这一列。</b>投射烘焙的三条来源里，第三条 <code>liveSlotImage</code> 拿到的是<b>材质上挂着的 map</b>——
+  当混合有图层时，那是<b>合成图</b>。于是它把「白底 + 50% 绿」当成基础图，又把这张图整片写回 <code>slotMaps</code>；
+  而混合的图层配置一点没动，下一次材质重建会拿这张「已经绿过」的图当底层，<b>再叠一次同样的绿</b>。
+</div>
+
+<h3>1.3 五个读者，四个定义</h3>
+<table>
+  <tr><th style="width:150px">读者</th><th style="width:210px">取法</th><th>后果</th></tr>
+  <tr><td><code>makeMaterials</code><br><span class="tag code">model-desk:2729</span></td><td><code>MIX.texFor(i)</code> → 否则 <code>sharedTexture(slotMaps[i])</code></td><td>材质重建时优先用「上一帧的合成结果」，与 slotMaps 谁新谁旧没有判据</td></tr>
+  <tr><td><code>liveSlotImage</code><br><span class="tag code">model-desk:2695</span></td><td>遍历 pivot 取 <code>material[slot].map.image</code></td><td>拿到的是<b>合成后</b>的图 —— 这条兜底修过「烘焙洗掉贴图」，但也把合成结果引入了烘焙底图</td></tr>
+  <tr><td>投射烘焙左栏<br><span class="tag code">md-proj-bake:1721</span></td><td>baseImg → sharedTexture → live</td><td>「左栏看到的底图」在混合存在时是合成图；烘焙写回后又会变一次</td></tr>
+  <tr><td>绘制工作区<br><span class="tag code">md-paint:163</span></td><td><code>baseImageFor()</code>（经 MIX）</td><td>有 <code>baked</code> 时笔迹画在 baked 上，但提交写进 <code>slotMaps</code> —— <b>两处真源</b></td></tr>
+  <tr><td>UV 编辑器<br><span class="tag code">md-uv-editor:593</span></td><td>只读 <code>slotMaps</code> 第一张非空</td><td><code>slotMaps</code> 为空（贴图只在材质 / 只有 baked）时显示「无纹理」，而视口明明有图</td></tr>
+</table>
+
+<figure>
+<div class="flow">
+<svg viewBox="0 0 1000 320" width="100%" height="320" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#5d6675"/>
+    </marker>
+    <marker id="ar-r" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#c06a6a"/>
+    </marker>
+  </defs>
+  <!-- writers -->
+  <text x="14" y="22" fill="#7d8592" font-size="11" letter-spacing="1">写者</text>
+  <rect x="10" y="34" width="180" height="46" rx="5" fill="#1d2128" stroke="#3a4250"/>
+  <text x="24" y="54" fill="#e6e8ec" font-size="12.5">绘制 · md-paint</text>
+  <text x="24" y="70" fill="#7d8592" font-size="10.5">底图 + 笔迹（1024）</text>
+
+  <rect x="10" y="94" width="180" height="46" rx="5" fill="#1d2128" stroke="#3a4250"/>
+  <text x="24" y="114" fill="#e6e8ec" font-size="12.5">混合烘焙 · md-texmix</text>
+  <text x="24" y="130" fill="#7d8592" font-size="10.5">cfg.baked（资产 id）</text>
+
+  <rect x="10" y="154" width="180" height="46" rx="5" fill="#241d1d" stroke="#6d3535"/>
+  <text x="24" y="174" fill="#f0b0b0" font-size="12.5">投射烘焙 · md-proj-bake</text>
+  <text x="24" y="190" fill="#c08a8a" font-size="10.5">整张写回 slotMaps</text>
+
+  <rect x="10" y="214" width="180" height="46" rx="5" fill="#1d2128" stroke="#3a4250"/>
+  <text x="24" y="234" fill="#e6e8ec" font-size="12.5">模型库 · m3d-slots</text>
+  <text x="24" y="250" fill="#7d8592" font-size="10.5">同一份 TEX_KEY</text>
+
+  <!-- store -->
+  <rect x="270" y="60" width="210" height="86" rx="6" fill="#1b2028" stroke="#4a5566"/>
+  <text x="286" y="84" fill="#cfd6e2" font-size="13">doc.materials.slotMaps</text>
+  <text x="286" y="103" fill="#7d8592" font-size="11">一张 dataURL / 槽</text>
+  <text x="286" y="122" fill="#c06a6a" font-size="11">语义未定义 ← 问题所在</text>
+
+  <rect x="270" y="168" width="210" height="74" rx="6" fill="#1b2028" stroke="#4a5566"/>
+  <text x="286" y="192" fill="#cfd6e2" font-size="13">openagi_model_tex_v1</text>
+  <text x="286" y="211" fill="#7d8592" font-size="11">layers / baked（只存 id）</text>
+  <text x="286" y="229" fill="#7d8592" font-size="11">建模 App 与模型库共用</text>
+
+  <!-- readers -->
+  <text x="556" y="22" fill="#7d8592" font-size="11" letter-spacing="1">读者</text>
+  <rect x="556" y="34" width="196" height="40" rx="5" fill="#1d2128" stroke="#3a4250"/>
+  <text x="570" y="59" fill="#cfd6e2" font-size="11.5">makeMaterials → 视口</text>
+
+  <rect x="556" y="84" width="196" height="40" rx="5" fill="#1d2128" stroke="#3a4250"/>
+  <text x="570" y="109" fill="#cfd6e2" font-size="11.5">投射烘焙左栏底图</text>
+
+  <rect x="556" y="134" width="196" height="40" rx="5" fill="#1d2128" stroke="#3a4250"/>
+  <text x="570" y="159" fill="#cfd6e2" font-size="11.5">绘制工作区底图</text>
+
+  <rect x="556" y="184" width="196" height="40" rx="5" fill="#1d2128" stroke="#3a4250"/>
+  <text x="570" y="209" fill="#cfd6e2" font-size="11.5">UV 编辑器贴图显示</text>
+
+  <rect x="556" y="234" width="196" height="40" rx="5" fill="#1d2128" stroke="#3a4250"/>
+  <text x="570" y="259" fill="#cfd6e2" font-size="11.5">合成 · compose / texFor</text>
+
+  <!-- lines -->
+  <path d="M190 57 L268 92" stroke="#5d6675" stroke-width="1.2" marker-end="url(#ar)"/>
+  <text x="200" y="70" fill="#6f7a8b" font-size="10">写</text>
+  <path d="M190 117 L268 190" stroke="#5d6675" stroke-width="1.2" marker-end="url(#ar)"/>
+  <path d="M190 177 L268 130" stroke="#c06a6a" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#ar-r)"/>
+  <text x="196" y="168" fill="#c08a8a" font-size="10">写（合成结果！）</text>
+  <path d="M190 237 L268 226" stroke="#5d6675" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <path d="M480 92 L554 54" stroke="#5d6675" stroke-width="1.2" marker-end="url(#ar)"/>
+  <path d="M480 104 L554 104" stroke="#5d6675" stroke-width="1.2" marker-end="url(#ar)"/>
+  <path d="M480 116 L554 154" stroke="#5d6675" stroke-width="1.2" marker-end="url(#ar)"/>
+  <path d="M480 126 L554 204" stroke="#5d6675" stroke-width="1.2" marker-end="url(#ar)"/>
+  <path d="M480 216 L554 254" stroke="#5d6675" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <path d="M752 254 C 800 254, 800 120, 758 100" stroke="#6d3535" stroke-width="1.3" stroke-dasharray="5 3" marker-end="url(#ar-r)"/>
+  <text x="770" y="180" fill="#c08a8a" font-size="10.5">texFor 被 makeMaterials</text>
+  <text x="770" y="194" fill="#c08a8a" font-size="10.5">当「重建后的贴图」</text>
+</svg>
+</div>
+<figcaption>红色虚线是真正的病灶：投射烘焙把「合成结果」写进了「基础图」的位置，而 <code>makeMaterials</code> 又从合成缓存里往回取。两条回路绕过了同一个字段，谁都不是真源。</figcaption>
+</figure>
+
+<h2><span class="no">§2 实测</span>同一个操作，两种结果</h2>
+<p class="lead">探针 <code>tools/_diag-tex-arch.js</code>（两个独立页面，各跑一遍完整链路）。为了能判读，用「白底 + 一层 50% 绿」这种可算的颜色，原画用纯红、落点缩到 5%。</p>
+
+<h3>2.1 场景 A：<code>slotMaps</code> 为空（贴图只在材质上 / 导入没写进文档）</h3>
+<table>
+  <tr><th style="width:90px">步骤</th><th>观测</th><th style="width:120px">判读</th></tr>
+  <tr><td>A1</td><td>视口模型表面 R/G = <b>0.748</b>（32867 个采样点）</td><td>混合层生效</td></tr>
+  <tr><td>A2</td><td><code>__debug().baseMap.from = "live"</code>，512×512</td><td>烘焙底图 = 视口里那张<b>合成图</b></td></tr>
+  <tr><td>A3</td><td>烘焙后 <code>slotMaps</code> 全图均值 <b>R=128 G=254 B=126</b>（262144 px 全是这个值，白 0%）</td><td class="ok">混合层被烙进了基础图<br><span style="color:#7d8592">白 + 50% 绿 = (127,255,127)</span></td></tr>
+  <tr><td>A4</td><td>重建材质后视口 R/G <b>0.748 → 0.624</b></td><td>同一层又叠了一次<br><span style="color:#7d8592">方向与「双重」一致</span></td></tr>
+</table>
+
+<h3>2.2 场景 B：<code>slotMaps</code> 里有真贴图（走 sharedTexture）</h3>
+<table>
+  <tr><th style="width:90px">步骤</th><th>观测</th><th style="width:120px">判读</th></tr>
+  <tr><td>B1</td><td>视口 R/G = <b>0.748</b>（与 A 完全一致）</td><td>混合层同样生效</td></tr>
+  <tr><td>B2</td><td><code>baseMap.from = "slot"</code></td><td>烘焙底图 = <code>slotMaps</code> 原件</td></tr>
+  <tr><td>B3</td><td>烘焙后非白像素只有 <b>1594 px</b>（就是那一个红岛），白色 <b>260550 px</b></td><td class="no">烘焙结果<b>完全不含</b>混合效果</td></tr>
+  <tr><td>B4</td><td>重建后视口 R/G <b>0.748 → 0.748</b></td><td>没有双份</td></tr>
+</table>
+
+<div class="cols">
+  <figure style="margin:0">
+    <img src="assets/tex-arch-a.png" alt="场景 A：烘焙后混合层被烙进 slotMaps">
+    <figcaption><b>A（slotMaps 为空）</b>：烘焙后重建立即变浓一档 —— 用户看不到任何报错。</figcaption>
+  </figure>
+  <figure style="margin:0">
+    <img src="assets/tex-arch-b.png" alt="场景 B：烘焙结果不含混合效果">
+    <figcaption><b>B（slotMaps 有图）</b>：烘焙只重采样了那一个岛，底色仍是原来的白，混合层原封不动。</figcaption>
+  </figure>
+</div>
+
+<div class="box red">
+  <b>这两张图是同一句用户操作（拖一个岛 → 点烘焙）在两种资产上的结果。</b>
+  差别不在用户做了什么，只在于 <code>slotMaps[0]</code> 是不是空串。这就是「语义未定义」的具体代价：
+  <b>它同时造成了「混合层被重复应用」和「烘焙结果不含混合效果」这两个相反的错误</b>，而两个都不会报错。
+</div>
+
+<div class="box">
+  <b>为什么 A4 只有 0.748→0.624，不是理论上的 0.5→0.25？</b>
+  截图取样受环境光/材质本色相乘影响，绝对值不可当标尺（B1 与 A1 数值相同正说明它主要反映「有没有绿」）。
+  所以本文只把 A3 的像素值当作硬证据（那是从 <code>slotMaps</code> 里直接读出来的），A4 只作方向性佐证；
+  「第二次叠加」这一步由代码路径确证：<code>md-texmix.js:380</code> 的 <code>baseImg = pc || baked || rec.baseImg</code>，
+  <code>rec.baseImg</code> 就是刚被写绿的那张 <code>slotMaps</code>，而 <code>layers</code> 仍在配置里。
+</div>
+
+<h2><span class="no">§3 缺陷清单</span>按修复收益排序</h2>
+
+<table>
+  <tr><th style="width:66px">等级</th><th style="width:210px">缺陷</th><th>症状 / 机理 / 证据</th></tr>
+
+  <tr>
+    <td><span class="pill p0">P0-1</span></td>
+    <td>「底图」有四个定义</td>
+    <td>绘画的底 = baked｜混合的底 = slotMaps｜烘焙的底 = baseImg/sharedTexture/live｜UV 编辑器的底 = slotMaps。
+      同一条链路里换一个资产，<b>同一个按钮的含义就变了</b>（§2 实测）。<span class="tag code">md-texmix:380 · md-paint:163 · md-proj-bake:1721 · md-uv-editor:593</span></td>
+  </tr>
+
+  <tr>
+    <td><span class="pill p0">P0-2</span></td>
+    <td>投射烘焙写回「合成结果」</td>
+    <td>烘焙把「白底 + 混合层 + 岛」整张写回 <code>slotMaps</code>，混合配置里的层没删 → 下次重建再叠一遍。
+      历史里存的 <code>before</code> 也是合成图 → <b>撤销会把脏数据固定下来</b>。<span class="tag hard">实测 A3</span></td>
+  </tr>
+
+  <tr>
+    <td><span class="pill p0">P0-3</span></td>
+    <td>投射烘焙忽略混合层（另一面）</td>
+    <td>当 <code>slotMaps</code> 有 URL 且 <code>sharedTexture</code> 能解出图时，底图直接取原件，<b>烘焙结果不含混合效果</b>，
+      用户会以为「烘了没变化」或「烘焙把混合弄丢了」。<span class="tag hard">实测 B3</span></td>
+  </tr>
+
+  <tr>
+    <td><span class="pill p1">P1-1</span></td>
+    <td>笔迹与 baked 双真源</td>
+    <td><code>baked</code> 存在时，绘制工作区以 baked 为底，提交却写 <code>slotMaps</code>。
+      视口继续显示 baked（<code>compose</code> 里 baked 优先于 slotMaps），笔迹看起来「画完就没了」；
+      但 GLB 导出带的是 slotMaps —— <b>所见非所存</b>。<span class="tag code">md-texmix:380 · md-paint:205</span></td>
+  </tr>
+
+  <tr>
+    <td><span class="pill p1">P1-2</span></td>
+    <td>分辨率四档互相打架</td>
+    <td><code>PAINT_MAX 1024</code> / <code>MAX_SIDE 2048</code> / <code>BAKE_MAX 1024 + BAKE_CAP 2048</code> / 且 live 那张可能是 4096。
+      每次跨模块流转都重编码一次，<b>细节只减不增</b>：画一笔 → 2048 合成 → 1024 烘焙 → 再合成… 越用越糊。</td>
+  </tr>
+
+  <tr>
+    <td><span class="pill p1">P1-3</span></td>
+    <td>撤销三格式，语义不对等</td>
+    <td><code>patch</code> 只回像素不回配置，<code>mix</code> 只回配置不回像素，<code>mats</code> 又是第三套。
+      一次「烘焙」可能同时改了配置与像素，却只能撤一半。<span class="tag code">md-history:139-144</span></td>
+  </tr>
+
+  <tr>
+    <td><span class="pill p1">P1-4</span></td>
+    <td>UV 编辑器只认 slotMaps</td>
+    <td>贴图只在材质上时显示「无纹理」，用户对着有图的模型调 UV，无从判断对应关系。没有 <code>liveSlotImage</code> 兜底。</td>
+  </tr>
+
+  <tr>
+    <td><span class="pill p2">P2-1</span></td>
+    <td>投射绑定按「岛 id」存</td>
+    <td><code>S.binds[islandId]</code> 是内存态且 <code>rebuildUV</code> 直接清空 —— UV 一变（换展开 / 打包 / 盒式投影）所有落位全部丢失，
+      没有「失效但可重应用」的中间态。</td>
+  </tr>
+
+  <tr>
+    <td><span class="pill p2">P2-2</span></td>
+    <td>入口分散在三处</td>
+    <td>绘画页签里塞了笔刷卡 + 混合面板（<code>#mdMixBox</code>）；投射烘焙是独立浮动窗口（菜单/命令 <code>projbake</code>）；
+      UV 编辑器又是另一个窗口。三者都要选「当前槽」，各自维护一份 <code>curSlot</code> / <code>S.slot</code> / <code>st.paint.slot</code>。</td>
+  </tr>
+
+  <tr>
+    <td><span class="pill p2">P2-3</span></td>
+    <td>两代引擎并存</td>
+    <td><code>texbrush / texpaint / modeltex / svgtex</code>（屏空间笔画 + GPU 投影烘焙，给节点/AI 用）与建模 App 里的这三个模块是**两套世界**：
+      前者不认 <code>slotMaps</code>，后者不认节点。它们不冲突，但文档/命名上必须划线，否则下次还会有人接错。</td>
+  </tr>
+</table>
+
+<h2><span class="no">§4 目标架构</span>一个栈，两个入口</h2>
+<p class="lead">不新增「第四个子系统」，而是把已有的三者压到同一套契约上：<b>像素只有一份（base），其余的改动都是栈里的操作（ops）</b>。</p>
+
+<h3>4.1 核心模型</h3>
+<pre><code><span class="c">// 一个材质槽 = 一棵可重放的栈</span>
+TexSlot {
+  name:  string,
+  w, h:  number,
+  base:  TexSource,          <span class="c">// 唯一像素底座，有且只有一个</span>
+  ops:   TexOp[],            <span class="c">// 有序、非破坏、可开关/可重排</span>
+  rev:   number              <span class="c">// 任何 base/ops 改动 +1，用于缓存与「脏」判断</span>
+}
+
+<span class="c">// 底座：像素从哪来（不可再拆）</span>
+TexSource = { kind:<span class="s">'import'</span>, url }          <span class="c">// GLB 抽出 / 用户上传</span>
+          | { kind:<span class="s">'asset'</span>,  id }           <span class="c">// 资产库（模型库共用）</span>
+          | { kind:<span class="s">'flat'</span>,   color }        <span class="c">// 槽位色（无贴图）</span>
+
+<span class="c">// 操作：三类，正好对应现有三个子系统</span>
+TexOp = { type:<span class="s">'blend'</span>,   <span class="c">// ← 纹理混合的「图层」</span>
+         img:TexSource, mode, opacity, mask? }
+      | { type:<span class="s">'project'</span>, <span class="c">// ← 投射烘焙的「绑定」（当前是写回，要改成一层）</span>
+         src:TexSource, islands:[{ faces:[i], uvHash, cx, cy, s, op }] }
+      | { type:<span class="s">'stroke'</span>,  <span class="c">// ← 绘画的「笔迹」（当前是写回，要改成一层）</span>
+         canvas }               <span class="c">// 与 base 同尺寸的 RGBA；不落文档，落历史</span>
+</code></pre>
+
+<h3>4.2 两个入口</h3>
+<pre><code><span class="c">// ① 读：全工程唯一取图入口。任何人想知道「这个槽现在长什么样」都只调它</span>
+resolveTex(slot, purpose) → { canvas, w, h, rev }
+<span class="c">//   purpose = 'view'   视口用（按 TexSpec.view 档，带缓存）</span>
+<span class="c">//           = 'base'   继续操作时的底（== view，保证「看到的 = 接着改的」）</span>
+<span class="c">//           = 'export' 导出 GLB 用（满档位，不缓存）</span>
+
+<span class="c">// ② 写：全工程唯一改图入口。它只接受「栈操作」，不接受一张成品图</span>
+commitTex(slot, mutator, label) → entry
+<span class="c">//   mutator 形如 (draft) => { draft.ops.push(...) } / { draft.base = ... }</span>
+<span class="c">//   内部：改栈 → rev++ → 一帧一次重合成 → applySlotTexture → 记一条历史</span>
+</code></pre>
+
+<div class="box green">
+  <b>这条规则一旦立住，§3 的 P0-1/2/3、P1-1/3 全部自动消失：</b>
+  底图只有一种定义（<code>resolveTex(slot,'base')</code>）；
+  投射烘焙不再有机会把合成结果写进 <code>slotMaps</code>（它只能 push 一个 <code>project</code> op）；
+  绘画与 baked 不再分叉（笔迹也是一层）；
+  一次操作只产生一条历史（栈的 diff，不含像素，体积从 MB 级降到 KB 级）。
+</div>
+
+<h3>4.3 「烘焙」这个词要拆成两个动作</h3>
+<p>现在两个面板上各有一个「烘焙」，语义完全不同，用户无从分辨：</p>
+<table>
+  <tr><th style="width:170px">按钮</th><th style="width:200px">现在的行为</th><th>整合后</th></tr>
+  <tr><td>投射烘焙 · 烘焙</td><td>重采样岛 → <b>写回 slotMaps</b>（破坏性）</td><td><b>「应用投射」= push 一个 project op</b>（非破坏，可反复调落位）</td></tr>
+  <tr><td>纹理混合 · 烘焙</td><td>合成 → <b>存成新资产 + 清空 layers</b>（破坏性）</td><td><b>「固化为底图」= flatten</b>：把 ops 合成进 base，ops 清空</td></tr>
+</table>
+<p>两者都保留，但措辞与图标区分：<b>应用</b>（加一层，随时可改）vs <b>固化</b>（烧进底，省内存、便于导出）。这是行业里 Blender「Bake」与「Apply Modifier」的区别，用户学一次就懂。</p>
+
+<h3>4.4 渲染与导出契约</h3>
+<ul>
+  <li><b>材质只认 <code>resolveTex(slot,'view')</code></b>。<code>makeMaterials</code> 里删掉 <code>MIX.texFor</code> 那条分支，改成问管线；<code>md-texmix</code> 的 <code>texFor/ensureTex/applyBase</code> 全部下沉进管线。</li>
+  <li><b>导出 = <code>resolveTex(slot,'export')</code> 的 flatten</b>。GLB 内嵌一张合成好的图，语义与今天一致（导出后混合层「看起来」被固化，但工程里仍可改）。</li>
+  <li><b>合成永远在 CPU（2D canvas）</b>，不上着色器。理由不变：着色器混出来的只有视口好看，导出是空的（<code>md-texmix.js</code> 头注释已经写明）。</li>
+  <li><b>预览走低档</b>：拖动滑杆/拖角点时不重新合成全尺寸，走「低档 resolve + 尺寸不变换」；松手才按 view 档重合成一次。</li>
+</ul>
+
+<h2><span class="no">§5 兼容方案</span>怎么改而不炸</h2>
+
+<h3>5.1 存储：v4 schema（读旧、写新，双读器并存）</h3>
+<pre><code><span class="c">// localStorage['openagi_model_tex_v1'][assetKey][slotName]</span>
+<span class="c">// v1 单贴图 · v2 图层栈 · v3 + baked —— 全部保留可读</span>
+{
+  <span class="f">v</span>: <span class="n">4</span>,
+  <span class="f">base</span>: { kind:<span class="s">'asset'</span>, id:<span class="s">'a_xxx'</span> },        <span class="c">// v3 的 baked 迁到这里</span>
+  <span class="f">ops</span>: [
+    { type:<span class="s">'blend'</span>, img:{kind:<span class="s">'asset'</span>,id:<span class="s">'a_y'</span>}, mode:<span class="s">'normal'</span>, opacity:<span class="n">0.5</span>, mask:{…} },
+    { type:<span class="s">'project'</span>, src:{kind:<span class="s">'asset'</span>,id:<span class="s">'a_src'</span>}, islands:[{faces:[3,4,5],uvHash:<span class="s">'…'</span>,cx:<span class="n">512</span>,cy:<span class="n">512</span>,s:<span class="n">0.12</span>}] }
+  ],
+  <span class="f">legacy</span>: { from:<span class="s">'v3'</span>, taintedSlotMap:<span class="s">'2026-11-11T…'</span> }  <span class="c">// 见 5.2</span>
+}</code></pre>
+
+<table>
+  <tr><th style="width:110px">旧版本</th><th>迁移规则</th><th style="width:220px">风险与处置</th></tr>
+  <tr><td>v1 单贴图</td><td>→ <code>ops[0] = {blend, img:{id}}</code>，base = flat</td><td>无风险，语义完全等价</td></tr>
+  <tr><td>v2 图层栈</td><td>→ <code>ops = layers.map(blend)</code>，base = <code>slotMaps</code></td><td>无风险</td></tr>
+  <tr><td>v3 baked</td><td>baked → <code>base</code>；layers → <code>ops</code></td><td>无风险（baked 本来就是「底层」）</td></tr>
+  <tr><td><b>被写脏的 v3</b><br><span style="color:#7d8592">（旧版投射烘焙写过 slotMaps）</span></td><td><code>base</code> 仍取 <code>slotMaps</code>，<b>不自动改</b>，只在面板顶部给一次性提示：<br>「这张底图可能已包含混合层，是否合并掉重复的那一层？」→ 提供「合并 / 忽略」两个动作</td><td>无法自动判别：<br>像素里没有「我叠过几次」的标记。<br><b>宁可让用户选一次，也不要静默改像素。</b></td></tr>
+</table>
+
+<h3>5.2 与模型库（<code>m3d-slots.js</code>）共用一份配置</h3>
+<p>两边现在共用 <code>openagi_model_tex_v1</code>，这是<b>对的</b>，别拆。需要补的是「谁写的」与「谁说了算」：</p>
+<ul>
+  <li>写配置时带 <code>writer: 'modeldesk' | 'library'</code> 与 <code>at</code>；读的时候不校验（兼容旧数据），只在冲突提示里用。</li>
+  <li><b>同一槽的 ops 以最后写入者为准</b>（不做字段级合并 —— 合并两个图层栈是伪需求，且会造出谁都没配过的结果）。</li>
+  <li>模型库暂不实现 <code>project</code> / <code>stroke</code> op：读到未知 op 类型时<b>原样保留、跳过渲染</b>，并在面板上标注「此槽含建模 App 的投射层（N）」。
+      这样两边版本不必同步升级，也不会互相删数据。</li>
+</ul>
+
+<h3>5.3 历史</h3>
+<p>新增第四种 entry，老的三种继续能撤（不迁移旧历史，只保证读得动）：</p>
+<pre><code><span class="c">// 新：一次操作 = 一条栈 diff，体积与层数成正比，与分辨率无关</span>
+{ tex: { key:<span class="s">'默认材质'</span>, before:<span class="s">'{"v":4,…}'</span>, after:<span class="s">'{"v":4,…}'</span>,
+        <span class="c">// stroke 这类图层不进行 JSON，改存 canvas 引用 + 尺寸，避免 MB 级字符串</span>
+        blobs: { <span class="s">'op#3'</span>: { w:<span class="n">1024</span>, h:<span class="n">1024</span>, url:<span class="s">'data:…'</span> } } },
+  label:<span class="s">'应用投射'</span>, bytes:<span class="n">…</span> }
+
+<span class="c">// md-history.apply 里保持四个分支：patch / mix / mats / tex</span></code></pre>
+<div class="box">
+  <b>为什么不用「前后两张整图」了：</b>现在一次烘焙 <code>before+after</code> 是两张 PNG dataURL（2048² 轻松 4–6MB），
+  <code>HISTORY_BUDGET</code> 一撞车就把最老的历史丢掉 —— 用户感觉「撤几步就撤不动了」。
+  改成栈 diff 之后，一次投射操作 ≈ 几百字节（<code>stroke</code> 层除外，但笔迹本来就需要像素）。
+</div>
+
+<h3>5.4 分辨率：只留三个档位</h3>
+<table>
+  <tr><th style="width:110px">档位</th><th style="width:110px">长边</th><th>用途</th></tr>
+  <tr><td><code>TexSpec.view</code></td><td>1024</td><td>视口 / 面板缩略图 / 拖动预览</td></tr>
+  <tr><td><code>TexSpec.edit</code></td><td>2048</td><td>绘制、投射采样、导出前合成（= 今天的 PAINT_MAX 与 MAX_SIDE 合并）</td></tr>
+  <tr><td><code>TexSpec.export</code></td><td>min(4096, 源)</td><td>导出 GLB 时的 flatten，<b>不放大</b>（源多大就多大，永不超源）</td></tr>
+</table>
+<p>规则：<b>底座只缩不放大</b>；一旦某槽的 base 是 2048，后续所有写操作都在 2048 上做，不允许任何模块把它压回 1024（这正是现在「越用越糊」的原因）。</p>
+
+<h2><span class="no">§6 落地</span>三个切片，每个都能单独上线</h2>
+
+<div class="step">
+  <div class="sn">01</div>
+  <div>
+    <h4>切片一：统一读取（新文件 <code>js/tex-source.js</code>，约 150 行） <span class="pill ok">已落地</span></h4>
+    <p>把散在四处的取图逻辑收成一个函数，<b>不改任何写路径</b>，因此几乎零风险：</p>
+    <ul>
+      <li><code>resolveBase(slot) → {img, from}</code>：<code>baseImg → sharedTexture(slotMaps) → baked → liveSlotImage → 槽位色</code>，顺序写死并返回 <code>from</code>（可观测）。</li>
+      <li>改造点：<code>md-paint.paintEnsureTarget</code>、<code>md-proj-bake.slotBaseImage</code>、<code>md-texmix.baseImageFor</code>、<code>md-uv-editor.uvSyncModelMap</code> 四处改为调用它。</li>
+      <li>顺带修 <b>P0-1 / P1-4</b>：UV 编辑器终于能看到「只在材质上」的贴图。</li>
+      <li>这一步就会让 §2 的 A/B 分叉<b>收敛成一个答案</b>（选哪个由 <code>resolveBase</code> 的注释与一次决策固定下来：<b>取 live</b>——所见即所改）。</li>
+    </ul>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">02</div>
+  <div>
+    <h4>切片二：投射烘焙改「层」，修 P0-2 / P0-3 <span class="pill ok">已落地</span></h4>
+    <ul>
+      <li><code>S.binds</code> 已经是「岛 → 落位」的完整描述，天然就是 <code>project</code> op。落位改成写进栈（内存态即可，先不落 localStorage）。</li>
+      <li>「烘焙」按钮 = <code>commitTex(slot, d =&gt; d.pushOp(projectOp))</code>，<b>不再碰 slotMaps</b>。</li>
+      <li>另加「固化为底图」= <code>flatten</code>（把 ops 合进 base，写一次 slotMaps，一条历史）。</li>
+      <li>左栏底图改用 <code>resolveBase</code>，从此「左栏看到的底」与「烘出来的底」由同一个函数保证。</li>
+      <li>绑定改存 <code>{faces, uvHash}</code>：UV 变了不再静默丢，而是标「失效，点此重应用」（修 P2-1）。</li>
+    </ul>
+  </div>
+</div>
+
+<div class="step">
+  <div class="sn">03</div>
+  <div>
+    <h4>切片三：绘画改「层」+ 配置 v4 + 共用仲裁 <span class="pill ok">已落地</span></h4>
+    <ul>
+      <li><code>paintCommit</code> 从「写 slotMaps」改为「提交 stroke op」；<code>applyPaintPatch</code> 改为栈 diff。</li>
+      <li>配置升级 v4（保留 v1–v3 读器），与模型库共用 <code>writer/at</code> 字段。</li>
+      <li>一次性迁移提示（5.1 表格最后一行），提供「合并 / 忽略」。</li>
+      <li>历史四格式并存；<code>HISTORY_BUDGET</code> 的判定口径同步改成「栈 diff + blobs」。</li>
+    </ul>
+  </div>
+</div>
+
+<h3>6.1 每步的验收门禁</h3>
+<table>
+  <tr><th style="width:120px">切片</th><th>必须复跑的探针</th><th style="width:230px">新增断言</th></tr>
+  <tr>
+    <td>01</td>
+    <td><code>probe-projbake</code> / <code>-map</code> / <code>-drag</code>、<code>_diag-pb-keep</code> / <code>live</code> / <code>safe</code> / <code>src</code>、<code>_diag-tex-arch</code></td>
+    <td>四个读者对同一槽返回<b>同一张图</b>（像素哈希相等）</td>
+  </tr>
+  <tr>
+    <td>02</td>
+    <td>上述全部 + <code>_diag-pb-ui</code> / <code>pick</code> / <code>shape</code> / <code>hl</code> / <code>layer</code> / <code>multi</code></td>
+    <td>① 投射后 <code>slotMaps</code> <b>哈希不变</b> ② 重建前后视口贴图 <b>哈希不变</b> ③ 固化后 ops 为空且像素等价（±1）</td>
+  </tr>
+  <tr>
+    <td>03</td>
+    <td><code>probe-modeldesk</code>、<code>probe-md-texmix</code>、<code>tools/model-tex-blend.js</code>（模型库侧）、<code>css-links</code></td>
+    <td>① 一笔画完重建后笔迹仍在 ② 撤销一次回到「无这一层」而非「无贴图」③ 模型库读到 v4 不崩、不删 op</td>
+  </tr>
+</table>
+
+<h3>6.2 落地记录（切片一 / 二实测）</h3>
+
+<div class="box green">
+  <b>切片一 · 已落地。</b>新增 <code>js/tex-source.js</code>，四个读者（<code>md-paint</code> / <code>md-proj-bake</code> /
+  <code>md-texmix</code> / <code>md-uv-editor</code>）全部改调 <code>resolveBase</code>，写路径一行未动。
+  探针 <code>tools/_diag-tex-source.js</code> 17 项全绿（含「C 场景不许取合成图」）。
+</div>
+
+<div class="box green">
+  <b>切片二 · 已落地。</b>新增 <code>js/tex-stack.js</code>；<code>bake()</code> 从「写 <code>slotMaps</code>」改为
+  <code>TStack.push(doc, slot, projectOp)</code>，UI 加「固化为底图」按钮。探针 <code>tools/_diag-tex-stack.js</code> 五道门禁全绿：
+  ① 推层不改 <code>slotMaps</code>；② 重建前后合成结果哈希一致；③ 固化后 <code>ops=0</code> 且像素等价、结果不透明、撤销可回；
+  ④ 混合层与投射层共存；⑤ 导出不固化文档。
+</div>
+
+<div class="box green">
+  <b>切片三 · 已落地。</b>一笔 = 一个 <code>stroke</code> 层（<code>md-paint</code> 同时维护「预览画布」与「增量画布」两张），
+  抬笔只推层、不再编码回 <code>slotMaps</code>；历史改存**栈 diff**；配置升 <b>v4</b>
+  （<code>{v:4, layers, baked, ops}</code>，像素存 data URL，超 40KB 交给 <code>blob-store</code> 外置成 <code>blob:&lt;id&gt;</code>），
+  打开页面时由 <code>ensureSlot</code> 把 <code>ops</code> 灌回 <code>TexStack</code>。
+  探针 <code>tools/_diag-paint-stack.js</code> 33 项全绿：① 重建后笔迹仍在（合成结果逐像素一致）
+  ② 撤销 = 少一层、贴图始终在 ③ 模型库口径读写不删 op、记录仍是 v4 ④ 一笔不改 <code>slotMaps</code>
+  ⑤ 橡皮层回放是「擦掉」不是「涂黑」⑥ 层的序列化往返（平均差 0）⑦ 模拟刷新后笔迹回来、合成结果不变。
+</div>
+
+<h3>实施中偏离方案的九处（都是踩出来的，不是偏好）</h3>
+<table>
+  <tr><th style="width:150px">项</th><th style="width:230px">方案原写法</th><th>实际落地与原因</th></tr>
+  <tr>
+    <td><code>resolveBase</code> 顺序</td>
+    <td><code>baseImg → slotMaps → baked → live</code></td>
+    <td><b>掉过来了</b>：<code>slotMaps → baked → cached → live</code>。<code>baseImg</code> 是调用方各自的缓存、是最不可信的一档，
+      排在最后且必须按 url 校验（槽位换图后旧缓存会串味）。</td>
+  </tr>
+  <tr>
+    <td><code>live</code> 兜底</td>
+    <td>「取 live，所见即所改」</td>
+    <td><b>必须排除合成图</b>。混合模块留下的 <code>TB.compose</code> 产物也是挂在材质上的 image，而且它<b>不透明</b>
+      （已用槽位色打底）；拿它当编辑底座 → 透明信息全丢、每帧还可能变。
+      判据是<b>比较 image 身份</b>：<code>liveSlotImage</code> 返回 image，<code>MIX.texFor</code> 返回 Texture，
+      必须先 <code>.image</code> 再比，否则排除逻辑静默失效（实测过：占比 100%）。</td>
+  </tr>
+  <tr>
+    <td>新增 <code>adoptLiveBase()</code></td>
+    <td>无（方案里没有这一步）</td>
+    <td><b>必须补</b>。<code>MIX.applyBase</code> 在 <code>slotMaps</code> 无 URL 时会把材质 <code>map</code> 清成 null，
+      而那张图正是唯一来源 → 「撤销一下贴图全没了」。两处修：<code>applyBase</code> 见到 live 有图就别清；
+      打开投射窗时把 live 像素「领养」进 <code>slotMaps</code>，让文档成为真源。</td>
+  </tr>
+  <tr>
+    <td><code>TB.compose</code> 打底色</td>
+    <td><code>#ffffff</code>（原实现）</td>
+    <td>加 <code>baseColor</code> 参数，无底座时用材质槽色 <code>#c9ccd4</code>。白底会让<b>没贴图的模型一进合成就变白</b>，
+      也会在「只贴了几个岛」的场景把整张贴图污染成 76.5% 白。</td>
+  </tr>
+  <tr>
+    <td>导出期</td>
+    <td>导出时 flatten 写 <code>slotMaps</code></td>
+    <td><b>改成临时换、<code>try/finally</code> 换回</b>（<code>glbTexSwap</code>）。自动保存也走 <code>save()</code>，
+      固化一次用户就再也没法调落位了。</td>
+  </tr>
+  <tr>
+    <td>「固化为底图」的守卫</td>
+    <td>「没像素就别固化」</td>
+    <td>判据得是 <code>resolveBase(slot).from === 'slot'</code>。<b>「有没有像素」不够</b>：上一轮的合成图会被 <code>live</code>
+      兜底取到，用它当底座固化 = 把坏 URL 换成「槽位灰 + 几个岛」，比不固化更糟。</td>
+  </tr>
+  <tr>
+    <td>增量画布</td>
+    <td>无（方案只说「提交 stroke op」）</td>
+    <td><b>必须一笔一张，不能复用</b>。复用那张已被推进栈的画布，下一笔的 <code>clearRect</code> 会把上一笔擦掉
+      （症状：画第二笔时第一笔凭空消失）。落笔时按需分配，抬笔后立刻松手。</td>
+  </tr>
+  <tr>
+    <td>混合配置的撤销快照</td>
+    <td>沿用「<code>JSON.stringify(cfg)</code>」</td>
+    <td><b>必须把 <code>ops</code> 摘掉</b>。理由两条：① 语义 —— 混合撤销只该管图层与烘焙图，笔迹有它自己的
+      <code>tex</code> 条目，混在一起会让「撤销一次滑杆」顺手撤掉十笔；② 性能 —— <code>ops</code> 里是整张 PNG，
+      拖滑杆时每帧 stringify 一遍直接卡死。<code>snapCfg</code> 只留 <code>{v, layers, baked}</code>。</td>
+  </tr>
+  <tr>
+    <td>v4 的体积兜底</td>
+    <td>无</td>
+    <td>单条记录序列化后超过 <b>1.2MB</b> 就丢掉 <code>ops</code> 只留图层（退回 v2/v3）。
+      外置（<code>blob-store</code>）不可用的浏览器里，ops 内联会直接把 localStorage 撑爆，
+      而 <code>writeStore</code> 的 try/catch 会把它变成「静默不落盘」—— 那比少存一层更糟。</td>
+  </tr>
+  <tr>
+    <td>一次性迁移提示</td>
+    <td>检测「被旧版写脏的 v3」→ 弹「合并 / 忽略」</td>
+    <td><b>不做</b>，理由写在 §8：<b>判据无法可靠</b>。「<code>slotMaps</code> 非空 + 配了混合层」在干净模型上同样成立
+      （导入时就带底图、混合层是在模型库配的），一做就是常态误报；而「合并」本身也无法实现
+      —— 从合成图里还原不出干净底座。给一句永久误报的弹窗，不如在文档里写清楚：要干净底座就重新导入模型。</td>
+  </tr>
+</table>
+
+<div class="box">
+  <b>仍然遗留的（有意不做，不是忘了）</b>
+  <ul style="margin:8px 0 0">
+    <li><b>绑定仍存 island id</b>，未改成 <code>{faces, uvHash}</code> —— P2-1（UV 一改就静默丢绑定）还在。
+      改格式会动 <code>S.binds</code> 的存档结构，和「一次改一件事」的原则冲突，单独一轮做更稳。</li>
+    <li><b>v4 的 <code>ops</code> 只跟 <code>textureConfigKey</code> 走</b>：文档还没保存过（没有 key）时不落盘，
+      此时刷新会丢未导出的笔迹 —— 与「图层只有资产 id 才落盘」的既有语义一致。</li>
+    <li><b>模型库不渲染 <code>ops</code></b>：它只认 <code>layers</code> / <code>baked</code>，所以笔迹不会出现在模型库预览里。
+      改动前也一样（笔迹当时写在 <code>slotMaps</code>，模型库压根不读），不是新缺口。</li>
+  </ul>
+</div>
+
+<h2><span class="no">§7 性能</span>为什么这套不会更慢</h2>
+<ul>
+  <li><b>合成次数反而变少</b>：现在「烘焙一次 = 整张重编码 PNG（2048² 约 120ms）+ 材质重建 + 再解码」，改栈之后「应用一层 = push op + 一次合成」，<b>省掉了 toDataURL / Image 解码</b>（这是最贵的两步）。</li>
+  <li><b>缓存键</b>：<code>(slot, rev, size, purpose)</code>。rev 不动就直接复用 canvas，不重合成。</li>
+  <li><b>合帧</b>：沿用现有 <code>md-texmix.schedule</code> 的 rAF 合并；拖滑杆只跑低档。</li>
+  <li><b>内存上界</b>：每槽 1 张 view 档 canvas（1024² RGBA ≈ 4MB）+ 1 张合成画布。10 槽 ≈ 80MB，可接受；<code>project</code> op 不额外持有整图（只持有原画引用）。</li>
+  <li><b>导出时才 flatten 到 export 档</b>，用户不导出就不付这份开销。</li>
+</ul>
+
+<h2><span class="no">§8 边界</span>这几件事不做</h2>
+<ul>
+  <li><b>不做字段级合并</b>：不试图把「模型库的层」和「建模 App 的层」合成一份新栈 —— 只会造出谁都没配过的结果。</li>
+  <li><b>不把投射烘焙搬进蓝图节点</b>（与既有的「不要把 ComfyUI 编排搬进蓝图」同一条结论）：节点侧那是 <code>texbrush/texpaint</code> 的另一个世界，两边共享算法（<code>tex-blend</code>）即可，不共享状态。</li>
+  <li><b>不引入 WebGL 合成</b>：导出要的是 CPU 上那张真图。</li>
+  <li><b>不自动修复被写脏的 v3 数据，也不做「合并 / 忽略」弹窗</b>：判据不可靠（干净模型同样满足「底座非空 + 有混合层」），
+    且「合并」本身无法实现 —— 从合成图里还原不出干净底座。要干净底座只能重新导入模型。理由见 §6.2 最后一行。</li>
+  <li><b>不做多通道（PBR）</b>：现在只有 baseColor 一张。等真的有 metallic/roughness/normal 需求时，把 <code>TexSlot</code> 换成 <code>Map&lt;channel, TexStack&gt;</code> 即可 —— 本方案的 ops 模型天然支持，不需要再改一次架构。</li>
+</ul>
+
+<h2><span class="no">§9 附</span>证据与复跑</h2>
+<pre><code><span class="c"># 落地后的回归守卫（原来的「复现缺陷」已翻成「缺陷不再复发」）</span>
+node tools/_diag-tex-arch.js &gt; tools/_r-arch.txt 2&gt;&amp;1   <span class="c"># A/B 两场景 14 项</span>
+
+<span class="c"># 三切片各自的门禁</span>
+node tools/_diag-tex-source.js          <span class="c"># 切片一：统一读入口 18 项</span>
+node tools/_diag-tex-stack.js           <span class="c"># 切片二：层栈 ①–⑤</span>
+node tools/_diag-paint-stack.js         <span class="c"># 切片三：绘画改层 + v4 33 项</span>
+
+<span class="c"># 纹理相关全量回归（改完必须全绿）</span>
+node tools/probe-projbake.js            <span class="c"># 28 项</span>
+node tools/probe-projbake-map.js        <span class="c"># 11 项</span>
+node tools/probe-projbake-drag.js       <span class="c"># 17 项</span>
+node tools/_diag-pb-keep.js             <span class="c"># 烘焙不吃旧贴图</span>
+node tools/_diag-pb-live.js             <span class="c"># 贴图只在材质上</span>
+node tools/_diag-pb-safe.js             <span class="c"># 大图不缩水 + 拒绝写回空图</span>
+node tools/_diag-pb-src.js              <span class="c"># 原画 / 合成视图</span>
+node tools/_diag-pb-ui.js               <span class="c"># 窗口 DOM 21 项</span>
+node tools/_diag-pb-shape.js            <span class="c"># 岛形状 / 白底占比</span>
+node tools/_diag-pb-layer.js            <span class="c"># 图层行 + 不透明度 + 固化 30 项</span>
+node tools/_diag-pb-multi.js            <span class="c"># 连选 17 项</span>
+node tools/probe-md-texmix.js           <span class="c"># 混合 22 项</span>
+node tools/probe-modeldesk.js           <span class="c"># 建模台全量 220 项</span>
+node tools/model-tex-blend.js           <span class="c"># 模型库侧同一份配置</span>
+node tools/css-links.js                 <span class="c"># 样式表链接守卫</span></code></pre>
+
+<div class="box blue">
+  <b>写探针的一条教训</b>：<code>toHash(canvas)</code> 不要用「缩到 32×32 再算」。
+  Chromium 在 GPU / CPU backing store 之间切换时，<code>drawImage</code> 缩小的平滑插值会差 ±1，
+  于是<b>逐像素完全相同</b>的两张图会算出两个哈希 —— 实测表现为「重建前后合成结果不一致」，
+  而逐像素比对的 <code>diff = 0</code>，查了很久才发现是量具本身在抖。
+  要么原尺寸抽样，要么直接用带容差的逐点差（<code>mean &lt; 2</code>）。
+</div>
+
+<footer>
+  调研对象为当前工作树（md-texmix 1514 行 / md-paint 367 / md-proj-bake 3084 / md-uv-editor 1660）。
+  文中标「实测」的结论均可用 <code>tools/_diag-tex-arch.js</code> 复现；标「代码路径」的为静态分析，未构造运行态。
+</footer>
+
+</div>
+</body>
+</html>

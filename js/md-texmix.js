@@ -27,13 +27,62 @@
   var TEX_KEY = 'openagi_model_tex_v1';
   var MAX_SIDE = 2048;      /* 合成画布长边上限：和模型库同一口径 */
   var LIMIT = 8;            /* 单槽最多几层：滑杆再多也调不动 */
+  var TB = global.TexBlend;
+
+  /* 层归一化放在 create() 外面：它只依赖 TexBlend，是能直接测的纯函数。
+   * 「模型库写进层里的字段必须原样带回」这条兼容规则挂在这里，
+   * 探针可以直接断言，不必为了测它去开一整个建模 App。
+   * 跟 M3DSlots.mergeSlotRec 是同一套约定：两边共用一份配置，未知字段不许洗掉。 */
+  function normLayer(r) {
+    if (!r) return null;
+    var o = {
+      id: String(r.id || ''), name: String(r.name || ''),
+      flipY: r.flipY !== false,
+      opacity: TB.clampNum(r.opacity != null ? r.opacity : 1, 0, 1),
+      blend: r.blend || 'normal'
+    };
+    /* src 只用于「本会话内有效」的临时图（没有资产库时） */
+    if (r.src) o.src = String(r.src);
+    if (r.kind === 'color') o.kind = 'color';
+    if (Array.isArray(r.islands) && r.islands.length) o.islands = r.islands.map(Number);
+    if (r.mask && (r.mask.id || r.mask.src)) {
+      o.mask = {
+        id: String(r.mask.id || ''), name: String(r.mask.name || ''),
+        flipY: r.mask.flipY !== false, invert: !!r.mask.invert
+      };
+      if (r.mask.src) o.mask.src = String(r.mask.src);
+    }
+    return o;
+  }
+  function encLayer(l, persist) {
+    if (!l) return null;
+    /* 没有资产 id 的层在网页版里落不住盘：写了只会让人以为配过、下次又没了 */
+    if (persist && !l.id) return null;
+    var o = {
+      id: String(l.id || ''), name: String(l.name || ''), flipY: l.flipY !== false,
+      opacity: TB.clampNum(l.opacity, 0, 1), blend: l.blend || 'normal'
+    };
+    if (!persist && l.src) o.src = String(l.src);
+    if (l.kind === 'color') o.kind = 'color';
+    if (Array.isArray(l.islands) && l.islands.length) o.islands = l.islands.map(Number);
+    if (l.mask && (l.mask.id || l.mask.src)) {
+      var m = {
+        id: String(l.mask.id || ''), name: String(l.mask.name || ''),
+        flipY: l.mask.flipY !== false, invert: !!l.mask.invert
+      };
+      if (!persist && l.mask.src) m.src = String(l.mask.src);
+      if (persist && !m.id) m = null;
+      if (m) o.mask = m;
+    }
+    return o;
+  }
 
   function create(ctx) {
     var st = ctx.st, THREE = ctx.THREE;
-    var TB = global.TexBlend;
     var setStatus = ctx.setStatus, updateChrome = ctx.updateChrome;
     var sharedTexture = ctx.sharedTexture;
     var applySlotTexture = ctx.applySlotTexture;
+    var liveSlotImage = ctx.liveSlotImage;
     var paintCanvasFor = ctx.paintCanvasFor;
     var paintTexFor = ctx.paintTexFor;
     var totalBytes = ctx.totalBytes, syncBytes = ctx.syncBytes;
@@ -42,6 +91,14 @@
     /* doc → { 槽名: 配置 }：本会话的完整配置（含「不能落盘」的临时层）。
      * 读的时候先看这里，保证同一会话里加了又撤、撤了又加不会丢层。 */
     var sessionCfg = new WeakMap();
+    /* doc → { 槽下标: true }：这一槽的 v4 ops 已经灌进 TexStack。
+     * 用来区分「栈是空的」和「栈还没读过」，否则一次写盘就会把用户的笔迹删光。 */
+    var opsReady = new WeakMap();
+    function opsReadyOf(doc) {
+      var m = opsReady.get(doc);
+      if (!m) { m = Object.create(null); opsReady.set(doc, m); }
+      return m;
+    }
     /* doc → { slots: { 槽下标: rec } }：运行时解码 / 合成缓存 */
     var imgCache = Object.create(null);
     var uiReady = false;
@@ -80,29 +137,13 @@
       try { global.localStorage.setItem(TEX_KEY, JSON.stringify(all)); } catch (e) {}
     }
 
-    function normLayer(r) {
-      if (!r) return null;
-      var o = {
-        id: String(r.id || ''), name: String(r.name || ''),
-        flipY: r.flipY !== false,
-        opacity: TB.clampNum(r.opacity != null ? r.opacity : 1, 0, 1),
-        blend: r.blend || 'normal'
-      };
-      /* src 只用于「本会话内有效」的临时图（没有资产库时） */
-      if (r.src) o.src = String(r.src);
-      if (r.mask && (r.mask.id || r.mask.src)) {
-        o.mask = {
-          id: String(r.mask.id || ''), name: String(r.mask.name || ''),
-          flipY: r.mask.flipY !== false, invert: !!r.mask.invert
-        };
-        if (r.mask.src) o.mask.src = String(r.mask.src);
-      }
-      return o;
-    }
-    /* v1 = 单贴图；v2 = 图层栈；v3 = 多一张 baked（烘焙后的基础贴图）。
+    /* normLayer / encLayer 已提到 IIFE 顶层（纯函数，供探针直接测） */
+    /* v1 = 单贴图；v2 = 图层栈；v3 = 多一张 baked（烘焙后的基础贴图）；
+     * v4 = 再多一个 ops（编辑层栈：投射落位 / 笔迹的增量图）。
      * 旧配置必须能读，别为了省事只认新格式。 */
     function normCfg(raw) {
-      if (!raw) return { v: 2, layers: [], baked: null };
+      var ops = (raw && Array.isArray(raw.ops)) ? raw.ops : [];
+      if (!raw) return { v: 2, layers: [], baked: null, ops: ops };
       if (Array.isArray(raw.layers)) {
         var baked = null;
         if (raw.baked && (raw.baked.id || raw.baked.src)) {
@@ -113,32 +154,12 @@
           /* 网页版没有资产库时烘焙图只能带 data URL，留在本次会话 */
           if (raw.baked.src) baked.src = String(raw.baked.src);
         }
-        return { v: raw.v || 2, layers: raw.layers.map(normLayer).filter(Boolean), baked: baked };
+        return { v: raw.v || 2, layers: raw.layers.map(normLayer).filter(Boolean), baked: baked, ops: ops };
       }
-      if (raw.id || raw.name) return { v: 2, layers: [normLayer(raw)].filter(Boolean), baked: null };
-      return { v: 2, layers: [], baked: null };
+      if (raw.id || raw.name) return { v: 2, layers: [normLayer(raw)].filter(Boolean), baked: null, ops: ops };
+      return { v: 2, layers: [], baked: null, ops: ops };
     }
-    function encLayer(l, persist) {
-      if (!l) return null;
-      /* 没有资产 id 的层在网页版里落不住盘：写了只会让人以为配过、下次又没了 */
-      if (persist && !l.id) return null;
-      var o = {
-        id: String(l.id || ''), name: String(l.name || ''), flipY: l.flipY !== false,
-        opacity: TB.clampNum(l.opacity, 0, 1), blend: l.blend || 'normal'
-      };
-      if (!persist && l.src) o.src = String(l.src);
-      if (l.mask && (l.mask.id || l.mask.src)) {
-        var m = {
-          id: String(l.mask.id || ''), name: String(l.mask.name || ''),
-          flipY: l.mask.flipY !== false, invert: !!l.mask.invert
-        };
-        if (!persist && l.mask.src) m.src = String(l.mask.src);
-        if (persist && !m.id) m = null;
-        if (m) o.mask = m;
-      }
-      return o;
-    }
-    function encCfg(cfg, persist) {
+    function encCfg(cfg, persist, opsDesc) {
       var ls = (cfg.layers || []).map(function (l) { return encLayer(l, persist); }).filter(Boolean);
       var b0 = cfg.baked;
       var baked = (b0 && (b0.id || (!persist && b0.src))) ? {
@@ -146,8 +167,45 @@
         flipY: b0.flipY !== false
       } : null;
       if (baked && !persist && b0.src) baked.src = String(b0.src);
-      if (!ls.length && !baked) return null;
-      return { v: baked ? 3 : 2, layers: ls, baked: baked };
+      var ops = (opsDesc && opsDesc.length) ? opsDesc : null;
+      if (!ls.length && !baked && !ops) return null;
+      var out = { v: ops ? 4 : (baked ? 3 : 2), layers: ls, baked: baked };
+      if (ops) out.ops = ops;
+      return out;
+    }
+
+    /* 编辑层栈 → 配置里的 ops。返回 null 表示「这一槽的栈还没被本会话碰过」，
+     * 写盘时要沿用旧记录里的 ops，不能当成空数组把用户的笔迹删掉。 */
+    function collectOpsDesc(doc, slot) {
+      if (!global.TexStack) return null;
+      var rdy = opsReadyOf(doc);
+      if (rdy[slot]) return global.TexStack.toDesc(doc, slot);
+      if (global.TexStack.has(doc, slot)) return global.TexStack.toDesc(doc, slot);
+      return null;
+    }
+
+    /* 大块像素落盘前先外置（blob-store：localStorage 只留 'blob:<id>' 存根）。
+     * 外置不可用时原样内联 —— 宁可占，不丢。 */
+    function packOps(opsDesc, persist) {
+      if (!persist || !opsDesc) return opsDesc;
+      var out = [];
+      for (var i = 0; i < opsDesc.length; i++) {
+        var d = opsDesc[i], o = {};
+        for (var k in d) if (Object.prototype.hasOwnProperty.call(d, k)) o[k] = d[k];
+        if (o.src && typeof blobPack === 'function') o.src = blobPack(o.src);
+        out.push(o);
+      }
+      return out;
+    }
+
+    function cfgSig(cfg) {
+      /* 不能 JSON.stringify(cfg)：ops 里是整张 PNG 的 data URL，
+       * 拖滑杆时每帧 stringify 一遍会直接卡死（这是同步路径）。 */
+      var o = cfg.ops || [], key = '';
+      for (var i = 0; i < o.length; i++) {
+        key += (o[i] && o[i].type || '') + ':' + (o[i] && o[i].src ? String(o[i].src).length : 0) + ':';
+      }
+      return JSON.stringify({ v: cfg.v, layers: cfg.layers, baked: cfg.baked }) + '#' + o.length + '#' + key;
     }
 
     function memOf(doc) {
@@ -156,34 +214,54 @@
       return m;
     }
     function readCfg(doc, slot) {
-      if (!doc) return { v: 2, layers: [], baked: null };
+      if (!doc) return { v: 2, layers: [], baked: null, ops: [] };
       var k = slotKeyOf(doc, slot);
       var mem = sessionCfg.get(doc);
       if (mem && mem[k]) return normCfg(mem[k]);
       var assetKey = doc.materials && doc.materials.textureConfigKey;
-      if (!assetKey) return { v: 2, layers: [], baked: null };
+      if (!assetKey) return { v: 2, layers: [], baked: null, ops: [] };
       var all = readStore();
       return normCfg(all[assetKey] && all[assetKey][k]);
     }
     /* 写配置：本会话快照一定更新；能落盘的（有资产 id 的层）同步写 localStorage。
-     * 不落盘的层只留在 sessionCfg 里，和模型库「网页版本次会话有效」的语义一致。 */
+     * 不落盘的层只留在 sessionCfg 里，和模型库「网页版本次会话有效」的语义一致。
+     * ops（编辑层栈）只从 TexStack 取 —— 配置是它的镜像，不能反过来当真源。 */
     function writeCfg(doc, slot, cfg) {
       if (!doc) return;
       var k = slotKeyOf(doc, slot);
       var mem = memOf(doc);
-      var full = encCfg(cfg, false);
+      var full = encCfg(cfg, false, collectOpsDesc(doc, slot));
       if (full) mem[k] = full; else delete mem[k];
       var assetKey = doc.materials && doc.materials.textureConfigKey;
       if (!assetKey) return;
       var all = readStore();
       var m = (all[assetKey] && typeof all[assetKey] === 'object') ? all[assetKey] : {};
-      var p = encCfg(cfg, true);
+      var prev = (m[k] && typeof m[k] === 'object') ? m[k] : null;
+      /* 栈还没被本会话碰过：沿用旧记录里的 ops，别用「空」覆盖掉用户的笔迹 */
+      var desc = collectOpsDesc(doc, slot);
+      if (desc === null) desc = (prev && Array.isArray(prev.ops)) ? prev.ops : null;
+      var p = encCfg(cfg, true, packOps(desc, true));
+      /* 兜底：ops 内联进 localStorage 会撑爆 5MB 配额（外置不可用的浏览器）。
+       * 撞线就只落图层，ops 退回「本次会话有效」—— 宁少存，不要写坏整条记录。 */
+      if (p) {
+        var sz = 0;
+        try { sz = JSON.stringify(p).length; } catch (e) { sz = 0; }
+        if (sz > 1200 * 1024 && p.ops) {
+          delete p.ops;
+          p.v = p.baked ? 3 : 2;
+          if (!p.layers || !p.layers.length) p = (p.baked ? p : null);
+        }
+      }
       if (p) m[k] = p; else delete m[k];
       if (Object.keys(m).length) all[assetKey] = m; else delete all[assetKey];
       writeStore(all);
     }
     function snapCfg(slot) {
-      return JSON.stringify(readCfg(docOf(), slot));
+      /* 快照**不含 ops**：混合配置的撤销只该管图层与烘焙图，
+       * 笔迹 / 投射层有它们自己的 tex 历史条目。顺带也是性能问题 ——
+       * ops 里是整张 PNG，混进快照等于每拖一次滑杆编码一遍所有笔迹。 */
+      var cfg = readCfg(docOf(), slot);
+      return JSON.stringify({ v: cfg.v, layers: cfg.layers, baked: cfg.baked });
     }
 
     /* ---------------- 图片解码 ---------------- */
@@ -264,7 +342,7 @@
       if (!doc) return null;
       var cfg = readCfg(doc, slot);
       var rec = recOf(doc, slot);
-      var sig = JSON.stringify(cfg);
+      var sig = cfgSig(cfg);
       var baseUrl = ((doc.materials && doc.materials.slotMaps) || [])[slot] || '';
       if (!force && rec.ready && rec.sig === sig && rec.baseUrl === baseUrl) return rec;
       var my = ++rec.token;
@@ -289,7 +367,8 @@
         return {
           id: l.id, name: l.name, flipY: l.flipY !== false,
           opacity: TB.clampNum(l.opacity, 0, 1), blend: l.blend || 'normal',
-          img: img, mask: mask
+          img: img, mask: mask,
+          kind: l.kind || '', islands: l.islands || []
         };
       }));
 
@@ -319,7 +398,46 @@
       rec.baseUrl = baseUrl;
       rec.sig = sig;
       rec.ready = true;
+      /* v4 的 ops：灌进 TexStack（编辑层栈的唯一真源）。
+       * 只在「这一槽还没灌过、栈也空着」时做 —— 用户在当前会话里已经推过层，
+       * 说明栈比配置新，不能拿配置反向覆盖。 */
+      await hydrateOps(doc, slot, cfg, rec);
       return rec;
+    }
+
+    async function hydrateOps(doc, slot, cfg, rec) {
+      var rdy = opsReadyOf(doc);
+      if (rdy[slot] === 1 || rdy[slot] === 2) return;   /* 已完成 / 正在灌 */
+      if (!global.TexStack) { rdy[slot] = 1; return; }
+      if (global.TexStack.has(doc, slot)) { rdy[slot] = 1; return; }
+      var list0 = (cfg && cfg.ops) || [];
+      if (!list0.length) { rdy[slot] = 1; return; }
+      rdy[slot] = 2;
+      /* 存根（'blob:<id>'）要靠 blob-store 的内存缓存才能同步还原，先等它载完 */
+      if (typeof blobEnsure === 'function') { try { await blobEnsure(); } catch (e) {} }
+      var list = [];
+      for (var i = 0; i < list0.length; i++) {
+        var d = list0[i];
+        if (!d || !d.src) continue;
+        var src = (typeof blobResolve === 'function') ? blobResolve(d.src) : d.src;
+        if (!src) continue;
+        try {
+          var im = await urlImg(src);
+          var op = global.TexStack.fromDesc(d, im);
+          if (op) list.push(op);
+        } catch (e) { /* 单层解码失败不该毁掉整槽 */ }
+      }
+      if (!list.length) {
+        /* 一层都没解出来（图丢了 / 存根还在但库读不到）：**不置 ready**。
+         * 置了的话下一次写配置就会把 ops 当空数组删掉 —— 数据是救不回来的，
+         * 至少要让它们留在配置里，等资产库恢复后还能再试。 */
+        rdy[slot] = 0;
+        return;
+      }
+      rdy[slot] = 1;
+      global.TexStack.setOps(doc, slot, list);
+      /* 灌进来的层要让合成重跑一次 */
+      rec.sig = '';
     }
 
     /* ---------------- 合成 ---------------- */
@@ -365,7 +483,26 @@
       if (pt) { applySlotTexture(slot, pt); return; }
       var doc = docOf();
       var url = ((doc && doc.materials && doc.materials.slotMaps) || [])[slot] || '';
-      applySlotTexture(slot, url ? sharedTexture(url) : null);
+      if (url) { applySlotTexture(slot, sharedTexture(url)); return; }
+      /* slotMaps 里没有 URL 时**不能**把材质清成 null：材质上那张可能就是唯一的图
+       * （只在 map 上的老资产 / 合成图）。清掉就是「撤销一下贴图全没了」。
+       * 只有材质上本来也没图，才真的清空。 */
+      if (liveSlotImage && liveSlotImage(slot)) return;
+      applySlotTexture(slot, null);
+    }
+
+    /* 编辑层栈（投射 / 笔迹）的合成结果：底座之上、混合层之下。
+     * 缓存键带上「底座的来源 + 地址 + 尺寸」—— 换图 / 撤销画笔之后底座变了，
+     * 继续用旧合成图会把上一次的像素留在视口里。 */
+    function editsFor(slot, doc, rec) {
+      if (!global.TexStack || !global.TexStack.has(doc, slot)) return null;
+      var base = null, key = '';
+      if (global.TexSource) {
+        var r = global.TexSource.resolveBase(slot, { cached: rec && rec.baseImg, cachedUrl: rec && rec.baseUrl });
+        base = r.img;
+        key = r.from + '|' + r.url + '|' + (base ? (base.naturalWidth || base.width) + 'x' + (base.naturalHeight || base.height) : '');
+      }
+      return global.TexStack.edited(doc, slot, { base: base, baseKey: key });
     }
 
     function composeAndApply(slot) {
@@ -374,30 +511,55 @@
       var rec = recOf(doc, slot);
       var pc = paintCanvasFor ? paintCanvasFor(slot) : null;
       var eff = effectiveLayers(rec);
+      var edits = editsFor(slot, doc, rec);
       /* 有烘焙图也要合成：烘焙图就是新的基础层 */
-      if (!eff.length && !pc && !rec.baked) { applyBase(slot); return; }
-      var baseImg = pc || (rec.baked && rec.baked.img) || rec.baseImg || null;
+      if (!eff.length && !pc && !rec.baked && !edits) { applyBase(slot); return; }
+      var baseImg = pc || (rec.baked && rec.baked.img) || edits || rec.baseImg || null;
       var sz = TB.mixSize({ baseImg: baseImg, layers: eff }, MAX_SIDE);
       if (!rec.canvas) rec.canvas = document.createElement('canvas');
-      var cv = TB.compose({ w: sz.w, h: sz.h, baseImg: baseImg, layers: eff, canvas: rec.canvas });
+      var cv = TB.compose({
+        w: sz.w, h: sz.h, baseImg: baseImg, layers: eff, canvas: rec.canvas,
+        /* 没有底座时用材质槽色打底，别用 TB 默认的白 —— 否则「没贴图的模型」
+         * 一进合成就变白，和材质本色对不上 */
+        baseColor: ((doc.materials && doc.materials.slotColors) || [])[slot] || '#c9ccd4'
+      });
       rec.canvas = cv;
       rec.slotName = slotKeyOf(doc, slot);
       var tex = ensureTex(rec, cv);
       applySlotTexture(slot, tex);
     }
 
+    /* 编辑层栈落盘：栈的 rev 变了就写一次配置（v4）。
+     * 触发点是「合成之后」而不是「推层那一刻」—— 推层在绘画 / 投射两条同步路径上，
+     * 那里 toDataURL 会把落笔手感拖垮；这里已经在 rAF 里，一次编码换一次持久化。 */
+    function persistOps(doc, slot) {
+      if (!global.TexStack) return;
+      var assetKey = doc.materials && doc.materials.textureConfigKey;
+      if (!assetKey) return;      /* 还没保存过：没有 key 可以挂，落盘是无处可写 */
+      var rec = recOf(doc, slot);
+      var rv = global.TexStack.rev(doc, slot);
+      if (rec.opsRev === rv) return;
+      rec.opsRev = rv;
+      writeCfg(doc, slot, readCfg(doc, slot));
+    }
+
     function pump(slot) {
       var doc = docOf();
       if (!doc) return;
       var rec = recOf(doc, slot);
-      var sig = JSON.stringify(readCfg(doc, slot));
+      var sig = cfgSig(readCfg(doc, slot));
       var baseUrl = ((doc.materials && doc.materials.slotMaps) || [])[slot] || '';
       /* 基础贴图也可能变（撤销画笔 / 换图）：变了就得重新解码，
        * 不能拿旧的 rec.baseImg 继续合成。 */
-      if (rec.ready && rec.sig === sig && rec.baseUrl === baseUrl) { composeAndApply(slot); return; }
+      if (rec.ready && rec.sig === sig && rec.baseUrl === baseUrl) {
+        composeAndApply(slot);
+        persistOps(doc, slot);
+        return;
+      }
       ensureSlot(slot, false).then(function (r) {
         if (!r || st.doc !== doc) return;
         composeAndApply(slot);
+        persistOps(doc, slot);
         if (uiReady) renderUi();
       }).catch(function () {});
     }
@@ -420,7 +582,9 @@
       if (!doc) return;
       var cfg = readCfg(doc, slot);
       var rec = recOf(doc, slot);
-      var idle = !(cfg.layers.length || cfg.baked);
+      /* 编辑层栈也算「有东西要合成」：没有混合层时它是唯一让视口更新的路径 */
+      var hasEdits = !!(global.TexStack && global.TexStack.has(doc, slot));
+      var idle = !(cfg.layers.length || cfg.baked || hasEdits);
       if (idle) {
         if (rec.texValid) applyBase(slot);
         else if (!rec.ready) {
@@ -455,10 +619,18 @@
       return (rec && rec.texValid && rec.tex) ? rec.tex : null;
     }
     /* 绘画工作区的底图：烘焙图优先于导入的基础色贴图 */
+    /* 这个槽「未合成的底座」—— 混合层要叠在它上面，绘画/投射要在它上面画。
+     * 具体从哪张取由 TexSource 统一决定（baked → slotMaps → 本模块解码缓存 → live），
+     * 四个读者共用同一条顺序，避免各处答案不同（2026-11-11 调研的根因）。 */
     function baseImageFor(slot) {
       var doc = docOf();
       if (!doc) return null;
       var rec = recOf(doc, slot);
+      if (global.TexSource) {
+        var r = global.TexSource.resolveBase(slot, { cached: rec.baseImg, cachedUrl: rec.baseUrl });
+        return r.img || null;
+      }
+      /* TexSource 没加载时的降级（老页面 / 单测直引本文件） */
       if (rec.baked && rec.baked.img) return rec.baked.img;
       if (rec.baseImg) return rec.baseImg;
       var url = ((doc.materials && doc.materials.slotMaps) || [])[slot] || '';
@@ -466,7 +638,20 @@
         var t = sharedTexture(url);
         if (t && t.image && t.image.width) return t.image;
       }
+      if (liveSlotImage) {
+        var live = liveSlotImage(slot);
+        if (live && (live.width || live.naturalWidth)) return live;
+      }
       return null;
+    }
+
+    /* 上一轮「固化为底图」留下的底图（没有就是 null）。
+     * TexSource 用它作为 slotMaps 之后的第二来源。 */
+    function bakedImageFor(slot) {
+      var doc = docOf();
+      if (!doc) return null;
+      var rec = recOf(doc, slot);
+      return (rec.baked && rec.baked.img) || null;
     }
 
     /* ---------------- 历史补丁 ---------------- */
@@ -510,7 +695,8 @@
       var all = readStore();
       var m = (all[newKey] && typeof all[newKey] === 'object') ? all[newKey] : {};
       Object.keys(mem).forEach(function (k) {
-        var p = encCfg(normCfg(mem[k]), true);
+        var n0 = normCfg(mem[k]);
+        var p = encCfg(n0, true, packOps((n0.ops && n0.ops.length) ? n0.ops : null, true));
         if (p) m[k] = p; else delete m[k];
       });
       if (Object.keys(m).length) all[newKey] = m; else delete all[newKey];
@@ -772,7 +958,10 @@
       var eff = effectiveLayers(rec);
       var baseImg = pc || (rec.baked && rec.baked.img) || rec.baseImg || null;
       var sz = TB.mixSize({ baseImg: baseImg, layers: eff }, MAX_SIDE);
-      var cv = TB.compose({ w: sz.w, h: sz.h, baseImg: baseImg, layers: eff });
+      var cv = TB.compose({
+        w: sz.w, h: sz.h, baseImg: baseImg, layers: eff,
+        baseColor: ((doc.materials && doc.materials.slotColors) || [])[slot] || '#c9ccd4'
+      });
       var url = cv.toDataURL('image/png');
       var name = (slotKeyOf(doc, slot) || '槽') + ' 烘焙';
       var before = snapCfg(slot);
@@ -1495,12 +1684,39 @@
       if (uiReady) renderUi();
     }
 
+    /* 重新从配置里灌一次编辑层栈（丢掉当前栈）。
+     * 用途：换文档 / 外部把配置改了 / 探针模拟「刷新页面」。
+     * 正常打开页面时由 ensureSlot 自动调一次，这里是显式入口。 */
+    function rehydrate(slot) {
+      var doc = docOf();
+      if (!doc) return Promise.resolve(0);
+      slot = Math.max(0, Math.min(slotCount(doc) - 1, Number(slot) || 0));
+      var rdy = opsReadyOf(doc);
+      delete rdy[slot];
+      var rec = recOf(doc, slot);
+      return hydrateOps(doc, slot, readCfg(doc, slot), rec).then(function () {
+        refreshSlot(slot, true);
+        return global.TexStack ? global.TexStack.ops(doc, slot).length : 0;
+      });
+    }
+
     return {
       init: init, refresh: refresh, renderUi: renderUi, schedule: schedule,
-      baseImageFor: baseImageFor, texFor: texFor, applyPatch: applyPatch,
+      /* 同步重合成：撤销「投射层 / 固化」之后要立刻看到结果，不能等异步解码。
+       * 层没变、只变底座或编辑层栈时用这条。 */
+      composeNow: composeAndApply,
+      rehydrate: rehydrate,
+      /* 单槽刷新（投射改了编辑层栈之后调它）：会重新解码层再合成 */
+      refreshSlot: refreshSlot,
+      baseImageFor: baseImageFor, bakedImageFor: bakedImageFor, texFor: texFor, applyPatch: applyPatch,
       rekey: rekey, selectSlot: selectSlot
     };
   }
 
-  global.MDTexMix = { create: create };
+  /* 纯函数挂出来供探针直接测：模型库写进层里的 kind / islands，
+   * 建模 App 一次读写绝不能把它们洗掉（跟 M3DSlots.mergeSlotRec 同款约定）。 */
+  global.MDTexMix = {
+    create: create,
+    normLayer: normLayer, encLayer: encLayer
+  };
 })(window);

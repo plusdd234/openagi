@@ -1,5 +1,7 @@
 /* ============================================================
- * app.css 拆分 · 12-modeldesk
+ * app.css 拆分 · 15-modeldesk
+ * （原编号 12，与 12-media 撞号；选择器全部以 .os-win.modeldesk 开头，
+ *   作用域独立，所以改号并挪到最后不影响层叠。）
  * 建模 App 外壳：按 Maya 2024 的布局重画
  * 菜单条 / 状态行 / 工具架 / 主区（工具条 + 大纲 + 视口 + 右侧）/ 命令行。
  * 只作用在 .os-win.modeldesk 里，别让这些灰色面板污染别的 App。
@@ -16,19 +18,56 @@
 .md-host { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; }
 
 .md-app {
-  --md-bg: #242424;
-  --md-panel: #3a3a3a;
-  --md-panel-hi: #444444;
-  --md-line: #1b1b1b;
-  --md-line-soft: #2e2e2e;
-  --md-txt: #d6d6d6;
-  --md-dim: #a4a4a4;
-  --md-mute: #868686;
-  --md-field: #2b2b2b;
-  --md-field-line: #1d1d1d;
-  --md-on: #4f6a84;
-  --md-on-line: #394e61;
-  --md-accent: #c98f35;
+  /* ---------- 色阶 ----------
+   * 五级灰，从上到下依次变亮。**每一个容器只准用这五级里的一个**：
+   *   视口外的空底 ink → 侧栏面板 panel → 卡片/分区 raise → 按钮面 ctrl → 悬停 raise-hi。
+   * 以前 #242424/#333/#363636/#3a3a3a/#3d3d3d/#3f3f3f/#444 七种灰混着用，
+   * 相邻两层的差只有 2–3，层级根本看不出来（这就是"面板糊成一片"的原因）。 */
+  --md-ink: #141414;          /* 最深：外框、窗口边、凹陷区 */
+  --md-bg: #222222;           /* 视口外的空底 */
+  --md-panel: #303030;        /* 侧栏 / 面板底 */
+  --md-raise: #383838;        /* 卡片 / 分区 / 分组底 */
+  --md-ctrl: #3f3f3f;         /* 按钮面 */
+  --md-raise-hi: #4a4a4a;     /* 悬停 / 抬起 */
+  --md-sunken: #252525;       /* 输入框 / 画布凹槽 */
+
+  --md-line: #141414;         /* 强分隔（面板与面板之间） */
+  --md-line-soft: #2a2a2a;    /* 弱分隔（面板内部） */
+  /* 按钮上沿的一道高光：深色 UI 里"可点"这件事主要靠它表达，
+   * 纯靠背景色差在低对比下几乎看不出来 */
+  --md-edge-top: rgba(255, 255, 255, .075);
+
+  --md-txt: #d9d9d9;
+  --md-dim: #a6a6a6;
+  --md-mute: #8a8a8a;
+
+  --md-field: var(--md-sunken);
+  --md-field-line: #161616;
+
+  /* 选中蓝 / 强调金：这两个色以前各有四种写法（#4f6a84 / #4a7ea5 / #4a6a92 /
+   * #3f6d92，金 #c98f35 / #d9922f / #e0a13a / #d8a15a），
+   * 同一个"选中"在不同面板里颜色不同，用户学不会"蓝=选中" */
+  --md-on: #47719a;
+  --md-on-line: #345570;
+  --md-on-hi: #5a86b0;
+  --md-accent: #d8a04a;
+  --md-accent-line: #8a6222;
+  --md-focus: #6fa8d6;
+  --md-err: #ff9b8a;
+  --md-warn: #ffd08a;
+
+  --md-r-sm: 2px;             /* 小徽章 / 缩略图 */
+  --md-r: 3px;                /* 控件（按钮 / 输入框 / 页签） */
+  --md-r-lg: 6px;             /* 卡片 / 分区 */
+  --md-r-pop: 8px;            /* 弹层 / 浮窗 */
+
+  --md-t: background-color .12s ease, border-color .12s ease, color .12s ease;
+
+  /* 让原生控件（复选框、下拉列表、取色器、range、滚动条）按深色渲染。
+   * 不加这一条，深色面板里会冒出：纯白复选框、白底下拉列表、白色滚动槽 ——
+   * 这是"看起来像没做完"最直观的来源，而且光靠 CSS 改不动它们的内部。 */
+  color-scheme: dark;
+
   flex: 1 1 auto; min-width: 0; min-height: 0;
   display: flex; flex-direction: column;
   background: var(--md-bg); color: var(--md-txt);
@@ -1583,3 +1622,1281 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   .md-uvwin { left: 120px; right: 8px; }
   .md-uv-kit { flex-basis: 200px; width: 200px; }
 }
+
+/* ============================================================
+   投射烘焙编辑器（js/md-proj-bake.js）
+   左：原画  右：UV 岛（当前摄像机着色）
+   窗口骨架沿用 UV 编辑器那套（27px 标题栏 + 深色面板），
+   但左右分栏是这里独有的，别往 .md-uvwin 上叠。
+   ============================================================ */
+.md-pbwin {
+  position: absolute; left: 150px; top: 76px; right: 34px; bottom: 46px;
+  z-index: 31; min-width: 620px; min-height: 420px;
+  display: flex; flex-direction: column;
+  background: #2c2c2c; color: var(--md-txt);
+  border: 1px solid #101010; border-radius: 3px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, .58), 0 0 0 1px rgba(255, 255, 255, .045);
+  overflow: hidden; outline: none;
+}
+.md-pbwin.pulse { animation: md-uv-pulse .26s ease; }
+
+.md-pb-head {
+  flex: 0 0 27px; height: 27px;
+  display: flex; align-items: center; gap: 8px; padding: 0 8px;
+  background: linear-gradient(180deg, #474747 0%, #373737 100%);
+  border-bottom: 1px solid #191919;
+  cursor: move; user-select: none;
+}
+.md-pb-head b { font-size: 11.5px; font-weight: 700; color: #f2f2f2; }
+.md-pb-target { font-size: 10px; color: #9a9a9a; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-pb-headbtns { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+.md-pb-hbtn {
+  height: 19px; padding: 0 8px; font-size: 10.5px; line-height: 17px;
+  color: #d8d8d8; background: #3c3c3c; border: 1px solid #1c1c1c; border-radius: 2px; cursor: pointer;
+}
+.md-pb-hbtn:hover { background: #4a4a4a; color: #fff; }
+
+.md-pb-body { flex: 1 1 auto; display: flex; min-height: 0; background: #242424; }
+.md-pb-pane { flex: 1 1 50%; min-width: 0; display: flex; flex-direction: column; }
+.md-pb-ptitle {
+  flex: 0 0 22px; height: 22px; display: flex; align-items: center; gap: 7px;
+  padding: 0 8px; background: #333; border-bottom: 1px solid #1b1b1b;
+  font-size: 10.5px; color: #cfcfcf;
+}
+.md-pb-ptitle > span:first-child { font-weight: 600; }
+.md-pb-ptitle em { font-style: normal; color: #8c8c8c; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-pb-pbtns { margin-left: auto; display: flex; gap: 4px; }
+.md-pb-tbtn {
+  height: 17px; padding: 0 7px; font-size: 10px; line-height: 15px;
+  background: #3d3d3d; color: #d6d6d6; border: 1px solid #1d1d1d; border-radius: 2px; cursor: pointer;
+}
+.md-pb-tbtn:hover { background: #4c4c4c; color: #fff; }
+/* 「上传原画」是个 label[for]：按钮样式要自己补，label 默认是 inline 且不吃 height */
+label.md-pb-tbtn {
+  display: inline-flex; align-items: center; box-sizing: border-box;
+  user-select: none; -webkit-user-select: none;
+}
+label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px; }
+/* file input 用「挪到视口外」隐藏，不能用 hidden / display:none ——
+ * 那种状态下某些外壳会拒绝激活文件对话框，
+ * 症状就是「点击上传原画毫无反应」（对话框根本不弹）。 */
+.md-pb-filein {
+  position: absolute; left: -9999px; top: 0;
+  width: 1px; height: 1px; opacity: 0; pointer-events: none;
+}
+
+.md-pb-cvwrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+/* 只作用于**直接子画布**（左右两块主画布）。写成 `.md-pb-cvwrap canvas` 会连图层面板里的
+ * 缩略图 canvas 一起变成 position:absolute; inset:0 —— 缩略图会铺满整个面板，
+ * 面板里所有点击都被它吃掉（症状：点眼睛没反应、点哪一行都选中底图）。 */
+.md-pb-cvwrap > canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#mdPbRight { cursor: grab; }
+#mdPbRight:active { cursor: grabbing; }
+#mdPbLeft { cursor: default; }
+
+.md-pb-empty {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px; text-align: center;
+  color: #7d7d7d; font-size: 11.5px; pointer-events: none; padding: 20px;
+}
+.md-pb-empty[hidden] { display: none; }
+.md-pb-empty b { font-size: 13px; color: #a8a8a8; font-weight: 600; }
+.md-pb-empty em { font-style: normal; font-size: 10.5px; color: #6a6a6a; }
+/* 没原画却去拖岛时闪一下：整条落位链路这时是空转的，不给视觉反馈
+ * 用户只会觉得「拖不动」。只动 opacity，不动尺寸，避免触发重排。 */
+.md-pb-empty.attn { animation: mdPbEmptyAttn 1s ease-in-out 2; }
+.md-pb-empty.attn b { color: #ffd08a; }
+@keyframes mdPbEmptyAttn {
+  0%, 100% { opacity: .55; }
+  50% { opacity: 1; }
+}
+
+.md-pb-toast, .md-pb-hint {
+  position: absolute; left: 10px; bottom: 10px; max-width: calc(100% - 20px);
+  padding: 5px 9px; border-radius: 3px; font-size: 10.5px; line-height: 1.45;
+  background: rgba(18, 18, 18, .88); color: #d8d8d8; border: 1px solid rgba(255, 255, 255, .08);
+  opacity: 0; transform: translateY(4px); transition: opacity .16s, transform .16s;
+  pointer-events: none;
+}
+.md-pb-toast.on { opacity: 1; transform: none; }
+.md-pb-toast.err { color: #ffb4a8; border-color: rgba(220, 110, 90, .45); }
+.md-pb-hint {
+  opacity: 1; transform: none; color: #9aa7ad;
+  left: 6px; bottom: 6px; padding: 3px 7px; font-size: 10px;
+  max-width: 74%; background: rgba(18, 18, 18, .82);
+}
+.md-pb-hint.warn { color: #ffd08a; border-color: rgba(224, 160, 58, .42); background: rgba(38, 28, 12, .92); }
+/* 左栏的缩放提示放**左上**：右下已经被 toast 占了，两条叠在一起会互相盖 */
+.md-pb-zhint { top: 6px; bottom: auto; }
+.md-pb-hint[hidden] { display: none; }
+
+/* ---------------- 图层面板 ----------------
+   浮在左栏右上角（PS 也在右边），不挤压画布。
+   面板是画布的**兄弟节点**，指针事件不会串到 canvas 的 pointerdown 上，
+   所以点眼睛/拖行排序都不会顺手拖动画布。 */
+.md-pb-lypanel {
+  position: absolute; top: 8px; right: 8px; width: 168px;
+  max-height: calc(100% - 16px);
+  display: flex; flex-direction: column;
+  background: rgba(30, 30, 30, .95);
+  border: 1px solid #101010; border-radius: 3px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .55);
+  font-size: 10.5px; color: #cfcfcf; z-index: 3;
+  backdrop-filter: blur(2px);
+}
+.md-pb-lypanel[hidden] { display: none; }
+.md-pb-lyhd {
+  flex: 0 0 20px; height: 20px; display: flex; align-items: center; gap: 6px;
+  padding: 0 4px 0 7px; background: linear-gradient(180deg, #3d3d3d, #333);
+  border-bottom: 1px solid #1a1a1a; border-radius: 2px 2px 0 0;
+}
+.md-pb-lyhd b { font-size: 10.5px; font-weight: 600; color: #eaeaea; }
+.md-pb-lyhd em { font-style: normal; color: #8a8a8a; font-size: 9.5px; }
+.md-pb-lyx {
+  margin-left: auto; width: 16px; height: 15px; line-height: 13px; padding: 0;
+  font-size: 11px; color: #9a9a9a; background: transparent;
+  border: 0; border-radius: 2px; cursor: pointer;
+}
+.md-pb-lyx:hover { background: #4d4d4d; color: #fff; }
+
+.md-pb-lylist { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 3px; }
+.md-pb-ly {
+  display: flex; align-items: center; gap: 5px;
+  height: 22px; padding: 0 3px; border-radius: 2px;
+  cursor: pointer; user-select: none;
+  border: 1px solid transparent;
+}
+.md-pb-ly:hover { background: rgba(255, 255, 255, .055); }
+.md-pb-ly.on {
+  background: rgba(120, 214, 236, .14);
+  border-color: rgba(120, 214, 236, .38);
+}
+.md-pb-ly.dragging { opacity: .5; }
+.md-pb-ly.off .md-pb-lynm,
+.md-pb-ly.off .md-pb-lyth { opacity: .4; }
+
+.md-pb-lyeye {
+  flex: 0 0 16px; width: 16px; height: 16px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #9fb4bb; background: transparent; border: 0; border-radius: 2px; cursor: pointer;
+}
+.md-pb-lyeye:hover { color: #dff4fa; background: rgba(255, 255, 255, .08); }
+.md-pb-ly.off .md-pb-lyeye { color: #5c5c5c; }
+
+/* 缩略图底用棋盘格标「透明」：层的形状之外是透明的，涂成纯黑会让人以为
+ * 那一层本来就是黑的（PS 用棋盘格也是这个道理）。 */
+.md-pb-lyth {
+  flex: 0 0 18px; width: 18px; height: 18px;
+  border-radius: 2px; border: 1px solid #111;
+  background-color: #232323;
+  background-image:
+    linear-gradient(45deg, #313131 25%, transparent 25%, transparent 75%, #313131 75%),
+    linear-gradient(45deg, #313131 25%, transparent 25%, transparent 75%, #313131 75%);
+  background-size: 6px 6px;
+  background-position: 0 0, 3px 3px;
+}
+.md-pb-lynm {
+  flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #d2d2d2;
+}
+.md-pb-lyop { font-style: normal; color: #8fb8c4; font-size: 9.5px; }
+.md-pb-lylock {
+  font-style: normal; font-size: 9px; color: #7a7a7a;
+  border: 1px solid #3c3c3c; border-radius: 2px; padding: 0 3px; line-height: 13px;
+}
+.md-pb-lydel {
+  flex: 0 0 14px; width: 14px; height: 14px; padding: 0; line-height: 12px;
+  font-size: 12px; color: #9a9a9a; background: transparent;
+  border: 0; border-radius: 2px; cursor: pointer; opacity: 0;
+}
+.md-pb-ly:hover .md-pb-lydel { opacity: 1; }
+.md-pb-lydel:hover { background: rgba(220, 110, 90, .28); color: #ffd3cb; }
+
+.md-pb-lyfoot {
+  flex: 0 0 24px; display: flex; align-items: center; gap: 5px;
+  padding: 0 6px; border-top: 1px solid #1a1a1a; background: #2e2e2e;
+  border-radius: 0 0 2px 2px;
+}
+.md-pb-lyfoot[hidden] { display: none; }
+.md-pb-lyfoot span { color: #8f8f8f; white-space: nowrap; }
+.md-pb-lyfoot input[type="range"] {
+  flex: 1 1 auto; min-width: 40px; height: 12px; margin: 0;
+  accent-color: var(--md-accent); cursor: pointer;
+}
+.md-pb-lyfoot em {
+  font-style: normal; flex: 0 0 30px; text-align: right; color: #b6b6b6; font-size: 9.5px;
+}
+/* 图层面板开着时，「图层」按钮要亮着 —— 否则用户不知道面板从哪来的 */
+.md-pb-tbtn.on {
+  background: #46585e; color: #d8f2f9; border-color: #6d94a0;
+}
+
+.md-pb-split {
+  flex: 0 0 5px; width: 5px; cursor: col-resize;
+  background: linear-gradient(90deg, #1e1e1e, #313131 50%, #1e1e1e);
+}
+.md-pb-split:hover { background: var(--md-accent); }
+
+.md-pb-foot {
+  flex: 0 0 32px; height: 32px; display: flex; align-items: center; gap: 8px;
+  padding: 0 10px; background: #333; border-top: 1px solid #1b1b1b; font-size: 10.5px;
+  white-space: nowrap;
+}
+/* 底栏每一项都不许被压扁：窄窗口下宁可让「状态」省略也不能让按钮换行 */
+.md-pb-foot > * { flex: 0 0 auto; }
+.md-pb-flab { color: #909090; }
+.md-pb-sel {
+  height: 20px; width: 104px; font-size: 10.5px; color: #d8d8d8;
+  background: #262626; border: 1px solid #1a1a1a; border-radius: 2px; padding: 0 4px;
+}
+.md-pb-chk { display: inline-flex; align-items: center; gap: 4px; color: #b8b8b8; cursor: pointer; }
+.md-pb-chk input { width: 11px; height: 11px; accent-color: var(--md-accent); }
+.md-pb-fsep { width: 1px; height: 16px; background: #1c1c1c; }
+.md-pb-go {
+  height: 22px; padding: 0 16px; font-size: 11px; font-weight: 600;
+  color: #2a1c05; background: linear-gradient(180deg, #e0a63f, #c98f35);
+  border: 1px solid #7c5714; border-radius: 2px; cursor: pointer;
+}
+.md-pb-go:hover { background: linear-gradient(180deg, #eeb44c, #d69a3c); }
+.md-pb-go:active { transform: translateY(1px); }
+.md-pb-stat { margin-left: auto; color: #8c8c8c; font-size: 10px; flex: 0 1 auto !important; overflow: hidden; text-overflow: ellipsis; }
+
+.md-pb-rs {
+  position: absolute; right: 0; bottom: 0; width: 14px; height: 14px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, .18) 50%);
+}
+
+@media (max-width: 1100px) {
+  .md-pbwin { left: 110px; right: 8px; }
+  .md-pb-ptitle em { max-width: 34%; }
+}
+
+/* ============================================================
+ * 15. 视觉打磨（2026-11-11）
+ *
+ * 这一节**只修正问题，不换风格**：还是仿 Maya/Blender 的深灰工业化面板。
+ * 修的是五类"看得出但说不出"的地方：
+ *   ① 色阶混乱 —— 七种灰、四种蓝、三种金，同一语义不同颜色；
+ *   ② 交互态缺失 —— 一半按钮没有 hover 过渡，点了只有浏览器默认的按下；
+ *   ③ 滚动条没管 —— 只有两处自绘，其余是系统亮色滚动条，在深底上像一道白条；
+ *   ④ 焦点不可见 —— 键盘 Tab 找不到位置；
+ *   ⑤ 层级扁平 —— 分组标题和内容一样大一样亮，看不出"这是一段的头"。
+ *
+ * 为什么整节用 `.md-app xxx` 前缀：原来的选择器是裸 `.md-xxx`（0,1,0），
+ * 这里要压过它们就得提高一级；顺带把影响范围锁死在建模 App 内
+ * （虽然目前 .md- 类名只有这个 App 用，但别依赖这个巧合）。
+ * ============================================================ */
+
+/* ---------- 15.1 滚动条：全 App 一条，深色细轨 ---------- */
+.md-app ::-webkit-scrollbar { width: 9px; height: 9px; }
+.md-app ::-webkit-scrollbar-track { background: transparent; }
+.md-app ::-webkit-scrollbar-thumb {
+  background: #4a4a4a; background-clip: padding-box;
+  border: 2px solid transparent; border-radius: 6px;
+}
+.md-app ::-webkit-scrollbar-thumb:hover { background: #5e5e5e; background-clip: padding-box; }
+.md-app ::-webkit-scrollbar-thumb:active { background: #6b6b6b; background-clip: padding-box; }
+.md-app ::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---------- 15.2 焦点环：只有键盘导航才画 ----------
+ * 用 :focus-visible 而不是 :focus —— 鼠标点按钮也画一圈蓝框，
+ * 每个控件都会"闪一下"，在这么密的界面里非常吵。 */
+.md-app button:focus-visible,
+.md-app input:focus-visible,
+.md-app select:focus-visible,
+.md-app label:focus-visible,
+.md-app [tabindex]:focus-visible {
+  outline: 2px solid var(--md-focus);
+  outline-offset: 1px;
+}
+/* 鼠标点击不再画 outline（各控件原来写的 :focus 边框色保留，那是"输入中"的提示） */
+.md-app button:focus:not(:focus-visible) { outline: none; }
+
+/* ---------- 15.3 控件面：一套边框 / 悬停 / 按下 / 禁用 ----------
+ * 这些类原来各自抄了一遍近似值（#252525 / #272727 / #282828 混用，
+ * hover 只有一半有，disabled 只有少数有），统一到这里。 */
+.md-app .md-act,
+.md-app .md-chip,
+.md-app .md-tbtn,
+.md-app .md-cb-btn,
+.md-app .md-dock-mini,
+.md-app .md-wide,
+.md-app .md-soft-reset,
+.md-app .md-slot-a,
+.md-app .md-mod-add button,
+.md-app .md-mod-ops button,
+.md-app .md-uvk-acts button,
+.md-app .md-uv-hbtn,
+.md-app .md-uv-tbtn,
+.md-app .md-pb-hbtn,
+.md-app .md-pb-tbtn {
+  border: 1px solid #1e1e1e;
+  border-top-color: var(--md-edge-top);
+  border-radius: var(--md-r);
+  background: var(--md-ctrl);
+  color: #d6d6d6;
+  transition: var(--md-t);
+}
+.md-app .md-act:hover,
+.md-app .md-chip:hover,
+.md-app .md-tbtn:hover,
+.md-app .md-cb-btn:hover,
+.md-app .md-dock-mini:hover,
+.md-app .md-wide:hover,
+.md-app .md-soft-reset:hover,
+.md-app .md-slot-a:hover:not(:disabled),
+.md-app .md-mod-add button:hover,
+.md-app .md-mod-ops button:hover,
+.md-app .md-uvk-acts button:hover,
+.md-app .md-uv-hbtn:hover,
+.md-app .md-uv-tbtn:hover,
+.md-app .md-pb-hbtn:hover,
+.md-app .md-pb-tbtn:hover {
+  background: var(--md-raise-hi);
+  border-top-color: rgba(255, 255, 255, .12);
+  color: #fff;
+}
+/* 按下：往下压一档，不位移（位移会让 1px 边框发虚） */
+.md-app .md-act:active:not(:disabled),
+.md-app .md-chip:active:not(:disabled),
+.md-app .md-tbtn:active:not(:disabled),
+.md-app .md-cb-btn:active:not(:disabled),
+.md-app .md-dock-mini:active:not(:disabled),
+.md-app .md-wide:active:not(:disabled),
+.md-app .md-uv-tbtn:active:not(:disabled),
+.md-app .md-pb-hbtn:active:not(:disabled),
+.md-app .md-pb-tbtn:active:not(:disabled) { background: #363636; border-top-color: #1e1e1e; }
+.md-app .md-act:disabled,
+.md-app .md-cb-btn:disabled,
+.md-app .md-dock-mini:disabled,
+.md-app .md-uv-tbtn:disabled,
+.md-app .md-pb-tbtn:disabled {
+  opacity: .38; background: #363636; color: #a2a2a2;
+  border-top-color: #1e1e1e; cursor: default;
+}
+
+/* 选中态（按钮型开关）：统一成同一个蓝，不再各写各的 */
+.md-app .md-act.on,
+.md-app .md-chip.on,
+.md-app button.md-vpi.on,
+.md-app .md-uv-tbtn.on {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  border-top-color: var(--md-on-hi);
+  color: #fff;
+}
+.md-app .md-act.primary,
+.md-app .md-cb-btn.primary {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  border-top-color: var(--md-on-hi);
+  color: #fff; font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+}
+.md-app .md-act.primary:hover,
+.md-app .md-cb-btn.primary:hover {
+  background: var(--md-on-hi); border-color: var(--md-on-line);
+}
+
+/* ---------- 15.4 页签：四种（大纲 / 工具箱 / 属性 / 内容浏览器 / 工具架）合成一种 ----------
+ * 以前"选中"这一件事有四种表现：灰胶囊、无边框文字、文件夹页签、白底按钮。
+ * 现在统一为「透明的暗字 → 悬停微亮 → 选中为抬起的小块」。 */
+.md-app .md-otab,
+.md-app .md-dock-tab,
+.md-app .md-stab {
+  height: 18px; line-height: 17px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--md-r);
+  background: transparent;
+  color: var(--md-mute);
+  font: inherit; font-size: 10px;
+  cursor: pointer; white-space: nowrap;
+  transition: var(--md-t);
+}
+.md-app .md-otab:hover,
+.md-app .md-dock-tab:hover,
+.md-app .md-stab:hover {
+  background: rgba(255, 255, 255, .06);
+  color: #e4e4e4;
+}
+.md-app .md-otab.on,
+.md-app .md-dock-tab.on,
+.md-app .md-stab.on {
+  background: var(--md-ctrl);
+  border-color: #1e1e1e; border-top-color: var(--md-edge-top);
+  color: #f2f2f2; font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .28);
+}
+/* 页签条本身退成面板色，别用比面板更亮的 #363636 ——
+ * 那条亮带会和下面的内容抢注意力 */
+.md-app .md-otabs,
+.md-app .md-tb-tabs {
+  background: var(--md-panel);
+  border-bottom: 1px solid var(--md-line-soft);
+  padding: 0 6px;
+}
+.md-app .md-shelf-tabs { padding-left: 3px; }
+/* 属性编辑器的文件夹页签保留"贴住内容区"的造型，只换配色 */
+.md-app .md-ptabs { background: var(--md-panel); border-bottom: 1px solid var(--md-line); }
+.md-app .md-ptab {
+  background: #383838; color: var(--md-mute);
+  border-color: #1e1e1e; border-bottom: 0;
+  border-radius: var(--md-r) var(--md-r) 0 0;
+  transition: var(--md-t);
+}
+.md-app .md-ptab:hover { color: #e6e6e6; background: #3f3f3f; }
+.md-app .md-ptab.on {
+  background: linear-gradient(180deg, #4b4b4b 0%, #414141 100%);
+  border-color: #1a1a1a; border-top-color: rgba(255, 255, 255, .12);
+  color: #f2f2f2; font-weight: 600;
+}
+
+/* ---------- 15.5 分组标题：这是一段的"头"，得看得出来 ---------- */
+.md-app .md-sec2-h,
+.md-app .md-tb-h {
+  height: 22px;
+  background: linear-gradient(180deg, #414141 0%, #373737 100%);
+  border-bottom: 1px solid #262626;
+  color: #e8e8e8;
+  font-weight: 600; font-size: 10px;
+  letter-spacing: .02em;
+  transition: background-color .12s ease;
+}
+.md-app .md-sec2-h:hover { background: linear-gradient(180deg, #484848 0%, #3e3e3e 100%); }
+.md-app .md-sec2-open { border-bottom: 1px solid #262626; }
+/* 右侧状态值（"关"、"3 项"…）：原来 9px #8f8f8f 贴在灰底上，
+ * 字重又太细，等于看不见。改成带底的小胶囊。 */
+.md-app .md-sec2-h em,
+.md-app .md-tb-h em {
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #2b2b2b;
+  border: 1px solid #242424;
+  font-size: 9px; font-weight: 400; letter-spacing: 0;
+  color: #a8a8a8;
+}
+.md-app .md-sec2-h em.on,
+.md-app .md-tb-h em.on {
+  background: #3b3122; border-color: #60491f; color: var(--md-accent);
+}
+/* 折叠箭头：0.12s 旋转已经有了，这里只把它对齐到视觉中线 */
+.md-app .md-sec2-arrow {
+  width: 10px; text-align: center;
+  color: #b0b0b0; font-size: 9px;
+}
+.md-app .md-sec2:not(.open) .md-sec2-h { border-bottom-color: transparent; }
+/* 分区容器：靠 1px 深边 + 6px 圆角把自己从面板里"切"出来 */
+.md-app .md-sec2 {
+  border: 1px solid #1f1f1f;
+  border-radius: var(--md-r-lg);
+  background: var(--md-raise);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .16);
+}
+.md-app .md-sec {
+  border: 1px solid #1f1f1f;
+  border-radius: var(--md-r-lg);
+  background: var(--md-raise);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .16);
+}
+.md-app .md-h2 {
+  background: linear-gradient(180deg, #414141 0%, #373737 100%);
+  border-bottom: 1px solid #262626;
+  color: #e8e8e8; font-weight: 600;
+}
+.md-app .md-h2::before { color: #b0b0b0; }
+
+/* ---------- 15.6 顶部三条：菜单 / 工具条 / 工具架 ----------
+ * 三条的高度和底色本来各写一份，现在统一到"上亮下暗"的同一条渐变，
+ * 视觉上它们是一个整体（顶部 chrome），只是分了三行。 */
+.md-app .md-menu,
+.md-app .md-vpbar {
+  background: linear-gradient(180deg, #3d3d3d 0%, #333333 100%);
+  border-bottom: 1px solid var(--md-line);
+}
+.md-app .md-toolbar { background: #2e2e2e; }
+.md-app .md-shelf {
+  background: linear-gradient(180deg, #373737 0%, #2f2f2f 100%);
+  border-bottom: 1px solid var(--md-line);
+}
+/* 菜单项：文字按钮不该有边框感的 hover，只给底 */
+.md-app .md-mitem {
+  border-radius: var(--md-r);
+  color: #d0d0d0;
+  transition: var(--md-t);
+}
+.md-app .md-mitem:hover,
+.md-app .md-mitem.open {
+  background: rgba(255, 255, 255, .09);
+  border-color: transparent;
+  color: #fff;
+}
+/* 下拉：圆角与阴影跟其它弹层一致（原来是 3px + 硬阴影） */
+.md-app .md-drop {
+  border-radius: var(--md-r-pop);
+  border-color: #101010;
+  background: #353535;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .06);
+  padding: 5px;
+}
+.md-app .md-mi { border-radius: var(--md-r); transition: var(--md-t); }
+.md-app .md-mi:hover:not(.off) { background: var(--md-on); }
+.md-app .md-msep { background: #2b2b2b; margin: 5px 8px; }
+/* 工具条里的只读标签（对齐 / 单位）压暗，别和按钮抢 */
+.md-app .md-tbst { color: #7f7f7f; font-size: 9.5px; }
+/* 工具架图标：文本字形（▣ ◉ ▤…）和 SVG 图标混排，
+ * 14px 的字形在 17px 的 SVG 旁边明显偏小 → 统一到 16px 并居中 */
+.md-app .md-sico {
+  width: 26px; height: 28px;
+  font-size: 16px;
+  border-radius: var(--md-r);
+  transition: var(--md-t);
+}
+.md-app .md-sico svg { width: 18px; height: 18px; }
+.md-app .md-sico { opacity: .92; }
+.md-app .md-sico:hover { background: var(--md-raise-hi); border-color: #1e1e1e; opacity: 1; }
+/* 工具架分组分隔线：二十多个图标连成一条，找"UV 在哪"要靠数 */
+.md-app .md-sico-sep {
+  flex: 0 0 1px; width: 1px; height: 18px; margin: 0 4px;
+  background: #232323; box-shadow: 1px 0 0 rgba(255, 255, 255, .05);
+}
+/* 左侧竖工具条 */
+.md-app .md-tool {
+  border-radius: var(--md-r);
+  transition: var(--md-t);
+}
+.md-app .md-tool:hover { background: var(--md-raise-hi); border-color: #1e1e1e; }
+.md-app .md-tool.on {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  color: #f4f9ff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14);
+}
+
+/* ---------- 15.7 视口标题行 ---------- */
+/* 占位项（照明 / 显示 / 渲染器 / 面板）不是控件，压到比真控件更暗，
+ * 免得用户以为能点；真正当前视图的那个标签提亮。 */
+.md-app .md-vplabel { color: #909090; }
+.md-app .md-vplabel#mdViewLabel { color: #dcdcdc; font-weight: 600; }
+.md-app .md-vpsel {
+  height: 19px;
+  border-radius: var(--md-r);
+  border-color: #1a1a1a; border-top-color: rgba(255, 255, 255, .07);
+  background: var(--md-sunken);
+  transition: var(--md-t);
+  /* 自绘箭头：系统箭头在 19px 高的控件里是一坨双 V，比按钮上的图标还显眼 */
+  -webkit-appearance: none; appearance: none;
+  padding: 0 17px 0 6px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #9a9a9a 50%),
+    linear-gradient(135deg, #9a9a9a 50%, transparent 50%);
+  background-position: calc(100% - 10px) 8px, calc(100% - 6px) 8px;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+}
+.md-app .md-vpsel:hover { border-color: #3f3f3f; color: #fff; }
+.md-app .md-vpi { border-radius: var(--md-r); transition: var(--md-t); }
+.md-app .md-vpi:hover { background: var(--md-raise-hi); border-color: #1e1e1e; }
+.md-app .md-numb {
+  border-radius: var(--md-r);
+  border-color: #1a1a1a;
+  color: #bfbfbf;
+}
+.md-app .md-vpstyle {
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .22);
+  border-color: #1e1e1e;
+  color: #a8a8a8;
+}
+/* 视口 HUD：信息条压薄，别挡模型 */
+.md-app .md-hud {
+  border-radius: var(--md-r-lg);
+  background: rgba(20, 20, 20, .58);
+  backdrop-filter: blur(3px);
+  border-color: rgba(255, 255, 255, .06);
+  color: #cfcfcf;
+}
+
+/* ---------- 15.8 大纲视图 ---------- */
+.md-app .md-outline { background: var(--md-panel); }
+.md-app .md-panel-h {
+  background: linear-gradient(180deg, #3d3d3d 0%, #343434 100%);
+  border-bottom: 1px solid var(--md-line);
+  color: #e4e4e4; font-weight: 600;
+}
+.md-app .md-panel-h em { color: #909090; font-weight: 400; }
+/* 搜索框：凹槽要真的"凹"下去（比面板更暗 + 内阴影） */
+.md-app .md-osearch { padding: 5px 6px; border-bottom: 1px solid var(--md-line-soft); }
+.md-app .md-osearch input,
+.md-app .md-row1 input {
+  border-radius: var(--md-r);
+  border-color: #161616;
+  background: var(--md-sunken);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35);
+  transition: var(--md-t);
+}
+.md-app .md-osearch input:focus,
+.md-app .md-row1 input:focus,
+.md-app .md-cmd:focus {
+  border-color: var(--md-on-line);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35), 0 0 0 2px rgba(71, 113, 154, .28);
+  outline: none;
+}
+/* 行：高度收到 20px，悬停用半透明白（比 #464646 更不容易和选中态混淆） */
+.md-app .md-part-row {
+  height: 20px;
+  border-radius: var(--md-r);
+  color: #cfcfcf;
+  transition: var(--md-t);
+}
+.md-app .md-part-row:hover:enabled { background: rgba(255, 255, 255, .065); }
+.md-app .md-part-row.sel {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  color: #fff;
+  box-shadow: inset 2px 0 0 var(--md-on-hi);
+}
+.md-app .md-part-row.multi {
+  background: #3d4750;
+  box-shadow: inset 2px 0 0 var(--md-on-hi);
+}
+/* 类型图标：三种（面 / 视图 / 节点）尺寸要一致，否则行首像没对齐 */
+.md-app .md-ficon, .md-app .md-vicon, .md-app .md-nicon {
+  width: 10px; height: 10px;
+}
+.md-app .md-nicon { width: 9px; height: 9px; }
+.md-app .md-hint { color: #7d7d7d; font-size: 9px; line-height: 1.6; border-top-color: var(--md-line-soft); }
+
+/* ---------- 15.9 右侧面板 ---------- */
+.md-app .md-right { background: var(--md-panel); }
+/* 页签条：三个大页签在本行最左，右边的"对象"是当前模式的回显 */
+.md-app .md-right-h { padding: 0 6px; gap: 8px; }
+.md-app .md-tbkinds { gap: 3px; }
+.md-app .md-tbkinds .md-otab { height: 19px; line-height: 18px; padding: 0 9px; }
+/* 模式条：五个模式图标是这一栏最重要的东西，给它一条自己的底 */
+.md-app .md-modebar {
+  gap: 6px; padding: 7px 7px 6px;
+  background: #2b2b2b;
+  border-bottom: 1px solid var(--md-line);
+}
+.md-app .md-mode {
+  border-radius: var(--md-r);
+  color: #b8b8b8;
+  transition: var(--md-t);
+}
+.md-app .md-mode:hover { background: var(--md-raise-hi); border-color: #1e1e1e; color: #fff; }
+.md-app .md-mode.on {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  color: #f4f9ff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14);
+}
+.md-app .md-mode-hint {
+  padding: 5px 9px 6px;
+  color: #9a9a9a; font-size: 9.5px;
+  background: #2b2b2b;
+  border-bottom: 1px solid var(--md-line);
+}
+.md-app .md-tb-body { padding: 4px 0 6px; }
+.md-app .md-tb-list { padding: 4px 6px 8px; }
+/* 算子按钮：两列网格，图标 + 文字。原来边框色和悬停态跟别的按钮不一样 */
+.md-app .md-op {
+  height: 27px;
+  border: 1px solid #1e1e1e; border-top-color: var(--md-edge-top);
+  border-radius: var(--md-r);
+  background: var(--md-ctrl);
+  color: #d6d6d6;
+  transition: var(--md-t);
+}
+.md-app .md-op:hover {
+  background: var(--md-raise-hi);
+  border-top-color: rgba(255, 255, 255, .12);
+  color: #fff;
+}
+.md-app .md-op:active { background: #363636; }
+.md-app .md-op.on {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  color: #fff;
+}
+.md-app .md-op-i { color: #b4c0cc; }
+.md-app .md-op:hover .md-op-i { color: var(--md-accent); }
+/* 复选框：方框稍大一点（12px 在 100% DPI 下只有 12 个像素，很难点准） */
+.md-app .md-switch i { width: 13px; height: 13px; border-radius: var(--md-r-sm); }
+.md-app .md-switch input:checked + i {
+  border-color: var(--md-accent-line);
+  background: var(--md-accent);
+  box-shadow: inset 0 0 0 2px #2f2f2f;
+}
+.md-app .md-switch { height: 21px; color: #c9c9c9; }
+/* 软选择的三个控件同一行：网格列宽对齐，下拉和数字框等高 */
+.md-app .md-soft-sel, .md-app .md-soft-num {
+  border-radius: var(--md-r);
+  border-color: #161616; border-top-color: #1e1e1e;
+  background: var(--md-sunken);
+}
+.md-app .md-curve-wrap {
+  border-radius: var(--md-r);
+  border-color: #1a1a1a;
+  background: #202020;
+}
+
+/* ---------- 15.10 属性编辑器 ---------- */
+.md-app .md-ch { height: 21px; border-bottom-color: var(--md-line-soft); }
+/* 只读值：原来带实心边框 + 右对齐，看着像"不能编辑的输入框"。
+ * 改成悬停才浮出底色（Maya 的通道盒也是这个读法）。 */
+.md-app .md-ch em {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #dedede;
+  border-radius: var(--md-r);
+  transition: var(--md-t);
+}
+.md-app .md-ch:hover em { background: var(--md-sunken); border-color: #1a1a1a; }
+.md-app .md-ch span { color: #9e9e9e; }
+.md-app .md-row1 span { color: #9e9e9e; }
+/* 材质槽行 */
+.md-app .md-slot {
+  border-radius: var(--md-r-lg);
+  border-color: #1f1f1f;
+  background: var(--md-ctrl);
+  transition: var(--md-t);
+}
+.md-app .md-slot:hover { border-color: #2f2f2f; }
+/* ⚠ 这个输入框原来在深色面板里是**纯白 34px 高的大框**：
+ * `01-base` 的 `input[type=text]`（0,1,1）压过了 `.md-slot-n`（0,1,0），
+ * 而 base 那条给的是 `background: var(--panel2)`（浅色主题下接近白）。
+ * 必须提到 (0,2,1) 才压得住 —— 漏掉背景色那一条，界面里就永远有一块白。 */
+.md-app .md-slot-n {
+  height: 21px;
+  background: transparent;
+  border-color: transparent;
+  color: #dcdcdc;
+  font: inherit; font-size: 10px;
+  border-radius: var(--md-r-sm);
+}
+.md-app .md-slot-n:focus { border-color: var(--md-on-line); background: #1d1d1d; }
+.md-app .md-slot-x:hover:not(:disabled) { background: #6a2a2a; }
+.md-app .md-slot-add {
+  border-radius: var(--md-r);
+  border-color: #454545;
+  color: #9fc4e6;
+  transition: var(--md-t);
+}
+.md-app .md-slot-add:hover { background: #2c3743; border-color: var(--md-on-line); color: #dcecff; }
+/* 修改器 */
+.md-app .md-mod-row {
+  border-radius: var(--md-r-lg);
+  border-color: #1f1f1f;
+  background: var(--md-ctrl);
+}
+.md-app .md-mod-en input:checked + i { background: var(--md-accent); border-color: var(--md-accent-line); }
+
+/* ---------- 15.11 内容浏览器 / 命令行 ---------- */
+.md-app .md-dock { background: var(--md-panel); }
+.md-app .md-dock-tabs {
+  background: linear-gradient(180deg, #383838 0%, #303030 100%);
+  border-bottom: 1px solid var(--md-line);
+}
+.md-app .md-dock-body { background: #262626; }
+.md-app .md-dock-sub { color: #909090; }
+.md-app .md-cb-card {
+  border-radius: var(--md-r-lg);
+  border-color: #1f1f1f;
+  background: var(--md-raise);
+  transition: var(--md-t);
+}
+.md-app .md-cb-card:hover {
+  border-color: var(--md-on-line);
+  background: #3d3d3d;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .28);
+}
+.md-app .md-cb-thumb { border-radius: var(--md-r-sm); border-color: #1a1a1a; }
+.md-app .md-cb-card:hover .md-cb-thumb { border-color: #38414a; }
+.md-app .md-cb-tag { border-radius: var(--md-r); border-color: #3a3a3a; color: #7f7f7f; }
+.md-app .md-cmdrow { background: #2e2e2e; }
+.md-app .md-cmd {
+  border-radius: var(--md-r);
+  border-color: #161616;
+  background: var(--md-sunken);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35);
+}
+.md-app .md-status { color: #a8a8a8; }
+.md-app .md-status.err { color: var(--md-err); }
+
+
+/* ============================================================
+ * 16. 浮窗：投射烘焙 / UV 编辑器
+ *
+ * 这两个窗口原来各自抄了一份"标题栏 + 底栏 + 面板"的样式，
+ * 结果同类控件的尺寸和颜色都不同（底栏按钮 17px，主按钮 22px，下拉 20px）。
+ * 这里把两边对齐到同一条基线，并把两栏结构画清楚。
+ * ============================================================ */
+
+/* ---------- 16.1 窗口外壳 ---------- */
+.md-app .md-pbwin,
+.md-app .md-uvwin {
+  border-radius: var(--md-r-lg);
+  border-color: #0d0d0d;
+  background: #2a2a2a;
+  box-shadow: 0 22px 52px rgba(0, 0, 0, .62), 0 0 0 1px rgba(255, 255, 255, .05);
+}
+.md-app .md-pb-head,
+.md-app .md-uv-head {
+  background: linear-gradient(180deg, #434343 0%, #353535 100%);
+  border-bottom: 1px solid #101010;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .09);
+  border-radius: var(--md-r-lg) var(--md-r-lg) 0 0;
+}
+.md-app .md-pb-head b,
+.md-app .md-uv-head b { font-size: 11.5px; letter-spacing: .02em; }
+/* 标题栏里"作用于谁"的副标题：做成胶囊，别和标题连成一句话 */
+.md-app .md-pb-target,
+.md-app .md-uv-target {
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, .28);
+  border: 1px solid rgba(255, 255, 255, .05);
+  color: #9e9e9e; font-size: 9.5px;
+}
+.md-app .md-pb-hbtn,
+.md-app .md-uv-hbtn { height: 20px; padding: 0 9px; font-size: 10px; }
+/* 关闭按钮：比其它标题栏按钮窄，且悬停变红 —— 别让"重抓视角"和"×"长得一样 */
+.md-app .md-pb-hbtn[data-pbact="close"],
+.md-app .md-uv-hbtn[data-uvact="close"] {
+  width: 20px; padding: 0; font-size: 12px;
+}
+.md-app .md-pb-hbtn[data-pbact="close"]:hover,
+.md-app .md-uv-hbtn[data-uvact="close"]:hover {
+  background: #7a3232; border-top-color: #a04a4a; color: #fff;
+}
+
+/* ---------- 16.2 两栏结构 ---------- */
+.md-app .md-pb-body { background: var(--md-bg); }
+.md-app .md-pb-pane { position: relative; }
+/* 右栏是摄像机取色快照（JS 那边把 scene.background 刷成纯黑再拍），
+ * 和左栏 #1b1b1b 差了一整档。不去改绘制逻辑（那张黑底是"渲染结果"的一部分，
+ * 改了会影响取色判断），改成给画布加一圈内阴影，让它读起来像"取景框"。 */
+.md-app #mdPbRight { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .85), inset 0 0 44px rgba(0, 0, 0, .55); }
+.md-app .md-pb-ptitle {
+  height: 24px; flex: 0 0 24px;
+  background: #2d2d2d;
+  border-bottom: 1px solid #101010;
+  color: #cfcfcf;
+}
+.md-app .md-pb-ptitle > span:first-child {
+  font-weight: 600; color: #e6e6e6; font-size: 10.5px;
+}
+.md-app .md-pb-ptitle em {
+  font-size: 9.5px; color: #8a8a8a;
+}
+.md-app .md-pb-pane:last-child .md-pb-ptitle { border-left: 1px solid #101010; }
+/* 分栏把手：原来 5px 渐变几乎和背景同色，等于藏起来了 */
+.md-app .md-pb-split {
+  position: relative;            /* ::after 的定位基准，漏了它竖纹会跑到窗口中间 */
+  background: #1a1a1a;
+  border-left: 1px solid #0e0e0e;
+  border-right: 1px solid #3a3a3a;
+  transition: background-color .12s ease;
+}
+.md-app .md-pb-split::after {
+  content: ''; position: absolute; top: 50%; left: 50%;
+  width: 1px; height: 26px; margin: -13px 0 0 -.5px;
+  background: #4a4a4a; border-radius: 1px;
+}
+.md-app .md-pb-split:hover { background: var(--md-accent); }
+.md-app .md-pb-split:hover::after { background: #3a2a08; }
+
+/* ---------- 16.3 空态：从三行灰字改成一块引导卡 ---------- */
+.md-app .md-pb-empty {
+  align-items: center; justify-content: center;
+  gap: 0;
+  pointer-events: none;
+}
+.md-app .md-pb-empty[hidden] { display: none; }
+.md-app .md-pb-empty-i {
+  display: block; width: 46px; height: 46px;
+  margin: 0 0 12px;               /* 显式写全：上面 `> span` 那条也会命中它 */
+  color: #4d5a66;
+}
+.md-app .md-pb-empty-i svg { width: 100%; height: 100%; display: block; }
+.md-app .md-pb-empty b {
+  font-size: 13px; color: #c2c2c2; font-weight: 600; letter-spacing: .02em;
+}
+.md-app .md-pb-empty > span {
+  margin-top: 6px; max-width: 300px;
+  font-size: 10.5px; line-height: 1.6; color: #8f8f8f;
+}
+.md-app .md-pb-empty > em {
+  margin-top: 12px; max-width: 300px;
+  font-size: 9.5px; line-height: 1.55; color: #6b6b6b;
+}
+/* 空态里的主按钮：这是这一屏唯一该点的东西，做成实心金 */
+.md-app .md-pb-empty-go {
+  pointer-events: auto;
+  margin-top: 14px; height: 28px; padding: 0 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--md-accent-line);
+  border-top-color: #e8bb6a;
+  border-radius: var(--md-r);
+  background: linear-gradient(180deg, #e0a63f, #c98f35);
+  color: #2a1c05; font-size: 11.5px; font-weight: 600;
+  cursor: pointer; user-select: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+  transition: var(--md-t);
+}
+.md-app .md-pb-empty-go:hover { background: linear-gradient(180deg, #eeb44c, #d69a3c); }
+.md-app .md-pb-empty-go:active { background: linear-gradient(180deg, #c98f35, #b87e2b); }
+
+/* ---------- 16.4 图层面板 ---------- */
+.md-app .md-pb-lypanel {
+  border-radius: var(--md-r-lg);
+  border-color: #0d0d0d;
+  background: rgba(26, 26, 26, .96);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .6);
+  overflow: hidden;
+}
+.md-app .md-pb-lyhd {
+  height: 22px; flex: 0 0 22px;
+  padding: 0 4px 0 8px;
+  background: linear-gradient(180deg, #3d3d3d 0%, #323232 100%);
+  border-bottom: 1px solid #151515;
+  border-radius: 0;
+}
+.md-app .md-pb-lyhd b { font-size: 10.5px; }
+.md-app .md-pb-lyhd em {
+  padding: 0 5px; height: 14px; line-height: 14px;
+  border-radius: 7px; background: rgba(255, 255, 255, .07);
+  color: #a0a0a0; font-size: 9px;
+}
+.md-app .md-pb-lyx { border-radius: var(--md-r-sm); }
+.md-app .md-pb-ly { height: 24px; padding: 0 4px; border-radius: var(--md-r); }
+.md-app .md-pb-ly:hover { background: rgba(255, 255, 255, .07); }
+.md-app .md-pb-ly.on {
+  background: rgba(120, 214, 236, .13);
+  border-color: rgba(120, 214, 236, .42);
+  box-shadow: inset 2px 0 0 rgba(120, 214, 236, .75);
+}
+.md-app .md-pb-lyth { border-radius: var(--md-r-sm); }
+.md-app .md-pb-lynm { font-size: 10.5px; color: #d6d6d6; }
+.md-app .md-pb-lyop { color: #86b4c2; font-size: 9px; }
+.md-app .md-pb-lyfoot { background: #2a2a2a; border-top-color: #151515; }
+.md-app .md-pb-lyfoot input[type="range"] { accent-color: var(--md-accent); }
+
+/* ---------- 16.5 底栏：统一 22px 高，主次分明 ---------- */
+.md-app .md-pb-foot {
+  background: linear-gradient(180deg, #333333 0%, #2c2c2c 100%);
+  border-top: 1px solid #101010;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+  gap: 7px;
+}
+.md-app .md-pb-flab { color: #8f8f8f; font-size: 10px; }
+.md-app .md-pb-sel {
+  height: 22px; width: 116px;
+  border-radius: var(--md-r);
+  border-color: #1a1a1a; border-top-color: rgba(255, 255, 255, .06);
+  background: var(--md-sunken);
+  transition: var(--md-t);
+}
+.md-app .md-pb-sel:hover { border-color: #3f3f3f; }
+/* 底栏里这几个按钮原来没定义过 → 用的是侧栏那个 17px 的小按钮样式，
+ * 比旁边的「烘焙」(22px) 矮一截，看着像次要到不该点 */
+.md-app .md-pb-tbtn.txt {
+  height: 22px; padding: 0 11px;
+  font-size: 10.5px; line-height: 1;
+}
+/* 主操作：金。第二重要（固化）给金边 —— 它是"导出前必点"的那一步，
+ * 和"清除绑定 / 重建 UV"这种偶尔用的不能长一样 */
+.md-app .md-pb-tbtn.txt[data-pbact="flatten"] {
+  border-color: #5c4620; border-top-color: #8a6a2e;
+  color: #e8c58a;
+}
+.md-app .md-pb-tbtn.txt[data-pbact="flatten"]:hover {
+  background: #4a3a20; border-color: #7a5c26; color: #ffd99a;
+}
+.md-app .md-pb-go {
+  height: 22px; padding: 0 18px;
+  border-radius: var(--md-r);
+  border-color: var(--md-accent-line);
+  border-top-color: #e8bb6a;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .3);
+}
+.md-app .md-pb-go:active { transform: none; background: linear-gradient(180deg, #c98f35, #b87e2b); }
+.md-app .md-pb-chk { font-size: 10px; color: #b4b4b4; }
+.md-app .md-pb-fsep { background: #1c1c1c; box-shadow: 1px 0 0 rgba(255, 255, 255, .05); height: 18px; }
+.md-app .md-pb-stat { color: #8a8a8a; font-size: 9.5px; }
+/* 栏内提示 / 吐司 */
+.md-app .md-pb-hint,
+.md-app .md-pb-toast {
+  border-radius: var(--md-r);
+  background: rgba(14, 14, 14, .86);
+  border-color: rgba(255, 255, 255, .07);
+  backdrop-filter: blur(3px);
+}
+.md-app .md-pb-hint.warn {
+  background: rgba(40, 29, 10, .94);
+  border-color: rgba(224, 160, 58, .48);
+  color: var(--md-warn);
+}
+.md-app .md-pb-tbtn.on {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  color: #eaf4ff;
+}
+
+/* ---------- 16.6 UV 编辑器 ---------- */
+.md-app .md-uv-menubar { background: #333333; border-bottom-color: #101010; }
+.md-app .md-uv-mitem { border-radius: var(--md-r); transition: var(--md-t); }
+.md-app .md-uv-mitem:hover { background: rgba(255, 255, 255, .09); border-color: transparent; color: #fff; }
+.md-app .md-uv-drop {
+  border-radius: var(--md-r-pop);
+  border-color: #101010;
+  background: #353535;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .6);
+  padding: 5px;
+}
+.md-app .md-uv-mi { border-radius: var(--md-r); transition: var(--md-t); }
+.md-app .md-uv-msep { background: #2b2b2b; }
+.md-app .md-uv-tools {
+  background: #2e2e2e;
+  border-bottom-color: #101010;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+.md-app .md-uv-tbtn span { color: #a8a8a8; transition: color .12s ease; }
+.md-app .md-uv-tbtn.on span { color: #eaf3fb; }
+.md-app .md-uv-tread { color: #8f8f8f; font-size: 9.5px; }
+.md-app .md-uv-tex {
+  border-radius: var(--md-r);
+  border-color: #5a4826; background: #37301f;
+  transition: var(--md-t);
+}
+.md-app .md-uv-tex:hover { background: #443a26; border-color: #7a6536; }
+.md-app .md-uv-tex.on {
+  background: var(--md-on); border-color: var(--md-on-line); color: #fff;
+}
+.md-app #mdUvCanvas { background: #1d1d1d; }
+.md-app .md-uv-hint {
+  color: #a2a2a2; font-size: 9.5px;
+  text-shadow: 0 1px 3px #000, 0 0 8px rgba(0, 0, 0, .8);
+}
+/* 右侧工具包 */
+.md-app .md-uv-kit { background: #2e2e2e; border-left-color: #101010; }
+.md-app .md-uv-kit::-webkit-scrollbar-thumb { background: #4a4a4a; border-color: transparent; }
+.md-app .md-uvk-head {
+  height: 24px;
+  background: linear-gradient(180deg, #3d3d3d 0%, #343434 100%);
+  border-bottom: 1px solid #101010;
+}
+.md-app .md-uvk-head b { font-size: 10.5px; font-weight: 600; }
+.md-app .md-uvk-help { height: 18px; border-radius: var(--md-r); }
+.md-app .md-uvk-grp { border-bottom: 1px solid #252525; }
+.md-app .md-uvk-gt {
+  height: 25px; color: #c9c9c9;
+  transition: var(--md-t);
+}
+.md-app .md-uvk-gt:hover { background: rgba(255, 255, 255, .05); color: #fff; }
+.md-app .md-uvk-gt i { color: #9a9a9a; font-size: 9px; }
+.md-app .md-uvk-title { color: #b8b8b8; font-size: 10px; letter-spacing: .02em; }
+.md-app .md-uvk-row { color: #9a9a9a; }
+.md-app .md-uvk-row b { color: #d4d4d4; }
+.md-app .md-uvk-note { color: #7d7d7d; }
+.md-app .md-uvk-grid .md-uv-tbtn { height: 32px; }
+.md-app .md-uv-rs {
+  background:
+    linear-gradient(135deg, transparent 42%, #8a8a8a 42%, #8a8a8a 56%, transparent 56%),
+    linear-gradient(135deg, transparent 66%, #5a5a5a 66%, #5a5a5a 80%, transparent 80%);
+}
+.md-app .md-pb-rs {
+  background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, .22) 50%);
+}
+
+/* ---------- 16.7 手绘遮罩 / 选图弹层（跨窗口用具，一起收圆角） ---------- */
+.md-app .md-mix-gpop,
+.md-app .md-mix-gback { border-radius: var(--md-r-pop); }
+.md-app .md-mix-ghead { background: #303030; border-bottom-color: #1a1a1a; }
+.md-app .md-mix-gfoot { background: #2b2b2b; border-top-color: #1a1a1a; }
+.md-app .md-mix-gcell {
+  border-radius: var(--md-r-lg);
+  border-color: #1f1f1f;
+  background: var(--md-raise);
+  transition: var(--md-t);
+}
+.md-app .md-mix-gcell:hover { border-color: var(--md-on-line); background: #3b434c; }
+.md-app .md-maskbar { border-radius: 10px; background: rgba(30, 30, 30, .97); }
+
+
+/* ---------- 16.8 UV 工具条与工具包的细节 ---------- */
+/* 图标 + 文字上下叠的按钮：23px 装不下 13px 图标 + 8.5px 字，
+ * 实测文字会被按钮底边裁掉一截（"点/边/壳"只剩半个字）。给到 25px。 */
+.md-app .md-uv-tbtn { height: 25px; min-width: 26px; }
+.md-app .md-uv-tbtn svg { width: 12px; height: 12px; }
+.md-app .md-uv-tbtn span { font-size: 8px; line-height: 1; margin-top: 1px; }
+.md-app .md-uv-tbtn.txt { height: 22px; font-size: 10px; }
+/* 缩放 −/+ 只有一个字符，用等宽方钮，别跟着文字一起变宽 */
+.md-app .md-uv-tbtn.txt[data-uvact="zoomIn"],
+.md-app .md-uv-tbtn.txt[data-uvact="zoomOut"] {
+  width: 24px; min-width: 24px; padding: 0;
+  font-size: 14px; line-height: 1;
+}
+/* 工具包最底下那行会被窗口右下角的缩放纹压住：留出 16px 让位 */
+.md-app .md-uv-kit { padding-bottom: 16px; }
+/* 「选择 / 变换」是区块标题，「固定 / 展开」是可折叠分组 —— 原来两者长一样，
+ * 用户看不出"这三个按钮属于变换"还是"属于下面那个折叠组" */
+.md-app .md-uvk-sec { padding: 8px 9px 9px; }
+.md-app .md-uvk-title {
+  color: #dcdcdc; font-size: 10.5px; font-weight: 600;
+  letter-spacing: .02em; margin-bottom: 7px;
+}
+.md-app .md-uvk-gt { color: #b4b4b4; font-size: 10px; font-weight: 400; }
+.md-app .md-uvk-gt:hover { color: #ececec; }
+.md-app .md-uvk-grp.open > .md-uvk-gt { color: #dcdcdc; }
+.md-app .md-uvk-gb { padding: 3px 9px 9px; }
+.md-app .md-uvk-row { font-size: 9.5px; }
+/* 折叠用的三角：字符 ▸ 在小字号下几乎看不见，换成三角形 */
+.md-app .md-uvk-gt i {
+  display: inline-block; width: 0; height: 0;
+  font-size: 0; line-height: 0;
+  border-left: 4px solid #909090;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform .15s ease, border-left-color .12s ease;
+}
+.md-app .md-uvk-grp.open > .md-uvk-gt i { transform: rotate(90deg); border-left-color: #c8c8c8; }
+.md-app .md-uvk-gt:hover i { border-left-color: #e8e8e8; }
+
+
+/* ---------- 17. 对话框（覆盖层：基础体 / 材质槽 / 打开列表） ---------- */
+.md-app .md-overlay {
+  padding: 18px;
+  background: rgba(14, 15, 17, .74);
+  backdrop-filter: blur(1.5px);
+}
+.md-app .md-ov {
+  border-radius: var(--md-r-pop);
+  border-color: #0d0d0d;
+  background: #2e2e2e;
+  box-shadow: 0 26px 60px rgba(0, 0, 0, .66), 0 0 0 1px rgba(255, 255, 255, .05);
+}
+.md-app .md-ov-head {
+  height: 30px;
+  background: linear-gradient(180deg, #414141 0%, #343434 100%);
+  border-bottom: 1px solid #101010;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+  border-radius: var(--md-r-pop) var(--md-r-pop) 0 0;
+}
+.md-app .md-ov-head b { font-size: 11.5px; letter-spacing: .01em; }
+.md-app .md-ov-sub { color: #8f8f8f; }
+.md-app .md-ov-x { border-radius: var(--md-r); transition: var(--md-t); }
+.md-app .md-ov-x:hover { background: #7a3232; border-top-color: #a04a4a; color: #fff; }
+.md-app .md-ov-body { background: #262626; }
+/* 基础体表单：标签提亮、输入框去掉那对又小又亮的原生上下箭头 */
+.md-app .md-pf span {
+  color: #a8a8a8; font-size: 9.5px;
+  letter-spacing: .02em;
+}
+.md-app .md-pf input {
+  height: 24px;
+  border-radius: var(--md-r);
+  border-color: #161616;
+  background: var(--md-sunken);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35);
+  font-variant-numeric: tabular-nums;
+}
+.md-app .md-pf input:focus {
+  border-color: var(--md-on-line);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35), 0 0 0 2px rgba(71, 113, 154, .28);
+  outline: none;
+}
+.md-app .md-pf input::-webkit-outer-spin-button,
+.md-app .md-pf input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.md-app .md-pf input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+/* 主按钮：这个对话框里唯一该点的东西 */
+.md-app .md-prim-go {
+  height: 28px; margin-top: 4px;
+  border: 1px solid var(--md-on-line);
+  border-top-color: var(--md-on-hi);
+  border-radius: var(--md-r);
+  background: linear-gradient(180deg, #4d7ba8 0%, #3f688d 100%);
+  color: #fff; font-size: 11px; font-weight: 600;
+  letter-spacing: .02em;
+  transition: var(--md-t);
+}
+.md-app .md-prim-go:hover { background: linear-gradient(180deg, #5888b6 0%, #477099 100%); }
+.md-app .md-prim-go:active { background: #3b6183; }
+.md-app .md-prim-tab {
+  border-radius: var(--md-r);
+  border-color: #1e1e1e; border-top-color: var(--md-edge-top);
+  background: var(--md-ctrl); color: #d0d0d0;
+  transition: var(--md-t);
+}
+.md-app .md-prim-tab:hover { background: var(--md-raise-hi); color: #fff; }
+.md-app .md-prim-tab.on {
+  background: linear-gradient(180deg, #d9a44e, #c08c38);
+  border-color: var(--md-accent-line); border-top-color: #e8c078;
+  color: #241a08; font-weight: 600;
+}
+.md-app .md-prim .md-note { color: #8a8a8a; line-height: 1.7; }
+.md-app .md-ov-head .md-ov-sub { margin-left: 2px; }
+
+/* 打开列表 / 材质槽 */
+.md-app .md-asset {
+  border-radius: var(--md-r-lg);
+  border-color: #1f1f1f;
+  background: var(--md-ctrl);
+  transition: var(--md-t);
+}
+.md-app .md-asset:hover { border-color: var(--md-on-line); background: #3d3d3d; }
+.md-app .md-list { background: #262626; }
+
+
+/* ---------- 18. 热盒（按住空格弹出） ----------
+ * 它是浮在**视口**上的，而视口是浅灰渐变 —— 半透明深底会被透出的亮色冲淡，
+ * 结果卡片里的字要盯着看才认得出。这里把底子压得更实一点，并补一道上沿高光。 */
+.md-app .md-hb-zone {
+  background: rgba(23, 24, 27, .965);
+  border-color: #43454c;
+  border-top-color: #5a5d66;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+.md-app .md-hb-zone b { color: #9aa1a9; font-size: 9.5px; letter-spacing: .06em; }
+.md-app .md-hb-row:hover { background: #3b3f47; }
+.md-app .md-hb-run { color: #dfe3e9; }
+.md-app .md-hb-run em { color: #8b9299; }
+.md-app .md-hb-core {
+  background: rgba(23, 24, 27, .965);
+  border-color: #43454c;
+  color: #dfe3e9;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+.md-app .md-hb-core i { color: #8b9299; }
+/* 内容浏览器的空态：视口/面板都是暗的，一行小字飘在中间像加载失败 */
+.md-app .md-cb-empty {
+  color: #8a8a8a; font-size: 10.5px; line-height: 1.8;
+  padding: 34px 14px; text-align: center;
+}
+.md-app .md-cb-empty.err { color: var(--md-err); }
+
+
+/* ---------- 19. 「长得像页签但点不动」的占位 ----------
+ * 工具架的「曲线 / 曲面 / 动画 …」和大纲的「隐藏 / 帮助」都是 <span>（还没接入），
+ * 但按页签样式画出来之后，鼠标移上去会亮、指针还是小手 —— 用户点一下没反应，
+ * 只会认为"这东西坏了"。这里按标签把交互反馈去掉：能点的一律是 <button>。 */
+.md-app span.md-otab,
+.md-app span.md-stab {
+  cursor: default;
+  opacity: .78;
+}
+.md-app span.md-otab:hover,
+.md-app span.md-stab:hover {
+  background: transparent;
+  color: var(--md-mute);
+}
+.md-app span.md-otab.on,
+.md-app span.md-stab.on { opacity: 1; }
+.md-app span.md-otab.on:hover,
+.md-app span.md-stab.on:hover {
+  background: var(--md-ctrl);
+  color: #f2f2f2;
+}
+

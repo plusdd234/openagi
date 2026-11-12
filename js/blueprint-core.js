@@ -340,6 +340,9 @@ function showView(name){
     next.classList.remove('view-in');
     if(prev) prev.classList.remove('view-out');
     document.body.classList.remove('view-swapping');
+    /* 顶栏 App 切换条只在工作台这一页出现；进来/离开都要重算一次，
+       否则从 App 点进工作流编辑器后，那条子会一直挂在那儿（点它什么反应都没有）。 */
+    if(typeof deskTabRender === 'function') deskTabRender();
   };
   if(animate){
     viewPendingSettle = settle;

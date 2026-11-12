@@ -110,9 +110,11 @@
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
     ctx.clearRect(0, 0, W, H);
-    /* 没有自带贴图时从白底开始：OBJ 的默认材质就是白色，
-     * 用黑底会让「叠一层带透明洞的图」变成黑影，跟直觉相反。 */
-    ctx.fillStyle = '#ffffff';
+    /* 没有自带贴图时从底色开始：OBJ 的默认材质是白色，用黑底会让
+     * 「叠一层带透明洞的图」变成黑影，跟直觉相反。
+     * baseColor 由调用方给（材质槽色）—— 槽色是 #c9ccd4 那种浅灰时，
+     * 视口里看到的底色才和「没贴图时的材质本色」对得上。 */
+    ctx.fillStyle = o.baseColor || '#ffffff';
     ctx.fillRect(0, 0, W, H);
     if (o.baseImg && o.baseImg.width) ctx.drawImage(o.baseImg, 0, 0, W, H);
 
@@ -142,12 +144,131 @@
     return cv;
   }
 
+  /* ---------------- UV 接缝：alpha 加权羽化 + 颜色出血 ----------------
+   * UV 岛在贴图上是硬边界：3D 上双线性/mipmap 采样一跨过岛边就吃到透明 texel，
+   * 视口里就是一条黑边或白边；「铺满颜色」这类操作还会让相邻岛之间直接硬切色。
+   * 修法是把岛内颜色向外扩散几个像素（UV padding / bleed），同时把边缘硬色晕开。
+   *
+   * 关键是「按 alpha 加权」：透明 texel 的 RGB 通常是 0，普通模糊会把边缘颜色
+   * 拉向黑色，越修越脏（跟之前「贴图变暗」是同一类坑）。这里用预乘色
+   *      Σ(R·A) / Σ(A)
+   * 求颜色、alpha 单独求均值 —— 颜色只来自有 alpha 的像素，才能干净地出血。
+   * 可分离 box blur：两次一维滑动窗口，O(W·H)，起笔时算一次整图不会卡手。
+   *
+   * 对外：featherData / feather（柔化结果）与 seamBleedData / seamBleed
+   * （只改边缘、内部完全不透明的像素一律不动，保住贴图细节）。 */
+  function clampIdx(i, n) { return i < 0 ? 0 : (i >= n ? n - 1 : i); }
+
+  function boxH(src, tmp, W, H, k) {
+    var win = k * 2 + 1;
+    for (var y = 0; y < H; y++) {
+      var row = y * W, sum = 0;
+      for (var d = -k; d <= k; d++) sum += src[row + clampIdx(d, W)];
+      for (var x = 0; x < W; x++) {
+        tmp[row + x] = sum / win;
+        sum += src[row + clampIdx(x + k + 1, W)] - src[row + clampIdx(x - k, W)];
+      }
+    }
+  }
+  function boxV(src, dst, W, H, k) {
+    var win = k * 2 + 1;
+    for (var x = 0; x < W; x++) {
+      var sum = 0;
+      for (var d = -k; d <= k; d++) sum += src[clampIdx(d, H) * W + x];
+      for (var y = 0; y < H; y++) {
+        dst[y * W + x] = sum / win;
+        sum += src[clampIdx(y + k + 1, H) * W + x] - src[clampIdx(y - k, H) * W + x];
+      }
+    }
+  }
+
+  function readData(src) {
+    if (!src || !src.width || !src.height) return null;
+    if (src.getContext) {
+      try { return src.getContext('2d').getImageData(0, 0, src.width, src.height); }
+      catch (e) { return null; }
+    }
+    return null;
+  }
+  function newData(w, h, from) {
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    var d = c.getContext('2d').createImageData(w, h);
+    if (from) d.data.set(from.data);
+    return d;
+  }
+
+  function featherFrom(d0, radius) {
+    var out = newData(d0.width, d0.height, d0);
+    var k = clampNum(radius, 0, 24) | 0;
+    if (k < 1) return out;
+    var W = d0.width, H = d0.height, N = W * H;
+    var s = d0.data, o = out.data, i, p;
+    /* 三个 Float32Array 轮着用：逐通道模糊，不必为 4 个通道各留一份 W×H */
+    var ch = new Float32Array(N), tmp = new Float32Array(N), am = new Float32Array(N);
+    for (i = 0; i < N; i++) ch[i] = s[i * 4 + 3];
+    boxH(ch, tmp, W, H, k);
+    boxV(tmp, am, W, H, k);                 // am = 邻域 alpha 均值
+    for (var c = 0; c < 3; c++) {
+      for (i = 0; i < N; i++) { p = i * 4; ch[i] = s[p + c] * s[p + 3]; }
+      boxH(ch, tmp, W, H, k);
+      boxV(tmp, ch, W, H, k);               // ch = Σ(RGB·A)/win²
+      for (i = 0; i < N; i++) {
+        p = i * 4;
+        var a = am[i];
+        /* a≈0 说明这一带全透明，颜色保持 0；否则反归一化回真实颜色 */
+        o[p + c] = a > 0.5 ? clampNum(ch[i] / a, 0, 255) : 0;
+        if (c === 0) o[p + 3] = clampNum(a, 0, 255);
+      }
+    }
+    return out;
+  }
+
+  function featherData(src, radius) {
+    var d0 = readData(src);
+    return d0 ? featherFrom(d0, radius) : null;
+  }
+  function feather(src, radius) {
+    var d = featherData(src, radius);
+    if (!d) return null;
+    var cv = document.createElement('canvas');
+    cv.width = d.width; cv.height = d.height;
+    cv.getContext('2d').putImageData(d, 0, 0);
+    return cv;
+  }
+  /* 一键修缝：只有「原本不是完全不透明」的像素才换成羽化值。
+   * 岛内部 alpha=255 的像素逐字节不动，花纹细节不会被整张糊掉。 */
+  function seamBleedData(src, radius) {
+    var d0 = readData(src);
+    if (!d0) return null;
+    var bl = featherFrom(d0, radius);
+    var out = newData(d0.width, d0.height, d0);
+    var s = d0.data, b = bl.data, o = out.data;
+    for (var p = 0; p < s.length; p += 4) {
+      if (s[p + 3] >= 254) continue;
+      o[p] = b[p]; o[p + 1] = b[p + 1]; o[p + 2] = b[p + 2]; o[p + 3] = b[p + 3];
+    }
+    return out;
+  }
+  function seamBleed(src, radius) {
+    var d = seamBleedData(src, radius);
+    if (!d) return null;
+    var cv = document.createElement('canvas');
+    cv.width = d.width; cv.height = d.height;
+    cv.getContext('2d').putImageData(d, 0, 0);
+    return cv;
+  }
+
   global.TexBlend = {
     BLEND_MODES: BLEND_MODES,
     blendOp: blendOp,
     clampNum: clampNum,
     maskAlpha: maskAlpha,
     mixSize: mixSize,
-    compose: compose
+    compose: compose,
+    featherData: featherData,
+    feather: feather,
+    seamBleedData: seamBleedData,
+    seamBleed: seamBleed
   };
 })(window);

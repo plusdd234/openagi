@@ -15,18 +15,24 @@ const fs = require('fs');
   await page.goto(url, { waitUntil: 'load' });
   await page.waitForTimeout(900);
 
-  // 1) 骨架（把商店放慢才截得到）
-  await page.evaluate(() => { window.openModelStore = () => new Promise(r => setTimeout(r, 2600)); openDeskApp('store'); });
+  // 1) 骨架（把加载拖慢才截得到）——先存真函数，截完骨架再补画内容
+  await page.evaluate(() => {
+    window.__realOpenStore = window.openModelStore;
+    window.openModelStore = () => new Promise(r => setTimeout(r, 2600));
+    openDeskApp('store');
+  });
   await page.waitForTimeout(700);
   await page.screenshot({ path: path.join(out, 'ui-1-skeleton.png'), clip: { x: 240, y: 100, width: 1180, height: 420 } });
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(2200);   // 这次加载走完、骨架撤除
+  await page.evaluate(() => window.__realOpenStore && window.__realOpenStore());   // 把真内容画上，别拍空画布
+  await page.waitForTimeout(700);
 
-  // 2) 就绪后的头部（<<< 在左、名称在右）
-  await page.screenshot({ path: path.join(out, 'ui-2-app-head.png'), clip: { x: 0, y: 40, width: 1440, height: 60 } });
-  await page.hover('#deskAppBack');
+  // 2) 顶栏：返回主页箭头在左、App 标签条在中（页头已删，App 名只在这里）
+  await page.screenshot({ path: path.join(out, 'ui-2-topbar.png'), clip: { x: 0, y: 0, width: 1440, height: 40 } });
+  await page.hover('#btnDeskHome');
   await page.waitForTimeout(340);
-  await page.screenshot({ path: path.join(out, 'ui-3-app-head-hover.png'), clip: { x: 0, y: 40, width: 1440, height: 110 } });
-  await page.evaluate(() => document.getElementById('deskAppBack').click());
+  await page.screenshot({ path: path.join(out, 'ui-3-topbar-hover.png'), clip: { x: 0, y: 0, width: 1440, height: 40 } });
+  await page.evaluate(() => document.getElementById('btnDeskHome').click());
   await page.waitForTimeout(700);
 
   // 3) 工作台 → 蓝图转场中途

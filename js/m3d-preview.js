@@ -666,7 +666,7 @@
     var uv = {
       on: false, layer: null, a: null, busy: false, err: '',
       mode: 'atlas', part: 'all', labels: true, size: 1024,
-      atlas: null, preview: '', previewBusy: false, partIslands: [],
+      atlas: null, preview: '', previewBusy: false, slotIslands: [],
       /* 排布状态：scale=滑杆（相对原始 UV 的倍率），snap=第一次动手前留的基线，
        * applied=排过没（决定「还原 / 存为 GLB」可不可点） */
       pk: { scale: 100, density: false, fill: 0, note: '', snap: null, busy: false, applied: false, saving: false }
@@ -683,6 +683,38 @@
     }
     function uvColor(id) {
       return 'hsl(' + ((id * 137.508) % 360).toFixed(1) + ',72%,58%)';
+    }
+    /* ---------------- 「插槽」的口径 = 独立贴图空间，不是 mesh ----------------
+     * OBJLoader 遇到一个 group 就建一个 mesh，于是「身体.obj」这种文件
+     * （里面写着两段 g input）会被显示成「插槽 1 / 插槽 2」—— 看着像模型被碎裂了。
+     * 但这两个 mesh 共用同一套 0–1 UV（岛在 UV 空间里互补）、共用同一个材质，
+     * 它们就是**一张贴图**。插槽该按 UV 空间分，不该按 mesh 分。
+     * 分组口径必须和 UvPack.packGroups 一致：排布按它装箱，界面也按它显示，
+     * 否则界面说两个插槽、排布却一起装，数字对不上（用户看到的就是「碎成两半」）。 */
+    function uvSlotGroups() {
+      var a = uv.a;
+      if (!a) return [];
+      var g = (global.UvPack && global.UvPack.groups) ? global.UvPack.groups(a) : null;
+      if (!g || !g.length) return a.parts.map(function (_, i) { return [i]; });
+      return g;
+    }
+    /* 当前选择 → 涉及哪些 part（mesh）索引；null = 全部 */
+    function uvSlotParts(sel) {
+      if (sel == null || sel === 'all') return null;
+      var gs = uvSlotGroups();
+      var m = /^g(\d+)$/.exec(String(sel));
+      /* 组不存在（换了模型 / 选择残留）→ 当作「全部」，宁可多显示也不能给个空白界面 */
+      if (m) { var g2 = gs[Number(m[1])]; return (g2 && g2.length) ? g2 : null; }
+      var n = Number(sel);              /* 兼容旧的「按 mesh 索引」选择 */
+      return isNaN(n) ? null : [n];
+    }
+    /* 当前选择是第几个插槽（1 起）；'all' → 0 */
+    function uvSlotNo(sel) {
+      if (sel == null || sel === 'all') return 0;
+      var m = /^g(\d+)$/.exec(String(sel));
+      if (m) return Number(m[1]) + 1;
+      var n = Number(sel);
+      return isNaN(n) ? 0 : n + 1;
     }
     function ensureUvStyle() {
       if (document.getElementById('mv3UvStyle')) return;
@@ -778,6 +810,8 @@
         uv.pk.density = !uv.pk.density; uvRender();
       } else if (act === 'pack') {
         uvPackRun();
+      } else if (act === 'stitch') {
+        uvStitchRun();
       } else if (act === 'pkreset') {
         uvPackReset();
       } else if (act === 'pksave') {
@@ -788,7 +822,10 @@
     }
     function uvAtlasCanvas(forPreview) {
       var o = { labels: uv.labels };
-      if (uv.part !== 'all') o.parts = [Number(uv.part)];
+      if (uv.part !== 'all') {
+        var ps = uvSlotParts(uv.part);
+        if (ps && ps.length) o.parts = ps;
+      }
       if (forPreview) o.bg = '#ffffff';
       return global.ModelTex.islandAtlas(uv.a, uv.size, o);
     }
@@ -806,7 +843,7 @@
         await new Promise(function (r) { setTimeout(r, 0); });   // 先让「渲染中」上屏
         uv.preview = global.ModelTex.previewGrid(uv.a, uvAtlasCanvas(true), {
           cell: 320, angles: [0, 35, 180], compare: false,
-          paintedLabel: uv.part === 'all' ? '岛图' : ('插槽 ' + (Number(uv.part) + 1)),
+          paintedLabel: uv.part === 'all' ? '岛图' : ('插槽 ' + uvSlotNo(uv.part)),
           texLabel: 'UV 岛图'
         });
       } catch (e) {
@@ -829,6 +866,20 @@
      *   手感直接废。所以滑杆只记数，「自动排布」才动几何。
      * 每次都从 snap 基线重来（restore → pack → apply）：这样 100% 恒等于模型原始尺寸，
      * 连点两次不会越缩越小，滑杆也才有确定含义。 */
+    /* 按当前几何重新分岛。缝合 / 排布会改 UV、拆顶点，岛分组必须跟着重算，
+     * 否则岛图、插槽统计、下一次排布拿到的都是上一轮的过期分组。 */
+    function uvReanalyze() {
+      if (!global.ModelTex || !uv.a || !uv.a.root) return null;
+      var a2 = global.ModelTex.analyzeRoot(uv.a.root);
+      uv.a = a2;
+      uv.slotIslands = uvSlotGroups().map(function (g2) {
+        return a2.islands.filter(function (o) {
+          return o.tris.some(function (r) { return g2.indexOf(r.part) >= 0; });
+        }).length;
+      });
+      return a2;
+    }
+
     async function uvPackRun() {
       if (!uv.a || uv.pk.busy) return;
       var P = global.UvPack;
@@ -839,6 +890,7 @@
       try {
         if (!uv.pk.snap) uv.pk.snap = P.snapshot(uv.a);
         P.restore(uv.a, uv.pk.snap);
+        uvReanalyze();                     // 从基线重来：岛分组也按基线 UV 重算（缝合后 id 会变）
         var r = P.pack(uv.a, { scale: uv.pk.scale / 100, equalDensity: uv.pk.density });
         if (!r.ok) throw new Error('没有可排布的 UV 岛');
         P.apply(uv.a, r.ops);
@@ -878,9 +930,53 @@
         P.restore(uv.a, uv.pk.snap);
         uv.pk.snap = null;        // 基线已经还回去了，下次排布重新拍一份
         uv.pk.applied = false; uv.pk.fill = 0;
+        uvReanalyze();            // 岛分组跟着基线 UV 重算，岛图才不会显示缝合后的过期分组
         uvBuildAtlas(); uv.preview = '';
       } catch (e) {
         uv.err = '还原失败：' + ((e && e.message) || e);
+      } finally {
+        uv.pk.busy = false; uvRender();
+        if (uv.mode === '3d' && !uv.err) uvPreview();
+      }
+    }
+
+    /* ---------------- 缝合碎岛 ----------------
+     * AI 生成模型的遗留：一小片一小片的面在 UV 上被切出主岛（碎片 UV 还叠在
+     * 主岛内部），3D 顶点位置其实没动。碎片当独立岛参与逐岛投射 / 上色时
+     * 会各自归到别的视图，表面出一堆杂色小斑。
+     * 这里把碎片 UV 重新参数化进主岛（见 uvpack.js 的 stitch），重算岛分组后
+     * 碎片自动并入主岛；贴图跟着重采样，碎片显示的颜色跟它搬过去。 */
+    async function uvStitchRun() {
+      if (!uv.a || uv.pk.busy) return;
+      var P = global.UvPack;
+      if (!P || !P.stitch) { uv.err = 'UV 缝合模块未就绪（uvpack.js 未加载）'; uvRender(); return; }
+      uv.pk.busy = true; uv.err = ''; uv.pk.note = '缝合中…';
+      uvRender();
+      await new Promise(function (r) { setTimeout(r, 0); });
+      try {
+        if (!uv.pk.snap) uv.pk.snap = P.snapshot(uv.a);
+        var before = uv.a.islands.length;
+        var r = P.stitch(uv.a, {});
+        P.refresh(uv.a);
+        uvReanalyze();
+        var after = uv.a.islands.length;
+        var notes = (r.notes || []).slice();
+        if (r.merged) notes.push('岛数 ' + before + ' → ' + after);
+        try {
+          var rm = P.remapTextures(uv.a, uv.pk.snap);
+          if (rm && rm.count) notes.push(rm.count + ' 张贴图已按新 UV 重采样');
+        } catch (e2) {
+          notes.push('贴图重采样失败：' + ((e2 && e2.message) || e2) + '（建议存 GLB 后重新上色）');
+        }
+        /* 缝合后的 UV 成为新基线：自动排布必须从基线重来（restore → pack），
+         * 不换基线的话一排布就把缝合覆盖回碎片状态，等于白缝。
+         * 代价是「还原」回到缝合前而不是模型最原始——碎片本来就是要修掉的，符合直觉。 */
+        if (r.merged) uv.pk.snap = P.snapshot(uv.a);
+        uv.pk.applied = true;
+        uv.pk.note = notes.join('；') || '没有可缝合的碎片岛';
+        uvBuildAtlas(); uv.preview = '';
+      } catch (e) {
+        uv.err = '缝合失败：' + ((e && e.message) || e);
       } finally {
         uv.pk.busy = false; uvRender();
         if (uv.mode === '3d' && !uv.err) uvPreview();
@@ -930,6 +1026,9 @@
         '<button type="button" class="mv3-uv-wide' + (P.density ? ' on' : '') + '" data-uv="density" data-v="1"' +
           ' title="按 3D 面积给每个岛分配 UV 面积：贴图精度均匀，不会大岛吃满、小岛只剩几个像素">' +
           '统一贴图密度' + (P.density ? ' · 开' : '') + '</button>' +
+        '<button type="button" class="mv3-uv-wide" data-uv="stitch" data-v="1"' + (P.busy ? ' disabled' : '') + '"' +
+          ' title="把「脱离主岛」的碎片面缝合回主岛：AI 生成模型常见一堆 1–4 面的碎岛（顶点位置没动、UV 叠在主岛内部），缝合后岛图干净、逐岛投射 / 上色不再出杂色斑">' +
+          '缝合碎岛</button>' +
         '<button type="button" class="mv3-uv-wide primary" data-uv="pack" data-v="1"' + (P.busy ? ' disabled' : '') + '>' +
           (P.busy ? '排布中…' : '自动排布') + '</button>' +
         '<div class="mv3-uv-row">' +
@@ -948,23 +1047,23 @@
       var a = uv.a;
       if (!a) return '';
       var tris = a.parts.reduce(function (n, p) { return n + p.tri; }, 0);
-      var num = uv.part === 'all' ? -1 : Number(uv.part);
-      var shown = uv.part === 'all' ? a.islands : a.islands.filter(function (o) {
-        return o.tris.some(function (r) { return r.part === num; });
+      /* 插槽 = UV 空间组（见 uvSlotGroups）。当前选择落到哪些 mesh 上。 */
+      var gs = uvSlotGroups();
+      var selParts = uvSlotParts(uv.part);
+      var shown = !selParts ? a.islands : a.islands.filter(function (o) {
+        return o.tris.some(function (r) { return selParts.indexOf(r.part) >= 0; });
       });
-      var slotTris = uv.part === 'all' ? tris : a.parts[num].tri;
-      /* UV 空间组：共用一张贴图的网格必须装在同一份 0–1 里。
-       * 多网格模型的「插槽数」和「UV 空间数」经常不是一回事（一个 OBJ 里几个 object 摊在同一张 UV 上），
-       * 这里把两者都摆出来，免得看到「3 网格 / 1 组」以为坏了。 */
-      var grp = (global.UvPack && global.UvPack.groups) ? global.UvPack.groups(a) : [];
+      var slotTris = !selParts ? tris : selParts.reduce(function (n, pi) {
+        return n + (a.parts[pi] ? a.parts[pi].tri : 0);
+      }, 0);
       var kv = function (k, v) { return '<div class="mv3-uv-kv"><span>' + k + '</span><b>' + v + '</b></div>'; };
       var rng = function (o) { return o.bbox[1].toFixed(1) + '–' + o.bbox[4].toFixed(1); };
       return '<div class="mv3-uv-sec"><div class="mv3-uv-h">概览</div>' +
           kv('UV 岛', uv.part === 'all' ? shown.length : (shown.length + ' / ' + a.islands.length)) +
           kv('三角面', slotTris) +
           kv('网格', a.parts.length) +
-          (a.parts.length > 1 ? kv('UV 空间', grp.length + ' 组') : '') +
-          (a.parts.length > 1 ? kv('当前插槽', uv.part === 'all' ? '全部' : ('#' + (num + 1))) : '') +
+          (gs.length < a.parts.length ? kv('UV 空间', gs.length + ' 组' + (gs.length === 1 ? '（一张贴图）' : '')) : '') +
+          (gs.length > 1 ? kv('当前插槽', uv.part === 'all' ? '全部' : ('#' + uvSlotNo(uv.part))) : '') +
           kv('UV 图', uv.size + ' × ' + uv.size) +
         '</div>' +
         uvPackHtml() +
@@ -978,9 +1077,9 @@
           }).join('') +
         '</div>' +
         '<div class="mv3-uv-tip">' + (a.parts.length > 1
-          ? (grp.length === 1
-            ? '这 ' + a.parts.length + ' 个网格共用同一张 UV（同一套布局），排布时会一起装进 0–1。'
-            : '这个模型有 ' + a.parts.length + ' 个网格、' + grp.length + ' 份独立 UV 空间（各自一张贴图），每份分别装进 0–1。')
+          ? (gs.length === 1
+            ? '这 ' + a.parts.length + ' 个网格共用同一张 UV（同一套布局、同一张贴图），排布时会一起装进 0–1。'
+            : '这个模型有 ' + a.parts.length + ' 个网格、' + gs.length + ' 份独立 UV 空间（各自一张贴图），每份分别装进 0–1。')
           : '岛编号可以直接写进「模型区域上色」的区域规则与细节规则，用来定位部位。') + '</div>';
     }
     function uvRender() {
@@ -994,12 +1093,23 @@
         return '<button type="button" class="mv3-uv-chip' + (on ? ' on' : '') + '" data-uv="' + act + '" data-v="' + val + '"' +
           (title ? ' title="' + uvEsc(title) + '"' : '') + '>' + label + '</button>';
       };
-      var slots = (a && a.parts.length > 1)
+      var gs = uvSlotGroups();
+      /* 插槽按钮按 **UV 空间组** 给，不按 mesh 给：
+       * 只有 1 组时干脆不显示（没有可隔离的对象），否则用户会以为模型碎成了几块。
+       * 真的多组时，标签写清「N 个网格」，点一次隔离整组。 */
+      var slots = (a && gs.length > 1)
         ? chip('part', 'all', '全部', uv.part === 'all') +
-          a.parts.map(function (p, i) {
-            return chip('part', String(i), '插槽 ' + (i + 1), uv.part === String(i),
-              p.tri + ' 面 · ' + (uv.partIslands[i] || 0) + ' 个岛');
+          gs.map(function (g2, gi) {
+            var tri = g2.reduce(function (n, pi) { return n + (a.parts[pi] ? a.parts[pi].tri : 0); }, 0);
+            var label = '插槽 ' + (gi + 1) + (g2.length > 1 ? ('（' + g2.length + ' 个网格）') : '');
+            return chip('part', 'g' + gi, label, uv.part === 'g' + gi,
+              tri + ' 面 · ' + (uv.slotIslands[gi] || 0) + ' 个岛');
           }).join('')
+        : '';
+      /* 只读提示：网格数 ≠ 贴图数时，把这件事说在脸上（不然用户以为模型坏了） */
+      var slotNote = (a && gs.length && a.parts.length > gs.length)
+        ? '<span class="mv3-uv-chip" style="cursor:default;opacity:.85" title="这几个网格共用同一套 UV 布局，是同一张贴图">' +
+          a.parts.length + ' 个网格 · ' + gs.length + ' 张贴图</span>'
         : '';
       var stageHtml;
       if (uv.err) stageHtml = '<div class="mv3-uv-state err">' + uvEsc(uv.err) + '</div>';
@@ -1024,6 +1134,7 @@
           chip('mode', 'atlas', 'UV 岛图', uv.mode === 'atlas') +
           chip('mode', '3d', '3D 岛图', uv.mode === '3d') +
           slots +
+          slotNote +
           chip('labels', '1', '编号', uv.labels, '在面积足够大的岛上标出编号') +
           chip('size', '1', uv.size, false, '切换 UV 图分辨率') +
           chip('export', '1', '导出 PNG', false) +
@@ -1061,11 +1172,15 @@
         uvRender();
         try {
           uv.a = await global.ModelTex.analyze(src);
-          uv.partIslands = uv.a.parts.map(function (p, i) {
+          /* 每个插槽（UV 空间组）有多少个岛 —— 按钮上的提示数字 */
+          uv.slotIslands = uvSlotGroups().map(function (g2) {
             return uv.a.islands.filter(function (o) {
-              return o.tris.some(function (r) { return r.part === i; });
+              return o.tris.some(function (r) { return g2.indexOf(r.part) >= 0; });
             }).length;
           });
+          /* 换模型后旧的插槽选择可能不存在了 → 回到「全部」，
+           * 别让按钮高亮一个不存在的插槽（uvSlotParts 对越界会兜底成全部）。 */
+          if (uv.part !== 'all' && !uvSlotParts(uv.part)) uv.part = 'all';
           uvBuildAtlas();
         } catch (e) {
           uv.err = 'UV 分析失败：' + ((e && e.message) || e);

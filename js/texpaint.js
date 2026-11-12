@@ -111,8 +111,15 @@
 
     var srcTex = new THREE.CanvasTexture(sc);
     srcTex.needsUpdate = true;
-    if (THREE.SRGBColorSpace && 'colorSpace' in srcTex) srcTex.colorSpace = THREE.SRGBColorSpace;
-    else if (THREE.sRGBEncoding && 'encoding' in srcTex) srcTex.encoding = THREE.sRGBEncoding;
+    /* rawColor = 参考图字节直通（多视图投射用）。
+     * ⚠ 默认这条 sRGB 标注在 WebGL2 下会让 GPU 用 SRGB8_ALPHA8 内部格式，
+     * 采样时自动 sRGB→linear 解码，而烘焙 shader 是手写 texture2D、输出不再编码
+     * —— 结果贴图整体暗一档（0.5 → 0.21）。笔刷草稿层对色差不敏感，保持老行为；
+     * 要把 AI 生图的颜色 1:1 搬进贴图时必须开 rawColor。 */
+    if (!opt.rawColor) {
+      if (THREE.SRGBColorSpace && 'colorSpace' in srcTex) srcTex.colorSpace = THREE.SRGBColorSpace;
+      else if (THREE.sRGBEncoding && 'encoding' in srcTex) srcTex.encoding = THREE.sRGBEncoding;
+    }
 
     /* 1. 相机视角线性深度。深度图要浮点才有意义（8 位只有 1/255 精度，远处几乎分不开），
      *    但输出贴图必须是 8 位（要落到 canvas），所以两个 RT 用不同精度。 */
@@ -214,7 +221,11 @@
       /* NoBlending：RT 里存的必须是 shader 原样输出（非预乘）。
        * 默认混合会把 color×alpha 写进缓冲，读回再按「非预乘」混一次 → 软边双重变暗发黑。 */
       blending: THREE.NoBlending,
-      side: THREE.FrontSide
+      /* ⚠ 这里的正面/背面是**UV 空间**的环绕方向，不是相机朝向：
+       * 镜像 UV 岛（左右对称部件常见）在 UV 空间就是背面，FrontSide 会把它们
+       * 整片剔掉，贴图上只剩一片空。需要重投影整模型时传 opt.side = DoubleSide，
+       * 背向相机的面靠深度测试剔除（bakeProject 自带的自遮挡那道）。 */
+      side: opt.side || THREE.FrontSide
     });
 
     var bakeRT = new THREE.WebGLRenderTarget(size, size, {

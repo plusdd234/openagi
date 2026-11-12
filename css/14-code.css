@@ -1,0 +1,781 @@
+/* 编码 App（.os-win.code）
+ *
+ * 说明：这是**新增 App 的独立样式**，不是从 app.css 拆出来的
+ * （同 13-imagelab.css 的情况，见 tools/css-links.js 的 NOT_SPLIT 白名单）。
+ * 所以：
+ *   - 全部作用域收在 .os-win.code 或 .ca- 前缀下，不污染其他 App；
+ *   - 本文件排在最后，可以放心写"最终样式"，不会被 08-theme 覆盖。
+ *
+ * 一条容易踩的对齐规则：
+ *   行号（.ca-gutter）和正文（.ca-ta）必须**同字号、同行高、同 padding-top**，
+ *   否则滚到第 500 行时两者会错开半行——这种错位在小文件里看不出来，
+ *   上线后用户第一个报的就是它。
+ */
+
+.os-win.code .os-win-body {
+  display: flex; flex-direction: column;
+  min-height: 0; padding: 0;
+  background: var(--panel);
+}
+
+/* 兜底高度：.os-win 基类是 height:auto（靠内容撑），而本 App 内部全是 flex + overflow，
+ * 内容不会撑出高度。在 App 页里 dapp-host 的 inset:0 决定尺寸，用不到这条；
+ * 但只要有人从别处直接显示这个窗口，没有它就会塌成一条线。 */
+.os-win.code { min-height: 320px; }
+
+/* 宿主节点：窗口 body 已经是 flex column，这里再撑满一层，内部才拿得到确定高度。
+   少了这一层 .ca-edit 的 flex:1 会算成 0，编辑区会塌成一条线。 */
+.ca-app {
+  flex: 1 1 auto;
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
+
+/* ---------- 顶栏 ---------- */
+.ca-bar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: #fbfcfd;
+}
+.ca-grow { flex: 1 1 auto; min-width: 0; }
+
+.ca-btn {
+  flex: 0 0 auto;
+  height: 26px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 7px;
+  background: #fff; color: var(--text);
+  font-size: 12px; cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.ca-btn:hover { background: #f2f4f7; border-color: #d3d8df; }
+.ca-btn:disabled { opacity: .45; cursor: default; background: #fff; }
+.ca-btn.is-on { background: #eef4ff; border-color: #b9cdf5; color: #2b5fbc; }
+.ca-btn.ca-save:not(:disabled) { background: #eaf7ef; border-color: #b7dfc6; color: #1f8a4c; }
+
+.ca-root {
+  min-width: 0; max-width: 40%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; color: var(--muted);
+  font-family: var(--mono);
+}
+.ca-root.is-on { color: var(--text); }
+
+/* ---------- 主体三栏 ---------- */
+.ca-body {
+  flex: 1 1 auto;
+  display: flex; min-height: 0;
+}
+
+.ca-side {
+  flex: 0 0 260px;
+  display: flex; flex-direction: column; min-height: 0;
+  border-right: 1px solid var(--border);
+  background: #fcfdfe;
+}
+.ca-side > * { min-height: 0; }
+
+.ca-tree {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 6px 0 12px;
+  font-size: 12.5px;
+}
+.ca-row {
+  display: flex; align-items: center; gap: 4px;
+  height: 24px; padding-right: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text);
+}
+.ca-row:hover { background: #eef1f6; }
+.ca-row.is-sel { background: #e6efff; color: #1b4fae; }
+.ca-row.is-heavy { color: #97a0ae; }
+.ca-caret {
+  flex: 0 0 12px;
+  font-size: 9px; color: #98a1ad;
+  text-align: center;
+}
+.ca-name {
+  overflow: hidden; text-overflow: ellipsis;
+}
+.ca-row.is-dir .ca-name { font-weight: 500; }
+
+/* [hidden] 的浏览器默认样式只是 display:none，而任何显式 display 声明都会盖掉它。
+ * 下面两条容器都写了 display:flex，所以必须补这条 ——
+ * 否则"隐藏"的搜索框会照常显示（截图验证时抓到的）。 */
+.ca-tree[hidden],
+.ca-searchbox[hidden] { display: none; }
+
+/* ---------- 搜索 ---------- */
+.ca-searchbox {
+  flex: 1 1 auto;
+  display: flex; flex-direction: column; min-height: 0;
+  padding: 8px;
+}
+.ca-input {
+  flex: 0 0 auto;
+  height: 28px; padding: 0 9px;
+  border: 1px solid var(--border); border-radius: 7px;
+  font-size: 12px; font-family: var(--mono);
+  background: #fff; color: var(--text);
+}
+.ca-input:focus { outline: none; border-color: #b9cdf5; box-shadow: 0 0 0 2px rgba(124,140,255,.14); }
+
+.ca-hits {
+  flex: 1 1 auto;
+  overflow: auto;
+  margin-top: 8px;
+}
+.ca-hit {
+  padding: 6px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.ca-hit:hover { background: #eef1f6; }
+.ca-hit-file {
+  font-size: 11.5px; color: #2b5fbc;
+  font-family: var(--mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ca-hit-line { color: var(--muted); }
+.ca-hit-text {
+  margin-top: 2px;
+  font-size: 11.5px; color: var(--muted);
+  font-family: var(--mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.ca-empty {
+  padding: 14px 12px;
+  font-size: 12px; color: var(--muted);
+  line-height: 1.6;
+}
+
+/* ---------- 编辑区 ---------- */
+.ca-main {
+  flex: 1 1 auto;
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+}
+
+.ca-tab {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: #fbfcfd;
+}
+.ca-tab-name {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-family: var(--mono); color: var(--text);
+}
+.ca-dirty {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: #fff4e0; color: #a86a00;
+  font-size: 11px;
+}
+
+.ca-edit {
+  flex: 1 1 auto;
+  display: flex; min-height: 0;
+  position: relative;
+  background: #fff;
+}
+
+/* 行号与正文的对齐靠这四行：同 font / 同 line-height / 同 padding-top */
+.ca-gutter,
+.ca-ta {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 20px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  border: 0;
+  margin: 0;
+}
+
+.ca-gutter {
+  flex: 0 0 54px;
+  overflow: hidden;
+  padding-right: 9px;
+  text-align: right;
+  color: #b3bbc6;
+  background: #fafbfc;
+  border-right: 1px solid var(--border-soft);
+  white-space: pre;
+  user-select: none;
+}
+
+.ca-ta {
+  flex: 1 1 auto;
+  width: 100%;
+  padding-left: 12px;
+  padding-right: 12px;
+  resize: none;
+  outline: none;
+  background: #fff;
+  color: var(--text);
+  white-space: pre;
+  overflow: auto;
+  tab-size: 2;
+}
+.ca-ta:disabled { background: #fbfcfd; color: #a9b1bd; }
+.ca-ta::selection { background: rgba(108,140,255,.28); }
+
+.ca-hint {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-soft);
+  background: #fbfcfd;
+  font-size: 11.5px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ca-hint.is-err { color: var(--bad); background: #fdf3f2; }
+
+/* 窄屏（App 页在小窗口里时）把侧栏收窄，别把编辑区挤到没法看 */
+@media (max-width: 720px) {
+  .ca-side { flex-basis: 180px; }
+  .ca-gutter { flex-basis: 44px; padding-right: 6px; }
+}
+
+.ca-hint.is-ok { color: #1a7f3c; background: #f2fbf5; }
+
+/* ==========================================================================
+   编码助手（js/code-agent.js）
+   宽度刻意给 340：再宽编辑器就没了，再窄 diff 看不出来。
+   ========================================================================== */
+
+.ca-agent {
+  flex: 0 0 340px;
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+  border-left: 1px solid var(--border);
+  background: #fcfdfe;
+}
+
+/* ---------- 顶栏（高度与 .ca-tab 对齐，否则两栏的横线会错位） ---------- */
+.ca-ag-head {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 6px;
+  height: 34px; padding: 0 7px 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: #fbfcfd;
+}
+.ca-ag-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #b8c1cd;
+  flex: 0 0 auto;
+}
+.ca-agent.is-busy .ca-ag-dot { background: #2f9e5c; }
+
+.ca-ag-title { font-size: 12px; color: var(--text); font-weight: 600; }
+.ca-ag-model {
+  min-width: 0; max-width: 150px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 10.5px; color: var(--muted); font-family: var(--mono);
+}
+.ca-ag-mini { height: 22px; padding: 0 7px; font-size: 11px; }
+
+/* ---------- 日志 ---------- */
+.ca-ag-log {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 10px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+/* 关键：flex 子项默认 flex-shrink:1，内容超出一屏时会把卡片**压扁**，
+ * 表现是 diff 只剩两行、应用/放弃按钮被挤没。必须显式禁止收缩，
+ * 让它超出后靠外层滚动，而不是自我压缩。 */
+.ca-ag-log > * { flex: 0 0 auto; }
+
+.ca-ag-note {
+  font-size: 11.5px; color: var(--muted); line-height: 1.6;
+  padding: 2px 2px 2px 8px;
+  border-left: 2px solid #e3e8ef;
+}
+
+.ca-ag-user {
+  align-self: flex-end;
+  max-width: 92%;
+  padding: 6px 9px;
+  border-radius: 9px 9px 2px 9px;
+  background: #eef3ff; color: var(--text);
+  font-size: 12.5px; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+.ca-ag-say {
+  max-width: 100%;
+  font-size: 12.5px; line-height: 1.65; color: var(--text);
+}
+.ca-ag-say-body { white-space: pre-wrap; word-break: break-word; }
+/* 流式过程中还没内容时给个闪烁光标，否则会以为没反应 */
+.ca-ag-say:last-child .ca-ag-say-body:empty::after {
+  content: '▍'; color: #9aa4b2;
+  animation: ca-blink 1s steps(1) infinite;
+}
+@keyframes ca-blink { 50% { opacity: 0; } }
+
+.ca-ag-tool {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 11px; font-family: var(--mono);
+  color: var(--muted);
+  padding: 2px 0 2px 8px;
+  border-left: 2px solid #e3e8ef;
+}
+.ca-ag-tool-name { color: #4a6b9e; flex: 0 0 auto; }
+.ca-ag-tool-det {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.ca-ag-err {
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: #fdf3f2; border: 1px solid #f3d5d2;
+  color: #b4322b; font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+/* ---------- 输入区 ---------- */
+.ca-ag-foot {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
+  background: #fbfcfd;
+  padding: 7px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.ca-ag-input {
+  width: 100%; box-sizing: border-box;
+  resize: none;
+  padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: 7px;
+  background: #fff; color: var(--text);
+  font-size: 12.5px; line-height: 1.55;
+  font-family: inherit;
+  outline: none;
+}
+.ca-ag-input:focus { border-color: #9db4e8; box-shadow: 0 0 0 2px rgba(108,140,255,.13); }
+.ca-ag-input:disabled { background: #f6f8fa; color: #9aa4b2; }
+
+.ca-ag-actions { display: flex; align-items: center; gap: 6px; }
+.ca-ag-state {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; color: var(--muted);
+}
+.ca-ag-state.warn { color: #a86a00; }
+.ca-ag-state.wait { color: #2f6fd0; }
+.ca-ag-send { height: 26px; padding: 0 12px; font-size: 12px; }
+.ca-ag-stop { height: 26px; padding: 0 10px; font-size: 12px; color: #b4322b; border-color: #edcfcc; }
+
+/* ==========================================================================
+   diff 卡片
+   ========================================================================== */
+
+.ca-ag-diff {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.ca-ag-diff.applied { border-color: #bfe3cb; }
+.ca-ag-diff.skipped { opacity: .72; }
+
+.ca-df-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  background: #f8fafc;
+}
+.ca-df-kind {
+  flex: 0 0 auto;
+  padding: 1px 5px; border-radius: 4px;
+  background: #eef3ff; color: #3a5d97;
+  font-size: 10.5px;
+}
+.ca-df-path {
+  min-width: 0;
+  padding: 0; border: 0; background: none;
+  font-family: var(--mono); font-size: 11px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+}
+.ca-df-path:hover { text-decoration: underline; }
+.ca-df-stat { flex: 0 0 auto; font-family: var(--mono); font-size: 10.5px; }
+.ca-df-stat i { font-style: normal; }
+.ca-df-stat i.add { color: #1a7f3c; }
+.ca-df-stat i.del { color: #b4322b; }
+
+.ca-df-why, .ca-df-warn {
+  padding: 5px 8px;
+  font-size: 11px; line-height: 1.5;
+  border-bottom: 1px solid var(--border-soft);
+}
+.ca-df-why { color: var(--muted); background: #fcfdfe; }
+.ca-df-warn { color: #a86a00; background: #fffbf0; }
+
+.ca-df-body {
+  max-height: 260px;
+  overflow: auto;
+  padding: 3px 0;
+  background: #fff;
+  font-family: var(--mono); font-size: 11px; line-height: 1.5;
+}
+.ca-df-row { display: flex; align-items: flex-start; white-space: pre; }
+.ca-df-m {
+  flex: 0 0 14px;
+  text-align: center;
+  color: #b8c1cd;
+  user-select: none;
+}
+.ca-df-t {
+  flex: 1 1 auto;
+  padding-right: 8px;
+  white-space: pre;
+}
+.ca-df-row.add { background: #eefaf1; }
+.ca-df-row.add .ca-df-m, .ca-df-row.add .ca-df-t { color: #1a7f3c; }
+.ca-df-row.del { background: #fdf1f0; }
+.ca-df-row.del .ca-df-m, .ca-df-row.del .ca-df-t { color: #b4322b; }
+.ca-df-row.gap {
+  justify-content: center;
+  background: #f8fafc;
+}
+.ca-df-row.gap .ca-df-t { color: #9aa4b2; font-size: 10px; }
+
+.ca-df-more {
+  padding: 4px 8px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 10.5px; color: var(--muted);
+  background: #fbfcfd;
+}
+
+.ca-df-acts {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 8px;
+  border-top: 1px solid var(--border-soft);
+  background: #fbfcfd;
+}
+.ca-df-ok {
+  background: #2f9e5c; border-color: #2f9e5c; color: #fff;
+  height: 26px; padding: 0 14px; font-size: 12px;
+}
+.ca-df-ok:hover { background: #278a50; border-color: #278a50; }
+.ca-df-no { height: 26px; padding: 0 12px; font-size: 12px; }
+.ca-df-verdict {
+  font-size: 11.5px; color: var(--muted);
+  padding: 4px 0;
+}
+.ca-ag-diff.applied .ca-df-verdict { color: #1a7f3c; }
+
+/* 窄屏：助手收窄，先保编辑区 */
+@media (max-width: 900px) {
+  .ca-agent { flex-basis: 290px; }
+}
+@media (max-width: 720px) {
+  .ca-agent { flex-basis: 240px; }
+  .ca-df-body { max-height: 180px; }
+}
+
+/* ==========================================================================
+   轨迹看板（H0：js/code-trace.js）
+   覆盖在主体上而不是挤进布局 —— 它是个"事后查看"的东西，
+   不该在正常写代码时占地方。
+   ========================================================================== */
+
+.os-win.code .os-win-body { position: relative; }
+
+.ca-tracebtn { color: #4a6b9e; }
+
+.ca-tracebox {
+  position: absolute;
+  left: 10px; right: 10px; top: 46px;
+  /* 高度跟着内容走，别用 bottom 撑满 —— 只有两条任务时撑满整块，
+   * 下面一片空白看起来像加载失败。 */
+  max-height: calc(100% - 56px);
+  z-index: 6;
+  overflow: auto;
+  padding: 12px 14px 14px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(20, 30, 50, .13);
+}
+
+/* ⚠ 这一条不能删：容器上有显式 display 时，浏览器给 [hidden] 的
+ * display:none 会被盖掉，于是"隐藏的"面板一直显示着。
+ * 这个坑在本文件里已经踩过一次（搜索框）。 */
+.ca-tracebox[hidden] { display: none !important; }
+
+.ca-tb-head {
+  display: flex; align-items: center; gap: 8px;
+  padding-bottom: 9px; margin-bottom: 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.ca-tb-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.ca-tb-sub { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+
+.ca-tb-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.ca-tb-cell {
+  padding: 8px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+.ca-tb-v { font-size: 16px; font-weight: 600; color: var(--text); line-height: 1.25; }
+.ca-tb-k { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.ca-tb-n { font-size: 10.5px; color: #9aa4b2; margin-top: 2px; }
+
+.ca-tb-note {
+  font-size: 11.5px; color: var(--muted);
+  padding: 6px 9px; margin-bottom: 10px;
+  background: #f8fafc; border-radius: 6px;
+}
+
+.ca-tb-rows { border-top: 1px solid var(--border-soft); }
+.ca-tb-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 2px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 11.5px; color: var(--text);
+}
+.ca-tb-c { flex: 0 0 auto; }
+.ca-tb-t { font-family: var(--mono); color: var(--muted); width: 38px; }
+.ca-tb-m {
+  width: 110px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: 11px; color: #4a6b9e;
+}
+
+.ca-tb-empty {
+  padding: 26px 10px;
+  text-align: center;
+  font-size: 12px; color: var(--muted);
+}
+
+@media (max-width: 900px) {
+  .ca-tb-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* ==========================================================================
+   命令执行卡片（run_cmd）
+   放在对话流里而不是单独开终端面板：命令总是「为了验证某个改动」而跑，
+   它和改动放在一起才看得出因果。独立终端会让人忘了为什么跑这条。
+   ========================================================================== */
+
+.ca-ag-run {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.ca-ag-run.ran { border-color: #cfdff7; }
+.ca-ag-run.skipped { opacity: .7; }
+
+.ca-run-head {
+  display: flex; align-items: flex-start; gap: 6px;
+  padding: 7px 9px;
+  background: #1e2430;
+}
+.ca-run-icon {
+  flex: 0 0 auto;
+  color: #6ee07a; font-family: var(--mono); font-size: 12px;
+  line-height: 1.55;
+}
+/* 命令本身用深色块：它是「要被执行的东西」，视觉上必须和解释文字分开，
+   否则用户点「运行」时看不清自己批的是什么。 */
+.ca-run-cmd {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: #e8eef7;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-all;
+}
+
+.ca-run-meta {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  padding: 4px 9px;
+  border-bottom: 1px solid var(--border-soft);
+  background: #f8fafc;
+  font-size: 10.5px; color: var(--muted); font-family: var(--mono);
+}
+
+.ca-run-acts {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 9px;
+  border-top: 1px solid var(--border-soft);
+  background: #fbfcfd;
+}
+.ca-run-ok {
+  background: #2f9e5c; border-color: #2f9e5c; color: #fff;
+  height: 26px; padding: 0 14px; font-size: 12px;
+}
+.ca-run-ok:hover { background: #278a50; border-color: #278a50; }
+.ca-run-no { height: 26px; padding: 0 12px; font-size: 12px; }
+.ca-run-auto {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; color: var(--muted);
+  cursor: pointer; user-select: none;
+}
+.ca-run-auto input { margin: 0; }
+.ca-run-state { font-size: 11.5px; color: #2f6fd0; }
+.ca-run-stop {
+  height: 24px; padding: 0 10px; font-size: 11.5px;
+  color: #b4322b; border-color: #edcfcc;
+}
+
+.ca-run-out {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  padding: 6px 9px;
+  background: #10151d;
+  color: #cfd8e3;
+  font-family: var(--mono); font-size: 11px; line-height: 1.5;
+  white-space: pre;
+}
+/* ⚠ 同 .ca-tracebox：容器上有显式样式时 [hidden] 的 display:none 会被盖掉。
+   pre 的默认 display 是 block，没显式设 display 的话这条其实不需要，
+   但保留它是因为以后一旦加了 display:flex/grid 就会静默失效 —— 这类坑已经踩过两次。 */
+.ca-run-out[hidden] { display: none !important; }
+
+.ca-run-foot {
+  padding: 5px 9px;
+  border-top: 1px solid var(--border-soft);
+  background: #fbfcfd;
+  font-family: var(--mono); font-size: 10.5px; color: #1a7f3c;
+}
+.ca-run-foot.bad { color: #b4322b; }
+.ca-run-foot[hidden] { display: none !important; }
+
+/* ---------- 预览 ----------
+ *
+ * 覆盖在编辑区上的那块。用 flex 占位而不是 position:absolute：
+ * 父级 .ca-main 就是 flex column，占位式不会和下面的 .ca-hint 抢高度。
+ *
+ * iframe 内部必须保持白底。不给的话，透明背景的页面（很常见 ——
+ * 大部分 demo 只在 body 上写内容不写背景色）会透出应用自己的面板色，
+ * 看起来像「预览把页面弄坏了」，而其实页面本身没问题。
+ */
+
+.ca-pv {
+  flex: 1 1 auto;
+  display: flex; flex-direction: column;
+  min-height: 0;
+  background: #fff;
+}
+.ca-pv[hidden] { display: none !important; }
+
+.ca-pv-bar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: #f7f9fb;
+}
+.ca-pv-url {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-family: var(--mono); color: var(--muted);
+}
+
+.ca-pv-stage { flex: 1 1 auto; min-height: 0; position: relative; background: #fff; }
+.ca-pv-frame {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  border: 0; background: #fff;
+}
+
+/* 错误按钮平常不出现 —— 页面正常时它存在本身就是噪音。
+   一旦有错就变红，因为那时候它是唯一能解释「为什么白屏」的入口。 */
+.ca-pv-errbtn {
+  color: #a32d2d; border-color: #f0c4c4; background: #fdf3f2;
+}
+.ca-pv-errbtn:hover { background: #fbe9e8; border-color: #e5b3b3; }
+
+.ca-pv-list {
+  flex: 0 0 auto;
+  max-height: 40%;
+  overflow: auto;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  background: #fffaf9;
+}
+.ca-pv-list[hidden] { display: none !important; }
+
+.ca-pv-item {
+  display: flex; align-items: flex-start; gap: 7px;
+  padding: 3px 0;
+  font-size: 12px; line-height: 1.5;
+}
+.ca-pv-tag {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10.5px; font-family: var(--mono); line-height: 16px;
+  background: #f3f4f6; color: #6b7280;
+}
+/* 三类错用三种色：运行时 / Promise / 资源加载。
+   合在一起看时，人最先要判断的是「是代码错了还是路径错了」，颜色就是这个判断的入口。 */
+.ca-pv-tag.pv-runtime { background: #fde8e8; color: #a32d2d; }
+.ca-pv-tag.pv-promise { background: #fdf0e3; color: #9a5b00; }
+.ca-pv-tag.pv-res     { background: #eef1fb; color: #3c4baf; }
+.ca-pv-msg {
+  flex: 1 1 auto; min-width: 0;
+  font-family: var(--mono);
+  color: #7a2a2a;
+  word-break: break-all;
+}
+
+/* ---------- ws_put 的卡片 ----------
+ *
+ * 和 diff 卡片共用头部与按钮行，只有中间那块不一样：
+ * 二进制没有"行"，能表达它的只有缩略图和体积。
+ * 缩略图必须限高 —— 一张 3000px 的竖图不限制的话会把整块日志顶到屏幕外，
+ * 而那张图只是"顺便让你确认一下"。
+ */
+.ca-ag-put .ca-put-body {
+  flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  padding: 8px 10px;
+  background: #fafbfc;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  max-height: 200px;
+  overflow: hidden;
+}
+.ca-put-img {
+  display: block;
+  max-width: 100%;
+  max-height: 184px;
+  object-fit: contain;
+  /* 棋盘格：透明 PNG 放在纯色底上会看不清到底哪儿是透明的 */
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #eef0f3 25%, transparent 25%, transparent 75%, #eef0f3 75%),
+    linear-gradient(45deg, #eef0f3 25%, transparent 25%, transparent 75%, #eef0f3 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 6px 6px;
+  border-radius: 4px;
+}
+.ca-put-none {
+  font-size: 12px; color: var(--muted);
+}
+
+/* ⚠ .ca-edit 有显式的 display:flex，属性 hidden 对它是**无效的** ——
+ * 浏览器默认样式表里的 [hidden]{display:none} 优先级低于任何类选择器。
+ * 没有这条，点预览后编辑区还留在上面，预览被挤到下半屏（实测就是这样，
+ * 而 DOM 上 .hidden === true，光看属性会以为没问题）。 */
+.ca-edit[hidden] { display: none !important; }
