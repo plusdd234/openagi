@@ -20,6 +20,7 @@
     "chat": "node server/chat.js",
     "test:chat": "node tools/chat.js",
     "app:scan": "node tools/app-scan.js",
+    "wt": "node tools/wt.js",
     "test:apps": "node tools/app-registry.js",
     "test:apps-all": "node tools/apps-all.js",
     "test:tabs": "node tools/desk-tabs.js",

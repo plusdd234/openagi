@@ -130,6 +130,7 @@ server/
   gateway.js            账号网关
   chat.js               交流社区
 tools/                  测试与探针（playwright-core）
+  wt.js                 ★ 一个 AI 一个 worktree（new / merge / rm）
 ```
 
 ### 四条架构铁律
@@ -140,6 +141,20 @@ tools/                  测试与探针（playwright-core）
 3. **默认值唯一来源。** `seedNodeData` 是默认值的唯一出处；取值优先级：连线 → 就地值 → `paramFallback`。
 4. **一个 App 只写一个目录。** 新增 App 就 `cp -r apps/hello apps/<id>`，不碰 `index.html` 和 `js/`；
    跑 `node tools/app-scan.js` 生成清单。细则和六条禁令见 [`apps/README.md`](apps/README.md)。
+
+### 多个 AI 同时开发
+
+文件层面已经隔离到「一个 App 一个目录」，但要真正并行还得各写各的工作区：
+
+```bash
+node tools/wt.js new <appId>     # 建 worktree（分支 app/<appId>，目录在仓库外）
+node tools/wt.js list            # 谁在改什么、有没有越界
+node tools/wt.js merge <appId>   # 合回主干：自动解 manifest 冲突 + 跑守卫，失败整体回滚
+node tools/wt.js rm <appId>      # 拆掉
+```
+
+合并有三道闸：**越界拦截**（只许改自己的 `apps/<id>/`）、**manifest 自动重算**、
+**门禁**（`app-scan --check` + `ns-guard` + `css-links`，任一红就 abort）。细节见 `apps/README.md`。
 
 ## 测试
 

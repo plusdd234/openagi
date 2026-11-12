@@ -17,6 +17,49 @@ node tools/app-registry.js         # 4. 体检（36 条，含「切回后用户�
 第 3 步是必须的：`apps/manifest.js` 是**生成物**，把所有 `apps/*/app.js` 内联进去。
 不跑它，你写的 App 不会出现在桌面上。
 
+---
+
+## 两个 AI 同时干活：一个 AI 一个 worktree
+
+上面那套解决了「**文件**不重叠」，但两个人改同一个 `apps/<id>/` 时改的仍是**同一份文件**。
+要真并行，就得各写各的工作区（`tools/wt.js`，2026-11-13 落地）：
+
+```bash
+# 在主仓：给这个 App 开一块独立工作区（分支 app/<id>，目录在仓库**外面**）
+node tools/wt.js new search
+
+# 它会打印一张「任务卡」，整段贴给那个 AI —— 那张卡自带边界说明，不用你再解释
+
+node tools/wt.js list            # 谁在干什么、改了哪些文件、有没有越界
+node tools/wt.js status search   # 只看一个
+node tools/wt.js merge search    # 合回主仓（自动重算 manifest + 跑守卫，失败整体回滚）
+node tools/wt.js rm search       # 拆掉工作区
+```
+
+**合并时的三道闸**，全自动：
+
+1. **越界拦截** —— 分支只许改 `apps/<id>/` 和 `apps/manifest.js`。
+   动了 `js/` `index.html` `css/` 一律拒绝（确实要合加 `--allow-shared`，并逐条人工过目）。
+   这是「文件不重叠」那套机制的运行时兜底：光有目录约定，AI 不会自己遵守。
+2. **manifest 冲突自动解** —— 每个分支都重算过 `apps/manifest.js`，合并必然撞。
+   它是生成物，所以冲突只做「挑一边 → 按磁盘上的 apps/ 重新生成」，不让人手工解。
+3. **门禁** —— `app-scan --check` + `ns-guard` + `css-links`，纯 node 秒级。
+   任何一条红就 `git merge --abort`，主仓回到合并前，不会留下半吊子状态。
+
+几条**已经踩过**的坑（脚本里都处理了，但你要知道为什么）：
+
+- **worktree 放在仓库外面**（默认 `<仓库上级目录>/openagi-wt/<id>`）。
+  放里面会让 `grep -r`、文件树、打包白名单全看见两份代码。
+- **`node_modules` 用 junction 共享**，不重复 `npm install`（electron 一个就 200MB+）。
+  ⚠ 拆工作区前脚本会**先摘掉链接**：直接删目录时 rmdir 会顺着链接把主仓的
+  `node_modules` 一起端掉 —— 这是整个流程里唯一有破坏性的地方。
+- **`vendor/` 被 `.gitignore` 挡着**，worktree 从提交里长出来 → 天然没有
+  `three.min.js` / 三个 loader / fflate / 模型商店的羊驼头。不补就是满屏
+  `ERR_FILE_NOT_FOUND`（图标丢、模型加载器 undefined）。脚本建的时候会补「主仓有、这边缺」的。
+- **别在主仓和 worktree 里同时 `npm run dev`**：Electron 有单实例锁，后起的会静默退出。
+
+---
+
 ### 示例
 
 ```js
@@ -111,6 +154,7 @@ window.MV_BODY = `<div class="mv-wrap"> … </div>`;
 | `tools/apps-all.js` | 逐个打开全部 App：宿主真有内容、骨架撤除、铺满、标签高亮、零报错 |
 | `tools/desk-tabs.js` | 顶栏切换条：返回桌面后标签仍在、切标签不重跑 `open()` |
 | `tools/ns-guard.js` | 跨文件重名、重复 id、未接线脚本（并行开发必跑） |
+| `tools/wt.js` | 一个 AI 一个 worktree：`new / list / status / merge / rm` |
 
 ---
 
