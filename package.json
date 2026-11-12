@@ -25,7 +25,8 @@
     "test:apps-all": "node tools/apps-all.js",
     "test:tabs": "node tools/desk-tabs.js",
     "test:ns": "node tools/ns-guard.js",
-    "test:conf": "node tools/conf-guard.js"
+    "test:conf": "node tools/conf-guard.js",
+    "test:busy": "node tools/chat-busy.js"
   },
   "dependencies": {
     "playwright-core": "^1.64.1"

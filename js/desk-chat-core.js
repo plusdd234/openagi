@@ -12,8 +12,37 @@
  */
 let msgs = [];            // 对话历史 [{role, content}]，content 可以是字符串或含图片的数组
 let atts = [];            // 待发送的图片附件（data URL）
-let busy = false;
 let srcProbing = false;   // 正在为「引擎在不在跑」做一次真探测（见 send 的生图分支）
+
+/* ---- 「对话 / 生图正在跑」的唯一真源 ----
+ * 以前是一个裸布尔 `let busy`，5 处赋值散在 3 个文件里。两个真实缺陷：
+ *   ① **嵌套被提前清零**：send() 里会 `await runGen()`（模型自己要求出图），
+ *      runGen 的 finishGen 把布尔置 false 时**外层 send 还没跑完**，
+ *      发送按钮已经解锁 —— 这时再点一次就是两条并发的 send。
+ *   ② **没有任何地方能查出「谁漏了收尾」**：任一处忘了配 false 就是永久卡死，
+ *      症状是「发不出消息」，而代码里看不出是谁干的。
+ * 所以改成 计数（嵌套不误清） + 代次（按过「停止」之后，旧请求的退出一律作废）。
+ *   写：只有 chatBusyEnter / chatBusyLeave / chatBusyReset；
+ *   读：只有 isChatBusy()。别处直读写 busy 会被 tools/conf-guard.js 拦下。 */
+let busyDepth = 0;      // 在途请求的层数：send 一层，它内部 await 的 runGen 再加一层
+let busyEpoch = 0;      // 代次：cancelGen 换一代，旧代的 leave 不得影响新一轮
+function isChatBusy(){ return busyDepth > 0; }
+function chatBusyEnter(){
+  busyDepth++;
+  if(busyDepth === 1) lockSend(true);
+  return busyEpoch;                 // 返回「票」：收尾时验代次
+}
+function chatBusyLeave(epoch){
+  if(epoch !== busyEpoch) return;   // 旧代收尾：用户已按停止（或已开新一轮），别解锁别人的
+  if(busyDepth > 0) busyDepth--;
+  if(busyDepth === 0) lockSend(false);
+}
+/* 用户按「停止」：不再等任何在途请求，立刻回到可操作状态 */
+function chatBusyReset(){
+  busyEpoch++;
+  busyDepth = 0;
+  lockSend(false);
+}
 let opened = false;
 let toastTimer = 0;
 

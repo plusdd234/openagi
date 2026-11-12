@@ -166,7 +166,8 @@ node tools/app-registry.js       # 注册表体检（注册 / 幂等 / 关闭 / 
 node tools/apps-all.js           # 14 个 App 逐个打开
 node tools/desk-tabs.js          # 顶栏标签条
 node tools/ns-guard.js           # 跨文件重名 / 重复 id（并行开发必跑）
-node tools/conf-guard.js         # 配置只经 confGet/confLlm/confImg 读，不许直摸 input
+node tools/conf-guard.js         # 配置只经 confGet/confLlm/confImg 读，不许直摸 input；busy 不许越权直写
+node tools/chat-busy.js          # 对话/生图忙锁：嵌套不误解锁、按停止后旧请求不干扰新一轮
 node tools/css-links.js          # 样式存在 / 无孤岛 / 编号顺序
 node tools/engine-autostart.js   # 引擎自动启动（纯 node）
 node tools/engine-keepalive.js   # 驻留保活器（纯 node）

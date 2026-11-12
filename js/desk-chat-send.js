@@ -254,7 +254,7 @@ async function ensureLocalModelWarm(conn){
 }
 
 async function send(){
-  if(busy) return;
+  if(isChatBusy()) return;
   const input = el('deskAiText');
   if(!input) return;
   const text = input.value.trim();
@@ -368,8 +368,9 @@ async function send(){
     + (chatImgMode === 'chat' ? '' : '\n' + IMG_SYS);
   const sent = historyForModel();
 
-  busy = true;
-  lockSend(true);
+  /* 进锁：lockSend(true) 在 chatBusyEnter 里，别在外面再锁一次——
+     两处都写就会出现「谁先谁后」的隐性依赖。票在 finally 里交回去。 */
+  const busyTicket = chatBusyEnter();
   setDot('busy', '生成中…');
   const reply = { id: ++msgSeq, role: 'assistant', content: '' };
   if(pack){
@@ -424,8 +425,7 @@ async function send(){
     setDot('err', msg);
     deskToast(msg);
   }finally{
-    busy = false;
-    lockSend(false);
+    chatBusyLeave(busyTicket);
     renderLog();
   }
 }

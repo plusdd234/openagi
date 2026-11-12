@@ -237,108 +237,113 @@ function startTick(m, token){
 async function runGen(m, opts){
   const o = opts || {};
   const token = ++genSeq;
-  busy = true;
-  lockSend(true);
-  setDot('busy', '出图中…');
-  renderImgLabel();          // 来源可能刚在设置里改过，别显示上次的
-  m.phase = 'plan';
-  m.p0 = Date.now();
-  m.phaseText = '理解需求…';
-  patchGen(m);
-  startTick(m, token);
-
-  let prompt = String(m.prompt || '');
-  /* ① 提示词改写：把「一只在雨里的猫」这种口语扩成能画的描述。
-     失败不算错——原话照样能生，绝不因为改写不通而让用户拿不到图。 */
-  /* ⚠️ 图生图（有参考图）**不改写**。
-     改写的目标是「写清主体+动作+环境+光线+材质+镜头+风格+色调」——那是给「从零生成」用的，
-     喂给图生图等于把参考图丢掉、照一段全新描述重画：用户明明只说了「把背景换成海边日落」，
-     改写却补出整套构图与光线，于是主体挪了位置、姿态也变了（「构图和原图不吻合」的头号原因）。
-     改图指令本来就具体，直接翻译比扩写可靠。 */
-  if(!o.skipRefine && refineOn && !prompt && !m.ref && canChat()){
-    try{
-      const sel = el('deskAiModel');
-      const conn = connFor(sel ? sel.value : '');
-      prompt = await deskImage.refine(m.raw, {
-        conn: conn,
-        onDelta: acc => {
-          if(token !== genSeq) return;
-          m.phaseText = '理解需求 · ' + String(acc || '').length + ' 字';
-          patchGen(m);
-        }
-      });
-    }catch(e){ prompt = ''; }
-  }
-  if(token !== genSeq) return;
-  if(!prompt) prompt = deskImage.cleanPrompt(m.raw);
-  m.prompt = prompt;
-  if(!prompt){ m.phase = 'error'; m.error = '没读懂要画什么，换个说法再试一次'; return finishGen(m, token); }
-
-  /* ② 出图 */
-  m.phase = 'gen';
-  m.t0 = Date.now();
-  m.phaseText = '生成中 · 0s';
-  patchGen(m);
-  startTick(m, token);
+  /* 进锁：计数 + 代次，收尾全部交给函数最外层的 finally。
+     中间有 3 处「token 已过期 → 直接 return」的早退，手工在每条路径上补一次收尾，
+     正是这套代码最容易漏的地方 —— 漏一处的症状是「一直卡在出图中」，而且看不出谁干的。 */
+  const busyTicket = chatBusyEnter();
   try{
-    imgCtrl = new AbortController();
-    const r = await deskImage.generate({ prompt: prompt, ref: m.ref, denoise: m.denoise, signal: imgCtrl.signal, timeoutSec: 300 });
-    if(token !== genSeq) return;
-    m.image = r.src;
-    m.ms = r.ms;
-    m.phase = 'done';
-    /* 本地模型只认英文：provider 会把中文翻成英文再送（SD1.5 的 CLIP 没有中文）。
-       翻没翻成要如实告诉用户，否则下次还是「图和描述无关」而不知道为什么。 */
-    const tr = (typeof comfyLastLocalize === 'function') ? comfyLastLocalize() : null;
-    if(tr && tr.zh === prompt && !tr.skipped && /^本地/.test(String(m.srcLabel || ''))){
-      m.trState = tr.ok ? 'ok' : 'fail';
-      m.tr = { via: tr.via || '', model: tr.model || '', reason: tr.reason || '' };   // 卡片上要说清「谁翻的 / 为什么没翻成」
+    setDot('busy', '出图中…');
+    renderImgLabel();          // 来源可能刚在设置里改过，别显示上次的
+    m.phase = 'plan';
+    m.p0 = Date.now();
+    m.phaseText = '理解需求…';
+    patchGen(m);
+    startTick(m, token);
+
+    let prompt = String(m.prompt || '');
+    /* ① 提示词改写：把「一只在雨里的猫」这种口语扩成能画的描述。
+       失败不算错——原话照样能生，绝不因为改写不通而让用户拿不到图。 */
+    /* ⚠️ 图生图（有参考图）**不改写**。
+       改写的目标是「写清主体+动作+环境+光线+材质+镜头+风格+色调」——那是给「从零生成」用的，
+       喂给图生图等于把参考图丢掉、照一段全新描述重画：用户明明只说了「把背景换成海边日落」，
+       改写却补出整套构图与光线，于是主体挪了位置、姿态也变了（「构图和原图不吻合」的头号原因）。
+       改图指令本来就具体，直接翻译比扩写可靠。 */
+    if(!o.skipRefine && refineOn && !prompt && !m.ref && canChat()){
+      try{
+        const sel = el('deskAiModel');
+        const conn = connFor(sel ? sel.value : '');
+        prompt = await deskImage.refine(m.raw, {
+          conn: conn,
+          onDelta: acc => {
+            if(token !== genSeq) return;
+            m.phaseText = '理解需求 · ' + String(acc || '').length + ' 字';
+            patchGen(m);
+          }
+        });
+      }catch(e){ prompt = ''; }
     }
-    lastImage = r.src;
-    /* 轨迹：记的是**真正送进引擎的那句**（可能是改写后的），不是用户原本那句话。
-     * 少了这条，「存成流程」就还原不出当时到底用了什么提示词。 */
-    traceCap('imageGen', {
-      ok: true,
-      ms: Number(m.ms) || 0,
-      model: (el('imgModel') && el('imgModel').value) || '',
-      engine: m.srcLabel || '',
-      inputs: { prompt: prompt, ref: m.ref || '', denoise: Number(m.denoise) || 0 },
-      outKind: 'image',
-      ref: r.src
-    });
-    setDot('ok', '已出图 · ' + (m.srcLabel || ''));
-    /* 在线接口给的是远程地址：后面「把这张再改改」「用作参考图」「保存到图库」
-       都要本地能取到像素，后台先转成 dataURL 备好。显示用的 <img> 不动（同一张图）。 */
-    if(/^https?:/i.test(String(r.src || ''))){
-      deskImage.toDataUrl(r.src).then(u => {
-        if(!u) return;
-        m.image = u;
-        if(lastImage === r.src) lastImage = u;
-      }).catch(() => {});
-    }
-  }catch(e){
     if(token !== genSeq) return;
-    m.phase = 'error';
-    m.error = (typeof friendlyErr === 'function') ? friendlyErr(e) : String((e && e.message) || e);
-    /* 失败的尝试也记：它不会写进流程，但要让「存成流程」知道这一轮有过瑕疵，
-     * 别把一次侥幸成功当成稳定做法固化下来。 */
-    traceCap('imageGen', {
-      ok: false, ms: 0,
-      inputs: { prompt: prompt, ref: m.ref || '', denoise: Number(m.denoise) || 0 },
-      error: m.error
-    });
-    setDot('err', '生图失败');
-    deskToast('生图失败：' + String(m.error).slice(0, 80));
+    if(!prompt) prompt = deskImage.cleanPrompt(m.raw);
+    m.prompt = prompt;
+    if(!prompt){ m.phase = 'error'; m.error = '没读懂要画什么，换个说法再试一次'; return finishGen(m, token); }
+
+    /* ② 出图 */
+    m.phase = 'gen';
+    m.t0 = Date.now();
+    m.phaseText = '生成中 · 0s';
+    patchGen(m);
+    startTick(m, token);
+    try{
+      imgCtrl = new AbortController();
+      const r = await deskImage.generate({ prompt: prompt, ref: m.ref, denoise: m.denoise, signal: imgCtrl.signal, timeoutSec: 300 });
+      if(token !== genSeq) return;
+      m.image = r.src;
+      m.ms = r.ms;
+      m.phase = 'done';
+      /* 本地模型只认英文：provider 会把中文翻成英文再送（SD1.5 的 CLIP 没有中文）。
+         翻没翻成要如实告诉用户，否则下次还是「图和描述无关」而不知道为什么。 */
+      const tr = (typeof comfyLastLocalize === 'function') ? comfyLastLocalize() : null;
+      if(tr && tr.zh === prompt && !tr.skipped && /^本地/.test(String(m.srcLabel || ''))){
+        m.trState = tr.ok ? 'ok' : 'fail';
+        m.tr = { via: tr.via || '', model: tr.model || '', reason: tr.reason || '' };   // 卡片上要说清「谁翻的 / 为什么没翻成」
+      }
+      lastImage = r.src;
+      /* 轨迹：记的是**真正送进引擎的那句**（可能是改写后的），不是用户原本那句话。
+       * 少了这条，「存成流程」就还原不出当时到底用了什么提示词。 */
+      traceCap('imageGen', {
+        ok: true,
+        ms: Number(m.ms) || 0,
+        model: (el('imgModel') && el('imgModel').value) || '',
+        engine: m.srcLabel || '',
+        inputs: { prompt: prompt, ref: m.ref || '', denoise: Number(m.denoise) || 0 },
+        outKind: 'image',
+        ref: r.src
+      });
+      setDot('ok', '已出图 · ' + (m.srcLabel || ''));
+      /* 在线接口给的是远程地址：后面「把这张再改改」「用作参考图」「保存到图库」
+         都要本地能取到像素，后台先转成 dataURL 备好。显示用的 <img> 不动（同一张图）。 */
+      if(/^https?:/i.test(String(r.src || ''))){
+        deskImage.toDataUrl(r.src).then(u => {
+          if(!u) return;
+          m.image = u;
+          if(lastImage === r.src) lastImage = u;
+        }).catch(() => {});
+      }
+    }catch(e){
+      if(token !== genSeq) return;
+      m.phase = 'error';
+      m.error = (typeof friendlyErr === 'function') ? friendlyErr(e) : String((e && e.message) || e);
+      /* 失败的尝试也记：它不会写进流程，但要让「存成流程」知道这一轮有过瑕疵，
+       * 别把一次侥幸成功当成稳定做法固化下来。 */
+      traceCap('imageGen', {
+        ok: false, ms: 0,
+        inputs: { prompt: prompt, ref: m.ref || '', denoise: Number(m.denoise) || 0 },
+        error: m.error
+      });
+      setDot('err', '生图失败');
+      deskToast('生图失败：' + String(m.error).slice(0, 80));
+    }
+    return finishGen(m, token);
+  }finally{
+    chatBusyLeave(busyTicket);
   }
-  return finishGen(m, token);
 }
 
 function finishGen(m, token){
   if(token !== genSeq) return;
   stopTick();
   imgCtrl = null;
-  busy = false;
-  lockSend(false);
+  /* busy / lockSend 不在这里收：那是 runGen 的 finally 的职责（计数器要能嵌套） */
   patchGen(m);
   renderImgLabel();
 }
@@ -351,15 +356,17 @@ function cancelGen(){
   stopTick();
   m.phase = 'cancel';
   m.phaseText = '已停止';
-  busy = false;
-  lockSend(false);
+  /* 用户主动叫停：不等在途请求的 finally，直接换代 + 清零。
+     换代很关键——那条被放弃的 runGen 稍后仍会走到自己的 finally，
+     凭旧代的票它什么都做不了，不会把用户紧接着开的新一轮解开锁。 */
+  chatBusyReset();
   setDot('', '已停止');
   patchGen(m);
 }
 
 /* 重新生成：新开一条消息而不是覆盖原来的——原图还能留着对比 */
 function retryGen(m){
-  if(busy) return;
+  if(isChatBusy()) return;
   const n = {
     id: ++msgSeq, role:'assistant', kind:'image', content:'',
     raw: m.raw, prompt: m.prompt, ref: m.ref || '', image:'',
