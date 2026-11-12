@@ -31,9 +31,9 @@ const ANALYSIS_SYSTEM = `你是图像画面诊断专家，负责诊断"生图幻
 
 async function analyze(){
   if(!currentImageDataURL){ setStatus('请先选择一张原图', 'error'); return; }
-  const base = $('llmBaseUrl').value.trim();
-  const model = $('llmModel').value.trim();
-  const key = $('llmKey').value.trim();
+  const base = confGet('llmBaseUrl');
+  const model = confGet('llmModel');
+  const key = confGet('llmKey');
   if(!base || !key || !model){ setStatus('请填写完整的分析 Base URL / Model / API Key', 'error'); return; }
 
   setButton('btnAnalyze', true, '分析中…');
@@ -98,15 +98,15 @@ async function generate(){
   if(!promptText){ setStatus('提示词为空，请先分析或手动填写', 'error'); return; }
   currentPrompt = promptText;
 
-  const base = ($('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim()).replace(/\/$/,'');
-  const model = ($('imgModel').value.trim() || $('llmModel').value.trim());
-  const key = $('imgKey').value.trim() || $('llmKey').value.trim();
-  const endpoint = $('imgEndpoint').value.trim();
+  const base = (confGet('imgBaseUrl') || confGet('llmBaseUrl')).replace(/\/$/,'');
+  const model = (confGet('imgModel') || confGet('llmModel'));
+  const key = confGet('imgKey') || confGet('llmKey');
+  const endpoint = confGet('imgEndpoint');
   if(!base || !model || !key){ setStatus('请填写生图 Base URL / Model / API Key', 'error'); return; }
 
   setButton('btnGenerate', true, '生图中…');
   try{
-    const size = $('imgSize').value.trim() || '1024x1024';
+    const size = confGet('imgSize') || '1024x1024';
     const useImage = $('sendImage').checked;
     const isEdit = /edit/i.test(endpoint);
     let data;
@@ -131,7 +131,7 @@ async function generate(){
       if(useImage) body.image = currentImageDataURL.split(',')[1];
       data = await post(base, key, endpoint, body);
     }
-    const path = $('respPath').value.trim() || 'data[0].url';
+    const path = confGet('respPath') || 'data[0].url';
 
     // 或 b64_json
     let url = lookupPath(data, path);
@@ -195,7 +195,7 @@ async function generateTripo(){
   if(!currentImageDataURL){ setStatus('请先选择一张原图', 'error'); return; }
   const promptText = $('promptOut').value.trim();
   if(!promptText){ setStatus('提示词为空，请先分析或手动填写', 'error'); return; }
-  const model = $('imgModel').value.trim() || 'seedream_v5';
+  const model = confGet('imgModel') || 'seedream_v5';
 
   setButton('btnGenerate', true, '生成中…');
   try{
@@ -231,7 +231,7 @@ async function generateTripo(){
 // ---- Tripo 3D 建模 ----
 async function generate3D(){
   if(!currentImageDataURL){ setStatus('请先选择一张原图', 'error'); return; }
-  const version = $('tripoVersion').value;
+  const version = confGet('tripoVersion');
 
   setButton('btnGenerate3D', true, '建模中…');
   try{

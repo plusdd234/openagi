@@ -76,11 +76,11 @@ async function modelOptions(){
   }
   // 自定义接口：设置里已读取的清单 + 当前填的模型名
   try{
-    const base = ($('llmBaseUrl').value || '').trim().replace(/\/$/, '');
+    const base = confGet('llmBaseUrl').replace(/\/$/, '');
     const cache = (typeof MODEL_CACHE !== 'undefined' && MODEL_CACHE) ? MODEL_CACHE : { base:'', list:[] };
     const ids = new Set();
     if(cache.base === base) (cache.list || []).forEach(m => ids.add(m.id));
-    const cur = ($('llmModel').value || '').trim();
+    const cur = confGet('llmModel');
     if(cur) ids.add(cur);
     ids.forEach(id => out.push({ value: 'local:' + id, label: id, group: '自定义接口' }));
   }catch(e){}
@@ -103,7 +103,7 @@ async function modelOptions(){
  *   生图模型 → 真正生效的配置（本地写 mc_comfy_ckpt，在线写 hf_imgModel）
  *
  * 为什么在线这一侧要写 hf_imgModel 而不是自己存一份：
- * 生图链路只认设置页那几个字段（wfImage 直接读 $('imgModel').value），
+ * 生图链路只认设置页那几个字段（一律经 config.js 的 confImg() 读），
  * 这里另存一份就会出现「下拉显示的是 A、实际出图用的是 B」——最难查的那种不一致。
  *
  * 只有两类来源：
@@ -151,11 +151,11 @@ async function imgModelOptions(){
 
   /* ---- 在线接口：设置页读过的生图模型清单 ---- */
   try{
-    const base = ($('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim()).replace(/\/$/, '');
+    const base = (confGet('imgBaseUrl') || confGet('llmBaseUrl')).replace(/\/$/, '');
     const cache = (typeof IMG_MODEL_CACHE !== 'undefined' && IMG_MODEL_CACHE) ? IMG_MODEL_CACHE : { base:'', list:[] };
     const ids = new Set();
     if(cache.base === base) (cache.list || []).forEach(m => ids.add(m.id));
-    const cur = ($('imgModel').value || '').trim();
+    const cur = confGet('imgModel');
     if(cur) ids.add(cur);
     ids.forEach(id => out.push({ value: 'online:' + id, label: id, group: '在线接口' }));
   }catch(e){}
@@ -182,7 +182,7 @@ function currentImgModelValue(){
     /* 引擎停在 Tripo 上时，imgModel 由设置页的 Tripo 模型 UI 管，
        这个下拉不参与（避免两处各存一份、必然对不上）。 */
     if(tripoEngineActive()) return '';
-    const m = ($('imgModel').value || '').trim();
+    const m = confGet('imgModel');
     if(m) return 'online:' + m;
   }catch(e){}
   return '';
@@ -369,8 +369,8 @@ const SRC_LABEL = { gw: '云端', oll: 'Ollama', local: '自定义' };
 function imgSiteMenuEntry(){
   try{
     if(tripoEngineActive()) return null;
-    const base = (($('imgBaseUrl') && $('imgBaseUrl').value.trim())
-      || ($('llmBaseUrl') && $('llmBaseUrl').value.trim()) || '');
+    const base = (confGet('imgBaseUrl')
+      || confGet('llmBaseUrl') || '');
     const s = imgSiteFor(base);
     if(!s) return null;
     const a = document.createElement('a');
@@ -666,9 +666,9 @@ function buildModelCfg(){
 function openModelCfg(){
   closeMenus();
   const mask = el('daiCfgMask') || buildModelCfg();
-  const base = $('llmBaseUrl') ? $('llmBaseUrl').value.trim() : '';
-  const key = $('llmKey') ? $('llmKey').value.trim() : '';
-  const model = $('llmModel') ? $('llmModel').value.trim() : '';
+  const base = confGet('llmBaseUrl');
+  const key = confGet('llmKey');
+  const model = confGet('llmModel');
   el('daiCfgBase').value = base;
   el('daiCfgKey').value = key;
   el('daiCfgModel').value = model;
@@ -866,7 +866,7 @@ function renderImgSite(){
   const a = el('daiImgCfgSite');
   if(!row || !a || !el('daiImgCfgBase')) return;
   const base = (el('daiImgCfgBase').value || '').trim()
-    || ((($('llmBaseUrl') && $('llmBaseUrl').value.trim()) || ''));
+    || ((confGet('llmBaseUrl') || ''));
   const s = imgSiteFor(base);
   if(!s){
     row.classList.add('hidden');
@@ -1004,11 +1004,11 @@ function buildImgCfg(){
 function openImgCfg(){
   closeMenus();
   const mask = el('daiImgCfgMask') || buildImgCfg();
-  el('daiImgCfgBase').value = $('imgBaseUrl') ? $('imgBaseUrl').value.trim() : '';
-  el('daiImgCfgKey').value = $('imgKey') ? $('imgKey').value.trim() : '';
-  el('daiImgCfgModel').value = $('imgModel') ? $('imgModel').value.trim() : '';
-  el('daiImgCfgEndpoint').value = ($('imgEndpoint') && $('imgEndpoint').value.trim()) || '/images/edits';
-  el('daiImgCfgSize').value = ($('imgSize') && $('imgSize').value.trim()) || '1024x1024';
+  el('daiImgCfgBase').value = confGet('imgBaseUrl');
+  el('daiImgCfgKey').value = confGet('imgKey');
+  el('daiImgCfgModel').value = confGet('imgModel');
+  el('daiImgCfgEndpoint').value = confGet('imgEndpoint') || '/images/edits';
+  el('daiImgCfgSize').value = confGet('imgSize') || '1024x1024';
   el('daiImgCfgList').innerHTML = '';
   el('daiImgCfgHint').textContent = '填好地址和 Key 后点「读取模型」，可从该站返回的清单里点选；也可以直接手填模型名。';
   imgCfgErr('');
@@ -1117,11 +1117,11 @@ function imgCfgPush(){
 async function imgCfgReadModels(){
   const v = imgCfgValues();
   imgCfgErr('');
-  if(!v.base && !($('llmBaseUrl') && $('llmBaseUrl').value.trim())){
+  if(!v.base && !confGet('llmBaseUrl')){
     imgCfgErr('先填接口地址，例如 https://api.example.com/v1；或点「复用分析接口」');
     return;
   }
-  if(!v.key && !($('llmKey') && $('llmKey').value.trim())){
+  if(!v.key && !confGet('llmKey')){
     imgCfgErr('先填 API Key（留空时需要有分析侧 Key 可复用）');
     return;
   }
@@ -1134,7 +1134,7 @@ async function imgCfgReadModels(){
   if(hint) hint.textContent = '正在请求 ' + (v.base || '分析侧地址').replace(/\/$/, '') + '/models …';
   try{
     if(typeof loadImgModels === 'function') await loadImgModels();
-    const base = ((v.base || $('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim()) || '').replace(/\/$/, '');
+    const base = ((v.base || confGet('imgBaseUrl') || confGet('llmBaseUrl')) || '').replace(/\/$/, '');
     const cache = (typeof IMG_MODEL_CACHE !== 'undefined' && IMG_MODEL_CACHE) ? IMG_MODEL_CACHE : null;
     const list = (cache && cache.base === base && Array.isArray(cache.list)) ? cache.list : [];
     box.innerHTML = '';
@@ -1168,7 +1168,7 @@ function imgCfgSave(){
   imgCfgErr('');
   const fixed = (typeof fixUrl === 'function' ? fixUrl(v.base) : '') || v.base;
   /* 地址可以留空（=复用分析侧），留空时分析侧必须已经有地址 */
-  const effBase = fixed.replace(/\/$/, '') || (($('llmBaseUrl') && $('llmBaseUrl').value.trim()) || '').replace(/\/$/, '');
+  const effBase = fixed.replace(/\/$/, '') || (confGet('llmBaseUrl') || '').replace(/\/$/, '');
   if(!effBase){
     imgCfgErr('请填接口地址，或点「复用分析接口」（那样需要分析侧已经配好 Base URL）');
     return;

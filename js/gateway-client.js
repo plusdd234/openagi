@@ -136,18 +136,17 @@ function gwConn(){
   return { base: gwBase() + '/v1', key: gwToken(), model, via: 'gateway' };
 }
 
-/* 统一取「这次调用用哪套连接」：登录走网关，否则用本地 Key */
+/* 统一取「这次调用用哪套连接」：登录走网关，否则用本地 Key。
+ * 本地这一支必须复用 confLlm()——读法与回落规则只留一份（见 config.js 顶部说明）。
+ * 以前这里自己又写了一遍 $('llmBaseUrl').value.trim()，于是「谁才是唯一取凭据入口」
+ * 只在口头成立：另有 8 个文件绕过它直读 DOM，云端登录后那些路径仍在拿本地配置。 */
 function llmConn(){
   if(llmMode() !== 'local'){
     const g = gwConn();
     if(g) return g;   // 云端模式且已登录
   }
-  return {
-    base: ($('llmBaseUrl').value || '').trim().replace(/\/$/, ''),
-    key: ($('llmKey').value || '').trim(),
-    model: ($('llmModel').value || '').trim(),
-    via: 'local'
-  };
+  const c = confLlm();
+  return { base: c.base, key: c.key, model: c.model, via: 'local' };
 }
 
 /* ---------- 设置面板渲染 ---------- */

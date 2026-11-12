@@ -78,8 +78,8 @@ function connFor(value){
     return { base: rtBase() + '/ollama/v1', key: 'ollama', model: id, via: 'ollama' };
   }
   return {
-    base: ($('llmBaseUrl').value || '').trim().replace(/\/$/, ''),
-    key: ($('llmKey').value || '').trim(),
+    base: confGet('llmBaseUrl').replace(/\/$/, ''),
+    key: confGet('llmKey'),
     model: id,
     via: 'local'
   };

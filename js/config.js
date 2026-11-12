@@ -160,6 +160,45 @@ function parseIdList(str){
 const $ = id => document.getElementById(id);
 const loadKey = k => localStorage.getItem('hf_' + k);
 
+/* ================= 配置读取的唯一入口 =================
+ * 真源是设置页那排**隐藏 input**（#llmKey / #imgModel …），由上面的 loadAll / saveAll
+ * 按 id 绑定，所以 id 一个都不能删。但「怎么读」不该让每个调用方各写一遍 ——
+ * 实测有 8 个文件在直接 `$('llmKey').value.trim()`，且把「imgBaseUrl 为空就回落
+ * llmBaseUrl」这条规则各重写一次（其中一处漏了去尾斜杠，拼出 /v1//images 这种地址）。
+ *
+ * 分三层，别混：
+ *   confGet(id) —— 原语。**只有它碰 DOM**，其余一律经它。
+ *   confLlm()   —— 分析侧（文本）三件套。没有回落对象。
+ *   confImg()   —— 生图侧三件套 + 回落规则。留空即继承分析侧（只配一套的老用户全靠这个）。
+ *   llmConn()   —— (gateway-client.js) 业务层：决定「云端还是本地」，**发请求的走它**。
+ *
+ * ⚠ 设置页的「测试接口」「拉模型列表」要用 confLlm/confImg 而不是 llmConn：
+ *   用户点测试就是想验证他刚填的那套，走云端分支反而测不到本地配置。
+ * ==================================================== */
+function confGet(id){
+  const el = document.getElementById(id);
+  if(!el) return '';
+  const v = el.type === 'checkbox' ? (el.checked ? '1' : '') : el.value;
+  return String(v == null ? '' : v).trim();
+}
+function confLlm(){
+  return {
+    base: confGet('llmBaseUrl').replace(/\/+$/, ''),
+    key: confGet('llmKey'),
+    model: confGet('llmModel'),
+  };
+}
+function confImg(){
+  const l = confLlm();
+  return {
+    base: (confGet('imgBaseUrl') || l.base).replace(/\/+$/, ''),
+    key: confGet('imgKey') || l.key,
+    model: confGet('imgModel') || l.model,
+    endpoint: confGet('imgEndpoint'),
+    size: confGet('imgSize'),
+  };
+}
+
 // ---- 配置持久化 ----
 const CFG = ['llmBaseUrl','llmModel','llmThink','imgBaseUrl','imgEndpoint','imgModel','imgSize','respPath','sendImage','genEngine','tripoVersion','tripoWebUrl','relayUrl','relayOn','wsProvider','wsBase','wsCount'];
 let saveTimer = null;

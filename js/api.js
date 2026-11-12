@@ -54,7 +54,7 @@ async function tripoWebLogin(){
     await tripoWebFetch('/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: $('tripoWebUrl').value })
+      body: JSON.stringify({ url: confGet('tripoWebUrl') })
     }, 20000);
     el.textContent = '浏览器已打开 · 等待登录并进入生图页…';
     for(let i = 0; i < 30; i++){
@@ -114,9 +114,9 @@ function setChip(id, ok, text, tip){
 }
 
 function updateStatusChips(){
-  const key = $('llmKey').value.trim();
-  const base = $('llmBaseUrl').value.trim();
-  const llm = $('llmModel').value.trim();
+  /* 读配置一律走 confLlm/confImg：回落规则（img 留空继承 llm）只有 config.js 一份 */
+  const L = confLlm();
+  const key = L.key, base = L.base, llm = L.model;
   const llmOk = !!(key && base && llm);
   /* 语言 chip 必须区分本地/云端：两种来源出问题时排查方向完全不同
    * （本地看 Ollama / 引擎，云端看 Key / 网络）。只给一个模型名等于什么都没说。 */
@@ -142,9 +142,8 @@ function updateStatusChips(){
         : '图像已切到本地生成，但 ComfyUI 没在跑——打开「本地生图」启动引擎，否则出图会失败');
     if(!running) refreshStatusEngine();
   } else {
-    const imgModel = $('imgModel').value.trim() || llm;
-    const imgBase = $('imgBaseUrl').value.trim() || base;
-    const imgKey = $('imgKey').value.trim() || key;
+    const I = confImg();
+    const imgModel = I.model, imgBase = I.base, imgKey = I.key;
     const imgOk = !!(imgKey && imgModel && imgBase);
     const imgSource = activeImgPreset === IMG_FOLLOW ? '复用分析接口' : activeImgPreset;
     setChip('stIMG', imgOk, '云端 · ' + (imgModel || '未配置'),
@@ -152,9 +151,9 @@ function updateStatusChips(){
   }
 
   /* 3D chip：网页助手连接优先，API Key 兜底（与「3D 生成」节点的取用顺序一致） */
-  const tKey = $('tripoKey').value.trim();
+  const tKey = confGet('tripoKey');
   const tKeyOk = !!tKey && !tripoKeyLooksWrong(tKey);
-  const tier = TRIPO_TIER[$('tripoVersion').value] || 'H3.1';
+  const tier = TRIPO_TIER[confGet('tripoVersion')] || 'H3.1';
   if(webReady){
     setChip('st3D', true, 'Tripo 网页助手', `3D 模型：网页账号已连接（版本 ${tier}）· 未连接时自动改走 API Key`);
   } else if(tKeyOk){
@@ -437,7 +436,7 @@ function tripoKeyLooksWrong(key){
   return !key || key.includes('@') || /\s/.test(key) || key.length < 16;
 }
 async function tripoCall(path, opts){
-  const key = $('tripoKey').value.trim();
+  const key = confGet('tripoKey');
   if(!key) throw new Error('请先填写 Tripo API Key');
   if(tripoKeyLooksWrong(key)){
     throw new Error('Tripo Key 格式不对：请在 platform.tripo3d.ai → API Keys 生成并粘贴完整 Key，不能填邮箱或账号密码');
@@ -463,7 +462,7 @@ async function tripoCall(path, opts){
 
 async function checkTripoKey(){
   const note = $('tripoNote');
-  const key = $('tripoKey').value.trim();
+  const key = confGet('tripoKey');
   if(tripoKeyLooksWrong(key)){
     note.textContent = 'Key 格式不对：请粘贴 Tripo 平台生成的 API Key（不是邮箱或账号密码）。';
     setStatus('Tripo Key 格式不正确', 'error');
@@ -564,7 +563,7 @@ function groupModels(list){
 
 function modelListForCurrentBase(role){
   const isLLM = role !== 'img';
-  const raw = isLLM ? $('llmBaseUrl').value.trim() : ($('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim());
+  const raw = isLLM ? confGet('llmBaseUrl') : (confGet('imgBaseUrl') || confGet('llmBaseUrl'));
   const base = raw.replace(/\/$/, '');
   const cache = isLLM ? MODEL_CACHE : IMG_MODEL_CACHE;
   return cache.base === base ? cache.list : [];
@@ -602,7 +601,7 @@ function chipGroup(label, ids, current, onPick){
 function renderTripoImageModels(){
   const listEl = $('imgModelTabs');
   const filter = $('imgModelFilter').value.trim().toLowerCase();
-  const current = $('imgModel').value.trim();
+  const current = confGet('imgModel');
   const models = TRIPO_IMAGE_MODELS.filter(m => !filter || m.includes(filter));
   listEl.innerHTML = '';
   if(!models.length){
@@ -664,8 +663,9 @@ function syncModelActive(role){
 }
 
 async function loadModels(){
-  const base = $('llmBaseUrl').value.trim().replace(/\/$/, '');
-  const key = $('llmKey').value.trim();
+  /* 设置页「读取模型列表」读的是**本地**配置，不走 llmConn 的云端分支：
+     用户点它就是想验证他刚填的那套地址和 Key。 */
+  const { base, key } = confLlm();
   if(!base || !key){ setStatus('读取模型前请先填好 Base URL 和 API Key', 'error'); return; }
 
   setButton('btnLoadModels', true, '读取中…');
@@ -697,8 +697,7 @@ async function loadModels(){
 }
 
 async function loadImgModels(){
-  const base = ($('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim()).replace(/\/$/, '');
-  const key = $('imgKey').value.trim() || $('llmKey').value.trim();
+  const { base, key } = confImg();
   if(!base || !key){ setStatus('读取生图模型前请先填好 Base URL 和 Key（图像或分析侧）', 'error'); return; }
 
   setButton('btnLoadImgModels', true, '读取中…');
@@ -744,9 +743,7 @@ function showTest(name, state, ms, detail, boxId){
 }
 
 async function testLLM(){
-  const base = $('llmBaseUrl').value.trim();
-  const model = $('llmModel').value.trim();
-  const key = $('llmKey').value.trim();
+  const { base, model, key } = confLlm();
   if(!base || !model || !key){ setStatus('测试分析接口前请填写 Base URL / 模型名 / Key', 'error'); return; }
 
   $('testLLMResult').querySelector('.test-item[data-test="分析接口"]')?.remove();
@@ -778,7 +775,7 @@ async function testLLM(){
 
 async function testIMG(){
   if(isTripo()){
-    if(!$('tripoKey').value.trim()){ setStatus('测试 Tripo 前请先填写 Tripo API Key', 'error'); return; }
+    if(!confGet('tripoKey')){ setStatus('测试 Tripo 前请先填写 Tripo API Key', 'error'); return; }
     if(!currentImageDataURL){ setStatus('Tripo 连通性测试需先载入一张原图', 'error'); return; }
     $('testIMGResult').querySelector('.test-item[data-test="生图接口"]')?.remove();
     setButton('testIMG', true, '测试中…');
@@ -797,17 +794,18 @@ async function testIMG(){
     return;
   }
 
-  const base = ($('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim()).replace(/\/$/,'');
-  const model = ($('imgModel').value.trim() || $('llmModel').value.trim());
-  const key = $('imgKey').value.trim() || $('llmKey').value.trim();
-  const endpoint = $('imgEndpoint').value.trim();
+  /* 测试生图接口：同样读本地配置（用户要验的就是他刚填的那套），
+     endpoint / size 的默认值仍由调用点给，confImg 只负责「值从哪来」 */
+  const I = confImg();
+  const base = I.base, model = I.model, key = I.key;
+  const endpoint = I.endpoint;
   if(!base || !model || !key || !endpoint){ setStatus('测试生图接口前请填写 Base URL / 模型名 / Key / 端点', 'error'); return; }
 
   $('testIMGResult').querySelector('.test-item[data-test="生图接口"]')?.remove();
   setButton('testIMG', true, '测试中…');
   const t0 = performance.now();
   try{
-    const size = $('imgSize').value.trim() || '1024x1024';
+    const size = confGet('imgSize') || '1024x1024';
     const isEdit = /edit/i.test(endpoint);
     let data, usedPath = endpoint, extra = '';
 
@@ -838,7 +836,7 @@ async function testIMG(){
     }
 
     const ms = Math.round(performance.now() - t0);
-    const url = lookupPath(data, $('respPath').value.trim() || 'data[0].url');
+    const url = lookupPath(data, confGet('respPath') || 'data[0].url');
     const b64json = lookupPath(data, 'data[0].b64_json');
     if(url || b64json){
       showTest('生图接口', 'ok', ms, `端点 ${usedPath} 可用${extra}`, 'testIMGResult');

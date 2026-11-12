@@ -39,7 +39,7 @@ let imgModelSig = '';
 function syncImgModelPicker(){
   const sig = [
     (function(){ try{ return imgMode(); }catch(e){ return 'online'; } })(),
-    (function(){ try{ return $('imgModel').value.trim(); }catch(e){ return ''; } })(),
+    (function(){ try{ return confGet('imgModel'); }catch(e){ return ''; } })(),
     (function(){ try{ return comfyCkptChoice(); }catch(e){ return ''; } })()
   ].join('|');
   if(sig === imgModelSig) return false;

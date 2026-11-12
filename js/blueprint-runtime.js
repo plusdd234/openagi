@@ -559,7 +559,7 @@ function stopFlow(){
 async function llmChat(sys, userText, image){
   // 登录了就走网关（Key 在服务端），否则用本地填的 Key
   const conn = (typeof llmConn === 'function') ? llmConn()
-    : { base: $('llmBaseUrl').value.trim().replace(/\/$/, ''), key: $('llmKey').value.trim(), model: $('llmModel').value.trim() };
+    : { base: confGet('llmBaseUrl').replace(/\/$/, ''), key: confGet('llmKey'), model: confGet('llmModel') };
   const key = conn.key, base = conn.base, model = conn.model;
   if(!key || !base || !model) throw new Error('语言模型未配置');
   const content = [];
@@ -580,7 +580,7 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
      不传 opts 时行为完全不变，避免影响设置页与工作流节点的既有链路。 */
   const conn = (opts && opts.conn) ? opts.conn
     : ((typeof llmConn === 'function') ? llmConn()
-    : { base: $('llmBaseUrl').value.trim().replace(/\/$/, ''), key: $('llmKey').value.trim(), model: $('llmModel').value.trim() });
+    : { base: confGet('llmBaseUrl').replace(/\/$/, ''), key: confGet('llmKey'), model: confGet('llmModel') });
   const key = conn.key, base = conn.base, model = conn.model;
   if(!key || !base || !model) throw new Error('语言模型未配置');
 
@@ -1054,14 +1054,14 @@ async function wfImage(prompt, image, opts){
      「Tripo 网页生图」专用节点（tripoImg，支持多参考图）上，
      由「网页操作」页的连接状态管理，与这里的引擎路由无关。 */
 
-  const base = ($('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim()).replace(/\/$/, '');
-  const model = $('imgModel').value.trim() || $('llmModel').value.trim();
-  const key = $('imgKey').value.trim() || $('llmKey').value.trim();
+  const base = (confGet('imgBaseUrl') || confGet('llmBaseUrl')).replace(/\/$/, '');
+  const model = confGet('imgModel') || confGet('llmModel');
+  const key = confGet('imgKey') || confGet('llmKey');
   if(!base || !model || !key) throw new Error('图像模型未配置');
 
-  let endpoint = $('imgEndpoint').value.trim() || '/images/edits';
+  let endpoint = confGet('imgEndpoint') || '/images/edits';
   if(!image && /edit/i.test(endpoint)) endpoint = endpoint.replace(/edits?/i, 'generations');
-  const size = $('imgSize').value.trim() || '1024x1024';
+  const size = confGet('imgSize') || '1024x1024';
   let data;
 
   if(image && /edit/i.test(endpoint)){
@@ -1080,7 +1080,7 @@ async function wfImage(prompt, image, opts){
     data = await post(base, key, endpoint, body);
   }
 
-  const path = $('respPath').value.trim() || 'data[0].url';
+  const path = confGet('respPath') || 'data[0].url';
   const url = lookupPath(data, path);
   if(url) return url;
   const b64 = lookupPath(data, 'data[0].b64_json');
@@ -1599,13 +1599,13 @@ async function renderSplit(img, w, h, geom, output, feather){
 async function wf3D(image){
   /* Tripo 与生图引擎解耦后 isTripo() 恒为 false：API 兜底的门槛改为「有没有 Key」。
      到这里说明网页助手也没连上（model3d 节点已先探过一轮），提示要指向新入口。 */
-  if(!$('tripoKey').value.trim()) throw new Error('3D 生成需要 Tripo：在 设置 → 网页操作 里登录网页账号，或填入 API Key');
+  if(!confGet('tripoKey')) throw new Error('3D 生成需要 Tripo：在 设置 → 网页操作 里登录网页账号，或填入 API Key');
   if(!image) throw new Error('缺少图像输入');
   const token = await tripoUpload(image);
   const task = await tripoCall('/generation/image-to-model', {
     method:'POST',
     headers:{ 'Content-Type':'application/json' },
-    body: JSON.stringify({ model: $('tripoVersion').value, input: token, texture: true, pbr: true })
+    body: JSON.stringify({ model: confGet('tripoVersion'), input: token, texture: true, pbr: true })
   });
   const done = await tripoPoll(task.task_id);
   const out = done.output || {};
@@ -1680,10 +1680,7 @@ async function runFlow(){
   };
   const modelOf = n => {
     try {
-      if(n.type === 'imageGen' || n.type === 'tripoImg'){
-        const el = $('imgModel');
-        return el && el.value ? String(el.value) : '';
-      }
+      if(n.type === 'imageGen' || n.type === 'tripoImg') return confGet('imgModel');
       if(n.type === 'aiTask' || n.type === 'smartBranch'){
         const el = $('bsModel') || $('modelSel');
         return el && el.value ? String(el.value) : '';

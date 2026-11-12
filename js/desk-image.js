@@ -235,14 +235,14 @@
     }
     /* Tripo 不再参与对话生图（2026-10-29）：网页生图只在「Tripo 网页生图」
        专用节点上，由 设置 → 网页操作 的连接状态管理。 */
-    const base = safe(() => ($('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim()), '');
-    const model = safe(() => ($('imgModel').value.trim() || $('llmModel').value.trim()), '');
-    const key = safe(() => ($('imgKey').value.trim() || $('llmKey').value.trim()), '');
+    const base = safe(() => (confGet('imgBaseUrl') || confGet('llmBaseUrl')), '');
+    const model = safe(() => (confGet('imgModel') || confGet('llmModel')), '');
+    const key = safe(() => (confGet('imgKey') || confGet('llmKey')), '');
     const ready = !!(base && model && key);
     // 图像侧留空时会沿用语言模型的接口（wfImage 也是这么做的）。名字对不上时
     // 用户第一反应是「为什么生成失败的是个聊天模型」，所以把这层借用说出来。
-    const shared = !safe(() => $('imgModel').value.trim(), '') || !safe(() => $('imgBaseUrl').value.trim(), '')
-      || !safe(() => $('imgKey').value.trim(), '');
+    const shared = !safe(() => confGet('imgModel'), '') || !safe(() => confGet('imgBaseUrl'), '')
+      || !safe(() => confGet('imgKey'), '');
     return {
       kind: 'online', label: '在线 · ' + (model || '未配置'), ready: ready, where: 'image', shared: shared,
       hint: ready ? '' : '图像模型未配置：设置 → 图像，填好接口地址 / API Key / 模型名'

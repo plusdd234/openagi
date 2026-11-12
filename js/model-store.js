@@ -75,8 +75,8 @@ function msIsInstalled(item){
 /* ---------- 当前启用的是哪个 ---------- */
 function msIsActive(item){
   if(item.engine === 'ollama'){
-    const base = ($('llmBaseUrl') && $('llmBaseUrl').value || '').trim().replace(/\/$/, '');
-    const model = ($('llmModel') && $('llmModel').value || '').trim();
+    const base = confGet('llmBaseUrl').replace(/\/$/, '');
+    const model = confGet('llmModel');
     const mode = (typeof llmMode === 'function') ? llmMode() : 'cloud';
     return mode === 'local' && model === item.ollama && /\/ollama\/v1$/i.test(base);
   }
@@ -228,7 +228,7 @@ async function msCancel(item){
  * 一个都不剩就退回云端，别把人锁在一个跑不动的配置上。 */
 function msDetachIfActive(item){
   if(item.engine === 'ollama'){
-    const cur = ($('llmModel') && $('llmModel').value || '').trim();
+    const cur = confGet('llmModel');
     if(cur !== item.ollama) return false;
     const rest = (msState.installed.llm || []).filter(n => n && n !== item.ollama);
     // 备选要连视觉模型一起找：只装了识图模型的人，卸载后不该被踢回云端

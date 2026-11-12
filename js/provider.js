@@ -27,20 +27,20 @@ function providerFor(kind, id){
 
 function llmCfg(){
   return {
-    base: $('llmBaseUrl').value.trim().replace(/\/$/, ''),
-    model: $('llmModel').value.trim(),
-    key: $('llmKey').value.trim()
+    base: confGet('llmBaseUrl').replace(/\/$/, ''),
+    model: confGet('llmModel'),
+    key: confGet('llmKey')
   };
 }
 function imgCfg(){
-  const base = ($('imgBaseUrl').value.trim() || $('llmBaseUrl').value.trim()).replace(/\/$/, '');
+  const base = (confGet('imgBaseUrl') || confGet('llmBaseUrl')).replace(/\/$/, '');
   return {
     base,
-    model: ($('imgModel').value.trim() || $('llmModel').value.trim()),
-    key: ($('imgKey').value.trim() || $('llmKey').value.trim()),
-    endpoint: $('imgEndpoint').value.trim() || '/images/edits',
-    size: $('imgSize').value.trim() || '1024x1024',
-    respPath: $('respPath').value.trim() || 'data[0].url'
+    model: (confGet('imgModel') || confGet('llmModel')),
+    key: (confGet('imgKey') || confGet('llmKey')),
+    endpoint: confGet('imgEndpoint') || '/images/edits',
+    size: confGet('imgSize') || '1024x1024',
+    respPath: confGet('respPath') || 'data[0].url'
   };
 }
 
@@ -131,7 +131,7 @@ registerProvider({
     const prompt = (args && args.prompt) || '';
     const image = (args && args.image) || null;
     if(!image) throw new Error('Tripo 生图需要原图');
-    const model = $('imgModel').value.trim() || 'seedream_v5';
+    const model = confGet('imgModel') || 'seedream_v5';
     const token = await tripoUpload(image);
     const task = await tripoCall('/generation/image-to-image', {
       method: 'POST',
@@ -145,7 +145,7 @@ registerProvider({
   },
   status(){
     if(typeof imageReady === 'function' && imageReady()) return true;
-    return !!($('tripoKey').value.trim() && $('imgModel').value.trim());
+    return !!(confGet('tripoKey') && confGet('imgModel'));
   }
 });
 
@@ -154,13 +154,13 @@ registerProvider({
   kind: '3d',
   label: 'Tripo 3D 建模',
   async listModels(){
-    const ver = $('tripoVersion').value || 'v3.1-20260211';
+    const ver = confGet('tripoVersion') || 'v3.1-20260211';
     return [{ id: ver, owned_by: 'Tripo' }];
   },
   async generate(args){
     const image = (args && args.image) || null;
     if(!image) throw new Error('3D 建模需要原图');
-    const version = $('tripoVersion').value;
+    const version = confGet('tripoVersion');
     const token = await tripoUpload(image);
     const task = await tripoCall('/generation/3d/v2/' + version, {
       method: 'POST',
@@ -173,7 +173,7 @@ registerProvider({
     return { data: done, url: modelUrl };
   },
   status(){
-    return isTripo() && !!($('tripoKey').value.trim());
+    return isTripo() && !!(confGet('tripoKey'));
   }
 });
 
@@ -955,7 +955,7 @@ registerProvider({
       ckpt,
       prompt: promptEn,
       negative: String(a.negative || COMFY_NEGATIVE),
-      size: o.size || a.size || ($('imgSize') ? $('imgSize').value : '') || tune.size || '',
+      size: o.size || a.size || confGet('imgSize') || tune.size || '',
       seed: Number.isFinite(Number(o.seed)) ? Number(o.seed) : Math.floor(Math.random() * 1e9),
       steps: Math.max(1, Math.min(80, Number(o.steps) || Number(tune.steps) || 20)),
       cfg: Math.max(1, Math.min(20, Number(o.cfg) || Number(tune.cfg) || 7)),

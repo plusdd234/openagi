@@ -31,6 +31,16 @@ function eq(a, b, name){
 const ROOT = path.join(__dirname, '..');
 const CAT_SRC = fs.readFileSync(path.join(ROOT, 'js/model-catalog.js'), 'utf8');
 const STORE_SRC = fs.readFileSync(path.join(ROOT, 'js/model-store.js'), 'utf8');
+/* confGet / confLlm / confImg 定义在 js/config.js 里，浏览器里它先于 model-store.js 加载。
+ * 这个测试只 vm 了 model-catalog + model-store，所以要把那一段**原样摘出来**注入 ——
+ * 不在测试里另写一份，否则「产品用哪套回落规则」和「测试验哪套」会悄悄漂开。 */
+const CONF_SRC = (() => {
+  const s = fs.readFileSync(path.join(ROOT, 'js/config.js'), 'utf8');
+  const a = s.indexOf('function confGet(');
+  const b = s.indexOf('// ---- 配置持久化 ----');
+  if (a < 0 || b < 0 || b <= a) throw new Error('config.js 里找不到 confGet/confLlm/confImg 段（被改名或挪位了？）');
+  return s.slice(a, b);
+})();
 
 /* ================= A. 目录 ================= */
 console.log('\n=== A. 商店目录 ===');
@@ -195,6 +205,7 @@ function makeEnv(seed){
     providerFor: (kind, id) => sandbox.FAKE_PROVIDERS[id] || null
   };
   vm.createContext(sandbox);
+  vm.runInContext(CONF_SRC, sandbox, { filename: 'config.js#配置读取原语' });
   vm.runInContext(CAT_SRC, sandbox, { filename: 'model-catalog.js' });
   vm.runInContext(STORE_SRC, sandbox, { filename: 'model-store.js' });
   sandbox.__els = els;
