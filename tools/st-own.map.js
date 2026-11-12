@@ -63,10 +63,12 @@ module.exports = {
     },
     tools: {
       title: '工具会话（M6a）+ 各工具的私有三件套 + 软选择 + 热盒',
-      keys: ['toolSession', 'tool', 'gest', 'soft', 'softDrag', 'hbOpen', 'hbHover', 'hbZones',
+      keys: ['tool', 'gest', 'soft', 'softDrag', 'hbOpen', 'hbHover', 'hbZones',
         'hbPanel', 'pointer', 'uv', 'extrudeGizmo', 'extrudeDrag', 'extrudeHover'],
-      /* ⚠ 这个域最该先拆：14 个键里 7 个是「某个工具的私有拖拽态」。
-       * 每加一个工具就往这里长 3 个键，是当前最明确的增长热点。 */
+      /* ⚠ 这个域最该先拆：13 个键里 7 个是「某个工具的私有拖拽态」。
+       * 每加一个工具就往这里长 3 个键，是当前最明确的增长热点。
+       * （2026-11-13 已把 `toolSession` 从这里删掉：它是 SeedTools 内部会话状态的镜像，
+       *   双写必然不同步。查当前会话请用 `SeedTools.current()` / `isLive(id)`。） */
       hot: true
     },
     cube: {
@@ -85,7 +87,7 @@ module.exports = {
 
   /* 定义块里没有、运行期才挂上去的键。守卫会核对：
    * 这里的键**必须**真的不在 `var st = {` 里；不在这里的键**必须**在定义块里。 */
-  dynamic: ['toolSession', 'previewHost', 'previewMesh', 'previewHiddenObjs',
+  dynamic: ['previewHost', 'previewMesh', 'previewHiddenObjs',
     'toolsBooted', 'isoComp', 'isoFaceCount', 'lastCompMode'],
 
   /* 建模 App 读 `st` 的文件。已抽出去的 7 个部件也是通过 ctx.st 读写同一份状态，

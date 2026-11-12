@@ -100,6 +100,46 @@ function check(ok, name, detail) {
     'Esc：文档逐字节不变（无痕）',
     'undo ' + sBefore.undo + '→' + sAfterEsc.undo + ' hash ' + (sAfterEsc.meshHash === sBefore.meshHash ? 'same' : 'DIFF'));
 
+  /* 4b) 操纵器归属：由工具 spec 的 ownsGizmo 声明，不再由外壳认 id（tool.extrude）。
+   *    三条都要测，少一条就会「改对了但没人知道」：
+   *      ① 无主工具不该被误收（以前外壳认 id，非挤出工具都走 else 分支，等价于本条）
+   *      ② 有主工具必须收起（两套手柄叠在同一处，变换手柄 capture 阶段先拿事件）
+   *      ③ 取消后必须挂回去（不恢复 = 用户点不到手柄，且没有任何报错） */
+  const gzA = await p.evaluate(() => {
+    const S = window.SeedTools;
+    window.modelDesk.beginTool('tool.inflate');
+    const d = window.modelDesk.__debug();
+    return { api: typeof S.ownsGizmo, owns: S.ownsGizmo(), cur: (S.current() || {}).ownsGizmo, target: !!d.gizmo.target };
+  });
+  check(gzA.api === 'function' && gzA.owns === false && gzA.cur === false,
+    'ownsGizmo 契约：无主工具不声明操纵器', JSON.stringify(gzA));
+  check(gzA.target === true,
+    '无主工具会话里变换手柄照常挂在对象上（不该被误收）');
+
+  const gzB = await p.evaluate(() => {
+    const S = window.SeedTools;
+    window.modelDesk.cancelTool();
+    const ok = window.modelDesk.beginTool('tool.extrude');
+    const d = window.modelDesk.__debug();
+    return {
+      ok: ok, owns: S.ownsGizmo(), ownId: S.ownsGizmo('tool.extrude'), otherId: S.ownsGizmo('tool.inflate'),
+      cur: (S.current() || {}).ownsGizmo, targetNull: d.gizmo.target === null, visible: d.gizmo.group.visible
+    };
+  });
+  check(gzB.ok === true && gzB.owns === true && gzB.cur === true && gzB.ownId === true && gzB.otherId === false,
+    '挤出声明 ownsGizmo：本工具真、别的工具假（不是「有会话就真」）', JSON.stringify(gzB));
+  check(gzB.targetNull === true && gzB.visible === false,
+    '有主工具会话里变换手柄收起（不与专用箭头抢事件）');
+
+  const gzC = await p.evaluate(() => {
+    const S = window.SeedTools;
+    window.modelDesk.cancelTool();
+    const d = window.modelDesk.__debug();
+    return { owns: S.ownsGizmo(), cur: S.current(), target: !!d.gizmo.target, visible: d.gizmo.group.visible };
+  });
+  check(gzC.owns === false && gzC.cur === null && gzC.target === true && gzC.visible === true,
+    '取消后变换手柄挂回去（否则用户点不到手柄且无报错）', JSON.stringify(gzC));
+
   /* 5) B 键触发假工具 → 再按 B 提交 */
   const sPre = await p.evaluate(() => window.modelDesk.getState());
   await p.evaluate(() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });

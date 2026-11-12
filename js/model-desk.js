@@ -1337,8 +1337,11 @@
       if (st.gizmo) st.gizmo.setTarget(null);
       return;
     }
-    /* 挤出会话里由专用箭头接管：变换手柄收起来，否则同位叠放、点箭头变成移动组件 */
-    if (st.toolSession === 'tool.extrude') {
+    /* 会话自带操纵器时由它接管（挤出有专用法线箭头 + 轴心缩放柄）：变换手柄收起来，
+     * 否则同位叠放、点箭头会变成移动组件。判据来自工具 spec 的 `ownsGizmo`，
+     * **不再在外壳里认 id** —— 加一个自带手柄的工具不该要改这里。
+     * SeedTools 还没加载 / 没有会话 → ownsGizmo() 为假，走正常分支（与旧行为一致）。 */
+    if (global.SeedTools && global.SeedTools.ownsGizmo && global.SeedTools.ownsGizmo()) {
       if (st.gizmo) st.gizmo.setTarget(null);
       return;
     }
@@ -3656,11 +3659,14 @@
   }
 
   /* 通用：算子会话骨架。op(mesh, params) → 新 mesh | null */
-  function makeOpTool(id, label, op, paramSchema, hintText) {
+  function makeOpTool(id, label, op, paramSchema, hintText, opts) {
     return {
       id: id,
       label: label,
       params: paramSchema,
+      /* 自带操纵器的工具（目前只有挤出）要在 spec 里声明，外壳据此把变换手柄收起来。
+       * 别改回「外壳里判 id」—— 那等于加一个自带手柄的工具就要改外壳。 */
+      ownsGizmo: !!(opts && opts.ownsGizmo),
       begin: function (ctx) {
         if (!ctx.mesh) return false;
         ctx.base = SeedModel.Mesh.clone(ctx.mesh);
@@ -3733,7 +3739,8 @@
         { key: 'divisions', label: '分段', value: 1, min: 1, max: 8, step: 1 },
         { key: 'keep', label: '保持面的连续性', value: 1, min: 0, max: 1, step: 1, type: 'toggle' }
       ],
-      '工具会话：挤出（改厚度看预览，Enter 提交，Esc 取消）'
+      '工具会话：挤出（改厚度看预览，Enter 提交，Esc 取消）',
+      { ownsGizmo: true }
     ));
     defineOpCommand('mesh.extrude', '挤出', 'mesh', 'Ctrl+E', 10,
       function () { return !!(st.doc && st.mesh && selFaceIds().length); }, 'tool.extrude');
@@ -3948,13 +3955,10 @@
       setStatus('工具无法启动：' + (r.reason || '未知原因'), true);
       return false;
     }
-    st.toolSession = id;
-    /* 挤出的专用箭头和变换手柄会叠在同一处（都在选中面中心附近）：
-     * 变换手柄是 capture 阶段先拿事件的，不收起来就会「点箭头变成移动组件」 */
-    if (st.gizmo) {
-      if (id === 'tool.extrude') st.gizmo.setTarget(null);
-      else syncGizmo();
-    }
+    /* 会话状态只有一份：SeedTools 内部的 live。这里不再往 st 存镜像
+     * （以前有 st.toolSession，与 live 双写，两处不同步时症状极难查）。
+     * 手柄收不收也由 syncGizmo 按 spec 判，不再在这里认 id。 */
+    syncGizmo();
     openToolPanel();
     return true;
   }
@@ -4048,7 +4052,6 @@
     var SeedTools = global.SeedTools;
     if (!SeedTools || !SeedTools.isLive()) return false;
     var r = SeedTools.commit();
-    st.toolSession = null;
     closeToolPanel();
     clearToolPreview();
     hideExtrudeGizmo();
@@ -4060,7 +4063,6 @@
     var SeedTools = global.SeedTools;
     if (!SeedTools || !SeedTools.isLive()) return false;
     var r = SeedTools.cancel();
-    st.toolSession = null;
     closeToolPanel();
     clearToolPreview();
     hideExtrudeGizmo();

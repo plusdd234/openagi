@@ -18,7 +18,7 @@
  *   - commit 返回 false 时视为没改成，外壳要回滚预览
  *
  * 对外：window.SeedTools = { register, lookup, list, begin, drag, commit, cancel,
- *                           isLive, current, setParams, listParams }
+ *                           isLive, ownsGizmo, current, setParams, listParams }
  * ============================================================ */
 (function (global) {
   'use strict';
@@ -56,7 +56,13 @@
       commit: isFn(spec.commit) ? spec.commit : function () { return true; },
       cancel: isFn(spec.cancel) ? spec.cancel : function () {},
       /* 可选：会话能不能在「没有组件选择」时开（默认可以） */
-      needSelection: !!spec.needSelection
+      needSelection: !!spec.needSelection,
+      /* 可选：会话自己画操纵器（比如挤出有专用法线箭头 + 轴心缩放柄）。
+       * 置真时外壳要把变换手柄收起来 —— 两套手柄叠在同一处时，
+       * 变换手柄在 capture 阶段先拿事件，点箭头会变成移动组件。
+       * 以前这条写在 model-desk 的 beginTool / syncGizmo 里判 id === 'tool.extrude'，
+       * 等于「加一个自带手柄的工具就要改外壳」；现在由工具自己声明。 */
+      ownsGizmo: !!spec.ownsGizmo
     };
     return impls[id];
   }
@@ -150,8 +156,13 @@
   }
 
   function isLive(id) { return !!live && (!id || live.id === String(id)); }
+  /* 当前会话是否自带操纵器。不传 id 问「当前这个」，传 id 问「那个工具」。
+   * 传 id 时仍然**只在它真在会话里**才为真 —— 不能拿它当「这个工具存在」的判据。 */
+  function ownsGizmo(id) {
+    return !!(live && live.impl.ownsGizmo && (!id || live.id === String(id)));
+  }
   function current() {
-    return live ? { id: live.id, params: live.params } : null;
+    return live ? { id: live.id, params: live.params, ownsGizmo: !!live.impl.ownsGizmo } : null;
   }
 
   global.SeedTools = {
@@ -163,6 +174,7 @@
     commit: commit,
     cancel: cancel,
     isLive: isLive,
+    ownsGizmo: ownsGizmo,
     current: current,
     setParams: setParams,
     listParams: listParams
