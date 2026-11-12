@@ -20,6 +20,14 @@
     var setStatus = ctx.setStatus;
     var turnBy = ctx.turnBy, tumbleBy = ctx.tumbleBy, viewFromPreset = ctx.viewFromPreset;
 
+    /* ViewCube 自己的交互态。原先是 st.cubeDrag / st.cubeHover / st.cubeClickTimer，
+     * 搬进闭包的理由：这三个键只有这块小画布读写，而 st 存在的唯一理由是
+     * 「给多个模块共享」——它们没有共享对象。cube 域现在只剩 cube 对象本身
+     * （那个是真共享：外壳的 __debug 与渲染循环都要读）。
+     * ⚠ cubeHover 初始值是 -1 不是 null：cubePick() 用 -1 表示「没命中任何面」，
+     *   写成 null 会让首帧 pointermove 多走一次 tint(-1)（幂等，但没必要改语义）。 */
+    var cubeDrag = null, cubeHover = -1, cubeClickTimer = 0;
+
     var CUBE_FACES = [
       { kind: 'right', label: '右', axes: [1, 0, 0] },
       { kind: 'left', label: '左', axes: [-1, 0, 0] },
@@ -172,17 +180,17 @@
       box.addEventListener('pointerdown', function (e) {
         if (e.button) return;
         if (e.target && e.target.closest && e.target.closest('[data-md-turn]')) return;
-        st.cubeDrag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, face: cubePick(e) };
+        cubeDrag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, face: cubePick(e) };
         box.classList.add('drag');
         try { box.setPointerCapture(e.pointerId); } catch (err) {}
         e.preventDefault();
       });
 
       box.addEventListener('pointermove', function (e) {
-        var d = st.cubeDrag;
+        var d = cubeDrag;
         if (!d) {
           var hov = cubePick(e);
-          if (hov !== st.cubeHover) { st.cubeHover = hov; tint(hov); }
+          if (hov !== cubeHover) { cubeHover = hov; tint(hov); }
           box.style.cursor = hov >= 0 ? 'pointer' : 'grab';
           return;
         }
@@ -196,9 +204,9 @@
       });
 
       box.addEventListener('pointerup', function (e) {
-        var d = st.cubeDrag;
+        var d = cubeDrag;
         if (!d || d.id !== e.pointerId) return;
-        st.cubeDrag = null;
+        cubeDrag = null;
         box.classList.remove('drag');
         try { box.releasePointerCapture(e.pointerId); } catch (err) {}
         if (d.moved) {
@@ -211,25 +219,25 @@
         var face = CUBE_FACES[d.face];
         if (!face) return;
         /* 留一点延迟，双击时不要先跳一次单面视图 */
-        clearTimeout(st.cubeClickTimer);
-        st.cubeClickTimer = setTimeout(function () { viewFromPreset(face.kind); }, 260);
+        clearTimeout(cubeClickTimer);
+        cubeClickTimer = setTimeout(function () { viewFromPreset(face.kind); }, 260);
       });
 
       box.addEventListener('pointercancel', function () {
-        st.cubeDrag = null;
+        cubeDrag = null;
         box.classList.remove('drag');
       });
 
       box.addEventListener('pointerleave', function () {
-        if (st.cubeDrag) return;
-        st.cubeHover = -1;
+        if (cubeDrag) return;
+        cubeHover = -1;
         tint(-1);
       });
 
       box.addEventListener('dblclick', function (e) {
         e.preventDefault();
-        clearTimeout(st.cubeClickTimer);
-        st.cubeDrag = null;
+        clearTimeout(cubeClickTimer);
+        cubeDrag = null;
         viewFromPreset('iso');
       });
     }

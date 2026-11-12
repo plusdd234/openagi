@@ -62,18 +62,26 @@ module.exports = {
       keys: ['dock', 'dockBody', 'dockOpen', 'dockLoading', 'dockAssets', 'dockErr', 'dockThumbs', 'dockToken']
     },
     tools: {
-      title: '工具会话（M6a）+ 各工具的私有三件套 + 软选择 + 热盒',
+      title: '工具会话（M6a）+ 各工具的私有拖拽态 + 软选择 + 热盒',
       keys: ['tool', 'gest', 'soft', 'softDrag', 'hbOpen', 'hbHover', 'hbZones',
-        'hbPanel', 'pointer', 'uv', 'extrudeGizmo', 'extrudeDrag', 'extrudeHover'],
-      /* ⚠ 这个域最该先拆：13 个键里 7 个是「某个工具的私有拖拽态」。
-       * 每加一个工具就往这里长 3 个键，是当前最明确的增长热点。
-       * （2026-11-13 已把 `toolSession` 从这里删掉：它是 SeedTools 内部会话状态的镜像，
-       *   双写必然不同步。查当前会话请用 `SeedTools.current()` / `isLive(id)`。） */
+        'hbPanel', 'pointer', 'uv'],
+      /* ⚠ 这个域仍是增长热点：10 个键里 6 个是「某个功能的私有瞬时态」。
+       * 每加一个工具就往这里长 3 个键。
+       * 已迁出两个（都因为「有主了」就不再需要 st）：
+       *   · `toolSession`（2026-11-13）：SeedTools 会话状态的镜像，双写必然不同步。
+       *     查当前会话用 `SeedTools.current()` / `isLive(id)`。
+       *   · `extrudeGizmo / extrudeDrag / extrudeHover`（2026-11-13）：
+       *     搬进 IIFE 内的模块私有变量 `EXGZ`。理由见 model-desk.js 里那段注释 ——
+       *     gizmo 组要跨会话复用（不能塞 SeedTools 的 ctx，那玩意每次 begin 都是新对象），
+       *     而三个键和文档 / 选择 / 四视图毫无关系，放 st 一级等于没有主人。 */
       hot: true
     },
     cube: {
-      title: 'ViewCube（拖拽 + 悬停 + 单击/双击判别）',
-      keys: ['cube', 'cubeDrag', 'cubeClickTimer', 'cubeHover']
+      title: 'ViewCube（只剩 cube 对象本身；拖拽/悬停/单击计时已搬进 md-viewcube 闭包）',
+      /* 2026-11-13：cubeDrag / cubeHover / cubeClickTimer 三个键**全部只在 md-viewcube.js**
+       * 里出现 —— 模块自己就有闭包，改 `var` 即可，连 st 都不该碰。
+       * 留在这里的判据：`cube` 被外壳（__debug）和模块同时读，才算真共享。 */
+      keys: ['cube']
     },
     paint: { title: '绘画工作区（笔刷参数 + 工作副本 canvas）', keys: ['paint'] },
     prim: { title: '基础体面板（M5）', keys: ['prim'] },

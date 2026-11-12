@@ -2,11 +2,12 @@
  * st-own —— 守住「`st` 的键必须有主」
  *
  * 为什么需要它：
- *   建模 App 的共享状态 `st` 有 98 个一级键，其中 32 个是某个功能的私有临时状态
+ *   建模 App 的共享状态 `st` 一开始有 98 个一级键，其中 32 个是某个功能的私有临时状态
  *   被摊在一级，还有 8 个是运行时第一处赋值才挂上去的（定义块里没有）。
  *   这类结构不会让任何测试变红：多塞一个键永远能跑。代价要过很久才付 ——
  *   等到「改这个字段还有谁在读」只能靠全文件 grep 猜的那天。
  *   所以判据不是「键多不多」，是「**每个键有没有主**」。
+ *   （现状 91 个：已迁出 `toolSession`、挤出三件套、ViewCube 三件套。见 --solo）
  *
  * 四条判据（前三条红，第四条只提醒）：
  *   ① 代码里出现的 `st.<键>` 必须在登记表里 —— 否则就是「谁都能塞」
@@ -23,6 +24,7 @@
  *
  * 用法：node tools/st-own.js           守卫
  *       node tools/st-own.js --list    按域打印现状（含 dyn 标记）
+ *       node tools/st-own.js --solo    按「谁在读它」分三档，指出下一个该搬谁
  */
 const fs = require('fs');
 const path = require('path');
@@ -178,6 +180,59 @@ ok(unregistered.length === 0,
 /* ---------- ④ 死登记（只提醒） ---------- */
 const dead = [...keyToDomain.keys()].filter(k => !used.has(k));
 if (dead.length) console.log('  ⚠ 登记了但代码里没出现：' + dead.join(', '));
+
+/* ---------- ⑤ 按「谁来用」分三档 → 降级候选（只提醒，不判红） ----------
+ * `st` 存在的唯一理由是「**给 7 个工厂模块共享**」。所以判据不是「键多不多」，
+ * 而是**谁在读它**。按文件分布分成三档，可直接转成动作：
+ *
+ *   A 档：只在某个 `md-*` 模块里出现 → 模块自己就有闭包，改 `var` 即可，
+ *          连 `st` 都不该碰。**最强，零争议。**
+ *          （2026-11-13 的 cubeDrag / cubeHover / cubeClickTimer 就是 A 档）
+ *   B 档：只在 model-desk.js 里出现 → 搬成 IIFE 内的 `var`，照 `EXGZ` 那样。
+ *          （extrudeGizmo / extrudeDrag / extrudeHover 走的是这条）
+ *   C 档：跨文件 → 真共享状态，留在 `st` 才对。
+ *
+ * 为什么不判红：A/B 档里有一类是**合理**的 —— `scene` / `camera` / `renderer` /
+ * `stage` 这些视口根对象本来就只归外壳，但它们是「整个 App 的状态」，
+ * 不是某个功能的临时态。所以只列清单，由人判断。
+ *
+ * 这条判据的价值在于：**它自己指出下一个该搬谁**，不用每次靠人想。
+ */
+const INSTANT = /(?:drag|hover|down|open|timer|token|loading|err|panel|before)$/i;
+const tierA = [], tierB = [], tierC = [];
+for (const [k, hits] of used) {
+  const files = [...new Set(hits.map(h => h.rel))];
+  const row = { key: k, files, n: hits.length, instant: INSTANT.test(k), dom: keyToDomain.get(k) || '?' };
+  if (files.length > 1) tierC.push(row);
+  else if (files[0] !== MAP.stateFile) tierA.push(row);
+  else tierB.push(row);
+}
+const byN = (a, b) => b.n - a.n;
+tierA.sort(byN); tierB.sort(byN); tierC.sort(byN);
+
+/* A 档不筛命名特征：模块内私有就是私有，叫什么名字都不该在 st 上 */
+const soloInstant = tierA.concat(tierB.filter(s => s.instant));
+
+if (argv.includes('--solo')) {
+  console.log('按「谁在读它」分三档（`st` 存在的唯一理由是给多个模块共享）\n');
+  console.log('[A] 只在某个 md-* 模块里 → 改成模块内 var，连 st 都不该碰  ' + tierA.length + ' 个');
+  tierA.forEach(s => console.log('    ' + s.key.padEnd(20) + String(s.n).padStart(4) + ' 处  ' + s.files[0] + '   [' + s.dom + ']'));
+  console.log('\n[B] 只在 model-desk.js 里 → 搬成 IIFE 内 var（照 EXGZ）  ' + tierB.length + ' 个');
+  console.log('    带 * 的是瞬时态命名（高置信，优先搬）：');
+  tierB.forEach(s => console.log('    ' + s.key.padEnd(20) + String(s.n).padStart(4) + ' 处   '
+    + (s.instant ? '*' : ' ') + '  [' + s.dom + ']'));
+  console.log('\n[C] 跨文件 → 真共享状态，留 st  ' + tierC.length + ' 个');
+  console.log('    ' + tierC.map(s => s.key + '(' + s.files.length + ')').join(' '));
+  process.exit(0);
+}
+
+if (soloInstant.length) {
+  const a = tierA.length, b = tierB.filter(s => s.instant).length;
+  console.log('  ⚠ ' + soloInstant.length + ' 个键有明确的家可回（A 档 ' + a + ' 个 / B 档 ' + b + ' 个）：'
+    + soloInstant.slice(0, 8).map(s => s.key).join(', ')
+    + (soloInstant.length > 8 ? ' …' : '')
+    + '\n     → `node tools/st-own.js --solo` 看三档完整清单');
+}
 
 /* ---------- 反向对照：确认扫描器真的会抓 ----------
  * 没有这条，一个「正则写错所以永远 0 违规」的守卫会安静地骗人。

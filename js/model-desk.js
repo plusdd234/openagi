@@ -45,7 +45,7 @@
      * quadMax 非空时该格全屏；quadDown / quadClick 用来区分单击、拖拽与双击。 */
     quadCtl: null, quadActive: 'front', quadMax: null, quadDown: null, quadClick: null,
     edgeLines: null, vertPoints: null, navAlt: false, lights: [], noPick: false,
-    cubeDrag: null, cubeClickTimer: 0, cube: null, cubeHover: -1,
+    cube: null,
     selected: 0,
     history: { undo: [], redo: [], bytes: 0 },
     editBefore: null, txBefore: null,
@@ -74,8 +74,6 @@
     hbOpen: false, hbHover: null, hbZones: [], hbPanel: null, pointer: { x: 0, y: 0 },
     /* 工具（竖条）：select / lasso / paint / move / rotate / scale；gest 是当前手势 */
     tool: 'select', gest: null,
-    /* 挤出专用操纵器（箭头 + 轴心缩放柄）：只在 tool.extrude 会话里出现 */
-    extrudeGizmo: null, extrudeDrag: null, extrudeHover: null,
     /* UV 编辑器（X5a–X5e）：窗口 + 二维画布 + 选择/变换状态。
      * corners 存的是**面角下标**（uvs 的一对值），不存 UV 点 ID ——
      * 点分组是派生的（同一顶点同一 UV），拓扑/UV 一改就重算。 */
@@ -94,6 +92,14 @@
       faceCache: null
     }
   };
+
+  /* 挤出专用操纵器的私有状态（箭头 + 轴心缩放柄）。
+   * 为什么不放 st：三个键和文档、选择、四视图全无关系，只属于这一个工具；
+   * 放 st 一级 = 没有主人（谁都能读、谁都能写，读 undefined 也不报错）。
+   * 为什么不放 SeedTools 的 ctx：gizmo 组要跨会话复用（THREE 几何不该每次开会话重建），
+   * 而 ctx 每次 begin 都是新对象。drag/hover 虽是瞬时的，但和 gizmo 共用同一组命中测试，
+   * 拆两处反而更容易不同步。 */
+  var EXGZ = { gizmo: null, drag: null, hover: null };
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -1991,13 +1997,13 @@
     /* 挤出会话：悬停箭头 / 轴心方柄给出可拖动光标。只在命中时写，离开时只清自己写的那次，
      * 免得把变换手柄（capture 阶段）设的 grab 覆盖掉 */
     if (global.SeedTools && global.SeedTools.isLive && global.SeedTools.isLive('tool.extrude') &&
-        !st.extrudeDrag && !st.gest) {
+        !EXGZ.drag && !st.gest) {
       var eh = extrudeGizmoHit(e);
       if (eh) {
-        st.extrudeHover = eh;
+        EXGZ.hover = eh;
         st.canvas.style.cursor = eh === 'root' ? 'ew-resize' : 'grab';
-      } else if (st.extrudeHover) {
-        st.extrudeHover = null;
+      } else if (EXGZ.hover) {
+        EXGZ.hover = null;
         st.canvas.style.cursor = '';
       }
     }
@@ -4095,7 +4101,7 @@
   }
 
   function ensureExtrudeGizmo() {
-    if (st.extrudeGizmo || !st.scene || !THREE) return st.extrudeGizmo;
+    if (EXGZ.gizmo || !st.scene || !THREE) return EXGZ.gizmo;
     var matArrow = new THREE.MeshBasicMaterial({ color: 0xffb64a, depthTest: false, transparent: true, opacity: 0.97 });
     var matRoot = new THREE.MeshBasicMaterial({ color: 0xffd45e, depthTest: false, transparent: true, opacity: 0.95 });
     var shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.021, 0.021, 1, 8, 1, true), matArrow);
@@ -4112,15 +4118,15 @@
     group.renderOrder = 11;
     group.add(shaft); group.add(head); group.add(root);
     st.scene.add(group);
-    st.extrudeGizmo = { group: group, shaft: shaft, head: head, root: root, radius: 0.5, basePx: null, tipPx: null };
-    return st.extrudeGizmo;
+    EXGZ.gizmo = { group: group, shaft: shaft, head: head, root: root, radius: 0.5, basePx: null, tipPx: null };
+    return EXGZ.gizmo;
   }
 
   function hideExtrudeGizmo() {
-    st.extrudeDrag = null;
-    st.extrudeHover = null;
+    EXGZ.drag = null;
+    EXGZ.hover = null;
     if (st.canvas) st.canvas.style.cursor = '';
-    if (st.extrudeGizmo) st.extrudeGizmo.group.visible = false;
+    if (EXGZ.gizmo) EXGZ.gizmo.group.visible = false;
   }
 
   /* 选中面的世界中心 / 平均法线 / 半径（用文档网格，预览网格只是临时壳） */
@@ -4188,11 +4194,11 @@
   function updateExtrudeGizmo() {
     var SeedTools = global.SeedTools;
     var live = !!(SeedTools && SeedTools.isLive && SeedTools.isLive('tool.extrude'));
-    if (!live) { if (st.extrudeGizmo) st.extrudeGizmo.group.visible = false; return; }
+    if (!live) { if (EXGZ.gizmo) EXGZ.gizmo.group.visible = false; return; }
     /* 四视图的指针走分屏自己的交互，主视口的屏幕坐标不成立；先收起，回单视图再出现 */
-    if (st.quad) { if (st.extrudeGizmo) st.extrudeGizmo.group.visible = false; return; }
+    if (st.quad) { if (EXGZ.gizmo) EXGZ.gizmo.group.visible = false; return; }
     var fr = extrudeSelectionWorld();
-    if (!fr || !st.camera || !st.canvas) { if (st.extrudeGizmo) st.extrudeGizmo.group.visible = false; return; }
+    if (!fr || !st.camera || !st.canvas) { if (EXGZ.gizmo) EXGZ.gizmo.group.visible = false; return; }
     var g = ensureExtrudeGizmo();
     if (!g) return;
     var dist = liveParamValue('dist', 0.1);
@@ -4215,7 +4221,7 @@
   }
 
   function extrudeGizmoHit(e) {
-    var g = st.extrudeGizmo;
+    var g = EXGZ.gizmo;
     if (!g || !g.group.visible || !g.basePx) return null;
     var r = st.canvas.getBoundingClientRect();
     var x = e.clientX - r.left, y = e.clientY - r.top;
@@ -4230,11 +4236,11 @@
   }
 
   function beginExtrudeGizmoDrag(mode, e) {
-    var g = st.extrudeGizmo;
+    var g = EXGZ.gizmo;
     if (!g) return false;
     var ax = g.tipPx.x - g.basePx.x, ay = g.tipPx.y - g.basePx.y;
     var al = Math.sqrt(ax * ax + ay * ay) || 1;
-    st.extrudeDrag = {
+    EXGZ.drag = {
       mode: mode, x0: e.clientX, y0: e.clientY,
       dist0: liveParamValue('dist', 0.1),
       offset0: liveParamValue('offset', 0),
@@ -4253,7 +4259,7 @@
   }
 
   function onExtrudeGizmoMove(e) {
-    var d = st.extrudeDrag;
+    var d = EXGZ.drag;
     if (!d) return;
     e.preventDefault();
     var dx = e.clientX - d.x0, dy = e.clientY - d.y0;
@@ -4274,9 +4280,9 @@
   }
 
   function onExtrudeGizmoUp() {
-    if (!st.extrudeDrag) return;
-    st.extrudeDrag = null;
-    st.extrudeHover = null;
+    if (!EXGZ.drag) return;
+    EXGZ.drag = null;
+    EXGZ.hover = null;
     st.pickDown = null;
     global.removeEventListener('pointermove', onExtrudeGizmoMove, true);
     global.removeEventListener('pointerup', onExtrudeGizmoUp, true);
@@ -7090,7 +7096,7 @@
         lights: st.lights,
         cube: st.cube,
         pivots: st.pivots,
-        extrudeGizmo: st.extrudeGizmo,
+        extrudeGizmo: EXGZ.gizmo,
         uv: st.uv,
         mesh: st.mesh, doc: st.doc
       };

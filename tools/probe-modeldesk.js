@@ -431,6 +431,64 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
   check(cubeSync.dq > 0.05 && cubeSync.view === '自由' && !cubeSync.shown,
     'ViewCube 随相机同步旋转', JSON.stringify(cubeSync));
 
+  /* 7.3b 悬停与单击延迟：这两条是 `cubeHover` / `cubeClickTimer` 唯一的观测手段。
+   * 2026-11-13 把这两个键（连同 cubeDrag）从 `st` 搬进 md-viewcube 的闭包 ——
+   * 拖拽有 7.3 盯着，悬停和延迟此前**一条断言都没有**，所以补在这里。
+   * 扫格找命中点而不是假定画布中心：7.3 之后视角是斜的，中心点不一定落在面上。 */
+  const cubeHoverClick = await page.evaluate(async () => {
+    const d = window.modelDesk.__debug();
+    const c = d.cube, T = window.THREE;
+    const box = document.getElementById('mdCube');
+    const r = c.canvas.getBoundingClientRect();
+    const pickAt = (x, y) => {
+      c.group.updateMatrixWorld(true);
+      c.ray.setFromCamera(new T.Vector2(((x - r.left) / r.width) * 2 - 1,
+        -((y - r.top) / r.height) * 2 + 1), c.cam);
+      const hit = c.ray.intersectObjects(c.planes, false)[0];
+      return hit && typeof hit.object.userData.face === 'number' ? hit.object.userData.face : -1;
+    };
+    let px = -1, py = -1, face = -1;
+    for (let iy = 2; iy <= 8 && face < 0; iy++) {
+      for (let ix = 2; ix <= 8 && face < 0; ix++) {
+        const x = r.left + r.width * ix / 10, y = r.top + r.height * iy / 10;
+        const f = pickAt(x, y);
+        if (f >= 0) { px = x; py = y; face = f; }
+      }
+    }
+    if (face < 0) return { err: '画布上找不到能命中面的点' };
+
+    const pv = (type, x, y) => box.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, button: 0, pointerId: 11, clientX: x, clientY: y
+    }));
+
+    /* ① 悬停：只移动不按下 */
+    pv('pointermove', px, py);
+    await new Promise(res => setTimeout(res, 60));
+    const lit = c.mats[face].color.getHex();
+    const othersWhite = c.mats.every((m, k) => k === face || m.color.getHex() === 0xffffff);
+    const cursor = box.style.cursor;
+    pv('pointermove', r.left - 300, r.top - 300);
+    await new Promise(res => setTimeout(res, 60));
+    const backWhite = c.mats.every(m => m.color.getHex() === 0xffffff);
+
+    /* ② 单击延迟：按 260ms 才跳，立刻不跳（这个延迟是为了双击不先跳一次单面） */
+    const start = window.modelDesk.getState().viewName;
+    pv('pointerdown', px, py); pv('pointerup', px, py);
+    await new Promise(res => setTimeout(res, 120));
+    const mid = window.modelDesk.getState().viewName;
+    await new Promise(res => setTimeout(res, 320));
+    const end = window.modelDesk.getState().viewName;
+
+    return { face, lit, othersWhite, cursor, backWhite, start, mid, end };
+  });
+  check(!cubeHoverClick.err && (cubeHoverClick.lit === 0xffcf86 && cubeHoverClick.othersWhite &&
+    cubeHoverClick.cursor === 'pointer' && cubeHoverClick.backWhite),
+    'ViewCube 悬停：命中面变暖色、其余回白、移开全白、光标 pointer', JSON.stringify(cubeHoverClick));
+  check(!cubeHoverClick.err && (cubeHoverClick.mid === cubeHoverClick.start &&
+    cubeHoverClick.end !== cubeHoverClick.start),
+    'ViewCube 单击有 260ms 延迟（立刻不跳、到点才跳）',
+    JSON.stringify({ start: cubeHoverClick.start, mid: cubeHoverClick.mid, end: cubeHoverClick.end }));
+
   /* 7.4 回轴测：后面的 Alt 导航与拾取断言都依赖这个视角 */
   await page.evaluate(async () => {
     document.getElementById('mdCube').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
