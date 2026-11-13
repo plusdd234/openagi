@@ -927,6 +927,193 @@ function idsOf(html) {
     JSON.stringify({ hasCur: exUi.hasCur, disabled: exUi.disabled }));
   check(/画布 \d+×\d+/.test(exUi.info), '布局信息已算出（N视图 CxR · 画布 · 单格）', exUi.info);
 
+  /* === 6. 专业版编辑界面：右栏页签 / 投射参数 / 舞台上下文条 === */
+  console.log('\n=== 6. 右栏页签与投射参数 ===');
+  const ui = await app.p.evaluate(async () => {
+    const tabs = [...document.querySelectorAll('#mvRightTabs [data-mv-tab]')];
+    const paneOf = (n) => document.querySelector('.mv-right-pane[data-pane="' + n + '"]');
+    const vis = (el) => !!(el && !el.classList.contains('hidden'));
+    const active = () => tabs.filter(t => t.classList.contains('is-on')).map(t => t.dataset.mvTab);
+    const before = {
+      tabs: tabs.length,
+      active: active(),
+      layers: vis(paneOf('layers')),
+      exportPane: vis(paneOf('export')),
+      proj: vis(paneOf('proj')),
+      rows: document.querySelectorAll('#mvLayerList .mv-ly-item').length
+    };
+    tabs.find(t => t.dataset.mvTab === 'export').click();
+    const afterExport = {
+      layers: vis(paneOf('layers')), exportPane: vis(paneOf('export')),
+      active: active(), colorBtn: !!document.getElementById('mvExColor')
+    };
+    tabs.find(t => t.dataset.mvTab === 'proj').click();
+    const afterProj = {
+      exportPane: vis(paneOf('export')), proj: vis(paneOf('proj')), active: active()
+    };
+    tabs.find(t => t.dataset.mvTab === 'layers').click();
+
+    /* 参数：默认值 → 拖动 → 标签/存档；最后复原，避免污染下一次运行 */
+    const defaults = MVProject.settings();
+    const inset = document.getElementById('mvProjInset');
+    const fill = document.getElementById('mvProjFill');
+    const bleed = document.getElementById('mvProjBleed');
+    const flip = document.getElementById('mvProjFlipV');
+    inset.value = '3'; inset.dispatchEvent(new Event('input'));
+    fill.value = '30'; fill.dispatchEvent(new Event('input'));
+    bleed.value = '2'; bleed.dispatchEvent(new Event('input'));
+    flip.checked = true; flip.dispatchEvent(new Event('change'));
+    const changed = MVProject.settings();
+    const labels = {
+      inset: document.getElementById('mvProjInsetV').textContent,
+      fill: document.getElementById('mvProjFillV').textContent,
+      bleed: document.getElementById('mvProjBleedV').textContent
+    };
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem('hf_mv_proj') || 'null'); } catch (e) {}
+    MVProject.setSetting('inset', 1); MVProject.setSetting('fill', 15);
+    MVProject.setSetting('bleed', 0); MVProject.setSetting('flipV', false);
+
+    const hud = document.getElementById('mvStageHud');
+    const hudMeta = document.getElementById('mvHudMeta').textContent;
+    const repro = {
+      right: !!document.getElementById('mvProjReproj'),
+      modal: document.querySelectorAll('[data-mv-proj-reproj]').length,
+      api: typeof MVProject.reproject === 'function',
+      srcBox: !!document.getElementById('mvProjSrcBox'),
+      stats: !!document.getElementById('mvProjStats')
+    };
+
+    return {
+      before, afterExport, afterProj, defaults, changed, labels, stored,
+      hud: { hidden: !!(hud && hud.hidden), meta: hudMeta },
+      repro, reset: !!document.getElementById('mvReset')
+    };
+  });
+  check(ui.before.tabs === 3, '右栏是 3 个页签（图层 / 导出 / 投射）', String(ui.before.tabs));
+  check(ui.before.active.join(',') === 'layers' && ui.before.layers && !ui.before.exportPane && !ui.before.proj,
+    '默认停在「图层」，另外两页收起', JSON.stringify(ui.before));
+  check(ui.before.rows === 10, '切页签后图层面板结构不变', String(ui.before.rows));
+  check(ui.afterExport.layers === false && ui.afterExport.exportPane === true &&
+    ui.afterExport.active.join(',') === 'export' && ui.afterExport.colorBtn,
+    '点「导出」→ 只显示导出页（按钮仍在 DOM 里）', JSON.stringify(ui.afterExport));
+  check(ui.afterProj.exportPane === false && ui.afterProj.proj === true && ui.afterProj.active.join(',') === 'proj',
+    '点「投射」→ 只显示投射页', JSON.stringify(ui.afterProj));
+
+  check(ui.defaults.inset === 1 && ui.defaults.fill === 15 && ui.defaults.bleed === 0 && ui.defaults.flipV === false,
+    '投射参数默认 1px / 15% / 0px / 不翻转', JSON.stringify(ui.defaults));
+  check(ui.changed.inset === 3 && ui.changed.fill === 30 && ui.changed.bleed === 2 && ui.changed.flipV === true,
+    '拖动参数 → 设置对象同步', JSON.stringify(ui.changed));
+  check(ui.labels.inset === '3 px' && ui.labels.fill === '30%' && ui.labels.bleed === '2 px',
+    '滑条数值标签同步', JSON.stringify(ui.labels));
+  check(ui.stored && ui.stored.inset === 3 && ui.stored.fill === 30 && ui.stored.bleed === 2 && ui.stored.flipV === true,
+    '投射参数独立存档（hf_mv_proj）', JSON.stringify(ui.stored));
+  check(ui.hud.hidden === false && /视图/.test(ui.hud.meta), '舞台左上角有模型上下文条',
+    JSON.stringify(ui.hud));
+  check(ui.repro.right && ui.repro.modal >= 1 && ui.repro.api && ui.repro.srcBox && ui.repro.stats,
+    '重新投射入口 / 生图源 / 统计都在', JSON.stringify(ui.repro));
+  check(ui.reset === true, '「恢复默认参数」入口存在');
+
+  /* 恢复默认参数：改线宽再重置，state 和滑条都要回默认 */
+  const rst = await app.p.evaluate(async () => {
+    const w = document.getElementById('mvLineW');
+    w.value = '40'; w.dispatchEvent(new Event('input'));
+    await new Promise(r => setTimeout(r, 60));
+    const before = multiview.state.lineWidth;
+    document.getElementById('mvReset').click();
+    await new Promise(r => setTimeout(r, 120));
+    return { before, after: multiview.state.lineWidth, slider: w.value };
+  });
+  check(Math.abs(rst.before - 4) < 1e-6 && Math.abs(rst.after - 1.4) < 1e-6 && rst.slider === '14',
+    '恢复默认 → 线宽回到 14，滑条同步', JSON.stringify(rst));
+
+  /* === 7. 导出交互反馈：按钮换字 / 面板状态行 / 弹层内状态 === */
+  console.log('\n=== 7. 导出交互反馈 ===');
+  const fb = await app.p.evaluate(async () => {
+    const snapEx = () => {
+      const b = document.getElementById('mvExStatus');
+      return {
+        hidden: b.classList.contains('hidden'),
+        cls: b.className,
+        text: document.getElementById('mvExStatusTxt').textContent
+      };
+    };
+    const snapPj = () => {
+      const b = document.getElementById('mvProjStatus');
+      return {
+        hidden: b.classList.contains('hidden'),
+        cls: b.className,
+        text: document.getElementById('mvProjStatusTxt').textContent
+      };
+    };
+    MV.exportClear();
+    const idle = snapEx();
+    MV.exportBegin('color', '正在渲染视图…');
+    MV.setBusy('export');
+    const busy = {
+      st: snapEx(),
+      color: document.getElementById('mvExColor').textContent,
+      depth: document.getElementById('mvExDepth').textContent,
+      dis: document.getElementById('mvExColor').disabled
+    };
+    MV.setBusy('');
+    MV.exportDone('color', 'M_4视图.png', 1234567, '4096×4096');
+    const ok = {
+      st: snapEx(),
+      color: document.getElementById('mvExColor').textContent,
+      dis: document.getElementById('mvExColor').disabled
+    };
+    MV.exportFail('depth', '渲染器没响应');
+    const err = {
+      st: snapEx(),
+      depth: document.getElementById('mvExDepth').textContent
+    };
+
+    /* 投射弹层用同一套状态；底部 say 被弹层挡住，必须显示在弹层里 */
+    multiview.state.proj = {
+      png: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      preview: '', size: 1024, painted: 1, occCount: 2, pct: 50,
+      islands: 3, lost: 0, fillTotal: 0, name: 'grid.png', perView: []
+    };
+    document.getElementById('mvProjPanel').classList.remove('hidden');
+    MV.exportBegin('proj-glb', '正在打包上色 GLB…');
+    MV.setBusy('export');
+    const pbusy = {
+      st: snapPj(),
+      label: document.getElementById('mvProjGlb').textContent,
+      dis: document.getElementById('mvProjGlb').disabled
+    };
+    MV.setBusy('');
+    MV.exportDone('proj-glb', 'M_上色.glb', 2048000, '贴图已内嵌');
+    const pok = {
+      st: snapPj(),
+      label: document.getElementById('mvProjGlb').textContent,
+      dis: document.getElementById('mvProjGlb').disabled
+    };
+    MV.exportClear();
+    document.getElementById('mvProjPanel').classList.add('hidden');
+    multiview.state.proj = null;
+    MV.paintExport();
+    return { idle, busy, ok, err, pbusy, pok };
+  });
+  check(fb.idle.hidden === true, '没有导出动作时不占状态行', JSON.stringify(fb.idle));
+  check(fb.busy.st.hidden === false && /is-busy/.test(fb.busy.st.cls) &&
+    fb.busy.st.text === '正在渲染视图…', '开始导出 → 黄点 + 阶段文字', JSON.stringify(fb.busy.st));
+  check(fb.busy.color === '导出中…' && fb.busy.depth === '导出深度图',
+    '被点的按钮换字，其他按钮保持原文', JSON.stringify(fb.busy));
+  check(fb.busy.dis === true, '导出中按钮禁用，避免连点', String(fb.busy.dis));
+  check(/is-ok/.test(fb.ok.st.cls) && fb.ok.st.text.indexOf('已导出视图 PNG') >= 0 &&
+    fb.ok.st.text.indexOf('1.18 MB') >= 0 && fb.ok.color === '导出视图 PNG' && fb.ok.dis === false,
+    '成功 → 绿点 + 文件名/体积，按钮复位', JSON.stringify(fb.ok));
+  check(/is-err/.test(fb.err.st.cls) && fb.err.st.text.indexOf('渲染器没响应') >= 0 &&
+    fb.err.depth === '导出深度图', '失败 → 红点 + 原因，按钮复位', JSON.stringify(fb.err));
+  check(fb.pbusy.st.hidden === false && /is-busy/.test(fb.pbusy.st.cls) &&
+    fb.pbusy.label === '处理中…' && fb.pbusy.dis === true,
+    '投射弹层内也能看到忙碌与按钮禁用', JSON.stringify(fb.pbusy));
+  check(/is-ok/.test(fb.pok.st.cls) && fb.pok.st.text.indexOf('已导出上色 GLB') >= 0 &&
+    fb.pok.label === '下载带贴图 GLB' && fb.pok.dis === false,
+    '投射弹层成功反馈带文件名/体积', JSON.stringify(fb.pok));
+
   await app.p.close();
   console.log('\n' + (fails ? '❌ 失败 ' + fails + ' 项' : '✅ 全部通过'));
   process.exit(fails ? 1 : 0);

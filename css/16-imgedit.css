@@ -1,0 +1,325 @@
+/* ============================================================
+ * 16-imgedit —— 图库 / 图片编辑器（专业版）
+ *
+ * 为什么单独一个文件：图片编辑器原来是 02-console 里的一小段「快速修正」，
+ * 这次升级成「工具轨 + 深色画布 + 检查器面板」的完整布局，规则量已经不适合
+ * 再塞回按行号切片的老文件。选择器全部带 .os-win.imgedit / .os-win.lib 前缀，
+ * 放最后加载不会影响其他 App。
+ * ============================================================ */
+
+/* ---------- 图库：视图密度 / 排序方向 / 结果计数 ---------- */
+.os-win.lib.lib-dense-s .lib-grid {
+  grid-template-columns: repeat(auto-fill, minmax(106px, 1fr));
+  gap: 8px;
+}
+.os-win.lib.lib-dense-l .lib-grid {
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+  gap: 14px;
+}
+.os-win.lib.lib-dense-s .lib-card-info { padding: 6px 8px 7px; }
+.os-win.lib.lib-dense-s .lib-meta .lib-date { display: none; }
+.os-win.lib.lib-dense-l .lib-name { font-size: 12.5px; }
+
+.lib-dir {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 24px; margin-left: 3px;
+  border: 0; border-radius: 6px; background: transparent;
+  color: #6a7488; cursor: pointer; font-size: 12px; line-height: 1;
+}
+.lib-dir:hover { background: #fff; color: var(--text); box-shadow: 0 1px 2px rgba(20,30,50,.08); }
+
+.lib-dense {
+  display: flex; gap: 2px; padding: 2px; background: #f2f4f7; border-radius: 8px;
+}
+.lib-dense button {
+  height: 24px; min-width: 24px; padding: 0 5px;
+  border: 0; border-radius: 6px; background: transparent;
+  color: #8a94a3; font-size: 10.5px; font-weight: 600; cursor: pointer;
+}
+.lib-dense button:hover { color: var(--text); }
+.lib-dense button.on { background: #fff; color: var(--text); box-shadow: 0 1px 2px rgba(20,30,50,.08); }
+
+.lib-qcount { font-size: 10.5px; color: #8a94a3; font-variant-numeric: tabular-nums; }
+
+/* 卡片自成一个绘制单元：悬停阴影 / 角标 / 缩略图缩放都只重绘这一张卡，
+ * 不会带得整片网格跟着重绘（图库滚动掉帧的主要来源之一）。 */
+.os-win.lib .lib-card { contain: layout paint style; }
+.os-win.lib .lib-thumb { contain: paint; }
+
+/* ---------- 图片编辑器：整体骨架 ---------- */
+/* 尺寸按**容器**算，不能用 vw：这个窗口挂在 .desk-wall 里（左侧还有 214px 工作流栏），
+ * 96vw 会撑出墙外，被 overflow 裁掉左边一条——工具轨正好在那一条上，点不到。 */
+.os-win.imgedit {
+  width: min(1280px, calc(100% - 32px));
+  height: min(860px, calc(100% - 28px));
+  max-height: none;
+}
+.os-win.imgedit .os-win-body {
+  flex: 1 1 auto; min-height: 0; padding: 0;
+  overflow: hidden; display: flex; background: #fff;
+}
+.ie-app { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ie-work { flex: 1; min-height: 0; display: flex; }
+
+/* 左侧工具轨：深色细条，不抢画面 */
+.ie-rail {
+  flex: none; width: 54px; padding: 8px 0;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: #12151a; border-right: 1px solid #232830;
+}
+.ie-tool {
+  width: 40px; height: 40px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 2px;
+  border: 0; border-radius: 9px; background: transparent;
+  color: #8d97a7; cursor: pointer; transition: background .12s, color .12s;
+}
+.ie-tool svg { width: 17px; height: 17px; }
+.ie-tool span { font-size: 8.5px; letter-spacing: .02em; }
+.ie-tool:hover { background: #1d222a; color: #d7dde7; }
+.ie-tool.on { background: #2a313c; color: #fff; }
+.ie-tool:disabled { opacity: .35; cursor: default; }
+
+/* 画布区：深底 + 可滚动；缩放后靠 margin:auto 保持居中 */
+.ie-stage-wrap { position: relative; flex: 1; min-width: 0; display: flex; background: #101318; }
+.ie-stage {
+  flex: 1; min-width: 0; overflow: auto;
+  display: flex; padding: 24px 24px 70px;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(255,255,255,.05), transparent 62%),
+    #101318;
+}
+.ie-canvas-wrap {
+  position: relative; margin: auto; flex: none; line-height: 0;
+  background-color: #20242c;
+  background-image:
+    linear-gradient(45deg, #262b34 25%, transparent 25%, transparent 75%, #262b34 75%),
+    linear-gradient(45deg, #262b34 25%, transparent 25%, transparent 75%, #262b34 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 9px 9px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.5);
+}
+/* 02-console 里给旧版留的 `.ie-stage canvas { max-height:58vh; object-fit:contain }`
+ * 会把画布按比例压扁（出现左右白边）。ID 选择器优先级更高，直接压回去。 */
+#ieCanvas {
+  display: block; max-width: none; max-height: none; object-fit: fill;
+  background: #fff; border-radius: 0; box-shadow: none;
+}
+.ie-empty {
+  margin: auto; color: #7c8698; font-size: 12px; line-height: 1.8;
+  text-align: center; letter-spacing: .02em;
+}
+
+/* 画布底部悬浮条：缩放 / 适应 / 对比 */
+.ie-zoombar {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 8;
+  display: flex; align-items: center; gap: 2px; padding: 4px 6px;
+  background: rgba(20,24,30,.9); border: 1px solid #2e3540; border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35); backdrop-filter: blur(8px);
+  color: #c9d2df; font-size: 10.5px; user-select: none;
+}
+.ie-zoombar button {
+  height: 24px; min-width: 24px; padding: 0 6px;
+  border: 0; border-radius: 6px; background: transparent;
+  color: #c9d2df; cursor: pointer; font-size: 10.5px;
+}
+.ie-zoombar button:hover { background: #2d3541; color: #fff; }
+.ie-zoombar b {
+  min-width: 44px; text-align: center; font-weight: 600;
+  font-variant-numeric: tabular-nums; color: #eef2f8;
+}
+.ie-zoombar .ie-zsep { width: 1px; height: 16px; margin: 0 4px; background: #343c48; }
+.ie-compare {
+  height: 24px; padding: 0 10px; border: 1px solid #3a4350; border-radius: 6px;
+  background: #232a34; color: #dbe3ee; cursor: pointer; font-size: 10.5px;
+}
+.ie-compare:hover, .ie-compare.on { border-color: #6f9cff; color: #fff; background: #2c3648; }
+
+/* 对比原图徽标 */
+.ie-compare-badge {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  padding: 3px 10px; border-radius: 999px; z-index: 9;
+  background: rgba(16,19,24,.82); border: 1px solid #3a4350;
+  color: #e8eef8; font-size: 10.5px; letter-spacing: .06em;
+  display: none;
+}
+.ie-compare-badge.on { display: block; }
+
+/* ---------- 右侧检查器 ---------- */
+.ie-side {
+  flex: none; width: 292px; min-height: 0;
+  display: flex; flex-direction: column;
+  background: #fff; border-left: 1px solid #e6e9ee;
+}
+.ie-panel-head {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px 9px; border-bottom: 1px solid #eef0f3;
+}
+.ie-panel-head b { font-size: 12px; font-weight: 650; color: #1f2328; }
+.ie-history { display: flex; gap: 4px; }
+.ie-history button {
+  width: 24px; height: 24px; border: 1px solid #e1e5ea; border-radius: 6px;
+  background: #fff; color: #5a6472; cursor: pointer; font-size: 12px; line-height: 1;
+}
+.ie-history button:hover:not(:disabled) { border-color: #c9d0da; color: #1f2328; background: #f8f9fb; }
+.ie-history button:disabled { opacity: .35; cursor: default; }
+
+.ie-panel { flex: 1; min-height: 0; overflow-y: auto; padding: 11px 12px 14px; }
+.ie-grp { margin-bottom: 15px; }
+.ie-grp:last-child { margin-bottom: 0; }
+.ie-grp h4 {
+  margin: 0 0 8px; font-size: 10px; font-weight: 700;
+  letter-spacing: .09em; text-transform: uppercase; color: #98a1ae;
+}
+.ie-row {
+  display: grid; grid-template-columns: 58px 1fr 42px 16px;
+  align-items: center; gap: 6px; margin-bottom: 7px;
+  font-size: 11px; color: #4a5260;
+}
+.ie-row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ie-row input[type=range] { width: 100%; margin: 0; accent-color: #e88a00; }
+.ie-row > b {
+  text-align: right; font-weight: 500; color: #2a2f36;
+  font-variant-numeric: tabular-nums;
+}
+.ie-row .ie-undo-val {
+  width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: #b3b9c3; cursor: pointer;
+  opacity: 0; font-size: 11px; line-height: 1;
+}
+.ie-row:hover .ie-undo-val { opacity: 1; }
+.ie-row .ie-undo-val:hover { background: #f0f2f5; color: #5a6472; }
+
+.ie-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.ie-hint { margin: 8px 0 0; font-size: 10.5px; line-height: 1.6; color: #98a1ae; }
+
+/* 裁剪比例胶囊 */
+.ie-ratios { display: flex; flex-wrap: wrap; gap: 5px; }
+.ie-ratio {
+  height: 26px; padding: 0 10px; border: 1px solid #e1e5ea; border-radius: 7px;
+  background: #fff; color: #4a5260; font-size: 10.5px; cursor: pointer;
+}
+.ie-ratio:hover { border-color: #c9d0da; }
+.ie-ratio.on { border-color: #e88a00; color: #a35f00; background: #fff8ee; font-weight: 600; }
+
+.ie-cropinfo {
+  margin-top: 10px; padding: 8px 9px; border-radius: 8px;
+  background: #f7f8fa; border: 1px solid #edf0f4;
+  font-size: 10.5px; line-height: 1.75; color: #5a6472;
+}
+.ie-cropinfo b { color: #2a2f36; font-variant-numeric: tabular-nums; }
+
+/* 滤镜预设 */
+.ie-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.ie-preset {
+  display: flex; flex-direction: column; gap: 4px; padding: 4px;
+  border: 1px solid #e6e9ee; border-radius: 9px; background: #fff;
+  cursor: pointer; transition: border-color .12s, box-shadow .12s;
+}
+.ie-preset:hover { border-color: #c9d0da; }
+.ie-preset.on { border-color: #e88a00; box-shadow: 0 0 0 1px #e88a00 inset; }
+.ie-preset canvas {
+  width: 100%; height: 52px; display: block; object-fit: cover;
+  border-radius: 6px; background: #f4f5f7;
+}
+.ie-preset span { font-size: 10.5px; color: #4a5260; text-align: center; }
+.ie-preset.on span { color: #a35f00; font-weight: 600; }
+
+/* 信息面板 */
+.ie-info { display: flex; flex-direction: column; gap: 1px; }
+.ie-info-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 7px 0; border-bottom: 1px solid #f1f3f6; font-size: 11px; color: #6a7488;
+}
+.ie-info-row:last-child { border-bottom: 0; }
+.ie-info-row b {
+  font-weight: 500; color: #2a2f36; text-align: right;
+  font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis;
+}
+.ie-info-row b.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10px; color: #5a6472; }
+
+/* 直方图 */
+.ie-hist-wrap { flex: none; padding: 6px 12px 9px; border-top: 1px solid #f0f2f5; background: #fff; }
+#ieHist { display: block; width: 100%; height: 62px; }
+
+/* ---------- 底部保存条 ---------- */
+.ie-foot {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  min-height: 50px; padding: 8px 12px;
+  background: #fff; border-top: 1px solid #e6e9ee;
+}
+.ie-status {
+  flex: 0 1 180px; min-width: 0;
+  font-size: 10.5px; color: #8a94a3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ie-status.err { color: #c9342a; }
+.ie-status.ok { color: #1f8a4c; }
+.ie-file { flex: 1; min-width: 140px; display: flex; align-items: center; gap: 6px; }
+.ie-file label { flex: none; font-size: 10.5px; color: #98a1ae; }
+.ie-file input {
+  flex: 1; min-width: 0; height: 28px; padding: 0 8px;
+  border: 1px solid #dfe2e7; border-radius: 7px;
+  font: inherit; font-size: 11.5px; color: #1f2328; outline: none;
+}
+.ie-file input:focus { border-color: #e88a00; }
+.ie-ext { flex: none; font-size: 10.5px; color: #8a94a3; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.ie-fmt { flex: none; display: flex; align-items: center; gap: 7px; }
+.ie-fmt select {
+  height: 28px; padding: 0 6px; border: 1px solid #dfe2e7; border-radius: 7px;
+  background: #fff; color: #2a2f36; font-size: 11px; outline: none;
+}
+.ie-quality { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: #98a1ae; }
+.ie-quality input { width: 66px; margin: 0; accent-color: #e88a00; }
+.ie-quality b { min-width: 20px; color: #2a2f36; font-weight: 500; font-variant-numeric: tabular-nums; }
+.ie-quality.hide { display: none; }
+.ie-foot-acts { flex: none; display: flex; gap: 6px; }
+
+/* ---------- 裁剪覆盖层 ---------- */
+.ie-crop { position: absolute; inset: 0; z-index: 5; display: none; touch-action: none; }
+.ie-crop.on { display: block; }
+.ie-crop-rect {
+  position: absolute; box-sizing: border-box;
+  border: 1px solid rgba(255,255,255,.95);
+  box-shadow: 0 0 0 9999px rgba(0,0,0,.58);
+  cursor: move;
+}
+.ie-crop-grid { position: absolute; inset: 0; pointer-events: none; }
+.ie-crop-grid i { position: absolute; background: rgba(255,255,255,.3); }
+.ie-crop-grid i:nth-child(1) { left: 33.333%; top: 0; bottom: 0; width: 1px; }
+.ie-crop-grid i:nth-child(2) { left: 66.666%; top: 0; bottom: 0; width: 1px; }
+.ie-crop-grid i:nth-child(3) { top: 33.333%; left: 0; right: 0; height: 1px; }
+.ie-crop-grid i:nth-child(4) { top: 66.666%; left: 0; right: 0; height: 1px; }
+.ie-crop-h {
+  position: absolute; width: 13px; height: 13px; border-radius: 2px;
+  background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.4);
+}
+.ie-crop-h[data-handle="nw"] { left: 0; top: 0; transform: translate(-50%, -50%); cursor: nwse-resize; }
+.ie-crop-h[data-handle="ne"] { left: 100%; top: 0; transform: translate(-50%, -50%); cursor: nesw-resize; }
+.ie-crop-h[data-handle="sw"] { left: 0; top: 100%; transform: translate(-50%, -50%); cursor: nesw-resize; }
+.ie-crop-h[data-handle="se"] { left: 100%; top: 100%; transform: translate(-50%, -50%); cursor: nwse-resize; }
+.ie-crop-h[data-handle="n"], .ie-crop-h[data-handle="s"] {
+  left: 50%; width: 22px; height: 6px; transform: translate(-50%, -50%);
+}
+.ie-crop-h[data-handle="n"] { top: 0; cursor: ns-resize; }
+.ie-crop-h[data-handle="s"] { top: 100%; cursor: ns-resize; }
+.ie-crop-h[data-handle="w"], .ie-crop-h[data-handle="e"] {
+  top: 50%; width: 6px; height: 22px; transform: translate(-50%, -50%);
+}
+.ie-crop-h[data-handle="w"] { left: 0; cursor: ew-resize; }
+.ie-crop-h[data-handle="e"] { left: 100%; cursor: ew-resize; }
+.ie-crop-size {
+  position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%);
+  padding: 2px 8px; border-radius: 5px;
+  background: rgba(16,19,24,.86); border: 1px solid #3a4350;
+  color: #e8eef8; font-size: 10px; white-space: nowrap;
+  font-variant-numeric: tabular-nums; pointer-events: none;
+}
+
+/* 窄窗口：检查器收窄，工具轨保留 */
+@media (max-width: 900px) {
+  .ie-side { width: 250px; }
+  .ie-rail { width: 48px; }
+  .ie-status { display: none; }
+  .ie-file label { display: none; }
+  .ie-quality { display: none; }
+}

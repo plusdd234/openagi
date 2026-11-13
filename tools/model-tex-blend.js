@@ -19,7 +19,7 @@ const zlib = require('zlib');
 
 const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';
 const GLB = path.join(__dirname, '..', 'assets', 'models', 'mvyfd48a-8e2b846b.glb');
-const TMP = path.join(__dirname, '_texblend');
+const TMP = require('./probe-run').runDir('model-tex-blend');
 
 let pass = 0, fail = 0;
 const check = (name, ok, info) => {

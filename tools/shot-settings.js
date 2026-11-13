@@ -1,13 +1,13 @@
 /* 截图：设置面板（重做后）
  * 用法：node tools/shot-settings.js
- * 产物：tools/shots/set-*.png
+ * 产物：.workbuddy/runs/<时间>-<pid>-shot-settings/set-*.png
  */
 const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const OUT = path.join(__dirname, 'shots');
+const OUT = require('./probe-run').runDir('shot-settings');
 
 (async () => {
   if (!fs.existsSync(OUT)) fs.mkdirSync(OUT, { recursive: true });

@@ -43,14 +43,23 @@ async function analyze(){
       { type: 'image_url', image_url: { url: currentImageDataURL } }
     ];
 
-    const data = await post(base, key, '/chat/completions', {
-      model, messages: [
-        { role: 'system', content: ANALYSIS_SYSTEM },
-        { role: 'user', content }
-      ],
-      temperature: 0.4,
-      max_tokens: 1500
-    });
+    const messages = [
+      { role: 'system', content: ANALYSIS_SYSTEM },
+      { role: 'user', content }
+    ];
+    const data = (typeof LLMRouter !== 'undefined' && LLMRouter && typeof LLMRouter.postChat === 'function')
+      ? await LLMRouter.postChat({
+          app: 'workbench',
+          conn: { base, key, model, via: 'local' },
+          messages: messages,
+          temperature: 0.4,
+          max_tokens: 1500
+        })
+      : await post(base, key, '/chat/completions', {
+          model, messages: messages,
+          temperature: 0.4,
+          max_tokens: 1500
+        });
     const text = data.choices[0].message.content;
     // 提取 JSON
     const m = text.match(/\{[\s\S]*\}/);
@@ -321,6 +330,12 @@ function switchTab(name){
   document.querySelectorAll('.tabpane').forEach(p => p.classList.toggle('hidden', p.dataset.pane !== name));
   // 资产占用随导入/删除随时变，切到这一页时重算一次，静态写死必然过期
   if(name === 'assets' && typeof renderAssetsPane === 'function') renderAssetsPane();
+  /* 壁纸面板懒渲染：不切进来就不去读 blob 存储里的图（可能是几 MB 的 dataURL）。
+   * 每次进来都重画，才能反映「刚在图库里设过壁纸」这件事。 */
+  if(name === 'desktop' && typeof wallPanelRender === 'function'){
+    const pane = $('paneWallpaper');
+    if(pane) wallPanelRender(pane, { source: 'settings' });
+  }
   // 网页操作页：助手地址是运行期真值（桌面端 ?tripo= 会改端口），每次进来都重填并探测一次
   if(name === 'webop' && typeof fillWebopPane === 'function') fillWebopPane();
 }
@@ -381,4 +396,11 @@ document.addEventListener('keydown', e => {
 });
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 document.querySelectorAll('.status-chip').forEach(c => c.addEventListener('click', () => openSettings(c.dataset.tab)));
+/* 「打开图库」跳转：设置页 → 关设置 → 图库。多这一步是为了让「去图库挑壁纸」成为
+ * 一次点击，而不是让用户自己关窗再找图标。 */
+const btnGalleryWall = $('btnOpenGalleryForWall');
+if(btnGalleryWall) btnGalleryWall.addEventListener('click', () => {
+  closeSettings();
+  if(typeof openLibrary === 'function') openLibrary('image');
+});
 

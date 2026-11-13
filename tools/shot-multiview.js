@@ -1,14 +1,14 @@
 /* 截图：多视图 App（工具栏 / 线框开关 / 透明底）
  * 用法：node tools/shot-multiview.js
- * 产物：tools/shots/mv-{app,side,wire-off,bare}.png
+ * 产物：.workbuddy/runs/<时间>-<pid>-shot-multiview/mv-{app,side,wire-off,bare}.png
  */
 const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const OUT = path.join(__dirname, 'shots');
-const TMP = path.join(__dirname, '_mv-sample');
+const OUT = require('./probe-run').runDir('shot-multiview');
+const TMP = path.join(OUT, 'sample');
 /* 样例模型：立方体，但每个面切成 2×2 个四边形（共 24 个四边面）。
  * 为什么不直接用 6 面立方体：正对镜头时它是四个纯色方块，线框只剩外轮廓，
  * 截图看不出「四边面 / 没有三角对角线」这件事。切碎之后每个面内部都有线，
@@ -82,11 +82,11 @@ const OBJ = quadCube();
 
   const win = await page.locator('#mvWin').boundingBox();
   await page.screenshot({ path: path.join(OUT, 'mv-app.png'), clip: win });
-  console.log('  → tools/shots/mv-app.png');
+  console.log('  → ' + path.join(OUT, 'mv-app.png'));
 
   const ctl = await page.locator('#mvWin .mv-ctl').boundingBox();
   await page.screenshot({ path: path.join(OUT, 'mv-toolbar.png'), clip: ctl });
-  console.log('  → tools/shots/mv-toolbar.png');
+  console.log('  → ' + path.join(OUT, 'mv-toolbar.png'));
 
   /* 关掉线框，同样的视角再拍一张，肉眼能直接对比 */
   await page.evaluate(() => {
@@ -96,7 +96,7 @@ const OBJ = quadCube();
   });
   await page.waitForTimeout(900);
   await page.screenshot({ path: path.join(OUT, 'mv-noline.png'), clip: win });
-  console.log('  → tools/shots/mv-noline.png');
+  console.log('  → ' + path.join(OUT, 'mv-noline.png'));
 
   /* 切素模 + 线框：旧版做不到的组合 */
   await page.evaluate(() => {
@@ -108,7 +108,7 @@ const OBJ = quadCube();
   });
   await page.waitForTimeout(1000);
   await page.screenshot({ path: path.join(OUT, 'mv-shaded-wire.png'), clip: win });
-  console.log('  → tools/shots/mv-shaded-wire.png');
+  console.log('  → ' + path.join(OUT, 'mv-shaded-wire.png'));
 
   /* 原始成品图单独存一份：App 里那张是按 CSS 宽度缩略显示的，
    * 1.4px 的线降采样之后基本看不见，只有看原图才能确认线框真的画上了。 */
@@ -118,7 +118,7 @@ const OBJ = quadCube();
   });
   if (raw && raw.src.indexOf('data:image') === 0) {
     fs.writeFileSync(path.join(OUT, 'mv-raw.png'), Buffer.from(raw.src.split(',')[1], 'base64'));
-    console.log('  → tools/shots/mv-raw.png · ' + raw.w + '×' + raw.h + '（原图，看线框用这张）');
+    console.log('  → ' + path.join(OUT, 'mv-raw.png') + ' · ' + raw.w + '×' + raw.h + '（原图，看线框用这张）');
   }
 
   /* 工具栏是否溢出：窗口右边界里所有控件都得在框内 */

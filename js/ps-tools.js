@@ -25,10 +25,19 @@ const PSTools = (function () {
     var st = {
       tool: 'move',
       drag: null,
-      brush: { size: 44, hardness: 70, opacity: 92 },
+      brush: { size: 44, hardness: 70, opacity: 92, spacing: 18 },
       tolerance: 24,
       gradient: 'fg2transparent',
-      colors: { fg: '#e8a13a', bg: '#ffffff' }
+      grad: { kind: 'linear', opacity: 100 },
+      select: { feather: 0 },
+      fill: { tolerance: 32, contiguous: true, opacity: 100 },
+      eye: { size: 1, merged: true },
+      crop: { ratio: 'free' },
+      move: { autoSelect: false },
+      colors: { fg: '#e8a13a', bg: '#ffffff' },
+      wand: { contiguous: true, sampleMerged: false },
+      vector: { kind: 'rect', fillOn: true, fill: '#e8a13a', strokeOn: true, stroke: '#0f1115', width: 2 },
+      penEdit: null
     };
 
     function activeDoc() { return hooks.doc(); }
@@ -45,12 +54,17 @@ const PSTools = (function () {
       var map = {
         move: 'grab', 'select-rect': 'crosshair', 'select-ellipse': 'crosshair',
         'select-lasso': 'crosshair', crop: 'crosshair', eyedropper: 'crosshair',
-        brush: 'none', eraser: 'none', gradient: 'crosshair', fill: 'crosshair', text: 'text'
+        brush: 'none', eraser: 'none', gradient: 'crosshair', fill: 'crosshair', text: 'text',
+        'magic-wand': 'crosshair', pen: 'crosshair', shape: 'crosshair', 'path-select': 'default'
       };
       view.canvas.style.cursor = map[st.tool] || 'default';
     }
 
     function setTool(id) {
+      if (st.penEdit) {
+        if (st.penEdit.pts.length >= 2) finishPen(true);
+        else cancelPen();
+      }
       st.tool = id;
       st.drag = null;
       view.previewShape = null;
@@ -58,6 +72,11 @@ const PSTools = (function () {
       view.previewLine = null;
       view.clearCursor();
       updateCursor();
+      // 用快捷键切到画笔 / 橡皮擦时指针可能已经在画布里，立即补画刷环，
+      // 否则 CSS 光标是 none、环又没有，看起来就是「光标消失」。
+      if ((id === 'brush' || id === 'eraser') && view.pointerInside && view.cursorDoc) {
+        view.setCursor(view.cursorDoc.docX, view.cursorDoc.docY, st.brush.size / 2);
+      }
       if (hooks.status) hooks.status('');
       view.schedule();
     }
@@ -66,8 +85,27 @@ const PSTools = (function () {
       if (key === 'size') st.brush.size = Math.max(1, value);
       else if (key === 'hardness') st.brush.hardness = Math.max(0, Math.min(100, value));
       else if (key === 'opacity') st.brush.opacity = Math.max(1, Math.min(100, value));
+      else if (key === 'spacing') st.brush.spacing = Math.max(1, Math.min(200, value));
       else if (key === 'tolerance') st.tolerance = Math.max(0, Math.min(255, value));
+      else if (key === 'feather') st.select.feather = Math.max(0, Math.min(200, value));
       else if (key === 'gradient') st.gradient = value;
+      else if (key === 'gradKind') st.grad.kind = value === 'radial' ? 'radial' : 'linear';
+      else if (key === 'gradOpacity') st.grad.opacity = Math.max(1, Math.min(100, value));
+      else if (key === 'fillTolerance') st.fill.tolerance = Math.max(0, Math.min(255, value));
+      else if (key === 'fillContiguous') st.fill.contiguous = !!value;
+      else if (key === 'fillOpacity') st.fill.opacity = Math.max(1, Math.min(100, value));
+      else if (key === 'eyeSize') st.eye.size = Math.max(1, Math.min(9, Number(value) || 1));
+      else if (key === 'eyeMerged') st.eye.merged = !!value;
+      else if (key === 'cropRatio') st.crop.ratio = value;
+      else if (key === 'autoSelect') st.move.autoSelect = !!value;
+      else if (key === 'wandContiguous') st.wand.contiguous = !!value;
+      else if (key === 'wandMerged') st.wand.sampleMerged = !!value;
+      else if (key === 'vectorKind') st.vector.kind = value;
+      else if (key === 'fillOn') st.vector.fillOn = !!value;
+      else if (key === 'fillColor') st.vector.fill = value;
+      else if (key === 'strokeOn') st.vector.strokeOn = !!value;
+      else if (key === 'strokeColor') st.vector.stroke = value;
+      else if (key === 'strokeWidth') st.vector.width = Math.max(0, Math.min(80, Number(value) || 0));
     }
 
     function options() {
@@ -76,8 +114,28 @@ const PSTools = (function () {
         size: st.brush.size,
         hardness: st.brush.hardness,
         opacity: st.brush.opacity,
+        spacing: st.brush.spacing,
         tolerance: st.tolerance,
-        gradient: st.gradient
+        feather: st.select.feather,
+        gradient: st.gradient,
+        gradKind: st.grad.kind,
+        gradOpacity: st.grad.opacity,
+        fillTolerance: st.fill.tolerance,
+        fillContiguous: st.fill.contiguous,
+        fillOpacity: st.fill.opacity,
+        eyeSize: st.eye.size,
+        eyeMerged: st.eye.merged,
+        cropRatio: st.crop.ratio,
+        autoSelect: st.move.autoSelect,
+        wandContiguous: st.wand.contiguous,
+        wandMerged: st.wand.sampleMerged,
+        vectorKind: st.vector.kind,
+        fillOn: st.vector.fillOn,
+        fillColor: st.vector.fill,
+        strokeOn: st.vector.strokeOn,
+        strokeColor: st.vector.stroke,
+        strokeWidth: st.vector.width,
+        penActive: !!st.penEdit
       };
     }
 
@@ -133,7 +191,8 @@ const PSTools = (function () {
     function stampLine(x0, y0, x1, y1) {
       var d = st.drag;
       if (!d || d.kind !== 'brush') return;
-      var spacing = Math.max(1.2, d.r * 0.17);
+      // 间距按笔刷直径的百分比算，和 PS 的 Spacing 语义一致
+      var spacing = Math.max(0.8, d.r * 2 * st.brush.spacing / 100);
       var dx = x1 - x0;
       var dy = y1 - y0;
       var dist = Math.sqrt(dx * dx + dy * dy);
@@ -221,7 +280,7 @@ const PSTools = (function () {
         if (hooks.change) hooks.change('selection');
         return;
       }
-      PS.setSelectionShape(activeDoc(), shape, false);
+      PS.setSelectionShape(activeDoc(), shape, false, { feather: st.select.feather });
       if (hooks.status) hooks.status(selectionMessage(shape));
       if (hooks.change) hooks.change('selection');
     }
@@ -243,8 +302,14 @@ const PSTools = (function () {
         var ctx = t.ctx;
         ctx.save();
         PS.clipToSelection(ctx, doc, layer, t);
-        ctx.globalAlpha = st.brush.opacity / 100;
-        var g = ctx.createLinearGradient(x0, y0, x1, y1);
+        ctx.globalAlpha = st.grad.opacity / 100;
+        var g;
+        if (st.grad.kind === 'radial') {
+          var rad = Math.max(1, Math.hypot(x1 - x0, y1 - y0));
+          g = ctx.createRadialGradient(x0, y0, 0, x0, y0, rad);
+        } else {
+          g = ctx.createLinearGradient(x0, y0, x1, y1);
+        }
         if (st.gradient === 'fg2bg') {
           g.addColorStop(0, rgba(c.fg, 1));
           g.addColorStop(1, rgba(c.bg, 1));
@@ -280,7 +345,10 @@ const PSTools = (function () {
       var tiles = PS.ensureAllTiles(layer);
       var tx = PS.beginTx(doc, '油漆桶');
       tiles.forEach(function (t) { if (t) PS.snapTile(tx, layer, t); });
-      var res = PS.floodFillLayer(layer, x, y, color, st.tolerance);
+      var res = PS.floodFillLayer(layer, x, y, color, st.fill.tolerance, {
+        contiguous: st.fill.contiguous,
+        opacity: st.fill.opacity / 100
+      });
       if (!res.ok) {
         if (hooks.status) hooks.status(res.reason || '填充失败', true);
         return res;
@@ -356,22 +424,352 @@ const PSTools = (function () {
       return true;
     }
 
+    /* ---------------- 魔棒 ---------------- */
+    function wandAt(doc, layer, p) {
+      if (!layer) {
+        if (hooks.status) hooks.status('请先选中一个图层', true);
+        return { ok: false };
+      }
+      var res = PS.magicWand(doc, layer, p.docX, p.docY, {
+        tolerance: st.tolerance,
+        contiguous: st.wand.contiguous,
+        sampleMerged: st.wand.sampleMerged
+      });
+      if (!res.ok) {
+        if (hooks.status) hooks.status(res.reason || '未能建立选区', true);
+        return res;
+      }
+      PS.setSelectionShape(doc, res.shape, false, { feather: st.select.feather });
+      if (hooks.change) hooks.change('selection');
+      if (hooks.status) {
+        hooks.status('魔棒选区 · ' + res.count + ' px' +
+          (res.shape.polygons.length > 1 ? ' · ' + res.shape.polygons.length + ' 个轮廓' : ''));
+      }
+      return res;
+    }
+
+    /* ---------------- 钢笔 ---------------- */
+    function syncPenPreview() {
+      var d = st.penEdit;
+      if (!d) { view.previewPath = null; return; }
+      view.previewPath = { pts: d.pts, closed: !!d.closed, cursor: d.cursor };
+      view.schedule();
+    }
+
+    function penState() {
+      var doc = activeDoc();
+      if (!st.penEdit || st.penEdit.doc !== doc) {
+        st.penEdit = { doc: doc, pts: [], closed: false, dragging: -1, cursor: null };
+      }
+      return st.penEdit;
+    }
+
+    function penDown(p) {
+      var d = penState();
+      var first = d.pts[0];
+      var tol = 9 / Math.max(0.15, view.zoom);
+      if (first && Math.hypot(p.docX - first.x, p.docY - first.y) <= tol) {
+        d.closed = true;
+        finishPen(true);
+        return;
+      }
+      d.pts.push({ x: p.docX, y: p.docY, hix: null, hiy: null, hox: null, hoy: null });
+      d.dragging = d.pts.length - 1;
+      d.cursor = { x: p.docX, y: p.docY };
+      syncPenPreview();
+    }
+
+    function penDrag(p) {
+      var d = st.penEdit;
+      if (!d) return;
+      if (d.dragging >= 0) {
+        var a = d.pts[d.dragging];
+        var dx = p.docX - a.x;
+        var dy = p.docY - a.y;
+        if (Math.hypot(dx, dy) > 1.5) {
+          a.hox = p.docX;
+          a.hoy = p.docY;
+          a.hix = a.x - dx;
+          a.hiy = a.y - dy;
+        }
+      }
+      d.cursor = { x: p.docX, y: p.docY };
+      syncPenPreview();
+    }
+
+    function penHover(p) {
+      var d = st.penEdit;
+      if (!d) return;
+      d.cursor = { x: p.docX, y: p.docY };
+      syncPenPreview();
+    }
+
+    function penUp() {
+      var d = st.penEdit;
+      if (d) d.dragging = -1;
+    }
+
+    function finishPen(close) {
+      var d = st.penEdit;
+      st.penEdit = null;
+      view.previewPath = null;
+      if (!d) return false;
+      var doc = d.doc || activeDoc();
+      if (d.pts.length < 2) {
+        if (hooks.status) hooks.status('路径至少需要两个锚点', true);
+        view.schedule();
+        return false;
+      }
+      var v = st.vector;
+      var shape = {
+        kind: 'path',
+        pts: d.pts.map(function (a) {
+          return { x: a.x, y: a.y, hix: a.hix, hiy: a.hiy, hox: a.hox, hoy: a.hoy };
+        }),
+        closed: !!close,
+        fill: v.fillOn ? v.fill : null,
+        stroke: v.strokeOn && v.width > 0 ? v.stroke : null,
+        strokeWidth: v.strokeOn ? v.width : 0
+      };
+      PS.addShapeLayer(doc, [shape], { name: '矢量路径', label: '钢笔路径' });
+      PS.requestMips(doc);
+      if (hooks.change) hooks.change('shape');
+      if (hooks.status) hooks.status('矢量路径已创建 · ' + d.pts.length + ' 个锚点');
+      view.schedule();
+      return true;
+    }
+
+    function cancelPen() {
+      st.penEdit = null;
+      view.previewPath = null;
+      view.schedule();
+      if (hooks.status) hooks.status('已取消当前路径');
+    }
+
+    /* ---------------- 形状 ---------------- */
+    function shapeName(kind) {
+      return kind === 'ellipse' ? '椭圆' : kind === 'line' ? '直线' : '矩形';
+    }
+
+    function buildShape(start, p, shift) {
+      var v = st.vector;
+      var x0 = start.x, y0 = start.y;
+      var x1 = p.docX, y1 = p.docY;
+      if (shift && v.kind !== 'line') {
+        var dx = x1 - x0, dy = y1 - y0;
+        var m = Math.max(Math.abs(dx), Math.abs(dy));
+        x1 = x0 + (dx < 0 ? -m : m);
+        y1 = y0 + (dy < 0 ? -m : m);
+      }
+      if (v.kind === 'line') {
+        return {
+          kind: 'line', x1: x0, y1: y0, x2: x1, y2: y1,
+          fill: null,
+          stroke: v.strokeOn ? v.stroke : (v.fillOn ? v.fill : null),
+          strokeWidth: v.strokeOn ? v.width : Math.max(2, v.width)
+        };
+      }
+      var r = normalizeRect(x0, y0, x1, y1);
+      return {
+        kind: v.kind, x: r.x, y: r.y, w: r.w, h: r.h,
+        fill: v.fillOn ? v.fill : null,
+        stroke: v.strokeOn && v.width > 0 ? v.stroke : null,
+        strokeWidth: v.strokeOn ? v.width : 0
+      };
+    }
+
+    function shapeDown(p) {
+      st.drag = { kind: 'vector', doc: activeDoc(), start: { x: p.docX, y: p.docY } };
+      view.previewVector = { shape: buildShape(st.drag.start, p, false) };
+    }
+
+    function shapeMove(p, shift) {
+      var d = st.drag;
+      if (!d || d.kind !== 'vector') return;
+      view.previewVector = { shape: buildShape(d.start, p, shift) };
+      view.schedule();
+    }
+
+    function shapeUp(p, shift) {
+      var d = st.drag;
+      if (!d || d.kind !== 'vector') return;
+      var shape = buildShape(d.start, p, shift);
+      st.drag = null;
+      view.previewVector = null;
+      var b = PS.shapeBounds(shape);
+      var tiny = shape.kind === 'line'
+        ? Math.hypot(shape.x2 - shape.x1, shape.y2 - shape.y1) < 3
+        : (!b || b.w < 2 || b.h < 2);
+      if (tiny) {
+        if (hooks.status) hooks.status('形状太小，已忽略', true);
+        view.schedule();
+        return;
+      }
+      var name = shapeName(shape.kind);
+      PS.addShapeLayer(d.doc, [shape], { name: name, label: '新建' + name });
+      PS.requestMips(d.doc);
+      if (hooks.change) hooks.change('shape');
+      if (hooks.status) hooks.status('已创建矢量' + name);
+      view.schedule();
+    }
+
+    /* ---------------- 路径选择 ---------------- */
+    function pathDown(p) {
+      var doc = activeDoc();
+      var hit = PS.hitShapeLayer(doc, p.docX, p.docY, 8 / Math.max(0.2, view.zoom));
+      if (!hit) {
+        if (hooks.status) hooks.status('没有命中矢量路径');
+        return;
+      }
+      doc.activeId = hit.layer.id;
+      PS.touchDoc(doc);
+      if (hooks.change) hooks.change('layer');
+      if (hit.anchor >= 0) {
+        var a = hit.shape.pts[hit.anchor];
+        st.drag = {
+          kind: 'anchor', doc: doc, layer: hit.layer, shape: hit.shape,
+          index: hit.anchor, sx: p.docX, sy: p.docY,
+          ox: a.x, oy: a.y,
+          before: PS.cloneShape(hit.shape), moved: false
+        };
+        if (hooks.status) hooks.status('拖动锚点 · 第 ' + (hit.anchor + 1) + ' 个');
+      } else {
+        st.drag = {
+          kind: 'shape-move', doc: doc, layer: hit.layer,
+          sx: p.docX, sy: p.docY, ox: hit.layer.x, oy: hit.layer.y, moved: false
+        };
+        if (hooks.status) hooks.status('拖动矢量图层');
+      }
+      view.schedule();
+    }
+
+    function pathMove(p) {
+      var d = st.drag;
+      if (!d) return;
+      if (d.kind === 'anchor') {
+        var dx = p.docX - d.sx;
+        var dy = p.docY - d.sy;
+        var a = d.shape.pts[d.index];
+        var prevX = a.x, prevY = a.y;
+        a.x = d.ox + dx;
+        a.y = d.oy + dy;
+        var mdx = a.x - prevX, mdy = a.y - prevY;
+        if (a.hix != null) { a.hix += mdx; a.hiy += mdy; }
+        if (a.hox != null) { a.hox += mdx; a.hoy += mdy; }
+        d.moved = true;
+        d.layer.version++;
+        d.doc.version++;
+        view.schedule();
+      } else if (d.kind === 'shape-move') {
+        d.layer.x = Math.round(d.ox + (p.docX - d.sx));
+        d.layer.y = Math.round(d.oy + (p.docY - d.sy));
+        d.moved = true;
+        d.layer.version++;
+        d.doc.version++;
+        view.schedule();
+      }
+    }
+
+    function pathUp() {
+      var d = st.drag;
+      if (!d) return;
+      st.drag = null;
+      if (!d.moved) return;
+      if (d.kind === 'anchor') {
+        var after = PS.cloneShape(d.shape);
+        var before = d.before;
+        PS.pushEntry(d.doc, {
+          label: '编辑锚点',
+          touched: [d.layer],
+          undo: function () { d.shape.pts = PS.cloneShape(before).pts; d.layer.version++; d.doc.version++; },
+          redo: function () { d.shape.pts = PS.cloneShape(after).pts; d.layer.version++; d.doc.version++; }
+        });
+        PS.touch(d.layer);
+        if (hooks.change) hooks.change('shape');
+        if (hooks.status) hooks.status('锚点已移动');
+      } else if (d.kind === 'shape-move') {
+        var dx = d.layer.x - d.ox;
+        var dy = d.layer.y - d.oy;
+        var layer = d.layer;
+        PS.pushEntry(d.doc, {
+          label: '移动矢量图层',
+          touched: [layer],
+          undo: function () { layer.x = d.ox; layer.y = d.oy; layer.version++; d.doc.version++; },
+          redo: function () { layer.x = d.ox + dx; layer.y = d.oy + dy; layer.version++; d.doc.version++; }
+        });
+        PS.touch(layer);
+        if (hooks.change) hooks.change('shape');
+        if (hooks.status) hooks.status('矢量图层已移动');
+      }
+    }
+
     /* ---------------- 手势 ---------------- */
-    function down(p) {
+    function cropRatioValue(name) {
+      if (name === '1:1') return 1;
+      if (name === '4:3') return 4 / 3;
+      if (name === '16:9') return 16 / 9;
+      return 0;
+    }
+
+    /* 裁剪矩形：锁定比例时从起点角向外推，Shift 临时改成 1:1。 */
+    function cropRect(p, start, shift) {
+      var dx = p.docX - start.x;
+      var dy = p.docY - start.y;
+      var w = Math.abs(dx);
+      var h = Math.abs(dy);
+      var ratio = cropRatioValue(st.crop.ratio) || (shift ? 1 : 0);
+      if (ratio > 0) {
+        if (w / Math.max(1e-6, h) > ratio) h = w / ratio;
+        else w = h * ratio;
+      }
+      return { x: dx < 0 ? start.x - w : start.x, y: dy < 0 ? start.y - h : start.y, w: w, h: h };
+    }
+
+    function down(p, e) {
       var doc = activeDoc();
       if (!doc) return;
       var layer = activeLayer();
 
       if (st.tool === 'move') {
-        if (!layer || layer.type !== 'pixel') {
-          if (hooks.status) hooks.status('调整层不能移动，请选中像素图层', true);
+        var target = layer;
+        // 「自动选择」：按下时先选中最上层的不透明图层，再开始拖
+        if (st.move.autoSelect) {
+          var hit = PS.topLayerAt(doc, p.docX, p.docY);
+          if (hit && hit !== layer) {
+            doc.activeId = hit.id;
+            target = hit;
+            if (hooks.change) hooks.change('layer');
+          }
+        }
+        if (!target || target.type === 'adjust') {
+          if (hooks.status) hooks.status('调整层不能移动，请选中像素或矢量图层', true);
           return;
         }
         st.drag = {
-          kind: 'move', doc: doc, layer: layer,
-          sx: p.docX, sy: p.docY, ox: layer.x, oy: layer.y
+          kind: 'move', doc: doc, layer: target,
+          sx: p.docX, sy: p.docY, ox: target.x, oy: target.y
         };
         view.canvas.style.cursor = 'grabbing';
+        return;
+      }
+
+      if (st.tool === 'magic-wand') {
+        wandAt(doc, layer, p);
+        return;
+      }
+
+      if (st.tool === 'pen') {
+        penDown(p);
+        return;
+      }
+
+      if (st.tool === 'shape') {
+        shapeDown(p);
+        return;
+      }
+
+      if (st.tool === 'path-select') {
+        pathDown(p);
         return;
       }
 
@@ -391,9 +789,13 @@ const PSTools = (function () {
       }
 
       if (st.tool === 'eyedropper') {
-        var c = PS.samplePixel(doc, p.docX, p.docY);
+        var c = PS.samplePixel(doc, p.docX, p.docY, {
+          size: st.eye.size,
+          layer: st.eye.merged ? null : layer
+        });
         if (hooks.onColor) hooks.onColor(c.hex);
-        if (hooks.status) hooks.status('取样 ' + c.hex.toUpperCase());
+        if (hooks.status) hooks.status('取样 ' + c.hex.toUpperCase() +
+          ' · ' + st.eye.size + '×' + st.eye.size + (st.eye.merged ? ' · 合并图层' : ' · 当前图层'));
         return;
       }
 
@@ -419,7 +821,9 @@ const PSTools = (function () {
       }
     }
 
-    function move(p) {
+    function move(p, e) {
+      var shift = !!(e && e.shiftKey);
+      if (st.tool === 'pen') { penDrag(p); return; }
       var d = st.drag;
       if (!d) {
         if (st.tool === 'brush' || st.tool === 'eraser') {
@@ -434,6 +838,14 @@ const PSTools = (function () {
         d.doc.version++;
         return;
       }
+      if (d.kind === 'vector') {
+        shapeMove(p, shift);
+        return;
+      }
+      if (d.kind === 'anchor' || d.kind === 'shape-move') {
+        pathMove(p);
+        return;
+      }
       if (d.kind === 'select') {
         if (st.tool === 'select-lasso') d.points.push({ x: p.docX, y: p.docY });
         d.shape = selectionShape(p, d.start, d.points);
@@ -441,13 +853,17 @@ const PSTools = (function () {
         return;
       }
       if (d.kind === 'crop') {
-        view.previewRect = normalizeRect(d.start.x, d.start.y, p.docX, p.docY);
+        view.previewRect = cropRect(p, d.start, shift);
         return;
       }
       if (d.kind === 'brush') {
         stampLine(d.lastX, d.lastY, p.docX, p.docY);
         d.lastX = p.docX;
         d.lastY = p.docY;
+        // 每段笔迹立即失效图层缓存并请求重绘，避免松手后才看到整条轨迹
+        PS.touch(d.layer);
+        d.doc.version++;
+        view.schedule();
         view.setCursor(p.docX, p.docY, d.r);
         return;
       }
@@ -456,9 +872,18 @@ const PSTools = (function () {
       }
     }
 
-    function up(p) {
+    function up(p, e) {
+      if (st.tool === 'pen') { penUp(); return; }
       var d = st.drag;
       if (!d) return;
+      if (d.kind === 'vector') {
+        shapeUp(p, !!(e && e.shiftKey));
+        return;
+      }
+      if (d.kind === 'anchor' || d.kind === 'shape-move') {
+        pathUp();
+        return;
+      }
       if (d.kind === 'move') {
         st.drag = null;
         var dx = d.layer.x - d.ox;
@@ -482,7 +907,7 @@ const PSTools = (function () {
         return;
       }
       if (d.kind === 'crop') {
-        var rect = normalizeRect(d.start.x, d.start.y, p.docX, p.docY);
+        var rect = cropRect(p || { docX: d.start.x, docY: d.start.y }, d.start, !!(e && e.shiftKey));
         st.drag = null;
         view.previewRect = null;
         if (rect.w < 4 || rect.h < 4) {
@@ -516,10 +941,25 @@ const PSTools = (function () {
         d.layer.version++;
         d.doc.version++;
       }
+      if (d && d.kind === 'anchor' && d.before) {
+        d.shape.pts = PS.cloneShape(d.before).pts;
+        d.layer.version++;
+        d.doc.version++;
+      }
+      if (d && d.kind === 'shape-move') {
+        d.layer.x = d.ox;
+        d.layer.y = d.oy;
+        d.layer.version++;
+        d.doc.version++;
+      }
+      if (st.penEdit) cancelPen();
       st.drag = null;
       view.previewShape = null;
       view.previewRect = null;
       view.previewLine = null;
+      view.previewVector = null;
+      view.previewPath = null;
+      view.schedule();
     }
 
     view.toolHandlers = { down: down, move: move, up: up };
@@ -533,6 +973,9 @@ const PSTools = (function () {
       drawText: drawText,
       fillAt: fillAt,
       applyGradient: applyGradient,
+      finishPen: finishPen,
+      cancelPen: cancelPen,
+      penActive: function () { return !!st.penEdit; },
       paintDot: function (doc, layer, x, y) {
         if (!layer || layer.type !== 'pixel') return false;
         var tx = PS.beginTx(doc, '画笔');

@@ -401,7 +401,7 @@ async function send(){
         ? streamPhaseText(acc, info)
         : ('生成中 ' + acc.length + ' 字'));
       renderLog();
-    }, { conn: conn });
+    }, { conn: conn, app: 'chat' });
     if(!text2) throw new Error('模型没有返回内容');
     const seg = (typeof deskImage !== 'undefined' && deskImage.segment)
       ? deskImage.segment(text2)

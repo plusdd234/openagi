@@ -238,7 +238,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check(pan.gridT && /translate3d/.test(pan.gridT), '平移只改底纹 transform', pan.gridT);
   check(pMax <= 50, '平移最长帧 ≤50ms', pMax + 'ms');
 
-  const shotDir = path.join(__dirname, '..', '.workbuddy', 'shots');
+  const shotDir = require('./probe-run').runDir('bp-perf');
   fs.mkdirSync(shotDir, { recursive: true });
   await page.screenshot({ path: path.join(shotDir, 'bp-pan.png') });
 

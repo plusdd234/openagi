@@ -1,6 +1,6 @@
 /* 探针：背景层永远在最底下（用户报「背景图层总是显示在最上面」）
  * 用法：node tools/probe-mv-bg.js
- * 产物：tools/shots/mv-bg-*.png
+ * 产物：运行目录下的 mv-bg-*.png（见 tools/probe-run.js）
  *
  * 背景层是「底色」：它一旦压在模型上面，模型就整块被盖掉，
  * 用户看到的是「模型不见了」，而不是「层序不对」。
@@ -21,7 +21,7 @@ const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const OUT = path.join(__dirname, 'shots');
+const OUT = require('./probe-run').runDir('probe-mv-bg');
 
 /* 立方体（每面独立 UV，岛色能画出来） */
 const V8 = [

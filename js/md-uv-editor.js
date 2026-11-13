@@ -521,29 +521,29 @@
       var minV = Math.min(p0.v, p1.v), maxV = Math.max(p0.v, p1.v);
       var i0 = Math.floor(minU / step), i1 = Math.ceil(maxU / step);
       var j0 = Math.floor(minV / step), j1 = Math.ceil(maxV / step);
-      /* 0–1 的空白区域铺一层浅色，提示贴图范围 */
+      /* 0–1 的空白区域铺一层淡蓝，提示贴图范围 */
       var a = uvProject(0, 0), b = uvProject(1, 1);
-      ctx.fillStyle = 'rgba(255,255,255,.035)';
+      ctx.fillStyle = 'rgba(43,124,211,.04)';
       ctx.fillRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]));
       ctx.lineWidth = 1;
       for (var i = i0; i <= i1; i++) {
         var u = i * step;
         var x = Math.round(uvProject(u, 0)[0]) + .5;
-        if (Math.abs(u) < 1e-9 || Math.abs(u - 1) < 1e-9) ctx.strokeStyle = '#7d7d7d';
-        else if (i % 5 === 0) ctx.strokeStyle = '#4a4a4a';
-        else ctx.strokeStyle = '#343434';
+        if (Math.abs(u) < 1e-9 || Math.abs(u - 1) < 1e-9) ctx.strokeStyle = '#8a95a5';
+        else if (i % 5 === 0) ctx.strokeStyle = '#c9d0d9';
+        else ctx.strokeStyle = '#e6e9ee';
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
       }
       for (var j = j0; j <= j1; j++) {
         var v = j * step;
         var y = Math.round(uvProject(0, v)[1]) + .5;
-        if (Math.abs(v) < 1e-9 || Math.abs(v - 1) < 1e-9) ctx.strokeStyle = '#7d7d7d';
-        else if (j % 5 === 0) ctx.strokeStyle = '#4a4a4a';
-        else ctx.strokeStyle = '#343434';
+        if (Math.abs(v) < 1e-9 || Math.abs(v - 1) < 1e-9) ctx.strokeStyle = '#8a95a5';
+        else if (j % 5 === 0) ctx.strokeStyle = '#c9d0d9';
+        else ctx.strokeStyle = '#e6e9ee';
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
       }
       /* 0–1 方框再压一道，方便判断 UV 是否越界 */
-      ctx.strokeStyle = '#9a9a9a';
+      ctx.strokeStyle = '#8a95a5';
       ctx.lineWidth = 1.4;
       ctx.strokeRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]));
     }
@@ -558,11 +558,11 @@
       var N = 8;
       for (var i = 0; i < N; i++) {
         for (var j = 0; j < N; j++) {
-          ctx.fillStyle = ((i + j) & 1) ? 'rgba(148,172,188,.16)' : 'rgba(226,232,238,.12)';
+          ctx.fillStyle = ((i + j) & 1) ? 'rgba(180,196,214,.28)' : 'rgba(255,255,255,.85)';
           ctx.fillRect(x0 + i * w / N, y0 + j * h / N, w / N + .5, h / N + .5);
         }
       }
-      ctx.strokeStyle = 'rgba(180,200,214,.35)';
+      ctx.strokeStyle = 'rgba(138,149,165,.45)';
       ctx.strokeRect(x0, y0, w, h);
     }
 
@@ -698,14 +698,14 @@
       var minU = Math.min(p0.u, p1.u), maxU = Math.max(p0.u, p1.u);
       var minV = Math.min(p0.v, p1.v), maxV = Math.max(p0.v, p1.v);
       var TOP = 18, LEFT = 20;
-      ctx.fillStyle = 'rgba(24,24,24,.92)';
+      ctx.fillStyle = 'rgba(255,255,255,.94)';
       ctx.fillRect(0, 0, w, TOP);
       ctx.fillRect(0, 0, LEFT, h);
-      ctx.strokeStyle = '#141414';
+      ctx.strokeStyle = '#e3e6ea';
       ctx.beginPath(); ctx.moveTo(0, TOP + .5); ctx.lineTo(w, TOP + .5); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(LEFT + .5, 0); ctx.lineTo(LEFT + .5, h); ctx.stroke();
-      ctx.fillStyle = '#9fb6c8';
-      ctx.strokeStyle = '#6f9cba';
+      ctx.fillStyle = '#5a6068';
+      ctx.strokeStyle = '#8a9098';
       ctx.font = '9px "Segoe UI", "Microsoft YaHei UI", sans-serif';
       ctx.textBaseline = 'middle';
       var i0 = Math.floor(minU / step), i1 = Math.ceil(maxU / step);
@@ -777,8 +777,8 @@
           cx.closePath();
         }
       }
-      cx.fillStyle = 'rgba(53,131,148,.14)';
-      cx.strokeStyle = '#45c7dc';
+      cx.fillStyle = 'rgba(23,160,190,.10)';
+      cx.strokeStyle = '#17a0be';
       cx.lineWidth = lw;
       cx.lineJoin = 'round';
       if (path) { cx.fill(path); cx.stroke(path); } else { cx.fill(); cx.stroke(); }
@@ -803,7 +803,7 @@
       uvResizeCanvas();
       var s = uvSize();
       ctx.save();
-      ctx.fillStyle = '#232323';
+      ctx.fillStyle = '#f4f6f9';
       ctx.fillRect(0, 0, s.w, s.h);
       uvDrawGrid(ctx, s.w, s.h);
       uvDrawTexture(ctx);
@@ -846,8 +846,8 @@
           var anySel = false, allSel = true;
           for (k = c0; k < e0; k++) { if (set[k]) anySel = true; else allSel = false; }
           if (!anySel) continue;
-          faceLive(f, allSel ? 'rgba(201,143,53,.30)' : 'rgba(201,143,53,.12)',
-            allSel ? '#ffcf86' : '#c98f35', allSel ? 1.7 : 1.2);
+          faceLive(f, allSel ? 'rgba(232,138,0,.22)' : 'rgba(232,138,0,.10)',
+            allSel ? '#c77500' : '#e88a00', allSel ? 1.7 : 1.2);
         }
         if (P) st.uv.parts = { build: +(P.now() - tBuild).toFixed(1), paint: 0, cache: true };
       } else {
@@ -879,26 +879,26 @@
         for (i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
         ctx.closePath();
         if (any) {
-          ctx.fillStyle = all ? 'rgba(201,143,53,.30)' : 'rgba(201,143,53,.12)';
+          ctx.fillStyle = all ? 'rgba(232,138,0,.22)' : 'rgba(232,138,0,.10)';
           ctx.fill();
-          ctx.strokeStyle = all ? '#ffcf86' : '#c98f35';
+          ctx.strokeStyle = all ? '#c77500' : '#e88a00';
           ctx.lineWidth = all ? 1.7 : 1.2;
         } else {
-          ctx.fillStyle = 'rgba(53,131,148,.10)';
+          ctx.fillStyle = 'rgba(23,160,190,.08)';
           ctx.fill();
-          ctx.strokeStyle = '#45c7dc';
+          ctx.strokeStyle = '#17a0be';
           ctx.lineWidth = 1;
         }
         ctx.stroke();
       }
       if (hasPath) {
         var tA = P ? P.now() : 0;
-        ctx.fillStyle = 'rgba(53,131,148,.10)'; ctx.fill(pNone);
-        ctx.strokeStyle = '#45c7dc'; ctx.lineWidth = 1; ctx.stroke(pNone);
-        ctx.fillStyle = 'rgba(201,143,53,.12)'; ctx.fill(pPart);
-        ctx.strokeStyle = '#c98f35'; ctx.lineWidth = 1.2; ctx.stroke(pPart);
-        ctx.fillStyle = 'rgba(201,143,53,.30)'; ctx.fill(pFull);
-        ctx.strokeStyle = '#ffcf86'; ctx.lineWidth = 1.7; ctx.stroke(pFull);
+        ctx.fillStyle = 'rgba(23,160,190,.08)'; ctx.fill(pNone);
+        ctx.strokeStyle = '#17a0be'; ctx.lineWidth = 1; ctx.stroke(pNone);
+        ctx.fillStyle = 'rgba(232,138,0,.10)'; ctx.fill(pPart);
+        ctx.strokeStyle = '#e88a00'; ctx.lineWidth = 1.2; ctx.stroke(pPart);
+        ctx.fillStyle = 'rgba(232,138,0,.22)'; ctx.fill(pFull);
+        ctx.strokeStyle = '#c77500'; ctx.lineWidth = 1.7; ctx.stroke(pFull);
         if (P) st.uv.parts = { build: +(tA - tBuild).toFixed(1), paint: +(P.now() - tA).toFixed(1), cache: false };
       }
       }
@@ -906,7 +906,7 @@
 
       /* 选中边：两个端点都在集合里才画，避免点模式下满屏白线 */
       if (st.uv.mode === 'edge' && selCount) {
-        ctx.strokeStyle = '#fff4d6';
+        ctx.strokeStyle = '#c77500';
         ctx.lineWidth = 2;
         for (f = 0; f < mesh.faceIds.length; f++) {
           c0 = mesh.faceOffsets[f]; e0 = mesh.faceOffsets[f + 1];
@@ -931,13 +931,13 @@
           var gsel = false;
           for (k = 0; k < g.corners.length; k++) if (set[g.corners[k]]) { gsel = true; break; }
           if (gsel) {
-            ctx.fillStyle = '#ffcf86';
+            ctx.fillStyle = '#e88a00';
             ctx.fillRect(sp[0] - 2.5, sp[1] - 2.5, 5, 5);
-            ctx.strokeStyle = '#5a4420';
+            ctx.strokeStyle = '#8a5a00';
             ctx.lineWidth = 1;
             ctx.strokeRect(sp[0] - 2.5, sp[1] - 2.5, 5, 5);
           } else if (show || tiny) {
-            ctx.fillStyle = show ? '#9ad9e6' : 'rgba(154,217,230,.45)';
+            ctx.fillStyle = show ? '#2b7cd3' : 'rgba(43,124,211,.45)';
             ctx.fillRect(sp[0] - 1.2, sp[1] - 1.2, 2.4, 2.4);
           }
         }
@@ -948,18 +948,18 @@
       if (hv && !st.uv.drag) {
         if (hv.kind === 'point' && hv.group) {
           var hp = uvProject(hv.group.u, hv.group.v);
-          ctx.strokeStyle = '#ffffff';
+          ctx.strokeStyle = '#1d5fa5';
           ctx.lineWidth = 1.4;
           ctx.beginPath(); ctx.arc(hp[0], hp[1], 6, 0, Math.PI * 2); ctx.stroke();
         } else if (hv.kind === 'edge') {
-          ctx.strokeStyle = 'rgba(255,255,255,.75)';
+          ctx.strokeStyle = 'rgba(29,95,165,.75)';
           ctx.lineWidth = 2;
           var q1 = uvProject(mesh.uvs[hv.c0 * 2], mesh.uvs[hv.c0 * 2 + 1]);
           var q2 = uvProject(mesh.uvs[hv.c1 * 2], mesh.uvs[hv.c1 * 2 + 1]);
           ctx.beginPath(); ctx.moveTo(q1[0], q1[1]); ctx.lineTo(q2[0], q2[1]); ctx.stroke();
         } else if (hv.kind === 'face') {
           var fs = mesh.faceOffsets[hv.face], fe = mesh.faceOffsets[hv.face + 1];
-          ctx.strokeStyle = 'rgba(255,207,134,.85)';
+          ctx.strokeStyle = 'rgba(199,117,0,.9)';
           ctx.lineWidth = 1.6;
           ctx.beginPath();
           for (k = fs; k < fe; k++) {
@@ -975,9 +975,9 @@
         var m = st.uv.marquee;
         var x0 = Math.min(m.x, m.x2), y0 = Math.min(m.y, m.y2);
         var w0 = Math.abs(m.x2 - m.x), h0 = Math.abs(m.y2 - m.y);
-        ctx.fillStyle = 'rgba(201,143,53,.10)';
+        ctx.fillStyle = 'rgba(232,138,0,.08)';
         ctx.fillRect(x0, y0, w0, h0);
-        ctx.strokeStyle = '#c98f35';
+        ctx.strokeStyle = '#c77500';
         ctx.setLineDash([4, 3]);
         ctx.lineWidth = 1;
         ctx.strokeRect(x0 + .5, y0 + .5, w0, h0);

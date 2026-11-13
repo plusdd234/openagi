@@ -8,6 +8,8 @@ const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
+const OUT = require('./probe-run').runDir('cover-check');
+
 const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';   // 禁止测试写入真实本地存储
 const OBJ = process.argv[2] || 'C:/Users/30297/Desktop/自研贴图系统/AIGC工具包/pipeline/model.obj';
 
@@ -70,7 +72,7 @@ const OBJ = process.argv[2] || 'C:/Users/30297/Desktop/自研贴图系统/AIGC�
   const gaps = [...sink.keys()].filter(t => !src.has(t));
   console.log('\n缺口类型: ' + (gaps.length ? gaps.join(', ') : '无'));
   await page.evaluate(() => fitView());
-  await page.screenshot({ path: path.join(__dirname, '..', 'samples', 'all_types.png') });
+  await page.screenshot({ path: path.join(OUT, 'all_types.png') });
 
   /* ---------------- 2. 真实连线运行 ---------------- */
   const objData = 'data:model/obj;base64,' + fs.readFileSync(OBJ).toString('base64');
@@ -150,7 +152,7 @@ const OBJ = process.argv[2] || 'C:/Users/30297/Desktop/自研贴图系统/AIGC�
   console.log(' boolNode 输出 ' + run.boolOut + ' → branch 得到 ' + run.branchGot);
   console.log(' 全部节点状态: ' + run.statuses.join(' | '));
 
-  await page.screenshot({ path: path.join(__dirname, '..', 'samples', 'input_types.png'), fullPage: false });
+  await page.screenshot({ path: path.join(OUT, 'input_types.png'), fullPage: false });
 
   console.log('\n=== 错误 (' + errors.length + ') ===');
   errors.slice(0, 10).forEach(e => console.log(' - ' + e));

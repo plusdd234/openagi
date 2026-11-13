@@ -1,6 +1,6 @@
 /* 探针：图层「Z 序」真的生效（3D 与 2D 交错）
  * 用法：node tools/probe-mv-zorder.js
- * 产物：tools/shots/zorder-*.png
+ * 产物：运行目录下的 zorder-*.png（见 tools/probe-run.js）
  *
  * 背景：以前 3D 和 2D 不能互换，因为 3D 是一口气渲到 WebGL 画布的，2D 只能在它上面叠。
  * 现在渲染核按 layerOrder 切段：一段 3D 渲一次、落到 2D 画布，中间夹着的 2D 层插进两次
@@ -15,7 +15,7 @@ const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const OUT = path.join(__dirname, 'shots');
+const OUT = require('./probe-run').runDir('probe-mv-zorder');
 
 const V8 = [
   [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],

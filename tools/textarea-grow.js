@@ -2,6 +2,7 @@
 const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
+const OUT = require('./probe-run').runDir('textarea-grow');
 const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';   // 禁止测试写入真实本地存储
 const LONG = '分析这张图片的特征，拟写生成灰度正效果\n图提示词，并且把每一处的细节、'
   + '光影层次、材质表现、构图意图都逐条列出来，不要遗漏任何可见元素，'
@@ -77,7 +78,7 @@ function check(ok, name, detail){
     const nodes = Array.from(document.querySelectorAll('.node'));
     return nodes.find(n => (n.querySelector('.node-title') || {}).textContent === '分析任务');
   });
-  await el.screenshot({ path: path.join(__dirname, '..', 'samples', 'z_textarea_grow.png') });
+  await el.screenshot({ path: path.join(OUT, 'textarea_grow.png') });
 
   check(errors.length === 0, '页面零错误', errors.slice(0, 2).join(' | '));
   await browser.close();

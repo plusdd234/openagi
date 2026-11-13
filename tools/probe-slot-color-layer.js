@@ -13,7 +13,9 @@ const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const fs = require('fs');
 const path = require('path');
+const { createRun } = require('./probe-run');
 
+const RUN = createRun('probe-slot-color-layer');
 const ROOT = path.join(__dirname, '..');
 const TARGET = pathToFileURL(path.join(ROOT, 'index.html')).href + '?nostore=1';
 const GLB = path.join(ROOT, 'assets', 'models', 'mvyfd48a-8e2b846b.glb');
@@ -129,7 +131,7 @@ const check = (name, ok, info) => {
       return p ? p.data : '';
     });
     const i = String(d).indexOf('base64,');
-    if (i > 0) fs.writeFileSync(path.join(__dirname, file), Buffer.from(d.slice(i + 7), 'base64'));
+    if (i > 0) fs.writeFileSync(RUN.artifact(file), Buffer.from(d.slice(i + 7), 'base64'));
   };
 
   const cfgTop = () => page.evaluate(() => {
@@ -199,7 +201,7 @@ const check = (name, ok, info) => {
   check('层锁定显示「已锁定 3 个岛」', t3.indexOf('已锁定 3 个岛') >= 0, t3.slice(0, 160));
   await clickText('铺满颜色');
   await page.waitForTimeout(300);
-  await page.screenshot({ path: path.join(__dirname, '_slotcolor_ui.png') });
+  await RUN.shot(page, 'slotcolor-ui.png');
   await clickText('完成');
   await page.waitForTimeout(1200);
   await dumpLastPut('_slotcolor_layer.png');

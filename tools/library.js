@@ -374,22 +374,9 @@ function htmlOf(env){ return env.__els.libBody.innerHTML; }
     const ids = Array.from(stateOf(env).sel);
     ok(ids.length === 3 && ids.indexOf('s1') >= 0 && ids.indexOf('s3') >= 0, '范围选择覆盖锚点到目标之间全部', ids.join(','));
 
-    // 拖到垃圾桶：复用 libRemoveSelected（引用警告 + 确认 + 移入回收站）
-    // 空选中时不能误删
-    env.libSetSel([]);
-    const before = desk.calls.filter(c => /^remove:/.test(c)).length;
-    env.libTrashDrop();
-    eq(desk.calls.filter(c => /^remove:/.test(c)).length, before, '没有选中项时拖入垃圾桶不会误删');
-
-    env.libSetSel(['s1', 's3']);
-    env.__log.confirms.length = 0;
-    env.libTrashDrop();
-    ok(env.__log.confirms.length > 0, '拖入垃圾桶仍然要确认（资产是用户产出，不能一松手就没）', env.__log.confirms.join(' | '));
-    await new Promise(r => setImmediate(r));
-    ok(desk.calls.some(c => /^remove:s1,s3/.test(c)), '确认后把拖拽的这批送去回收站', desk.calls.join(' | '));
-
-    // 垃圾桶不能画在 #libBody 里，否则 libPaint 每次重绘都会把它冲掉
-    ok(!/lib-trashcan/.test(htmlOf(env)), '垃圾桶不在 libBody 内（否则重绘时会被清掉）');
+    // 拖到垃圾桶删除已移除：删除统一走右键菜单 / 工具栏 / Del
+    ok(typeof env.libTrashDrop === 'undefined', '拖到垃圾桶删除已移除');
+    ok(!/lib-trashcan|lib-drag-ghost/.test(htmlOf(env)), '图库里不再有垃圾桶和拖拽幽灵');
   }
 
   console.log('\n结果：' + pass + ' / ' + (pass + fail) + ' 通过');

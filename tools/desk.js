@@ -4,7 +4,9 @@
 const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
+const { createRun } = require('./probe-run');
 
+const RUN = createRun('desk');
 const CELL = 104;   // 必须与 js/desktop.js 的 DESK_CELL 一致
 let fails = 0;
 const check = (ok, name, extra) => {
@@ -258,7 +260,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log('\n=== 6. 页面零错误 ===');
   check(errors.length === 0, '无页面异常', errors.slice(0, 3).join(' | '));
 
-  await page.screenshot({ path: 'C:/Users/30297/AppData/Local/Temp/desk_grid.png' });
+  await RUN.shot(page, 'desk-grid.png');
   await browser.close();
 
   console.log('\n=== ' + (fails === 0 ? '全部通过' : fails + ' 项失败') + ' ===');

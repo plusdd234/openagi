@@ -31,9 +31,12 @@ function PSView(host, opts) {
   this.previewShape = null;
   this.previewRect = null;
   this.previewLine = null;
+  this.previewPath = null;
+  this.previewVector = null;
   this.cursorDoc = null;
   this.cursorRadius = 0;
   this.cursorOn = false;
+  this.pointerInside = false;
   this.spaceDown = false;
   this.dragging = false;
   this.panning = null;
@@ -121,6 +124,10 @@ PSView.prototype._bindEvents = function () {
       self.schedule();
       return;
     }
+    // 悬停时也交给工具层：画笔 / 橡皮擦靠它画笔刷环，钢笔靠它更新橡皮筋
+    if (self.toolHandlers && typeof self.toolHandlers.move === 'function') {
+      self.toolHandlers.move(p, e);
+    }
     if (self.cursorOn) self.schedule();
   };
   this._onUp = function (e) {
@@ -149,9 +156,19 @@ PSView.prototype._bindEvents = function () {
       self.canvas.classList.remove('ps-space');
     }
   };
+  this._onEnter = function () {
+    self.pointerInside = true;
+  };
+  this._onLeave = function () {
+    self.pointerInside = false;
+    // 指针离开画布时收掉笔刷环，否则会留一个「幽灵圆」停在边缘
+    if (self.cursorOn) self.clearCursor();
+  };
   this.canvas.addEventListener('wheel', this._onWheel, { passive: false });
   this.canvas.addEventListener('pointerdown', this._onDown);
   this.canvas.addEventListener('pointermove', this._onMove);
+  this.canvas.addEventListener('pointerenter', this._onEnter);
+  this.canvas.addEventListener('pointerleave', this._onLeave);
   this.canvas.addEventListener('pointerup', this._onUp);
   this.canvas.addEventListener('pointercancel', this._onUp);
   this.canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
@@ -195,9 +212,17 @@ PSView.prototype.resize = function () {
   if (w <= 0 || h <= 0) return;
   var dpr = Math.min(2, window.devicePixelRatio || 1);
   if (w === this.cssW && h === this.cssH && dpr === this.dpr && this.canvas.width) return;
+  /* 视口尺寸变化（拖窗口、收纳面板）时保持画布中心不漂移 */
+  var centerDoc = this.cssW > 0 && this.doc
+    ? { x: (this.cssW / 2 - this.panX) / this.zoom, y: (this.cssH / 2 - this.panY) / this.zoom }
+    : null;
   this.cssW = w;
   this.cssH = h;
   this.dpr = dpr;
+  if (centerDoc) {
+    this.panX = w / 2 - centerDoc.x * this.zoom;
+    this.panY = h / 2 - centerDoc.y * this.zoom;
+  }
   this.canvas.width = Math.max(1, Math.round(w * dpr));
   this.canvas.height = Math.max(1, Math.round(h * dpr));
   this.canvas.style.width = w + 'px';
@@ -292,8 +317,11 @@ PSView.prototype.render = function () {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cw, ch);
 
-  // 工作台底色：对齐参考图里 Photoshop 的中性灰，深色图层在灰底上更清楚
-  ctx.fillStyle = '#6d6d6d';
+  // 工作台底色：和主界面的浅灰画布一致，白色文档浮在灰底上
+  var stageBg = ctx.createLinearGradient(0, 0, 0, ch);
+  stageBg.addColorStop(0, '#eef1f6');
+  stageBg.addColorStop(1, '#e6eaf0');
+  ctx.fillStyle = stageBg;
   ctx.fillRect(0, 0, cw, ch);
 
   var doc = this.doc;
@@ -313,10 +341,10 @@ PSView.prototype.render = function () {
 
   // 文档投影 + 底板
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,.55)';
-  ctx.shadowBlur = 24 * dpr;
-  ctx.shadowOffsetY = 6 * dpr;
-  ctx.fillStyle = '#1b1c20';
+  ctx.shadowColor = 'rgba(28,38,60,.22)';
+  ctx.shadowBlur = 20 * dpr;
+  ctx.shadowOffsetY = 5 * dpr;
+  ctx.fillStyle = '#ffffff';
   ctx.fillRect(dx, dy, dw, dh);
   ctx.restore();
 
@@ -357,12 +385,12 @@ PSView.prototype._drawChecker = function (dx, dy, dw, dh) {
   ctx.beginPath();
   ctx.rect(dx, dy, dw, dh);
   ctx.clip();
-  ctx.fillStyle = '#2a2c31';
+  ctx.fillStyle = '#f6f7f9';
   ctx.fillRect(dx, dy, dw, dh);
   var cell = 12;
   var cols = Math.ceil(dw / cell);
   var rows = Math.ceil(dh / cell);
-  ctx.fillStyle = '#24262a';
+  ctx.fillStyle = '#e9ecf1';
   for (var r = 0; r < rows; r++) {
     for (var c = 0; c < cols; c++) {
       if ((r + c) % 2) ctx.fillRect(dx + c * cell, dy + r * cell, cell, cell);
@@ -381,7 +409,7 @@ PSView.prototype._drawOverlays = function (ctx, doc, dx, dy, dw, dh, z, dpr) {
 
   // 文档边框
   ctx.save();
-  ctx.strokeStyle = 'rgba(255,255,255,.16)';
+  ctx.strokeStyle = 'rgba(28,38,60,.16)';
   ctx.lineWidth = 1;
   ctx.strokeRect(dx + 0.5, dy + 0.5, Math.max(0, dw - 1), Math.max(0, dh - 1));
   ctx.restore();
@@ -392,7 +420,7 @@ PSView.prototype._drawOverlays = function (ctx, doc, dx, dy, dw, dh, z, dpr) {
     ctx.beginPath();
     ctx.rect(dx, dy, dw, dh);
     ctx.clip();
-    ctx.strokeStyle = 'rgba(255,255,255,.12)';
+    ctx.strokeStyle = 'rgba(28,38,60,.13)';
     ctx.lineWidth = 1;
     var step = 100;
     for (var gx = step; gx < doc.width; gx += step) {
@@ -418,13 +446,13 @@ PSView.prototype._drawOverlays = function (ctx, doc, dx, dy, dw, dh, z, dpr) {
     this._strokeShape(ctx, doc, sel.shape, z, dpr, '#111318', 1);
   }
   if (this.previewShape) {
-    this._strokeShape(ctx, doc, this.previewShape, z, dpr, '#e8a13a', 1.5);
+    this._strokeShape(ctx, doc, this.previewShape, z, dpr, '#5b8fd9', 1.5);
   }
   if (this.previewRect) {
     var pr = this.previewRect;
     ctx.save();
-    ctx.strokeStyle = '#e8a13a';
-    ctx.fillStyle = 'rgba(232,161,58,.12)';
+    ctx.strokeStyle = '#5b8fd9';
+    ctx.fillStyle = 'rgba(91,143,217,.12)';
     ctx.lineWidth = 1;
     var rx = Math.round((this.panX + pr.x * z) * dpr);
     var ry = Math.round((this.panY + pr.y * z) * dpr);
@@ -437,7 +465,7 @@ PSView.prototype._drawOverlays = function (ctx, doc, dx, dy, dw, dh, z, dpr) {
   if (this.previewLine) {
     var pl = this.previewLine;
     ctx.save();
-    ctx.strokeStyle = '#e8a13a';
+    ctx.strokeStyle = '#5b8fd9';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo((this.panX + pl.x0 * z) * dpr, (this.panY + pl.y0 * z) * dpr);
@@ -446,10 +474,92 @@ PSView.prototype._drawOverlays = function (ctx, doc, dx, dy, dw, dh, z, dpr) {
     ctx.restore();
   }
 
+  // 钢笔路径预览：已落下的锚点 + 到光标的橡皮筋 + 控制柄
+  if (this.previewPath) {
+    var pp = this.previewPath;
+    var px = 1 / (z * dpr);
+    ctx.save();
+    this._docTransform(ctx, z, dpr, this.panX, this.panY);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    if (pp.pts.length >= 2) {
+      ctx.beginPath();
+      PS.shapePath(ctx, { kind: 'path', pts: pp.pts, closed: !!pp.closed });
+      ctx.strokeStyle = '#5b8fd9';
+      ctx.lineWidth = 1.6 * px;
+      ctx.stroke();
+    }
+    if (pp.cursor && pp.pts.length) {
+      var lastPt = pp.pts[pp.pts.length - 1];
+      ctx.beginPath();
+      ctx.moveTo(lastPt.x, lastPt.y);
+      ctx.lineTo(pp.cursor.x, pp.cursor.y);
+      ctx.setLineDash([6 * px, 4 * px]);
+      ctx.strokeStyle = 'rgba(91,143,217,.82)';
+      ctx.lineWidth = 1 * px;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    pp.pts.forEach(function (a, idx) {
+      if (a.hox != null || a.hoy != null) {
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(a.hox == null ? a.x : a.hox, a.hoy == null ? a.y : a.hoy);
+        ctx.strokeStyle = 'rgba(91,143,217,.6)';
+        ctx.lineWidth = 1 * px;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(a.hox == null ? a.x : a.hox, a.hoy == null ? a.y : a.hoy, 2.4 * px, 0, Math.PI * 2);
+        ctx.fillStyle = '#5b8fd9';
+        ctx.fill();
+      }
+      if (a.hix != null || a.hiy != null) {
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(a.hix == null ? a.x : a.hix, a.hiy == null ? a.y : a.hiy);
+        ctx.strokeStyle = 'rgba(91,143,217,.6)';
+        ctx.lineWidth = 1 * px;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(a.hix == null ? a.x : a.hix, a.hiy == null ? a.y : a.hiy, 2.4 * px, 0, Math.PI * 2);
+        ctx.fillStyle = '#5b8fd9';
+        ctx.fill();
+      }
+      var half = (idx === 0 ? 4.2 : 3.2) * px;
+      ctx.fillStyle = idx === 0 ? '#ffffff' : '#5b8fd9';
+      ctx.strokeStyle = '#111318';
+      ctx.lineWidth = 1 * px;
+      ctx.fillRect(a.x - half, a.y - half, half * 2, half * 2);
+      ctx.strokeRect(a.x - half, a.y - half, half * 2, half * 2);
+    });
+    ctx.restore();
+  }
+
+  // 形状工具拖拽预览
+  if (this.previewVector) {
+    var pv = this.previewVector;
+    ctx.save();
+    this._docTransform(ctx, z, dpr, this.panX, this.panY);
+    ctx.beginPath();
+    PS.shapePath(ctx, pv.shape);
+    if (pv.shape.kind !== 'line') {
+      ctx.fillStyle = pv.shape.fill || 'rgba(91,143,217,.25)';
+      ctx.globalAlpha = 0.45;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = '#5b8fd9';
+    ctx.lineWidth = 1.5 / (z * dpr);
+    ctx.setLineDash([5 / (z * dpr), 4 / (z * dpr)]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
   // 瓦片边界（调试/性能观察用）
   if (this.showTiles) {
     ctx.save();
-    ctx.strokeStyle = 'rgba(232,161,58,.35)';
+    ctx.strokeStyle = 'rgba(91,143,217,.35)';
     ctx.lineWidth = 1;
     doc.layers.forEach(function (layer) {
       if (layer.type !== 'pixel' || !layer.visible) return;

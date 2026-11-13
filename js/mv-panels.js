@@ -198,6 +198,32 @@
       var b = $(id);
       if (b) b.disabled = !has;
     });
+
+    /* 导出反馈：按钮文字 + 面板内状态行（黄点忙碌 / 绿点成功 / 红点失败） */
+    var es = MV.exportStatus ? MV.exportStatus() : { kind: '', txt: '', log: null };
+    var EX_BTN = {
+      color: ['mvExColor', '导出视图 PNG', '导出中…'],
+      depth: ['mvExDepth', '导出深度图', '导出中…'],
+      mask: ['mvExMask', '导出遮罩图', '导出中…'],
+      preview: ['mvExPreview', '预览导出结果', '生成预览中…']
+    };
+    for (var bk in EX_BTN) {
+      if (!Object.prototype.hasOwnProperty.call(EX_BTN, bk)) continue;
+      var bb = $(EX_BTN[bk][0]);
+      if (!bb) continue;
+      var on = es.kind === bk;
+      bb.textContent = on ? EX_BTN[bk][2] : EX_BTN[bk][1];
+      cls(bb, 'is-busy', on);
+    }
+    var stBox = $('mvExStatus'), stTxt = $('mvExStatusTxt');
+    if (stBox) {
+      var show = !!(es.kind || es.log);
+      cls(stBox, 'hidden', !show);
+      cls(stBox, 'is-busy', !!es.kind);
+      cls(stBox, 'is-ok', !!(es.log && es.log.ok));
+      cls(stBox, 'is-err', !!(es.log && !es.log.ok));
+      if (stTxt) stTxt.textContent = es.kind ? es.txt : (es.log ? es.log.txt : '');
+    }
     var sizeSel = $('mvExSize');
     if (sizeSel && sizeSel.value !== String(state.exSize)) sizeSel.value = String(state.exSize);
     var gapSel = $('mvExGap');
@@ -226,6 +252,55 @@
         ? '顶点 ' + MV.fmtN(s.verts) + ' · 三角面 ' + MV.fmtN(s.tris) + ' · UV ' + s.uv
         : '';
     }
+
+    /* 舞台工具栏的导出按钮也吃同一套禁止态：导出中不能连开第二个下载 */
+    var cellBtn = $('mvDlCell');
+    if (cellBtn) cellBtn.disabled = !(state.out && state.pick >= 0) || !!state.busy;
+    var allBtn = $('mvDlAll');
+    if (allBtn) allBtn.disabled = !state.out || !!state.busy;
+    var libBtn = $('mvSaveLib');
+    if (libBtn) {
+      /* 独立页没有图库，这个按钮留着只会点出一句「存不进」。直接不显示。 */
+      cls(libBtn, 'hidden', !MV.hasDesk());
+      libBtn.disabled = !state.out || !MV.hasDesk() || !!state.busy;
+    }
+  }
+
+  /* 右栏三个工作页签：layer / export / proj。只切显示，不销毁 DOM
+   * （图层参数控件的迁移、导出按钮的禁用状态都不受影响）。 */
+  function setRightTab(name) {
+    var keys = ['layers', 'export', 'proj'];
+    if (keys.indexOf(name) < 0) name = 'layers';
+    state.rightTab = name;
+    var tabs = $('mvRightTabs');
+    if (tabs) {
+      Array.prototype.forEach.call(tabs.querySelectorAll('[data-mv-tab]'), function (b) {
+        var on = b.dataset.mvTab === name;
+        cls(b, 'is-on', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('.mv-right-pane[data-pane]'), function (p) {
+      var on = p.getAttribute('data-pane') === name;
+      cls(p, 'is-on', on);
+      cls(p, 'hidden', !on);
+    });
+  }
+
+  /* 舞台左上角的上下文条：模型名 + 视图/网格/相机/画布。 */
+  function paintHud() {
+    var box = $('mvStageHud');
+    if (!box) return;
+    if (!state.cur) { box.hidden = true; return; }
+    box.hidden = false;
+    var name = $('mvHudName'), meta = $('mvHudMeta');
+    if (name) name.textContent = state.cur.name || '未命名';
+    if (meta) {
+      var L = MV.exportLayout(state.views.length, state.exSize, state.exGap, state.cols, state.compact);
+      meta.textContent = state.views.length + ' 视图 · ' + L.cols + '×' + L.rows +
+        ' · ' + (state.cam === 'ortho' ? '正交' : '透视') +
+        ' · ' + (state.exSize >= 4096 ? '4K' : '2K') + '画布';
+    }
   }
 
   function paint() {
@@ -234,6 +309,8 @@
     paintViews();
     paintInfo();
     paintExport();
+    paintHud();
+    setRightTab(state.rightTab);
     MV.paintLayers();
 
     var img = $('mvOut');
@@ -261,16 +338,6 @@
       }
     }
 
-    var cellBtn = $('mvDlCell');
-    if (cellBtn) cellBtn.disabled = !(state.out && state.pick >= 0);
-    var allBtn = $('mvDlAll');
-    if (allBtn) allBtn.disabled = !state.out;
-    var libBtn = $('mvSaveLib');
-    if (libBtn) {
-      /* 独立页没有图库，这个按钮留着只会点出一句「存不进」。直接不显示。 */
-      cls(libBtn, 'hidden', !MV.hasDesk());
-      libBtn.disabled = !state.out || !MV.hasDesk();
-    }
     var rBtn = $('mvRender');
     if (rBtn) {
       rBtn.disabled = !state.cur || state.busy === 'render' || state.busy === 'loading';
@@ -284,6 +351,7 @@
     if (spBtn) spBtn.disabled = !state.cur;
 
     paintPick();
+    if (window.MVProject && MVProject.paint) MVProject.paint();
   }
 
   /* ---------- 命中：点图上某一格 ---------- */
@@ -320,5 +388,7 @@
   MV.paintPick = paintPick;
   MV.paintExport = paintExport;
   MV.paint = paint;
+  MV.setRightTab = setRightTab;
+  MV.paintHud = paintHud;
   MV.cellAt = cellAt;
 })();

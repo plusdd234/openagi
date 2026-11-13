@@ -557,20 +557,34 @@ function stopFlow(){
 
 // ---- 节点执行 ----
 async function llmChat(sys, userText, image){
-  // 登录了就走网关（Key 在服务端），否则用本地填的 Key
-  const conn = (typeof llmConn === 'function') ? llmConn()
+  // 登录了就走网关（Key 在服务端），否则用本地填的 Key；多 Key 时由路由层挑空闲的
+  let conn = (typeof llmConn === 'function') ? llmConn()
     : { base: confGet('llmBaseUrl').replace(/\/$/, ''), key: confGet('llmKey'), model: confGet('llmModel') };
+  let lease = null;
+  if(typeof LLMRouter !== 'undefined' && LLMRouter && typeof LLMRouter.acquire === 'function'){
+    try{ lease = LLMRouter.acquire({ app:'workflow' }); }catch(_){}
+    if(lease && lease.conn) conn = lease.conn;
+  }
   const key = conn.key, base = conn.base, model = conn.model;
-  if(!key || !base || !model) throw new Error('语言模型未配置');
+  if(!key || !base || !model){
+    if(lease) lease.release({ ok:false, error:new Error('语言模型未配置') });
+    throw new Error('语言模型未配置');
+  }
   const content = [];
   if(userText) content.push({ type:'text', text: userText });
   if(image) content.push({ type:'image_url', image_url:{ url:image } });
-  const data = await post(base, key, '/chat/completions', {
-    model,
-    messages: [{ role:'system', content:sys }, { role:'user', content }],
-    temperature: .3
-  });
-  return ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '').trim();
+  try{
+    const data = await post(base, key, '/chat/completions', {
+      model,
+      messages: [{ role:'system', content:sys }, { role:'user', content }],
+      temperature: .3
+    });
+    if(lease) lease.release({ ok:true });
+    return ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '').trim();
+  }catch(e){
+    if(lease) lease.release({ ok:false, error:e, abort: !!(e && e.name === 'AbortError') });
+    throw e;
+  }
 }
 
 // 流式对话：逐块回调，60 秒无新内容自动中断
@@ -578,11 +592,22 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
   // 同 llmChat：登录走网关，未登录走本地 Key
   /* opts.conn 可覆盖本次连接（桌面聊天面板按用户在下拉里选的模型/来源走），
      不传 opts 时行为完全不变，避免影响设置页与工作流节点的既有链路。 */
-  const conn = (opts && opts.conn) ? opts.conn
+  let conn = (opts && opts.conn) ? opts.conn
     : ((typeof llmConn === 'function') ? llmConn()
     : { base: confGet('llmBaseUrl').replace(/\/$/, ''), key: confGet('llmKey'), model: confGet('llmModel') });
+  /* 多 Key 路由：没显式指定「已租用」时，按 app 选一条空闲凭据。
+     网关 / Ollama 这类单一来源由路由层原样放行，行为与以前一致。 */
+  let lease = null;
+  let leaseFail = null;
+  if(!(opts && opts._leased) && typeof LLMRouter !== 'undefined' && LLMRouter && typeof LLMRouter.acquire === 'function'){
+    try{ lease = LLMRouter.acquire({ app:(opts && opts.app) || 'workflow', conn:(opts && opts.conn) || null }); }catch(_){}
+    if(lease && lease.conn) conn = lease.conn;
+  }
   const key = conn.key, base = conn.base, model = conn.model;
-  if(!key || !base || !model) throw new Error('语言模型未配置');
+  if(!key || !base || !model){
+    if(lease) lease.release({ ok:false, error:new Error('语言模型未配置') });
+    throw new Error('语言模型未配置');
+  }
 
   const limitMs = opts && Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 0;
   const ctrl = new AbortController();
@@ -835,6 +860,7 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
     if(wantTools) return { text: text, toolCalls: calls, finishReason: finishReason };
     return text;
   }catch(e){
+    leaseFail = e;
     if(e && e.name === 'AbortError'){
       const el = elapsedSec();
       if(abortReason === 'stop') throw stopError();
@@ -861,6 +887,13 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
     clearTimeout(idle);
     clearTimeout(firstTimer);
     clearTimeout(hard);
+    if(lease){
+      lease.release({
+        ok: !leaseFail && !abortReason,
+        error: leaseFail || abortReason,
+        abort: !!abortReason || !!(leaseFail && leaseFail.name === 'AbortError')
+      });
+    }
   }
 }
 /* 没传系统提示词时的兜底人设。原来这份定义在「基线工具」里，基线工具整块移除后
@@ -931,7 +964,7 @@ async function wfAiTask(instruction, sections, images, outs, onDelta, timeoutMs)
   }
   const content = [{ type:'text', text: parts.join('\n\n') }];
   images.forEach(url => content.push({ type:'image_url', image_url:{ url } }));
-  const raw = await llmStreamRequest(sys, [{ role:'user', content }], onDelta, { timeoutMs, signal: runSignal() });
+  const raw = await llmStreamRequest(sys, [{ role:'user', content }], onDelta, { timeoutMs, signal: runSignal(), app: 'workflow' });
   if(!raw) throw new Error('分析任务未返回内容');
   return parseAiTaskResult(raw, outs);
 }
@@ -1202,7 +1235,7 @@ async function wfSplitViews(imageUrl, prompt, views, timeoutSec, onDelta){
   const raw = await llmStreamRequest(sys, [{ role:'user', content:[
     { type:'text', text: user },
     { type:'image_url', image_url:{ url: imageUrl } }
-  ]}], onDelta, { timeoutMs, signal: runSignal() });
+  ]}], onDelta, { timeoutMs, signal: runSignal(), app: 'workflow' });
   return parseSplitJson(raw, views);
 }
 
@@ -1224,7 +1257,7 @@ async function wfFeatureLocate(imageUrl, requirement, timeoutSec, more){
   const raw = await llmStreamRequest(sys, [{ role:'user', content:[
     { type:'text', text: user },
     { type:'image_url', image_url:{ url: imageUrl } }
-  ]}], null, { timeoutMs, signal: runSignal() });
+  ]}], null, { timeoutMs, signal: runSignal(), app: 'workflow' });
   const text = String(raw || '').trim();
   let obj = null;
   const m = text.match(/\{[\s\S]*\}/);
@@ -1264,7 +1297,7 @@ async function wfFeatureVerify(cells, crops, requirement, timeoutSec){
   const content = [{ type:'text', text: user }];
   crops.forEach(u => content.push({ type:'image_url', image_url:{ url: u } }));
   const timeoutMs = Math.round((Number(timeoutSec) || 180) * 1000);
-  const raw = await llmStreamRequest(sys, [{ role:'user', content }], null, { timeoutMs, signal: runSignal() });
+  const raw = await llmStreamRequest(sys, [{ role:'user', content }], null, { timeoutMs, signal: runSignal(), app: 'workflow' });
   const text = String(raw || '').trim();
   let obj = null;
   const m = text.match(/\{[\s\S]*\}/);
@@ -1462,7 +1495,7 @@ async function wfAiBranch(instruction, branches, ctx, timeoutSec, onDelta){
   const content = [{ type:'text', text: user }];
   imgs.forEach(img => content.push({ type:'image_url', image_url:{ url: img.url } }));
   const timeoutMs = Math.round((Number(timeoutSec) || 120) * 1000);
-  const raw = await llmStreamRequest(sys, [{ role:'user', content }], onDelta, { timeoutMs, signal: runSignal() });
+  const raw = await llmStreamRequest(sys, [{ role:'user', content }], onDelta, { timeoutMs, signal: runSignal(), app: 'workflow' });
   if(!raw) throw new Error('AI 分支未返回内容');
   return parseAiBranchResult(raw, branches);
 }

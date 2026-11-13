@@ -1,49 +1,199 @@
 /* ============================================================
  * app.css 拆分 · 12-media
- * 播放器 App / 名片 App
+ * 视频库 App / 名片 App
  *
  * ⚠ 这份文件是按**原始行号连续切片**出来的，各文件之间靠 index.html 的
  *   <link> 顺序维持层叠关系。加新样式请放进对应 App 的文件，不要在这里
  *   随手追加——也不要在 08-theme 之前的文件里写「最终样式」，那会被覆盖。
  * ============================================================ */
 
-  /* ---- 播放器 App ----
+  /* ---- 视频库 App ----
      舞台深色、侧栏浅色：看片的时候不该有一圈白边刺眼，但播放列表要看得清。
-     三层结构 stage(video+ctrl) / side(folders+list+foot)，中间用 12px 缝分开。 */
+     结构 head(当前集信息) / screen(video) / ctrl(进度 + 控制)，侧栏是媒体库。
+     强调色仍用金色 —— 全站唯一的强调色，视频库不另起一套。 */
   .pl-wrap {
-    display: flex; gap: 12px; height: 100%; min-height: 0;
+    position: relative; display: flex; gap: 12px; height: 100%; min-height: 0;
   }
   .pl-stage {
-    flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;
+    position: relative; flex: 1 1 auto; min-width: 0;
+    display: flex; flex-direction: column;
     border-radius: 12px; overflow: hidden;
     background: #14161c; border: 1px solid #0d0f14;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 12px 28px -20px rgba(15,20,30,.6);
   }
+  .pl-stage:fullscreen { border-radius: 0; border: 0; }
   .pl-screen {
     position: relative; flex: 1 1 auto; min-height: 0;
-    display: grid; place-items: center; background: #0b0d11; overflow: hidden;
+    display: grid; place-items: center; overflow: hidden;
+    background: radial-gradient(120% 82% at 50% 38%, #151922 0%, #0a0c11 62%, #08090c 100%);
   }
   .pl-screen video {
-    width: 100%; height: 100%; display: block; object-fit: contain; background: #0b0d11;
+    width: 100%; height: 100%; display: block; object-fit: contain; background: transparent;
   }
-  /* 全屏时把整块舞台顶满，控制条压在底部半透明 */
-  .pl-screen:fullscreen { background: #000; }
-  .pl-screen:fullscreen video { width: 100vw; height: 100vh; }
+  /* 有片子在播时保持纯黑（避免黑边泛灰）；空舞台则留一点中心光，别像块死黑板 */
+  .pl-stage.has-media .pl-screen { background: #08090c; }
+  /* 字幕贴着画面底部，带半透明底：白字压在亮画面上会直接消失 */
+  .pl-screen video::cue {
+    background: rgba(0,0,0,.62); color: #fff; font-size: 19px; line-height: 1.45;
+  }
+
+  /* 顶栏：压在画面上方的一条渐变，只标「我在看哪一集」，不挡画面中心 */
+  .pl-head {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 3;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    padding: 12px 14px 30px;
+    background: linear-gradient(180deg, rgba(6,8,12,.78), rgba(6,8,12,.36) 56%, transparent);
+    pointer-events: none;
+    transition: opacity .22s ease, transform .22s ease;
+  }
+  .pl-head-l { min-width: 0; }
+  .pl-head-t {
+    font-size: 13px; font-weight: 600; color: #f2f4f8; letter-spacing: .01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    text-shadow: 0 1px 3px rgba(0,0,0,.5);
+  }
+  .pl-head-s {
+    margin-top: 3px; font-size: 11px; color: #9aa3b5;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .pl-head-r { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; }
+  .pl-badge {
+    height: 19px; padding: 0 7px; display: inline-flex; align-items: center;
+    border-radius: 5px; background: rgba(255,255,255,.09);
+    border: 1px solid rgba(255,255,255,.1);
+    color: #c9d0dd; font-size: 10px; letter-spacing: .02em;
+    font-variant-numeric: tabular-nums;
+  }
 
   .pl-empty {
     position: absolute; inset: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 8px; text-align: center;
+    align-items: center; justify-content: center; gap: 6px; text-align: center;
     padding: 24px; color: #8d94a6; pointer-events: none;
   }
   .pl-empty.hidden { display: none; }
-  .pl-empty svg { width: 40px; height: 40px; opacity: .55; }
+  .pl-empty-ico {
+    width: 58px; height: 58px; display: grid; place-items: center; margin-bottom: 4px;
+    border-radius: 16px; background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.07);
+  }
+  .pl-empty-ico svg { width: 26px; height: 26px; opacity: .6; }
   .pl-empty-t { font-size: 13px; font-weight: 600; color: #c3c9d6; }
-  .pl-empty-s { font-size: 12px; line-height: 1.6; max-width: 380px; }
+  .pl-empty-s { font-size: 12px; line-height: 1.6; max-width: 380px; color: #7f8798; }
+  .pl-empty-acts { flex: 0 0 auto; display: flex; gap: 7px; margin-top: 10px; pointer-events: auto; }
+  .pl-empty-acts.hidden { display: none; }
+  .pl-empty-btn {
+    height: 27px; padding: 0 12px; border-radius: 7px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06);
+    color: #dfe4ee; font-size: 11.5px;
+    transition: background .12s ease, border-color .12s ease, color .12s ease;
+  }
+  .pl-empty-btn:hover { background: rgba(255,255,255,.12); color: #fff; }
+  .pl-empty-btn.primary {
+    background: #f0b429; border-color: #f0b429; color: #2b2103; font-weight: 600;
+  }
+  .pl-empty-btn.primary:hover { background: #f5c44a; border-color: #f5c44a; }
+
+  /* OSD：倍速 / 音量 / 快进这类「按了但画面上看不出来」的反馈 */
+  .pl-osd {
+    position: absolute; left: 50%; top: 50%; z-index: 5;
+    transform: translate(-50%, -50%) scale(.96);
+    min-width: 76px; padding: 13px 20px; border-radius: 11px;
+    background: rgba(10,12,17,.82); border: 1px solid rgba(255,255,255,.08);
+    color: #fff; font-size: 15px; font-weight: 600; letter-spacing: .02em;
+    text-align: center; font-variant-numeric: tabular-nums;
+    opacity: 0; pointer-events: none;
+    transition: opacity .16s ease, transform .16s ease;
+    box-shadow: 0 18px 40px -22px rgba(0,0,0,.8);
+  }
+  .pl-osd.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+
+  /* 快捷键面板：盖在画面上，白字深底，和舞台同一套色 */
+  .pl-help {
+    position: absolute; inset: 0; z-index: 7; display: grid; place-items: center;
+    background: rgba(6,8,12,.62);
+  }
+  .pl-help.hidden { display: none; }
+  .pl-help-card {
+    width: 332px; max-width: calc(100% - 40px); padding: 14px 16px 12px;
+    border-radius: 13px; background: #171b22; border: 1px solid #2a303c;
+    box-shadow: 0 26px 60px -30px rgba(0,0,0,.8); color: #d7dce6;
+  }
+  .pl-help-h {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 9px; border-bottom: 1px solid #242a34;
+    font-size: 12.5px; font-weight: 600; color: #fff;
+  }
+  .pl-help-x {
+    width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent;
+    color: #9aa3b5; font-size: 15px; line-height: 1; cursor: pointer;
+  }
+  .pl-help-x:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .pl-help-grid {
+    display: grid; grid-template-columns: auto 1fr; gap: 7px 12px;
+    margin-top: 11px; font-size: 11.5px; align-items: center;
+  }
+  .pl-help-grid kbd {
+    display: inline-flex; align-items: center; height: 20px; padding: 0 6px;
+    border-radius: 5px; border: 1px solid #333a47; background: #1e232c;
+    color: #c9d0dd; font-family: var(--mono); font-size: 10.5px; white-space: nowrap;
+  }
+  .pl-help-grid span { color: #9aa3b5; }
+  .pl-help-foot {
+    margin-top: 10px; padding-top: 9px; border-top: 1px solid #242a34;
+    font-size: 10.5px; color: #7f8798;
+  }
 
   .pl-ctrl {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 7px;
-    padding: 8px 12px; background: #191c23; border-top: 1px solid #23262f;
+    flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px;
+    padding: 9px 13px 10px; background: #16191f; border-top: 1px solid #23262f;
   }
+  .pl-ctrl-seek { display: flex; align-items: center; gap: 10px; }
+  /* 进度条：自绘轨道 + 原生 range 只负责交互。
+     缓冲段和已播段都画在输入框下面，拇指才不会把颜色挡住。 */
+  .pl-seek-wrap {
+    position: relative; flex: 1 1 auto; min-width: 60px; height: 16px;
+    display: flex; align-items: center;
+  }
+  .pl-seek-rail {
+    position: absolute; left: 0; right: 0; height: 4px; border-radius: 3px;
+    background: #2b303b; overflow: hidden; transition: height .12s ease;
+  }
+  .pl-seek-wrap:hover .pl-seek-rail { height: 6px; }
+  .pl-seek-buf {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #3b4352;
+  }
+  .pl-seek-fill {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+    background: linear-gradient(90deg, #d8a72e, #f0b429);
+  }
+  .pl-seek {
+    position: relative; z-index: 2; width: 100%; height: 16px; margin: 0;
+    appearance: none; -webkit-appearance: none; background: transparent; cursor: pointer;
+  }
+  .pl-seek::-webkit-slider-runnable-track { height: 16px; background: transparent; }
+  .pl-seek::-webkit-slider-thumb {
+    appearance: none; -webkit-appearance: none; width: 11px; height: 11px; margin-top: 2.5px;
+    border-radius: 50%; background: #fff; border: 0;
+    box-shadow: 0 0 0 3px rgba(240,180,41,.22), 0 1px 3px rgba(0,0,0,.5);
+    transition: transform .12s ease, background .12s ease;
+  }
+  .pl-seek:hover::-webkit-slider-thumb { transform: scale(1.18); background: #f0b429; }
+  .pl-seek-tip {
+    position: absolute; bottom: 16px; transform: translateX(-50%);
+    padding: 2px 6px; border-radius: 5px; white-space: nowrap;
+    background: rgba(8,10,14,.94); border: 1px solid #2f3643;
+    color: #e6eaf2; font-size: 10px; font-variant-numeric: tabular-nums;
+    opacity: 0; pointer-events: none; transition: opacity .1s ease; z-index: 3;
+  }
+  .pl-seek-tip.show { opacity: 1; }
+  .pl-time {
+    flex: 0 0 auto; min-width: 92px; text-align: right;
+    font-size: 11px; color: #98a0b2; font-variant-numeric: tabular-nums; letter-spacing: .01em;
+  }
+  .pl-ctrl-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .pl-ctrl-l, .pl-ctrl-r { display: flex; align-items: center; gap: 5px; min-width: 0; }
+  .pl-ctrl-sep { flex: 0 0 auto; width: 1px; height: 16px; margin: 0 3px; background: #2b303b; }
+
   .pl-btn {
     flex: 0 0 auto; width: 28px; height: 28px; display: grid; place-items: center;
     border: 0; border-radius: 8px; background: transparent; color: #cfd5e2;
@@ -51,45 +201,103 @@
   }
   .pl-btn:hover { background: rgba(255,255,255,.09); color: #fff; }
   .pl-btn:active { background: rgba(255,255,255,.14); }
+  .pl-btn:disabled { opacity: .35; cursor: default; }
+  .pl-btn:disabled:hover { background: transparent; color: #cfd5e2; }
   .pl-btn svg { width: 15px; height: 15px; display: block; }
-  .pl-btn-main { width: 32px; height: 32px; background: rgba(255,255,255,.1); }
-  .pl-btn-main svg { width: 17px; height: 17px; }
-  .pl-rate { width: auto; min-width: 34px; padding: 0 6px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .pl-time {
-    flex: 0 0 auto; font-size: 11px; color: #9aa2b4; font-variant-numeric: tabular-nums;
-    letter-spacing: .01em; min-width: 84px; text-align: center;
+  .pl-btn.is-on { color: #f0b429; background: rgba(240,180,41,.12); }
+  .pl-btn-main { width: 34px; height: 34px; background: rgba(255,255,255,.1); }
+  .pl-btn-main svg { width: 18px; height: 18px; }
+  .pl-btn-skip { color: #8f98aa; }
+  .pl-cc.is-on { color: #f0b429; background: rgba(240,180,41,.1); }
+  .pl-cc.is-off { color: #6f7889; }
+  .pl-rate {
+    width: auto; min-width: 38px; padding: 0 7px;
+    font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
   }
-  /* 进度条：细长一条，悬停变粗。用 appearance:none 自绘，
-     默认样式在深色底上几乎看不见（Chromium 给的是系统灰）。 */
-  .pl-seek {
-    flex: 1 1 auto; min-width: 60px; height: 4px; appearance: none; -webkit-appearance: none;
-    background: #2c313c; border-radius: 3px; cursor: pointer; outline-offset: 6px;
+
+  .pl-pop { position: relative; flex: 0 0 auto; }
+  .pl-menu {
+    position: absolute; right: 0; bottom: calc(100% + 7px); z-index: 8;
+    width: 88px; padding: 4px; border-radius: 9px;
+    background: #1c2029; border: 1px solid #2c323e;
+    box-shadow: 0 18px 36px -18px rgba(0,0,0,.8);
   }
-  .pl-seek::-webkit-slider-thumb {
-    appearance: none; -webkit-appearance: none; width: 11px; height: 11px;
-    border-radius: 50%; background: var(--gold); border: 0;
-    box-shadow: 0 0 0 3px rgba(240,180,41,.18); transition: transform .12s ease;
+  .pl-menu.hidden { display: none; }
+  .pl-menu-i {
+    display: block; width: 100%; height: 25px; padding: 0 8px;
+    border: 0; border-radius: 6px; background: transparent;
+    color: #c9d0dd; font-size: 11px; text-align: left; cursor: pointer;
+    font-variant-numeric: tabular-nums;
   }
-  .pl-seek:hover::-webkit-slider-thumb { transform: scale(1.2); }
+  .pl-menu-i:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .pl-menu-i.is-on { color: #f0b429; font-weight: 600; }
+  .pl-menu-i.is-on::after { content: '✓'; float: right; font-size: 10px; }
+
+  .pl-vol-wrap { display: flex; align-items: center; gap: 2px; }
   .pl-vol {
-    flex: 0 0 62px; width: 62px; height: 4px; appearance: none; -webkit-appearance: none;
-    background: #2c313c; border-radius: 3px; cursor: pointer;
+    flex: 0 0 64px; width: 64px; height: 4px;
+    appearance: none; -webkit-appearance: none; cursor: pointer;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #cfd5e2 0 var(--v, 100%), #2c313c var(--v, 100%));
   }
+  .pl-vol::-webkit-slider-runnable-track { height: 4px; background: transparent; }
   .pl-vol::-webkit-slider-thumb {
-    appearance: none; -webkit-appearance: none; width: 10px; height: 10px;
-    border-radius: 50%; background: #cfd5e2; border: 0;
+    appearance: none; -webkit-appearance: none; width: 10px; height: 10px; margin-top: -3px;
+    border-radius: 50%; background: #e3e8f1; border: 0;
   }
+
+  /* 全屏：控制条压成半透明浮层，鼠标静止后跟着顶栏一起收起 */
+  .pl-stage:fullscreen .pl-ctrl {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
+    padding: 38px 22px 16px; border-top: 0;
+    background: linear-gradient(0deg, rgba(6,8,12,.94), rgba(6,8,12,.66) 58%, transparent);
+    transition: opacity .22s ease, transform .22s ease;
+  }
+  .pl-stage.is-idle { cursor: none; }
+  .pl-stage.is-idle .pl-head { opacity: 0; transform: translateY(-14px); }
+  .pl-stage.is-idle .pl-ctrl { opacity: 0; transform: translateY(16px); pointer-events: none; }
 
   /* ---- 侧栏 ---- */
   .pl-side {
-    flex: 0 0 268px; display: flex; flex-direction: column; min-height: 0;
+    flex: 0 0 300px; display: flex; flex-direction: column; min-height: 0;
     border-radius: 12px; overflow: hidden;
     background: #fff; border: 1px solid #e3e6ea;
+    box-shadow: 0 10px 26px -22px rgba(28,38,60,.45);
   }
   .pl-side-head {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-    padding: 9px 10px; border-bottom: 1px solid #eceef2;
+    flex: 0 0 auto; padding: 10px 11px 9px;
+    border-bottom: 1px solid #eceef2;
+    background: linear-gradient(180deg, #fff, #fcfcfd);
   }
+  .pl-side-title { display: flex; align-items: baseline; gap: 8px; }
+  .pl-side-name { font-size: 12.5px; font-weight: 700; color: #2b3341; letter-spacing: .02em; }
+  .pl-count {
+    flex: 0 0 auto; margin-left: auto; font-size: 10.5px; color: #8a93a3;
+    font-variant-numeric: tabular-nums;
+  }
+  .pl-search {
+    display: flex; align-items: center; gap: 6px; height: 29px;
+    margin: 8px 0; padding: 0 8px;
+    border: 1px solid #e3e6ea; border-radius: 8px; background: #f7f8fa;
+    transition: border-color .12s ease, box-shadow .12s ease, background .12s ease;
+  }
+  .pl-search:focus-within {
+    border-color: #f0c855; background: #fff; box-shadow: 0 0 0 3px rgba(240,180,41,.13);
+  }
+  .pl-search svg { width: 13px; height: 13px; flex: 0 0 auto; color: #9aa2b2; }
+  .pl-search-in {
+    flex: 1 1 auto; min-width: 0; border: 0; background: transparent;
+    font-size: 11.5px; color: #1f2328; outline: none;
+  }
+  .pl-search-in::placeholder { color: #a8b0be; }
+  .pl-search-in::-webkit-search-cancel-button { display: none; }
+  .pl-search-x {
+    flex: 0 0 auto; width: 17px; height: 17px; border: 0; border-radius: 50%;
+    background: #e7eaef; color: #6a7488; font-size: 11px; line-height: 1; cursor: pointer;
+  }
+  .pl-search-x:hover { background: #dde1e8; color: #1f2328; }
+  .pl-search-x.hidden { display: none; }
+
   /* 分组 chips：**换行而不是横向滚**。横向滚会把第三个分组藏起来，
    * 用户根本不知道「散文件」那组存在；但分组可能很多（二十部番），
    * 所以限两行高度，超了自己竖向滚。 */
@@ -108,31 +316,67 @@
   }
   .pl-chip:hover { border-color: #cfd6e0; color: #1f2328; }
   .pl-chip.is-on { background: #fff6e2; border-color: #f0c855; color: #a06c00; font-weight: 600; }
-  .pl-count { flex: 0 0 auto; font-size: 10.5px; color: #8a93a3; font-variant-numeric: tabular-nums; }
 
-  .pl-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 5px; }
+  .pl-list-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 7px 11px 5px; }
+  .pl-list-lab { flex: 1 1 auto; font-size: 10px; font-weight: 600; color: #9aa2b2; letter-spacing: .08em; }
+  .pl-sort {
+    flex: 0 0 auto; height: 20px; padding: 0 7px;
+    border: 1px solid #e3e6ea; border-radius: 6px; background: #fff;
+    color: #6a7488; font-size: 10.5px; cursor: pointer;
+    transition: border-color .12s ease, color .12s ease;
+  }
+  .pl-sort:hover { border-color: #cfd6e0; color: #1f2328; }
+  .pl-mini {
+    flex: 0 0 auto; width: 20px; height: 20px; display: grid; place-items: center;
+    border: 1px solid #e3e6ea; border-radius: 6px; background: #fff;
+    color: #8a93a3; cursor: pointer;
+  }
+  .pl-mini:hover { border-color: #cfd6e0; color: #1f2328; }
+  .pl-mini svg { width: 12px; height: 12px; }
+
+  .pl-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 3px 6px 6px; }
   .pl-item {
     position: relative; display: flex; align-items: center; gap: 8px; width: 100%;
-    padding: 7px 8px; border: 1px solid transparent; border-radius: 8px;
+    padding: 6px 8px; border: 1px solid transparent; border-radius: 8px;
     background: transparent; text-align: left; cursor: pointer; color: #1f2328;
     transition: background .12s ease, border-color .12s ease;
   }
+  .pl-item::before {
+    content: ''; position: absolute; left: 1px; top: 50%; width: 2px; height: 0;
+    transform: translateY(-50%); border-radius: 2px; background: #f0b429;
+    transition: height .14s ease;
+  }
   .pl-item:hover { background: #f5f6f8; }
   .pl-item.is-cur { background: #fff8e8; border-color: #f2d27a; }
+  .pl-item.is-cur::before { height: 18px; }
   .pl-no {
-    flex: 0 0 20px; font-size: 10.5px; color: #a2a9b6; font-variant-numeric: tabular-nums;
-    text-align: right;
+    flex: 0 0 22px; font-size: 10.5px; color: #a2a9b6;
+    font-variant-numeric: tabular-nums; text-align: right;
   }
   .pl-item.is-cur .pl-no { color: #b07d00; font-weight: 700; }
+  .pl-row { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
   .pl-nm {
-    flex: 1 1 auto; min-width: 0; font-size: 12px; line-height: 1.35;
+    font-size: 12px; line-height: 1.35;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .pl-item.is-cur .pl-nm { font-weight: 600; }
-  .pl-meta { flex: 0 0 auto; font-size: 10px; color: #a2a9b6; font-variant-numeric: tabular-nums; }
+  .pl-sub { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .pl-tag {
+    flex: 0 0 auto; height: 14px; line-height: 14px; padding: 0 4px;
+    border-radius: 3px; background: #eef1f6; color: #7a8496;
+    font-family: var(--mono); font-size: 8.5px; letter-spacing: .03em;
+  }
+  .pl-meta {
+    flex: 0 0 auto; font-size: 10px; color: #a2a9b6;
+    font-variant-numeric: tabular-nums;
+  }
+  .pl-state {
+    flex: 0 0 auto; margin-left: auto; font-size: 9.5px; color: #b07d00;
+    font-variant-numeric: tabular-nums;
+  }
   /* 看过的进度条：贴在条目底部的一条细线 */
   .pl-done {
-    position: absolute; left: 8px; bottom: 2px; height: 2px; border-radius: 2px;
+    position: absolute; left: 6px; bottom: 1px; height: 2px; border-radius: 2px;
     background: #f0b429; opacity: .75;
   }
   .pl-warn {
@@ -141,6 +385,80 @@
     font-size: 9px; font-weight: 700; font-style: normal; vertical-align: 1px;
   }
   .pl-hint { padding: 22px 14px; text-align: center; font-size: 12px; color: #9aa2b2; line-height: 1.7; }
+
+  /* ---- 列表行内操作：重命名 / 更多菜单 / 删除确认 ---- */
+  .pl-item.is-sel { box-shadow: inset 0 0 0 1px rgba(240,180,41,.55); }
+  .pl-item:focus-visible { outline: 2px solid rgba(240,180,41,.5); outline-offset: -2px; }
+  .pl-nm.hidden { display: none; }
+  .pl-rename-in {
+    width: 100%; height: 20px; padding: 0 5px; margin: -2px 0 1px;
+    border: 1px solid #f0c855; border-radius: 5px; background: #fff;
+    font: inherit; font-size: 12px; color: #1f2328; outline: none;
+    box-shadow: 0 0 0 3px rgba(240,180,41,.15);
+  }
+  /* 「⋯」平时藏起来，悬停 / 选中 / 键盘聚焦时出现：
+     列表是看片时的视觉主体，常驻一排按钮会把片名挤窄。 */
+  .pl-more {
+    flex: 0 0 auto; width: 20px; height: 20px; display: grid; place-items: center;
+    border: 0; border-radius: 5px; background: transparent; color: #9aa2b2;
+    font-size: 13px; line-height: 1; cursor: pointer; opacity: 0;
+    transition: opacity .12s ease, background .12s ease, color .12s ease;
+  }
+  .pl-item:hover .pl-more,
+  .pl-item:focus-within .pl-more,
+  .pl-item.is-sel .pl-more { opacity: 1; }
+  .pl-more:hover { background: #eef1f6; color: #1f2328; }
+
+  .pl-ctx {
+    position: fixed; z-index: 60; min-width: 176px; padding: 5px;
+    border: 1px solid #e3e6ea; border-radius: 9px; background: #fff;
+    box-shadow: 0 18px 44px -20px rgba(28,38,60,.5), 0 2px 6px rgba(28,38,60,.08);
+    font-size: 11.5px;
+  }
+  .pl-ctx.hidden { display: none; }
+  .pl-ctx-i {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    width: 100%; height: 28px; padding: 0 8px; border: 0; border-radius: 6px;
+    background: transparent; color: #2b3341; font-size: 11.5px; text-align: left;
+    cursor: pointer;
+  }
+  .pl-ctx-i:hover, .pl-ctx-i:focus-visible { background: #f5f6f8; outline: none; }
+  .pl-ctx-i.danger { color: #c9342a; }
+  .pl-ctx-i.danger:hover, .pl-ctx-i.danger:focus-visible { background: #fdecea; }
+  .pl-ctx-i kbd {
+    font-family: var(--mono); font-size: 9.5px; line-height: 15px; padding: 0 4px;
+    border: 1px solid #e3e6ea; border-radius: 4px; background: #fafbfc; color: #9aa2b2;
+  }
+  .pl-ctx-sep { height: 1px; margin: 4px 6px; background: #eceef2; }
+  .pl-ctx-sep.hidden { display: none; }
+
+  .pl-dialog {
+    position: absolute; inset: 0; z-index: 50; display: grid; place-items: center;
+    background: rgba(24,30,40,.3); backdrop-filter: blur(2px);
+    animation: pl-fade .16s ease;
+  }
+  .pl-dialog.hidden { display: none; }
+  .pl-dialog-card {
+    width: 322px; max-width: calc(100% - 40px); padding: 16px 16px 13px;
+    border-radius: 12px; background: #fff; border: 1px solid #e3e6ea;
+    box-shadow: 0 26px 60px -26px rgba(20,30,50,.45), 0 2px 8px rgba(20,30,50,.06);
+  }
+  .pl-dialog-t { font-size: 13px; font-weight: 700; color: #1f2328; }
+  .pl-dialog-s {
+    margin-top: 7px; font-size: 11.5px; line-height: 1.65; color: #6a7488;
+    word-break: break-all;
+  }
+  .pl-dialog-acts { display: flex; justify-content: flex-end; gap: 7px; margin-top: 14px; }
+  .pl-dialog-btn {
+    height: 27px; padding: 0 12px; border-radius: 7px; cursor: pointer;
+    border: 1px solid #e3e6ea; background: #fff; color: #2b3341; font-size: 11.5px;
+    transition: border-color .12s ease, background .12s ease, color .12s ease;
+  }
+  .pl-dialog-btn:hover { border-color: #cfd6e0; background: #fafbfc; }
+  .pl-dialog-btn.danger { background: #c9342a; border-color: #c9342a; color: #fff; font-weight: 600; }
+  .pl-dialog-btn.danger:hover { background: #b52d24; border-color: #b52d24; }
+  .pl-dialog-btn:disabled { opacity: .6; cursor: default; }
+  @keyframes pl-fade { from { opacity: 0; } to { opacity: 1; } }
 
   .pl-dl { flex: 0 0 auto; padding: 9px 10px; border-top: 1px solid #eceef2; background: #fafbfc; }
   .pl-dl.hidden { display: none; }
@@ -156,7 +474,7 @@
   .pl-prog { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid #eceef2; }
   .pl-prog.hidden { display: none; }
   .pl-prog-bar { flex: 1 1 auto; height: 4px; border-radius: 3px; background: #eceef2; overflow: hidden; }
-  .pl-prog-bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--gold), var(--gold-deep)); transition: width .2s ease; }
+  .pl-prog-bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #d8a72e, #f0b429); transition: width .2s ease; }
   .pl-prog-txt { flex: 0 0 auto; font-size: 10.5px; color: #6a7488; font-variant-numeric: tabular-nums; }
   .pl-prog-x {
     flex: 0 0 auto; border: 0; background: transparent; color: #c9342a;
@@ -165,10 +483,23 @@
   .pl-prog-x:hover { background: #fdecea; }
 
   .pl-foot {
-    flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 5px;
-    padding: 8px 10px; border-top: 1px solid #eceef2; background: #fafbfc;
+    flex: 0 0 auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px;
+    padding: 9px 10px; border-top: 1px solid #eceef2; background: #fafbfc;
   }
-  .pl-foot .btn { flex: 1 1 auto; justify-content: center; }
+  .pl-foot .btn { width: 100%; justify-content: center; }
+
+  /* 窄窗口：先收音量条，再收 ±10 秒按钮；列表本身可以缩，但不换行堆叠 */
+  @media (max-width: 1180px) {
+    .pl-side { flex-basis: 258px; }
+    .pl-vol { flex-basis: 48px; width: 48px; }
+    .pl-btn-skip, .pl-ctrl-sep { display: none; }
+  }
+  @media (max-width: 1000px) {
+    .pl-side { flex-basis: 226px; }
+    .pl-vol-wrap { display: none; }
+    .pl-time { min-width: 76px; font-size: 10px; }
+    .pl-head-r { display: none; }
+  }
 
   /* ===================== 名片 App =====================
      两栏：左边「我是谁 / 在做什么 / 做过什么」，右边「怎么找我 / 怎么请我喝咖啡」。

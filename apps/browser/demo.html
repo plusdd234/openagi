@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本地示例页 · 内嵌浏览器测试</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 34px 26px 48px;
+    background: linear-gradient(180deg, #fbfcfe 0%, #f4f7fb 100%);
+    color: #1f2328;
+    font: 14px/1.75 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  .tag {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    background: #fdf3dc;
+    border: 1px solid #f2dfb2;
+    color: #a06f06;
+    font-size: 11.5px;
+    letter-spacing: .3px;
+  }
+  h1 { margin: 12px 0 6px; font-size: 24px; letter-spacing: .2px; }
+  p.lead { margin: 0 0 20px; color: #5b6470; font-size: 13.5px; }
+  .card {
+    padding: 18px 20px;
+    border: 1px solid #e6ebf2;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 10px 26px -24px rgba(28, 38, 60, .5);
+  }
+  .card + .card { margin-top: 12px; }
+  h2 { margin: 0 0 8px; font-size: 14px; }
+  ul { margin: 8px 0 0; padding-left: 20px; color: #4b5563; }
+  li + li { margin-top: 4px; }
+  code {
+    padding: 1px 5px;
+    border-radius: 5px;
+    background: #f2f5f9;
+    border: 1px solid #e6ebf2;
+    font: 12px/1.6 Consolas, "Courier New", monospace;
+  }
+  a { color: #b67a05; }
+  .foot { margin-top: 20px; color: #9aa1ab; font-size: 11.5px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #3fbf7f; margin-right: 6px; vertical-align: 1px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <span class="tag">本地页面 · 不走网络</span>
+    <h1>本地示例页</h1>
+    <p class="lead">你现在看到的内容，是由桌面工作台的「浏览器」App 通过 iframe 加载的。</p>
+
+    <div class="card">
+      <h2><span class="dot"></span>看到这一页，说明内嵌链路是通的</h2>
+      <ul>
+        <li>地址栏里的地址应指向 <code>apps/browser/demo.html</code>。</li>
+        <li>点地址栏左边的「后退」可以回到起始页，「前进」再回来。</li>
+        <li>点「刷新」会重新加载这一页，窗口顶部的金色进度线会走一遍。</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>为什么很多网站打不开</h2>
+      <p style="margin:0">
+        不少站点会发送 <code>X-Frame-Options: DENY</code> 或
+        <code>Content-Security-Policy: frame-ancestors</code>，明确禁止自己的页面被别的页面内嵌。
+        浏览器会遵守这条策略，于是 iframe 里只剩空白 —— 这不是 App 加载失败。
+        遇到这种情况，用状态栏右下的「在系统浏览器打开」。
+      </p>
+    </div>
+
+    <p class="foot">这个页面就是普通的 HTML，没有任何外部依赖，断网也能显示。</p>
+  </div>
+</body>
+</html>

@@ -58,6 +58,14 @@ registerProvider({
   async generate(args, opts){
     const { base, model, key } = llmCfg();
     if(!base || !model || !key) throw new Error('语言模型未配置：Base URL / 模型 / API Key');
+    if(typeof LLMRouter !== 'undefined' && LLMRouter && typeof LLMRouter.postChat === 'function'){
+      return LLMRouter.postChat({
+        app: 'provider',
+        conn: { base, key, model, via: 'local' },
+        messages: (args && args.messages) || [],
+        body: opts || {}
+      });
+    }
     const body = Object.assign({ model, messages: args && args.messages }, opts || {});
     return post(base, key, '/chat/completions', body);
   },
@@ -800,7 +808,7 @@ async function comfyLocalize(prompt){
   if(typeof llmStreamRequest === 'function' && conn && conn.base && conn.key && conn.model){
     try{
       // 15 秒：本机 Ollama 首次加载可能十几秒，再久就别等了——宁可出图慢一点也别卡住队列
-      const out = await llmStreamRequest(COMFY_TR_SYS, [{ role: 'user', content: s }], null, { conn, timeoutMs: 15000 });
+      const out = await llmStreamRequest(COMFY_TR_SYS, [{ role: 'user', content: s }], null, { conn, timeoutMs: 15000, app: 'comfy' });
       const q = comfyTrQuality(comfyCleanTr(out));
       if(q.ok){
         if(comfyTrCache.size > 60) comfyTrCache.clear();

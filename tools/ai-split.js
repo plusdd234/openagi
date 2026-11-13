@@ -15,7 +15,8 @@ const path = require('path');
 const { chromium } = require('playwright-core');
 
 const ROOT = path.join(__dirname, '..');
-const PORT = 8148;
+let PORT = 0;   // listen(0) 后取真实端口，避免多个 AI 同时跑时抢占固定端口
+const OUT = require('./probe-run').runDir('ai-split');
 const MODEL = '/assets/models/mvvd80i5-f2df38c4.glb';
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.glb': 'model/gltf-binary', '.obj': 'text/plain' };
 
@@ -63,7 +64,8 @@ const check = (ok, name, extra) => {
 let upstream = 'https://api.lingsuan.si/v1';
 
 (async () => {
-  await new Promise(r => server.listen(PORT, '127.0.0.1', r));
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  PORT = server.address().port;
 
   /* 只取接口配置（Key 不打印）；localStorage 的键名与 config.js 一致 */
   const store = JSON.parse(fs.readFileSync(path.join(ROOT, 'openagi-store.json'), 'utf8'));
@@ -211,13 +213,13 @@ let upstream = 'https://api.lingsuan.si/v1';
   console.log('\n=== 4. 结果图 / 截图 ===');
   check(r.previewLen > 20, '拆件预览图已生成', r.previewLen + 'KB');
   const pngURL = await page.evaluate(() => ModelSplit._ui.result.preview);
-  fs.writeFileSync(path.join(__dirname, '_ai_split_preview.png'), Buffer.from(pngURL.split(',')[1], 'base64'));
+  fs.writeFileSync(path.join(OUT, 'preview.png'), Buffer.from(pngURL.split(',')[1], 'base64'));
   const atlasURL = await page.evaluate(() => ModelSplit._ui.result.atlases[0]);
-  fs.writeFileSync(path.join(__dirname, '_ai_split_atlas.jpg'), Buffer.from(atlasURL.split(',')[1], 'base64'));
+  fs.writeFileSync(path.join(OUT, 'atlas.jpg'), Buffer.from(atlasURL.split(',')[1], 'base64'));
   const viewsURL = await page.evaluate(() => ModelSplit._ui.result.views || '');
-  if (viewsURL) fs.writeFileSync(path.join(__dirname, '_ai_split_views.jpg'), Buffer.from(viewsURL.split(',')[1], 'base64'));
-  await page.locator('#mvSplitPanel').screenshot({ path: path.join(__dirname, '_ai_split_panel.png') });
-  console.log('  已保存 _ai_split_preview.png / _ai_split_atlas.jpg / _ai_split_panel.png');
+  if (viewsURL) fs.writeFileSync(path.join(OUT, 'views.jpg'), Buffer.from(viewsURL.split(',')[1], 'base64'));
+  await page.locator('#mvSplitPanel').screenshot({ path: path.join(OUT, 'panel.png') });
+  console.log('  已保存 ' + OUT);
 
   console.log('\n=== 5. 导出 GLB 并读回 ===');
   const glb = await page.evaluate(async () => {
@@ -231,7 +233,7 @@ let upstream = 'https://api.lingsuan.si/v1';
   });
   check(glb.kb > 50, '合并 GLB 导出了', glb.kb + 'KB');
   check(glb.meshes >= r.parts.length, '导出的 GLB 能再读回来（多节点）', glb.meshes + ' 个网格 / ext=' + glb.ext);
-  fs.writeFileSync(path.join(__dirname, '_ai_split.glb'), Buffer.from(glb.url.split(',')[1], 'base64'));
+  fs.writeFileSync(path.join(OUT, 'ai-split.glb'), Buffer.from(glb.url.split(',')[1], 'base64'));
 
   console.log('\n页面报错:', errors.length ? errors.join(' | ') : '无');
   console.log(fails ? '\n❌ 失败 ' + fails + ' 项' : '\n✅ AI 拆件全部通过');

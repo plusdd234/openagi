@@ -1,6 +1,6 @@
 /* 探针：多视图「图层不透明度」（像素级）
  * 用法：node tools/probe-mv-opacity.js
- * 产物：tools/shots/op-*.png
+ * 产物：运行目录下的 op-*.png（见 tools/probe-run.js）
  *
  * 验三件事，缺一条就会「滑条能拖但看着没变」：
  *   ① 3D 层（线框 / 岛色）：材质里的 alpha 真的被乘了；
@@ -13,7 +13,7 @@ const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const OUT = path.join(__dirname, 'shots');
+const OUT = require('./probe-run').runDir('probe-mv-opacity');
 
 const V8 = [
   [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],

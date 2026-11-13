@@ -8,7 +8,8 @@ const path = require('path');
 const { chromium } = require('playwright-core');
 
 const ROOT = path.join(__dirname, '..');
-const PORT = 8154;
+let PORT = 0;   // listen(0) 后取真实端口
+const OUT = require('./probe-run').runDir('ai-split-offline');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.glb': 'model/gltf-binary' };
 
 const server = http.createServer((req, res) => {
@@ -21,7 +22,8 @@ const server = http.createServer((req, res) => {
 });
 
 (async () => {
-  await new Promise(r => server.listen(PORT, '127.0.0.1', r));
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  PORT = server.address().port;
   const browser = await chromium.launch({ channel: 'msedge' });
   const page = await browser.newPage();
   page.on('pageerror', e => console.log('pageerror:', e.message));
@@ -106,8 +108,8 @@ const server = http.createServer((req, res) => {
   ok(head.yMean > body.yMean, '头部 y 均值高于身体（' + head.yMean + ' vs ' + body.yMean + '）');
   ok(out.confirmImgs.length >= 2, '每个框选部件都有确认图（' + out.confirmImgs.length + ' 张）');
 
-  if (out.lastConfirm) fs.writeFileSync(path.join(__dirname, '_offline_confirm.jpg'), Buffer.from(out.lastConfirm.split(',')[1], 'base64'));
-  if (out.rest) fs.writeFileSync(path.join(__dirname, '_offline_rest.jpg'), Buffer.from(out.rest.split(',')[1], 'base64'));
+  if (out.lastConfirm) fs.writeFileSync(path.join(OUT, 'confirm.jpg'), Buffer.from(out.lastConfirm.split(',')[1], 'base64'));
+  if (out.rest) fs.writeFileSync(path.join(OUT, 'rest.jpg'), Buffer.from(out.rest.split(',')[1], 'base64'));
 
   console.log('\n失败 ' + fails.length + ' 项');
   await browser.close();

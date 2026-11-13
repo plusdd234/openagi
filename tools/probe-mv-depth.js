@@ -1,6 +1,6 @@
 /* 探针：多视图「深度描边」（像素级）
  * 用法：node tools/probe-mv-depth.js
- * 产物：tools/shots/mv-depth-*.png
+ * 产物：运行目录下的 mv-depth-*.png（见 tools/probe-run.js）
  *
  * 场景刻意用**两个前后错开的盒子**，看正视图：小盒子挡在大盒子中间。
  * 这时画面上只有一条「小盒子的外框」——它是物体**内部**的遮挡边界，
@@ -14,7 +14,7 @@ const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const OUT = path.join(__dirname, 'shots');
+const OUT = require('./probe-run').runDir('probe-mv-depth');
 
 /* 一个轴对齐盒子：c=中心，s=尺寸 */
 function box(c, s) {

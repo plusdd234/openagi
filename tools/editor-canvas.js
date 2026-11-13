@@ -12,6 +12,8 @@ const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
 
+const OUT = require('./probe-run').runDir('editor-canvas');
+
 const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';
 
 let fails = 0;
@@ -126,7 +128,7 @@ const check = (ok, name, extra) => {
   check(await page.locator('#bpNodes .node.sel').count() === 2, '选中态同步到 DOM');
   const infoTxt = await page.textContent('#bpSelInfo');
   check(/按 C 建注释面板/.test(infoTxt), '状态栏提示可以按 C 建注释', infoTxt.trim());
-  await page.screenshot({ path: path.join(__dirname, '..', 'samples', 'editor-marquee.png') });
+  await page.screenshot({ path: path.join(OUT, 'editor-marquee.png') });
 
   // 左键拖节点标题栏：多选时整组一起移动
   const nodeHead = await page.evaluate(id => {
@@ -182,7 +184,7 @@ const check = (ok, name, extra) => {
   check(frame2.title === '角色拆分 · 前后视图', '标题写入模型', frame2.title);
   check(frame2.color !== frame.color, '点色点可以换颜色', frame2.color);
   check(await page.inputValue('#f-' + fid + ' .frame-title') === '角色拆分 · 前后视图', '标题回填到输入框');
-  await page.screenshot({ path: path.join(__dirname, '..', 'samples', 'editor-frame.png') });
+  await page.screenshot({ path: path.join(OUT, 'editor-frame.png') });
 
   console.log('\n=== 4. 拖动面板带走框内节点 ===');
   await resetView();

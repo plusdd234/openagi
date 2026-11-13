@@ -101,9 +101,6 @@ const ASSETS = Array.from({ length: 6 }, (_, i) => ({
   const gapOf = (a, b) => ({ x: (a.right + b.left) / 2, y: a.top + a.h / 2 });
   const sel = () => page.evaluate(() => Array.from(libState.sel));
   const cleanState = () => page.evaluate(() => ({
-    ghosts: document.querySelectorAll('.lib-drag-ghost').length,
-    hot: (() => { const t = document.getElementById('libTrash'); return t && t.classList.contains('hot'); })(),
-    dragging: document.querySelectorAll('#libBody .lib-card.dragging').length,
     marquee: document.querySelectorAll('.lib-marquee').length
   }));
 
@@ -124,37 +121,18 @@ const ASSETS = Array.from({ length: 6 }, (_, i) => ({
   s = await sel();
   check(s.length === 1, 'Ctrl+再次点击可取消该卡片', JSON.stringify(s));
 
-  // 垃圾桶：有选中项才显形（等过渡结束再读，别把动画中的半透明当失败）
-  await page.waitForTimeout(320);
-  const trashShown = await page.evaluate(() => {
-    const t = document.getElementById('libTrash');
-    if (!t) return { ok: false, reason: 'no-element' };
-    const r = t.getBoundingClientRect();
-    const w = document.getElementById('libWin').getBoundingClientRect();
-    return {
-      ok: true, visible: getComputedStyle(t).visibility, opacity: getComputedStyle(t).opacity,
-      inside: r.left >= w.left && r.right <= w.right && r.bottom <= w.bottom,
-      inBody: !!document.getElementById('libBody').querySelector('.lib-trashcan')
-    };
-  });
-  check(trashShown.ok && trashShown.visible === 'visible' && Number(trashShown.opacity) > 0.5,
-    '有选中项时右下角垃圾桶显形', JSON.stringify(trashShown));
-  check(trashShown.inside, '垃圾桶固定在窗口内（右下角）');
-  check(!trashShown.inBody, '垃圾桶不在 libBody 内（否则重绘就被清掉）');
+  // 拖拽删除已移除：图库里不该再有垃圾桶 / 拖拽幽灵
+  const dragUi = await page.evaluate(() => ({
+    trash: !!document.getElementById('libTrash'),
+    trashCss: !!document.querySelector('.lib-trashcan'),
+    ghost: document.querySelectorAll('.lib-drag-ghost').length
+  }));
+  check(!dragUi.trash && !dragUi.trashCss && dragUi.ghost === 0,
+    '拖拽删除相关 UI 已移除（垃圾桶 / 幽灵）', JSON.stringify(dragUi));
 
-  // 浮动选中条：挂窗口、随选中显形、不占排版
-  const selbar = await page.evaluate(() => {
-    const b = document.getElementById('libSelBar');
-    if (!b) return null;
-    const r = b.getBoundingClientRect();
-    return {
-      shown: b.classList.contains('show'),
-      inBody: !!document.getElementById('libBody').querySelector('.lib-selbar'),
-      onScreen: r.width > 0 && r.height > 0
-    };
-  });
-  check(selbar && selbar.shown && selbar.onScreen, '浮动选中条随选中显形', JSON.stringify(selbar));
-  check(selbar && !selbar.inBody, '选中条不在 libBody 流里（否则框选时网格会跳动）');
+  // 浮动选中条已移除：底部「导出 / 删除」与右键菜单重复，选中动作统一走右键菜单
+  const selbar = await page.evaluate(() => document.getElementById('libSelBar'));
+  check(selbar === null, '底部浮动选中条已移除（避免与右键菜单重复）', String(selbar));
 
   /* ---------- 2. 框选 ---------- */
   rects = await measure();
@@ -188,60 +166,50 @@ const ASSETS = Array.from({ length: 6 }, (_, i) => ({
   const leftover = await page.evaluate(() => !!document.querySelector('.lib-marquee'));
   check(!leftover, '松手后遮罩被移除');
 
-  /* ---------- 3. 拖到垃圾桶删除 ---------- */
+  /* ---------- 3. 在卡片上拖拽：不再触发删除 ---------- */
   rects = await measure();
   const dragFrom = center(rects[1]);
-  const trash = await page.evaluate(() => {
-    const r = document.getElementById('libTrash').getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  });
-  const beforeSel = await sel();
+  const removedBefore = await page.evaluate(() => window.__removed.length);
+  const dialogsBefore = dialogs.length;
 
   await page.mouse.move(dragFrom.x, dragFrom.y);
   await page.mouse.down();
-  await page.mouse.move(dragFrom.x + 20, dragFrom.y + 20, { steps: 4 });
-  const ghost = await page.evaluate(() => !!document.querySelector('.lib-drag-ghost'));
-  await page.mouse.move(trash.x, trash.y, { steps: 14 });
-  const hot = await page.evaluate(() => document.getElementById('libTrash').classList.contains('hot'));
+  await page.mouse.move(dragFrom.x + 60, dragFrom.y + 40, { steps: 8 });
+  const dragArtifacts = await page.evaluate(() => ({
+    ghost: document.querySelectorAll('.lib-drag-ghost').length,
+    dragging: document.querySelectorAll('#libBody .lib-card.dragging').length,
+    marquee: document.querySelectorAll('.lib-marquee').length
+  }));
   await page.mouse.up();
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(300);
 
-  check(ghost, '拖拽时出现「几项 · 拖到垃圾桶删除」幽灵');
-  check(hot, '拖到垃圾桶上方时垃圾桶高亮');
-  check(dialogs.length > 0, '松手后仍走确认（资产不能一松手就没）', dialogs[0] && dialogs[0].slice(0, 40));
-  const removed = await page.evaluate(() => window.__removed);
-  check(removed.length === 1 && removed[0].length === beforeSel.length,
-    '确认后把拖拽的这批送去回收站', JSON.stringify(removed));
-  s = await sel();
-  check(s.length === 0, '删除后选择被清空');
+  check(dragArtifacts.ghost === 0 && dragArtifacts.dragging === 0 && dragArtifacts.marquee === 0,
+    '卡片上拖拽不再产生幽灵/拖拽态/框选遮罩', JSON.stringify(dragArtifacts));
+  const removedAfter = await page.evaluate(() => window.__removed.length);
+  check(removedAfter === removedBefore, '拖拽松手不会删除资产');
+  check(dialogs.length === dialogsBefore, '拖拽松手不再弹删除确认');
 
-  /* ---------- 4. 手势中断必须清理干净 ----------
-   * 用户实测：拖拽被 pointercancel/失焦打断后，「N 项 · 拖到垃圾桶删除」幽灵
-   * 和红色高亮的垃圾桶一直留在页面上。这里逐个中断路径验一遍。 */
+  /* ---------- 4. 框选中途被打断必须清理干净 ---------- */
 
-  // 4a. pointercancel：拖到一半被系统打断
+  // 4a. window blur：拖到一半切走窗口
   rects = await measure();
-  await clickCard(rects[0]);
-  let c = center(rects[0]);
-  await page.mouse.move(c.x, c.y);
+  const gapB = gapOf(rects[0], rects[1]);
+  await page.mouse.move(gapB.x, gapB.y);
   await page.mouse.down();
-  await page.mouse.move(c.x + 30, c.y + 20, { steps: 4 });
+  await page.mouse.move(gapB.x + 60, gapB.y + 40, { steps: 4 });
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
   let st = await cleanState();
-  check(st.ghosts === 1, '中断前幽灵存在（前提）', JSON.stringify(st));
+  check(st.marquee === 0, 'blur 中止框选后遮罩被移除', JSON.stringify(st));
+  await page.mouse.up();
+
+  // 4b. pointercancel：拖到一半被系统打断
+  rects = await measure();
+  await page.mouse.move(gapB.x, gapB.y);
+  await page.mouse.down();
+  await page.mouse.move(gapB.x + 60, gapB.y + 40, { steps: 4 });
   await page.evaluate(() => window.dispatchEvent(new Event('pointercancel')));
   st = await cleanState();
-  check(st.ghosts === 0 && !st.hot && st.dragging === 0, 'pointercancel 后幽灵/高亮/拖拽态全部清掉', JSON.stringify(st));
-  await page.mouse.up();   // 迟到的 pointerup 不能报错、不能误删
-
-  // 4b. 窗口失焦：拖到一半切走
-  rects = await measure();
-  c = center(rects[1]);
-  await page.mouse.move(c.x, c.y);
-  await page.mouse.down();
-  await page.mouse.move(c.x + 30, c.y + 20, { steps: 4 });
-  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
-  st = await cleanState();
-  check(st.ghosts === 0 && !st.hot && st.dragging === 0, 'blur 后清理干净', JSON.stringify(st));
+  check(st.marquee === 0, 'pointercancel 中止框选后遮罩被移除', JSON.stringify(st));
   await page.mouse.up();
 
   // 4c. Esc 中止框选
@@ -255,22 +223,12 @@ const ASSETS = Array.from({ length: 6 }, (_, i) => ({
   check(st.marquee === 0, 'Esc 中止框选后遮罩被移除', JSON.stringify(st));
   await page.mouse.up();
 
-  // 4d. 拖到半路松手（不在垃圾桶上）：幽灵消失、不触发删除
-  const removedBefore = await page.evaluate(() => window.__removed.length);
-  rects = await measure();
-  c = center(rects[2]);
-  await page.mouse.move(c.x, c.y);
-  await page.mouse.down();
-  await page.mouse.move(c.x + 60, c.y + 40, { steps: 6 });
-  await page.mouse.up();
-  st = await cleanState();
-  const removedAfter = await page.evaluate(() => window.__removed.length);
-  check(st.ghosts === 0 && !st.hot, '半路松手幽灵消失、垃圾桶不高亮', JSON.stringify(st));
-  check(removedAfter === removedBefore, '半路松手不触发删除');
-
-  // 收尾：幽灵总数必须归零（用户截图里就是残留了多个）
-  const finalSt = await cleanState();
-  check(finalSt.ghosts === 0, '页面上没有残留的拖拽幽灵', JSON.stringify(finalSt));
+  // 收尾：页面上不能留下任何手势残骸
+  const finalSt = await page.evaluate(() => ({
+    marquee: document.querySelectorAll('.lib-marquee').length,
+    ghost: document.querySelectorAll('.lib-drag-ghost').length
+  }));
+  check(finalSt.marquee === 0 && finalSt.ghost === 0, '页面上没有残留的手势遮罩/幽灵', JSON.stringify(finalSt));
 
   check(errors.length === 0, '页面零错误', errors.slice(0, 2).join(' | '));
 

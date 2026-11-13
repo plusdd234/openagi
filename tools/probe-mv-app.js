@@ -45,7 +45,9 @@ function quadCube() {
 }
 
 (async () => {
-  const TMP = path.join(__dirname, '_mv-probe');
+  const { createRun } = require('./probe-run');
+  const RUN = createRun('probe-mv-app');
+  const TMP = RUN.artifact('work');
   fs.mkdirSync(TMP, { recursive: true });
   const objFile = path.join(TMP, 'cube-quad.obj');
   fs.writeFileSync(objFile, quadCube(), 'utf8');
@@ -147,6 +149,7 @@ function quadCube() {
 
   fs.rmSync(TMP, { recursive: true, force: true });
   await browser.close();
+  RUN.finish(fails ? ['失败 ' + fails + ' 项'] : []);
   console.log('\n' + (fails ? '❌ 失败 ' + fails + ' 项' : '✅ 全部通过'));
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error('崩溃：', e); process.exit(1); });

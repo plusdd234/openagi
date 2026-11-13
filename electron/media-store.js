@@ -88,6 +88,26 @@ function safeBaseName(name, fallbackExt){
   return base;
 }
 
+/* 重命名用的文件名清洗：**不做静默替换**。
+ * 改名是用户明确输入的动作，把 `a:b.mp4` 悄悄改成 `a_b.mp4` 比直接拒绝更糟——
+ * 用户以为改成功了，下次按名字找却对不上。 */
+function cleanRenameName(name, oldExt){
+  /* 这里不取 basename：改名只允许一个纯文件名，带目录分隔符就是越权信号，
+   * 静默截成 basename 会让用户以为「改名顺带搬了位置」。 */
+  let base = String(name == null ? '' : name);
+  /* Windows 不允许文件名以点或空格结尾；资源管理器自己也会悄悄去掉。 */
+  base = base.trim().replace(/[. ]+$/g, '');
+  if(!base || /^\.+$/.test(base)) throw new Error('文件名不能为空');
+  if(/[\\/:*?"<>|]/.test(base)) throw new Error('文件名不能包含 \\ / : * ? " < > |');
+  if(base.length > 150) throw new Error('文件名过长（最多 150 个字符）');
+  /* 只写了名字没写扩展名时沿用旧的：用户改的通常是标题，不是格式。 */
+  if(!extOf(base) && oldExt) base += '.' + oldExt;
+  const stem = base.replace(/\.[^.]+$/, '');
+  if(/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(stem)) throw new Error('这个名称是系统保留名，换一个吧');
+  if(!kindOf(base)) throw new Error('扩展名不在支持范围内');
+  return base;
+}
+
 /* 重名就加 -1 / -2，绝不覆盖用户已有的文件——
  * 覆盖一次可能就是几个 G 的重新下载，而且原来那集再也找不回来。 */
 async function uniqueIn(dir, base){
@@ -111,6 +131,7 @@ function naturalCmp(a, b){ return NAT.compare(a, b); }
 function createMediaStore(root, deps){
   const ROOT = root;
   const dl = (deps && deps.dl) || null;
+  const trashFn = (deps && typeof deps.trash === 'function') ? deps.trash : null;
   const jobs = new Map();       // 下载任务：id → 取消标记
 
   async function ensure(){
@@ -312,10 +333,14 @@ function createMediaStore(root, deps){
   async function remove(ids){
     const list = Array.isArray(ids) ? ids : [ids];
     const gone = [];
+    const failed = [];
     for(const id of list){
       try{
         const abs = absOf(id);
-        await fsp.rm(abs, { force: true });
+        /* 优先走系统回收站：删错一集还能捞回来。
+         * 没有 trash 依赖时（单测 / 无 shell 环境）才退回永久删除。 */
+        if(trashFn) await trashFn(abs);
+        else await fsp.rm(abs, { force: true });
         gone.push(id);
         /* 顺手把变空的目录收掉：不然删完一整季会剩一串空文件夹，
          * 列表里还挂着「某番剧 0 集」。 */
@@ -328,9 +353,78 @@ function createMediaStore(root, deps){
             dir = path.dirname(dir);
           }catch(e){ break; }
         }
-      }catch(e){}
+      }catch(e){
+        /* 回收站也可能失败（网络盘 / 文件被别的程序占用）。
+         * 不能假装删掉了：界面要留着这一行并说清原因，否则用户下次进来又看见它。 */
+        failed.push({ id, message: String((e && e.message) || e) });
+      }
     }
-    return { ok: true, removed: gone };
+    if(failed.length){
+      return { ok: false, removed: gone, failed, trashed: !!trashFn, message: '删除失败：' + failed[0].message };
+    }
+    return { ok: true, removed: gone, trashed: !!trashFn };
+  }
+
+  /* 重命名：只允许在同一目录内改名，不允许借改名把文件搬到别的目录
+   * （移动是另一个语义，混在一起会让「重命名」变成越权写文件的入口）。
+   * 字幕会跟着改：播放器按「同目录 + 同 basename」找字幕，视频改了名而字幕不动，
+   * 用户打开下一集时会突然发现字幕没了，且很难联想到是改名造成的。 */
+  async function rename(id, name){
+    const abs = absOf(id);
+    let st;
+    try{ st = await fsp.stat(abs); }
+    catch(e){ throw new Error('文件不存在：' + id); }
+    if(!st.isFile()) throw new Error('只能重命名文件');
+    const dir = path.dirname(abs);
+    const oldBase = path.basename(abs);
+    const oldExt = extOf(oldBase);
+    const next = cleanRenameName(name, oldExt);
+    const relOf = p => path.relative(ROOT, p).split(path.sep).join('/');
+    if(next === oldBase){
+      return { ok: true, id, oldId: id, name: next, sidecars: [], unchanged: true };
+    }
+    const target = path.join(dir, next);
+    if(next.toLowerCase() === oldBase.toLowerCase()){
+      /* 只改大小写：Windows 可能把目标当成同一路径而让 rename 失败，
+       * 先挪到一个点开头的临时名（扫描会跳过）再改回来。 */
+      const tmp = path.join(dir, '.ren-' + crypto.randomBytes(4).toString('hex'));
+      await fsp.rename(abs, tmp);
+      try{ await fsp.rename(tmp, target); }
+      catch(e){
+        try{ await fsp.rename(tmp, abs); }catch(_){}
+        throw e;
+      }
+    }else{
+      const exists = await fsp.access(target).then(() => true, () => false);
+      if(exists) throw new Error('同一目录下已有同名文件：' + next);
+      await fsp.rename(abs, target);
+    }
+
+    const sidecars = [];
+    if(kindOf(oldBase) === 'video' || kindOf(oldBase) === 'audio'){
+      const oldStem = oldBase.slice(0, oldBase.length - (oldExt ? oldExt.length + 1 : 0));
+      const newExt = extOf(next);
+      const newStem = next.slice(0, next.length - (newExt ? newExt.length + 1 : 0));
+      let ents = [];
+      try{ ents = await fsp.readdir(dir); }catch(e){}
+      for(const nm of ents){
+        if(nm === oldBase) continue;
+        const ext = extOf(nm);
+        if(!['vtt', 'srt', 'ass', 'ssa'].includes(ext)) continue;
+        /* `第01话.zh.vtt` 这种带语言后缀的也要跟着走，所以用前缀而不是全等。 */
+        if(nm.toLowerCase().indexOf(oldStem.toLowerCase() + '.') !== 0) continue;
+        const subNext = newStem + nm.slice(oldStem.length);
+        const subAbs = path.join(dir, nm);
+        const subTarget = path.join(dir, subNext);
+        try{
+          const exists = await fsp.access(subTarget).then(() => true, () => false);
+          if(exists) continue;
+          await fsp.rename(subAbs, subTarget);
+          sidecars.push({ oldId: relOf(subAbs), id: relOf(subTarget), name: subNext });
+        }catch(e){}
+      }
+    }
+    return { ok: true, id: relOf(target), oldId: id, name: next, sidecars };
   }
 
   async function stat(){
@@ -351,7 +445,7 @@ function createMediaStore(root, deps){
     return { abs, size: st.size, mime: mimeOf(abs), kind: kindOf(abs) };
   }
 
-  return { root: ROOT, ensure, list, importFiles, download, cancel, remove, stat, open, absOf };
+  return { root: ROOT, ensure, list, importFiles, download, cancel, remove, rename, stat, open, absOf };
 }
 
 module.exports = {

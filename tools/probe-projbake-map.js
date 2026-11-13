@@ -9,6 +9,9 @@
 const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
+const { createRun } = require('./probe-run');
+
+const RUN = createRun('probe-projbake-map');
 
 let fails = 0;
 const check = (ok, name, extra) => {
@@ -183,9 +186,9 @@ const QUAD = `
   }
 
   /* 截图：整窗 + 单独右栏 */
-  await page.locator('#mdPbWin').screenshot({ path: path.join(root, 'tools', '_pb-shot.png') });
-  await page.screenshot({ path: path.join(root, 'tools', '_pb-shot-full.png') });
-  info('截图', 'tools/_pb-shot.png / _pb-shot-full.png');
+  const shotWin = await RUN.shot(page.locator('#mdPbWin'), 'pb-window.png');
+  const shotFull = await RUN.shot(page, 'pb-full.png');
+  if (shotWin || shotFull) info('截图', [shotWin, shotFull].filter(Boolean).join(' / '));
 
   check(errors.length === 0, '页面零错误', errors.slice(0, 3).join(' | ') || '0');
   await browser.close();

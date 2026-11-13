@@ -1,6 +1,6 @@
 /* 探针：多视图「线框开关 + 透明底」（像素级）
  * 用法：node tools/probe-mv-wire.js
- * 产物：tools/shots/mv-wire-*.png
+ * 产物：运行目录下的 mv-wire-*.png（见 tools/probe-run.js）
  *
  * ⚠ 用**轴测视角**量线像素，别用前视图：
  *   立方体正对镜头时，四边面线框只剩外轮廓那 4 条边，内部一条线都没有
@@ -13,7 +13,7 @@ const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const OUT = path.join(__dirname, 'shots');
+const OUT = require('./probe-run').runDir('probe-mv-wire');
 const OBJ = [
   'v -1 -1 -1', 'v 1 -1 -1', 'v 1 1 -1', 'v -1 1 -1',
   'v -1 -1 1', 'v 1 -1 1', 'v 1 1 1', 'v -1 1 1',

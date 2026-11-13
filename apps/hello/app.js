@@ -43,9 +43,7 @@
     name: '你好',
     title: '你好 · 模板 App',
     sub: '新 App 的骨架，复制即用',
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' +
-            '<path d="M4 6.5h16v9.5H9.5L4 19.5z"/><path d="M8 10.5h8"/><path d="M8 13h5"/>' +
-          '</svg>',
+    icon: deskSvg('hello'),
     css: ['apps/hello/app.css'],
 
     mount: function (body) {

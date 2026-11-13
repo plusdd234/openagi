@@ -10,15 +10,30 @@
  */
 'use strict';
 const path = require('path');
+const fs = require('fs');
+const net = require('net');
+const os = require('os');
 const { spawn } = require('child_process');
 const { chromium } = require(path.join(__dirname, '..', 'node_modules', 'playwright-core'));
 
 const ROOT = path.join(__dirname, '..');
 const MODEL = process.argv[2] || 'qwen2.5:3b';
-const CDP_PORT = 9333;
+let CDP_PORT = 0;   // 启动前取空闲端口，避免多个 AI 并行时抢 9333
+const USER_DATA = path.join(os.tmpdir(), 'openagi-e2e-keepalive-' + process.pid);
 let pass = 0, fail = 0;
 function check(c, m, x){ if(c){ pass++; console.log('  ok  ' + m); } else { fail++; console.log('  FAIL ' + m + (x?'  → '+x:'')); } }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function freePort(){
+  return new Promise((res, rej) => {
+    const s = net.createServer();
+    s.once('error', rej);
+    s.listen(0, '127.0.0.1', () => {
+      const p = s.address().port;
+      s.close(() => res(p));
+    });
+  });
+}
 
 async function ps(){
   try{
@@ -55,13 +70,15 @@ async function main(){
   await unload();
   console.log('初始驻留: ' + JSON.stringify(await ps()));
 
+  CDP_PORT = await freePort();
+  fs.mkdirSync(USER_DATA, { recursive: true });
   const env = Object.assign({}, process.env);
   // ELECTRON_RUN_AS_NODE 会让 electron.exe 走 Node 模式（不启动应用）
   delete env.ELECTRON_RUN_AS_NODE;
   const proc = spawn('node_modules/electron/dist/electron.exe',
     // ⚠ 开关必须放在应用路径【前面】：electron.exe 把第一个非开关参数当成应用路径，
     //   放在后面会被当成应用自己的 argv，调试端口就不会开（实测连不上）。
-    ['--remote-debugging-port=' + CDP_PORT, ROOT],
+    ['--remote-debugging-port=' + CDP_PORT, '--user-data-dir=' + USER_DATA, ROOT],
     { cwd: ROOT, env, stdio: 'ignore', detached: false });
 
   const alive = await waitCdp(CDP_PORT, 50);
@@ -132,6 +149,7 @@ async function main(){
   try{ await browser.close(); }catch(e){}
   try{ proc.kill(); }catch(e){}
   await sleep(1500);
+  try{ fs.rmSync(USER_DATA, { recursive: true, force: true }); }catch(e){}
   await unload();
   console.log('\n通过 ' + pass + ' / 失败 ' + fail);
   if(fail) process.exit(1);

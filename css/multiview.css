@@ -1090,3 +1090,242 @@
   .mv-split-imgs { flex-direction: column; }
   .mv-split-pane img { max-height: 200px; }
 }
+
+/* ============================================================
+ * 专业版编辑界面：右侧三页签 / 投射参数常驻 / 投射结果三栏
+ * 页签把「图层 · 导出 · 投射」拆成互斥工作区，避免一列堆到底后
+ * 关键按钮被挤出滚动区；参数留在右侧，改完可原地复烘。
+ * ============================================================ */
+.mv-right-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  padding: 8px 8px 0;
+  border-bottom: 1px solid var(--mv-soft);
+  background: #f6f8fa;
+}
+.mv-rtab {
+  flex: 1 1 0;
+  height: 28px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: #7c8698;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.mv-rtab:hover { color: #3d4657; background: #eef1f5; }
+.mv-rtab.is-on {
+  background: #fffdf6;
+  color: #2a2f36;
+  border-color: var(--mv-soft);
+  box-shadow: inset 0 2px 0 var(--mv-gold);
+}
+.mv-right-panes { flex: 1 1 auto; min-height: 0; display: flex; }
+.mv-right-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.mv-right-pane[data-pane="layers"] .mv-layers {
+  flex: 1 1 auto;
+  max-height: none;
+  border-bottom: 0;
+}
+.mv-right-pane .mv-export { flex: 1 1 auto; }
+.mv-proj-entry .btn { width: 100%; }
+.mv-proj-set {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px 0 5px;
+  border-top: 1px dashed rgba(226, 196, 119, .5);
+  border-bottom: 1px dashed rgba(226, 196, 119, .5);
+}
+.mv-proj-set .mv-field { font-size: 10.5px; }
+.mv-proj-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 6px 0 3px;
+  font-size: 10.5px;
+  color: #4a5466;
+  cursor: pointer;
+}
+.mv-proj-check input { width: 13px; height: 13px; accent-color: var(--mv-gold-deep); }
+#mvProjQuick { min-height: 30px; }
+#mvProjReproj { width: 100%; }
+
+/* 舞台左上角的常驻模型信息：模型名 + 视图/尺寸/相机，一眼确认当前上下文 */
+.mv-stage-hud {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 46%;
+  padding: 6px 9px;
+  border: 1px solid rgba(220, 224, 230, .9);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .84);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+.mv-stage-hud[hidden] { display: none; }
+.mv-stage-hud b {
+  font-size: 11.5px;
+  color: #2a2f36;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mv-stage-hud i {
+  font-style: normal;
+  font-size: 9.5px;
+  color: #8b94a5;
+  letter-spacing: .02em;
+  font-variant-numeric: tabular-nums;
+}
+#mvReset { margin-left: auto; }
+
+/* 投射结果弹层：生图源 / UV 贴图 / 上色预览 三栏；源图与参数说明固定在左侧 */
+.mv-proj-body {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+}
+.mv-proj-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--mv-soft);
+  border-radius: 9px;
+  background: #fbfcfd;
+}
+.mv-proj-src {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 104px;
+  max-height: 190px;
+  border: 1px solid var(--mv-soft);
+  border-radius: 7px;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, #eceef2 25%, transparent 25%, transparent 75%, #eceef2 75%) 0 0 / 12px 12px,
+    linear-gradient(45deg, #eceef2 25%, #f7f8fa 25%, #f7f8fa 75%, #eceef2 75%) 6px 6px / 12px 12px;
+}
+.mv-proj-src img { display: none; max-width: 100%; max-height: 188px; object-fit: contain; }
+.mv-proj-src.has img { display: block; }
+.mv-proj-src em { position: absolute; font-style: normal; font-size: 10.5px; color: #a4adba; }
+.mv-proj-src.has em { display: none; }
+.mv-proj-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #5d6675;
+  font-variant-numeric: tabular-nums;
+}
+.mv-proj-stat b { color: #2a2f36; }
+.mv-proj-stat .is-warn { color: #b98f35; }
+.mv-proj-tip {
+  margin-top: auto;
+  font-size: 10px;
+  line-height: 1.6;
+  color: #9aa3b2;
+}
+.mv-proj-prog {
+  position: relative;
+  height: 18px;
+  border-radius: 9px;
+  background: #eef1f5;
+  overflow: hidden;
+}
+.mv-proj-prog[hidden] { display: none; }
+.mv-proj-prog i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  background: linear-gradient(90deg, var(--mv-gold), var(--mv-gold-deep));
+  transition: width .18s;
+}
+.mv-proj-prog span {
+  position: relative;
+  display: block;
+  text-align: center;
+  font-size: 10px;
+  line-height: 18px;
+  color: #3d4657;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 760px) {
+  .mv-proj-body { grid-template-columns: 1fr; }
+  .mv-proj-src { max-height: 150px; }
+  .mv-proj-src img { max-height: 148px; }
+}
+
+/* ============================================================
+ * 导出交互反馈：忙时黄点 + 扫光、成功绿点、失败红点
+ * 结果行留到下一次导出，文件名 / 尺寸 / 体积一次说清。
+ * ============================================================ */
+.mv-ex-status {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 7px 8px;
+  border-radius: 7px;
+  background: #f3f6f9;
+  color: #5d6675;
+  font-size: 10.5px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+.mv-ex-status.hidden { display: none; }
+.mv-ex-status i {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: #aeb7c4;
+}
+.mv-ex-status span { min-width: 0; overflow-wrap: anywhere; }
+.mv-ex-status.is-busy { background: #fbf7e9; color: #7a6636; }
+.mv-ex-status.is-busy i {
+  background: var(--mv-gold-deep);
+  animation: mvExDot .9s ease-in-out infinite;
+}
+.mv-ex-status.is-busy::after {
+  content: '';
+  position: absolute;
+  left: -40%;
+  bottom: 0;
+  width: 38%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--mv-gold-deep), transparent);
+  animation: mvExSweep 1.2s linear infinite;
+}
+.mv-ex-status.is-ok { background: #f2f8f3; color: #3f6b45; }
+.mv-ex-status.is-ok i { background: #54a866; }
+.mv-ex-status.is-err { background: #fdf2f2; color: #a4453f; }
+.mv-ex-status.is-err i { background: #d0675f; }
+.mv-export .btn.is-busy { opacity: .72; cursor: progress; }
+#mvProjStatus { margin: 2px 0; }
+@keyframes mvExDot {
+  50% { opacity: .28; transform: scale(.78); }
+}
+@keyframes mvExSweep {
+  to { left: 100%; }
+}

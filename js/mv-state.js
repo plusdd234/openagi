@@ -39,7 +39,10 @@
     pick: -1,
     selLayer: '',         // 图层面板里选中的那一层（只影响参数区，不进存档）
     openLayer: '',        // 属性面板展开的是哪一层（同上，纯界面状态）
+    rightTab: 'layers',   // 右栏当前页签：layers / export / proj（纯界面状态）
     proj: null,           // 投射纹理结果 { png, canvas, size, painted, occCount, pct, islands, perView, root }
+    projSrc: null,        // 上一次导入的生图 { dataUrl, name, w, h }：支持改参数重新投射
+    projProg: null,       // 投射进度 { pct, txt }
     busy: '',
     error: '',
     loaded: false
@@ -207,6 +210,20 @@
     FIELDS.forEach(function (f) { o[f.k] = state[f.k]; });
     try { localStorage.setItem(MV.SET_KEY, JSON.stringify(o)); } catch (e) { /* 配额满了不该让 UI 崩 */ }
   }
+
+  /* 「恢复默认参数」：只重置带控件的参数与每层不透明度。
+   * 不改视图组 / 相机 / 画布列数（那是工作区选择，不是参数），
+   * 也不动图层顺序（用户手动拖过的顺序要保留）。 */
+  function resetSet() {
+    FIELDS.forEach(function (f) {
+      if (f.ui === 'none') return;
+      state[f.k] = MV.cloneDef(f.def);
+    });
+    state.opacity = MV.defaultOpacity();
+    if (state.wire && state.wireAngle) state.wire = false;
+    saveSet();
+  }
+  MV.resetSet = resetSet;
 
   function applySet(d) {
     FIELDS.forEach(function (f) {

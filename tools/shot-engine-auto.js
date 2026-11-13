@@ -10,7 +10,7 @@ const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const OUT = path.join(__dirname, '..', 'tmp-shots');
+const OUT = require('./probe-run').runDir('shot-engine-auto');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 (async () => {

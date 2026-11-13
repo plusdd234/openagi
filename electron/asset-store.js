@@ -27,8 +27,11 @@ const KIND_DIR = { image: 'images', model: 'models', blob: 'blobs' };
 const KIND_EXT = { image: 'png', model: 'glb', blob: 'bin' };
 const TRASH_DIR = '.trash';
 /* 3D 缩略图单独存一份：每次打开库都现场渲染会卡（一个模型要建 WebGL 上下文 + 解析几何）。
- * 图片不需要缩略图，原图本身就能当磁贴。 */
+ * 图片缩略图也存这里：图库里把原图直接当磁贴会让渲染进程背着一堆几千万像素的位图，
+ * 滚动时每帧缩放合成，卡片一多就掉帧。 */
 const THUMB_DIR = 'thumbs';
+/* 磁贴最大边。图库最大一档磁贴 196px，2 倍屏 392px，留一点余量给 480。 */
+const THUMB_MAX_PX = 480;
 
 /* 各种 MIME 对应的落盘扩展名。不认识的按类型给默认值，
  * 扩展名只影响「双击能不能被系统正确打开」，不影响我们自己的读取。 */
@@ -94,12 +97,35 @@ function createAssetStore(root){
     return path.join(ROOT, THUMB_DIR, String(id) + '.png');
   }
 
-  /* 读缩略图。没有就是没有（返回 ok:false），调用方据此决定要不要现场渲染一张。 */
+  /* 读缩略图。没有就**现场生成一张并存盘**（只对图片资产）。
+   *
+   * 为什么缩略图要在主进程做：原图动辄几 MB，把整段 dataURL 送进渲染进程，等于让界面
+   * 线程去解 base64、再保留整幅解码位图；图库里几百张卡同时这样，滚动必然掉帧。
+   * nativeImage 在主进程解码并按 480px 缩放，渲染进程只拿到几十 KB 的小图，
+   * 而且生成一次就落盘，之后每次开库都是直接读文件。 */
   async function readThumb(id){
     try{
       const buf = await fsp.readFile(thumbFile(id));
-      if(!buf.length) return { ok: false };
-      return { ok: true, dataURL: 'data:image/png;base64,' + buf.toString('base64') };
+      if(buf.length) return { ok: true, dataURL: 'data:image/png;base64,' + buf.toString('base64') };
+    }catch(e){}
+    const meta = metaOf(id);
+    if(!meta || meta.kind !== 'image') return { ok: false };
+    try{
+      const { nativeImage } = require('electron');
+      const img = nativeImage.createFromPath(fileOf(meta));
+      if(!img || img.isEmpty()) return { ok: false };
+      const size = img.getSize();
+      const k = Math.min(1, THUMB_MAX_PX / Math.max(size.width, size.height));
+      const small = k < 1
+        ? img.resize({
+            width: Math.max(1, Math.round(size.width * k)),
+            height: Math.max(1, Math.round(size.height * k)),
+            quality: 'good'
+          })
+        : img;
+      const dataURL = 'data:image/png;base64,' + small.toPNG().toString('base64');
+      await saveThumb(id, dataURL);
+      return { ok: true, dataURL };
     }catch(e){
       return { ok: false };
     }
@@ -188,6 +214,9 @@ function createAssetStore(root){
       if(oldFile && path.resolve(oldFile) !== path.resolve(fileOf({ id, kind, ext }))){
         try{ await fsp.unlink(oldFile); }catch(e){}
       }
+      /* 内容可能整个换了（编辑器「覆盖原图」），旧缩略图不作废的话，
+       * 图库里还会显示上一版，用户会以为没保存成功。 */
+      try{ await fsp.unlink(thumbFile(id)); }catch(e){}
     }
 
     const file = fileOf({ id, kind, ext });
@@ -209,6 +238,40 @@ function createAssetStore(root){
     };
     await writeIndex();
     return idx.assets[id];
+  }
+
+  /* 只改显示名，**不动磁盘文件、不改 id**。
+   * 为什么不复用 put()：put 会按新名字重写整个文件（几十 MB 的 glb 也能拖一下），
+   * 而且 id 一旦变，所有 blob: 存根和流程里的引用就全断。改名只该是索引里一行文字的变化。 */
+  async function rename(ids, name){
+    const list = Array.isArray(ids) ? ids : [ids];
+    const clean = safeName(name);
+    if(!clean) return { ok: false, message: '名称不能为空' };
+
+    /* 多选时同名前缀批量改：给了名字就当「基名」，后面自动补 _2 _3…
+     * 单选时原样使用用户输入的名字，不加后缀（否则「我的图」变成「我的图_1」很怪）。 */
+    await ensureDirs();
+    const idx = readIndex();
+    const renamed = [], failed = [];
+    let n = 0;
+    for(const rawId of list){
+      const id = String(rawId || '');
+      const meta = idx.assets[id];
+      if(!meta){ failed.push({ id, message: '资产不在索引里' }); continue; }
+      let label = clean;
+      if(list.length > 1){
+        n++;
+        const dot = clean.lastIndexOf('.');
+        label = n === 1
+          ? clean
+          : (dot > 0 ? clean.slice(0, dot) + '_' + n + clean.slice(dot) : clean + '_' + n);
+      }
+      meta.name = label;
+      meta.updated = nowMs();
+      renamed.push({ id, name: label });
+    }
+    if(renamed.length) await writeIndex();
+    return { ok: renamed.length > 0, renamed, failed, message: renamed.length ? '' : '没有可改名的资产' };
   }
 
   /* 读回资产内容 → dataURL（前端 <img src> / fetch 都能直接用）。
@@ -385,7 +448,7 @@ function createAssetStore(root){
 
   return {
     root: ROOT, indexFile: INDEX,
-    ensureDirs, put, read, list, remove, reconcile, stat, emptyTrash, exportTo,
+    ensureDirs, put, read, list, remove, reconcile, stat, emptyTrash, exportTo, rename,
     readThumb, saveThumb, thumbFile,
     metaOf, fileOf, newId,
     // 测试用：清掉内存里的索引副本，强制重读

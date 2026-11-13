@@ -81,12 +81,17 @@
   function setBusy(kind) {
     state.busy = kind || '';
     var el = MV.$('mvInfo');
-    if (!el) return;
-    if (kind === 'render') el.textContent = '渲染中…';
-    else if (kind === 'loading') el.textContent = '读取模型…';
-    else if (kind === 'saving') el.textContent = '存入图库…';
-    else if (kind === 'proj') el.textContent = '投射纹理中…';
-    else MV.paintInfo();
+    if (el) {
+      if (kind === 'render') el.textContent = '渲染中…';
+      else if (kind === 'loading') el.textContent = '读取模型…';
+      else if (kind === 'saving') el.textContent = '存入图库…';
+      else if (kind === 'export') el.textContent = '导出中…';
+      else if (kind === 'proj') el.textContent = '投射纹理中…';
+      else MV.paintInfo();
+    }
+    /* 按钮可用态跟着 busy 走：之前只有 info 换字，导出按钮还能连点 */
+    if (MV.paintExport) MV.paintExport();
+    if (window.MVProject && MVProject.paint) MVProject.paint();
   }
 
   /* ---------- 下载 ---------- */
@@ -106,6 +111,74 @@
     a.click();
     a.remove();
     setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+    return blob.size;
+  }
+
+  /* ---------- 导出反馈 ----------
+   * 耗时点在渲染 / 打包 / 写图库；此前只有底部 say 一行，按钮既不锁也不换字，
+   * 弹层打开时底部提示还被挡住。这里统一成：
+   *   exportBegin → 面板内黄点 + 扫光进度、按钮换字并全局禁用
+   *   exportDone  → 绿点 + 文件名 / 尺寸 / 体积，留到下一次导出
+   *   exportFail  → 红点 + 失败原因
+   * UI 由 mv-panels（导出页）和 mv-project（投射弹层）各自读取同一份状态。 */
+  var EX_DONE = {
+    color: '已导出视图 PNG', depth: '已导出深度图', mask: '已导出遮罩图',
+    preview: '导出预览已生成', all: '已导出整图', cell: '已导出单格',
+    lib: '整图已存入图库', 'proj-png': '已导出贴图 PNG',
+    'proj-glb': '已导出上色 GLB', 'proj-lib': '贴图已存入图库'
+  };
+  var exState = { kind: '', txt: '', log: null };
+
+  function fmtBytes(n) {
+    if (!n) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(2) + ' MB';
+  }
+
+  function paintExportPanels() {
+    if (MV.paintExport) MV.paintExport();
+    if (window.MVProject && MVProject.paint) MVProject.paint();
+  }
+
+  function exportBegin(kind, txt) {
+    exState.kind = kind || 'export';
+    exState.txt = txt || '导出中…';
+    exState.log = null;
+    paintExportPanels();
+  }
+
+  function exportDone(kind, filename, bytes, note) {
+    exState.kind = '';
+    exState.txt = '';
+    exState.log = {
+      ok: true,
+      txt: (EX_DONE[kind] || '导出完成') +
+        (filename ? ' · ' + filename : '') +
+        (bytes ? ' · ' + fmtBytes(bytes) : '') +
+        (note ? ' · ' + note : '')
+    };
+    paintExportPanels();
+    say(exState.log.txt);
+  }
+
+  function exportFail(kind, msg) {
+    exState.kind = '';
+    exState.txt = '';
+    exState.log = { ok: false, txt: '导出失败：' + (msg || '未知原因') };
+    paintExportPanels();
+    say(exState.log.txt);
+  }
+
+  function exportClear() {
+    exState.kind = '';
+    exState.txt = '';
+    exState.log = null;
+    paintExportPanels();
+  }
+
+  function exportStatus() {
+    return { kind: exState.kind, txt: exState.txt, log: exState.log };
   }
 
   function dataUrlToBlob(u) {
@@ -119,19 +192,27 @@
     return new Blob([arr], { type: (mime && mime[1]) || 'image/png' });
   }
 
-  function downloadAll() {
-    if (!state.out) return;
-    saveBlob(dataUrlToBlob(state.out.png), baseName() + '_' + state.out.cells.length + '视图.png');
-    say('已导出整图 · ' + state.out.width + '×' + state.out.height);
+  async function downloadAll() {
+    if (!state.out || state.busy) return;
+    exportBegin('all', '正在打包整图…');
+    setBusy('export');
+    /* 让出一帧：状态行 / 按钮换字先画出来，再做同步的 base64 解码 */
+    await new Promise(function (r) { setTimeout(r, 20); });
+    var fn = baseName() + '_' + state.out.cells.length + '视图.png';
+    var bytes = saveBlob(dataUrlToBlob(state.out.png), fn);
+    setBusy('');
+    exportDone('all', fn, bytes, state.out.width + '×' + state.out.height);
   }
 
   /* 单格靠裁剪得到：只 drawImage 一次，不重新渲染。
    * 重渲要新建 WebGLRenderer（几百毫秒 + 一个上下文），裁一张只要几毫秒。 */
   function downloadCell(idx) {
     var o = state.out;
-    if (!o) return;
+    if (!o || state.busy) return;
     var c = o.cells[idx];
     if (!c) return;
+    exportBegin('cell', '正在裁剪「' + c.name + '」视图…');
+    setBusy('export');
     var img = new Image();
     img.onload = function () {
       var cv = document.createElement('canvas');
@@ -141,11 +222,18 @@
       /* 透明背景要保留 alpha，所以不能先填白底 */
       cx.drawImage(img, c.x, c.y, c.w, c.h, 0, 0, c.w, c.h);
       cv.toBlob(function (blob) {
-        saveBlob(blob, baseName() + '_' + c.key + '.png');
-        say('已导出「' + c.name + '」视图 · ' + c.w + '×' + c.h);
+        var fn = baseName() + '_' + c.key + '.png';
+        var bytes = saveBlob(blob, fn);
+        setBusy('');
+        exportDone('cell', fn, bytes, c.w + '×' + c.h + ' · ' + c.name);
       }, 'image/png');
     };
-    img.onerror = function () { state.error = '裁剪失败：结果图读不出来'; MV.paint(); };
+    img.onerror = function () {
+      state.error = '裁剪失败：结果图读不出来';
+      MV.paint();
+      setBusy('');
+      exportFail('cell', '结果图读不出来');
+    };
     img.src = o.png;
   }
 
@@ -163,6 +251,7 @@
       return null;
     }
     var L = MV.exportLayout(state.views.length, state.exSize, state.exGap, state.cols, state.compact);
+    state.error = '';
     setBusy('render');
     try {
       var o = await Model3D.viewGrid(state.cur.src, MV.renderOpts(pass, L, true));
@@ -170,16 +259,24 @@
       return o;
     } catch (e) {
       setBusy('');
-      say('导出失败：' + MV.friendly(e));
+      state.error = '导出失败：' + MV.friendly(e);
+      say(state.error);
       return null;
     }
   }
 
   async function downloadExport(pass) {
+    if (state.busy) return;
+    exportBegin(pass, '正在渲染' + EX_LABEL[pass] + '…');
     var o = await exportPNG(pass);
-    if (!o) return;
-    saveBlob(dataUrlToBlob(o.png), baseName() + '_' + o.cells.length + '视图' + EX_SUFFIX[pass] + '.png');
-    say('已导出' + EX_LABEL[pass] + ' · ' + o.width + '×' + o.height + (pass === 'depth' ? ' · 近白远黑' : pass === 'mask' ? ' · 黑底白模' : ''));
+    if (!o) {
+      exportFail(pass, String(state.error || '').replace(/^导出失败：/, '') || '渲染没完成');
+      return;
+    }
+    var fn = baseName() + '_' + o.cells.length + '视图' + EX_SUFFIX[pass] + '.png';
+    var bytes = saveBlob(dataUrlToBlob(o.png), fn);
+    exportDone(pass, fn, bytes, o.width + '×' + o.height +
+      (pass === 'depth' ? ' · 近白远黑' : pass === 'mask' ? ' · 黑底白模' : ''));
   }
 
   /* 预览导出结果：弹层里先看大图，确认了再下载。 */
@@ -202,7 +299,16 @@
     xlEl.addEventListener('mousedown', function (ev) { if (ev.target === xlEl) closeExportOverlay(); });
     xlEl.querySelector('.mv-xl-x').addEventListener('click', closeExportOverlay);
     xlEl.querySelector('.mv-xl-dl').addEventListener('click', function () {
-      if (xlCur) saveBlob(dataUrlToBlob(xlCur.png), baseName() + '_' + xlCur.cells.length + '视图.png');
+      if (!xlCur) return;
+      var b = this;
+      var fn = baseName() + '_' + xlCur.cells.length + '视图.png';
+      var bytes = saveBlob(dataUrlToBlob(xlCur.png), fn);
+      var info = xlEl.querySelector('.mv-xl-info');
+      if (info) info.textContent = '已下载 · ' + fn + (bytes ? ' · ' + fmtBytes(bytes) : '');
+      b.textContent = '已下载';
+      b.disabled = true;
+      clearTimeout(b._mvT);
+      b._mvT = setTimeout(function () { b.textContent = '下载 PNG'; b.disabled = false; }, 1600);
     });
     return xlEl;
   }
@@ -226,33 +332,41 @@
   }
 
   async function previewExport() {
+    if (state.busy) return;
+    exportBegin('preview', '正在生成导出预览…');
     var o = await exportPNG('color');
-    if (!o) return;
+    if (!o) {
+      exportFail('preview', String(state.error || '').replace(/^导出失败：/, '') || '渲染没完成');
+      return;
+    }
     openExportOverlay(o);
+    exportDone('preview', '', 0, o.width + '×' + o.height + ' · 弹层里可下载');
   }
 
   async function saveToLib() {
-    if (!state.out) return;
+    if (!state.out || state.busy) return;
     var d = MV.lib();
     if (!d || typeof d.assetPut !== 'function') {
-      say('浏览器里存不进图库，用「下载整图」');
+      exportFail('lib', '浏览器里存不进图库，用「下载整图」');
       return;
     }
+    exportBegin('lib', '正在写入图库…');
     setBusy('saving');
+    var r = null, err = '';
     try {
-      var r = await d.assetPut({
+      r = await d.assetPut({
         kind: 'image',
         name: baseName() + '_' + state.out.cells.length + '视图.png',
         ext: 'png',
         data: state.out.png,
         source: 'multiview'
       });
-      if (r && r.ok) say('已存入图库 · 图库里能看到这张');
-      else say('入库失败：' + ((r && r.message) || '未知原因'));
     } catch (e) {
-      say('入库失败：' + MV.friendly(e));
+      err = MV.friendly(e);
     }
     setBusy('');
+    if (!err && r && r.ok) exportDone('lib', baseName() + '_' + state.out.cells.length + '视图.png', 0, '图库里能看到这张');
+    else exportFail('lib', err || (r && r.message) || '未知原因');
   }
 
   var sayTimer = 0;
@@ -275,6 +389,12 @@
   MV.baseName = baseName;
   MV.saveBlob = saveBlob;
   MV.dataUrlToBlob = dataUrlToBlob;
+  MV.exportBegin = exportBegin;
+  MV.exportDone = exportDone;
+  MV.exportFail = exportFail;
+  MV.exportClear = exportClear;
+  MV.exportStatus = exportStatus;
+  MV.fmtBytes = fmtBytes;
   MV.downloadAll = downloadAll;
   MV.downloadCell = downloadCell;
   MV.exportPNG = exportPNG;

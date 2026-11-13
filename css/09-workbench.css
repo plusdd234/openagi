@@ -17,14 +17,16 @@
   .desk-wall {
     background: #ffffff;
   }
-  /* 画布灰底：比外围白底深一档，配合内阴影把图标层「抬」起来 */
+  /* 画布灰底：比外围白底深一档。外投影负责「这块是浮在桌面上的板」，
+     内阴影负责「板面往下沉」，两者一起才能和四周白底分出前后。 */
   .desk-canvas {
-    background: linear-gradient(180deg, #f2f4f7 0%, #ebedf2 100%);
-    border-color: #e4e7ec;
+    background: linear-gradient(180deg, #f2f4f7 0%, #e9ecf1 100%);
+    border-color: #e0e4ea;
     box-shadow:
       inset 0 1px 0 rgba(255,255,255,.92),
-      inset 0 -18px 40px -28px rgba(28,38,60,.10),
-      0 1px 2px rgba(28,38,60,.05);
+      inset 0 -30px 56px -34px rgba(28,38,60,.16),
+      0 1px 2px rgba(28,38,60,.05),
+      0 20px 44px -28px rgba(28,38,60,.30);
   }
   .desk-icons { z-index: 1; }
 
@@ -59,12 +61,15 @@
   .desk-app:hover .desk-app-icon { transform: translateY(-2px) scale(1.02); }
   .desk-app.dragging .desk-app-icon { transform: scale(1.08); }
 
-  /* ---- 2 左侧工作流区：内凹嵌板（比地面低半级） ---- */
+  /* ---- 2 左侧工作流区：内凹嵌板（比地面低半级）----
+     右侧向白底投一道窄阴影，让侧栏和画布之间的留白有明确的「谁在前面」；
+     内侧再留一层柔和的暗角，避免整条侧栏平贴在页面上。 */
   .desk-side {
-    background: linear-gradient(180deg, #f4f5f7 0%, #eef0f3 100%);
+    background: linear-gradient(180deg, #f6f7f9 0%, #eceef2 100%);
     box-shadow:
-      inset -1px 0 0 rgba(255,255,255,.75),
-      inset -8px 0 16px -10px rgba(28,38,60,.14);
+      inset -1px 0 0 rgba(255,255,255,.72),
+      inset -16px 0 28px -20px rgba(28,38,60,.18),
+      10px 0 26px -22px rgba(28,38,60,.34);
     z-index: 2;
   }
   .desk-side-head .desk-side-title { color: #5c6472; }
@@ -115,13 +120,17 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 1px 2px rgba(28,38,60,.06);
   }
 
-  /* ---- 1 顶栏：天际线（最高层，与桌面形成投影分隔） ---- */
+  /* ---- 1 顶栏：天际线（最高层，压在所有板块之上）----
+     阴影分两段：近处一道细影贴住下沿，远处一团大范围柔影铺到内容区，
+     顶栏才会像「盖」在页面之上，而不是和内容同一个平面。 */
   .appbar {
     background: linear-gradient(180deg, #ffffff 0%, #fbfbfc 100%);
+    border-bottom-color: #dfe3e9;
     box-shadow:
-      0 1px 0 rgba(255,255,255,.9) inset,
-      0 1px 0 rgba(255,255,255,.6),
-      0 3px 12px rgba(28,38,60,.08);
+      inset 0 1px 0 rgba(255,255,255,.92),
+      0 1px 0 rgba(28,38,60,.06),
+      0 8px 20px -10px rgba(28,38,60,.20),
+      0 24px 48px -28px rgba(28,38,60,.28);
     z-index: 30;
   }
   .status-chip, .icon-btn {

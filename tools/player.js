@@ -109,8 +109,8 @@ async function openPlayer(page){
   });
   check(mounted.visible && mounted.inHost, '窗口搬进 App 页并显示');
   check(mounted.appOpen, '桌面翻到 App 页');
-  check(/播放器/.test(mounted.title), '顶栏标签是「播放器」', mounted.title);
-  check(mounted.sub.indexOf('本地') >= 0, '副标题说明这是本地播放器', mounted.sub);
+  check(/视频库/.test(mounted.title), '顶栏标签是「视频库」', mounted.title);
+  check(mounted.sub.indexOf('本地') >= 0, '副标题说明这是本地视频库', mounted.sub);
 
   console.log('\n— ② 列表只收影音 —');
   const listInfo = await pageA.evaluate(() => {

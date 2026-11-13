@@ -12,6 +12,7 @@
     flex: 0 0 auto; width: 214px; min-height: 0; padding: 10px 8px;
     display: flex; flex-direction: column;
     background: #fbfbfc; border-right: 1px solid #eceef2;
+    transition: width .22s ease, padding .22s ease;
   }
   .desk-side-head { display: flex; align-items: center; gap: 7px; padding: 2px 5px 8px; }
   .desk-side-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: #6a7488; }
@@ -19,6 +20,34 @@
     font-family: var(--mono); font-size: 10px; color: #6a7488;
     background: #eceef2; border-radius: 999px; padding: 0 6px; min-width: 18px; text-align: center;
   }
+  .desk-side-toggle {
+    flex: 0 0 auto; margin-left: auto; width: 22px; height: 22px; padding: 0;
+    display: grid; place-items: center;
+    border: 1px solid transparent; border-radius: 6px; background: transparent;
+    color: #8a9098; cursor: pointer;
+    transition: color .13s, background .13s, border-color .13s;
+  }
+  .desk-side-toggle:hover { color: #1f2328; background: #eceef2; border-color: #e1e4e9; }
+  .desk-side-toggle svg { width: 14px; height: 14px; display: block; transition: transform .2s ease; }
+
+  /* ---- 收纳态：整条侧栏收成一条窄轨 ----
+     只留标题栏里的展开按钮，正文全部撤场。宽度走 CSS 过渡，
+     桌面画布会自动铺开，不靠 JS 算尺寸。 */
+  .desk-side.collapsed { width: 46px; padding: 10px 6px; }
+  .desk-side.collapsed .desk-side-head { justify-content: center; padding: 2px 0 8px; }
+  .desk-side.collapsed .desk-side-title,
+  .desk-side.collapsed .desk-side-count,
+  .desk-side.collapsed .desk-side-new,
+  .desk-side.collapsed .desk-side-list,
+  .desk-side.collapsed .desk-side-foot { display: none; }
+  .desk-side.collapsed .desk-side-toggle { margin-left: 0; }
+  /* 窄轨里只剩这一个可点的东西：给它一层实底，别让人以为是个装饰箭头 */
+  .desk-side.collapsed .desk-side-toggle {
+    width: 26px; height: 26px; background: #fff; border-color: #e1e4e9;
+    color: #5a6068; box-shadow: 0 1px 2px rgba(28,38,60,.08);
+  }
+  .desk-side.collapsed .desk-side-toggle:hover { background: #f7f8fa; color: #1f2328; border-color: #cfd4db; }
+  .desk-side.collapsed .desk-side-toggle svg { transform: rotate(180deg); }
   .desk-side-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 1px; }
   .desk-side-new {
     margin-bottom: 8px; height: 30px; display: flex; align-items: center; justify-content: center; gap: 6px;

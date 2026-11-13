@@ -1,7 +1,7 @@
 /* 探针：多视图「深度描边」在**真实模型**上的观感（像素级）
  * 用法：node tools/probe-mv-depth-real.js
  * 可选：MV_MODEL=assets/models/xxx.obj node tools/probe-mv-depth-real.js
- * 产物：tools/shots/real-depth-*.png
+ * 产物：运行目录下的 real-depth-*.png（见 tools/probe-run.js）
  *
  * 为什么还要单独测一遍：合成盒子只验证「逻辑对不对」，验证不了「糊不糊」。
  * 模型库里的模型是 AI 生成的，普遍有重叠面片、薄片头发、双层裙摆——
@@ -14,7 +14,7 @@ const path = require('path');
 const fs = require('fs');
 
 const ROOT = path.join(__dirname, '..');
-const OUT = path.join(__dirname, 'shots');
+const OUT = require('./probe-run').runDir('probe-mv-depth-real');
 const LANE = process.env.MV_MODEL || 'assets/models/mvvjq461-74f758de.obj';
 
 let fails = 0;

@@ -12,7 +12,9 @@ const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const fs = require('fs');
 const path = require('path');
+const { createRun } = require('./probe-run');
 
+const RUN = createRun('probe-slot-seam-blur');
 const ROOT = path.join(__dirname, '..');
 const TARGET = pathToFileURL(path.join(ROOT, 'index.html')).href + '?nostore=1';
 const GLB = path.join(ROOT, 'assets', 'models', 'mvyfd48a-8e2b846b.glb');
@@ -144,7 +146,7 @@ const check = (name, ok, info) => {
   const dumpLast = async (file) => {
     const d = await lastData();
     const i = String(d).indexOf('base64,');
-    if (i > 0) fs.writeFileSync(path.join(__dirname, file), Buffer.from(d.slice(i + 7), 'base64'));
+    if (i > 0) fs.writeFileSync(RUN.artifact(file), Buffer.from(d.slice(i + 7), 'base64'));
   };
 
   /* 把入库 PNG 读回像素：统计不透明 / 半透明 / 全透明，以及出血带的平均色 */
@@ -328,7 +330,7 @@ const check = (name, ok, info) => {
   });
   check('模糊模式下岛遮罩开关置灰并写明让开', !!clipState && clipState.disabled &&
     /岛遮罩自动让开/.test(clipState.note), JSON.stringify(clipState));
-  await page.screenshot({ path: path.join(__dirname, '_seam_ui.png') });
+  await RUN.shot(page, 'seam-ui.png');
   await clickText('完成');
   await page.waitForTimeout(1200);
   const dataC = await lastData();
@@ -388,7 +390,7 @@ const check = (name, ok, info) => {
   }, [dataA, dataB, dataC]);
   if (compareURL) {
     const ci = compareURL.indexOf('base64,');
-    fs.writeFileSync(path.join(__dirname, '_seam_compare.png'), Buffer.from(compareURL.slice(ci + 7), 'base64'));
+    fs.writeFileSync(RUN.artifact('seam-compare.png'), Buffer.from(compareURL.slice(ci + 7), 'base64'));
     check('已产出三态局部对比图', true);
   } else check('已产出三态局部对比图', false, '对比图为空');
 

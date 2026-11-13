@@ -10,7 +10,7 @@ const path = require('path');
 const { chromium } = require('playwright-core');
 
 const ROOT = path.resolve(__dirname, '..');
-const PORT = 8972;
+let PORT = 0;   // listen(0) 后取真实端口，避免与其他探针抢占 8972
 const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.glb': 'model/gltf-binary', '.png': 'image/png' };
 
 const server = http.createServer((q, s) => {
@@ -29,7 +29,8 @@ const server = http.createServer((q, s) => {
   const output = process.argv[3] || input.replace(/\.glb$/i, '_fixed.glb');
   const rel = path.relative(ROOT, path.resolve(input)).replace(/\\/g, '/');
 
-  await new Promise(r => server.listen(PORT, r));
+  await new Promise(r => server.listen(0, r));
+  PORT = server.address().port;
   const browser = await chromium.launch({ channel: 'msedge', args: ['--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'] });
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
   page.on('pageerror', e => console.error('[pageerror]', e.message));

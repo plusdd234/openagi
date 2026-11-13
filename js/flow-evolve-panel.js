@@ -72,7 +72,7 @@ function vexAsk(sys, user){
     let acc = '';
     llmStreamRequest(sys, [{ role: 'user', content: [{ type: 'text', text: user }] }],
       t => { acc += t; },
-      { timeoutMs: 180000, signal: ctrl.signal }
+      { timeoutMs: 180000, signal: ctrl.signal, app: 'flow-evolve' }
     ).then(raw => { vexAbort = null; resolve(raw || acc); })
       .catch(e => { vexAbort = null; reject(e); });
   });

@@ -1,5 +1,5 @@
 /* 截图：名片 App
- * 用法：node tools/shot-card.js  → tools/shots/card-*.png
+ * 用法：node tools/shot-card.js  → .workbuddy/runs/<时间>-<pid>-shot-card/card-*.png
  *
  * 名片是纯静态页面，除了「换过码」这一种状态没有别的分支，
  * 所以只截两版：默认（仓库里那张码）+ 换码后的提示态。
@@ -9,7 +9,7 @@ const { pathToFileURL } = require('url');
 const fs = require('fs');
 const path = require('path');
 
-const OUT = path.join(__dirname, 'shots');
+const OUT = require('./probe-run').runDir('shot-card');
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });

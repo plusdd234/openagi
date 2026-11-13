@@ -9,6 +9,9 @@ const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
+const { createRun } = require('./probe-run');
+
+const RUN = createRun('probe-modeldesk');
 
 let fails = 0;
 const check = (ok, name, extra) => {
@@ -824,8 +827,9 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
   const hb = await readHb();
   check(hb.on && hb.zones.length === 4 && hb.zones[1].t === '对象操作',
     '热盒四区：组件模式 / 当前模式操作 / 工具 / 显示（对象模式下右区=对象操作）', JSON.stringify(hb.zones.map(function (z) { return z.t; })));
-  check(hb.zones[1].items.indexOf('复制对象') === 0 && hb.zones[1].items.filter(function (x) { return /占位$/.test(x); }).length === 3,
-    '对象操作区：3 个真命令 + 3 个占位（分组/父子/隔离）', JSON.stringify(hb.zones[1].items));
+  check(hb.zones[1].items.indexOf('复制对象') === 0 && hb.zones[1].items.filter(function (x) { return /占位$/.test(x); }).length === 2 &&
+    hb.zones[1].items.indexOf('隔离') > 0,
+    '对象操作区：4 个真命令 + 2 个占位（分组/父子），隔离已接入', JSON.stringify(hb.zones[1].items));
 
   /* 在热盒里点「面」→ 不关热盒，右区应换成「面操作」那一层 */
   const faceHbBtn = await page.$('#mdHotbox [data-hb="n:3"]');
@@ -1784,12 +1788,12 @@ Connections:  {
       h: Math.round(r.height * 10) / 10,
       overTop: Math.round((r.top - row.top) * 10) / 10,
       overBottom: Math.round((r.bottom - row.bottom) * 10) / 10,
-      bg: cs.backgroundColor, radius: cs.borderRadius
+      bg: cs.backgroundColor, radius: cs.borderRadius, border: cs.borderColor
     };
   });
   check(cmdStyle.h <= 21 && cmdStyle.overTop >= -1 && cmdStyle.overBottom <= 1 &&
-    cmdStyle.bg !== 'rgb(255, 255, 255)' && cmdStyle.radius !== '9px',
-    '命令行输入框不再白底、不越出命令行高度',
+    cmdStyle.radius === '4px' && cmdStyle.border === 'rgb(217, 221, 227)',
+    '命令行输入框沿用浅色字段样式（冷灰描边、4px 圆角、不越出命令行高度）',
     JSON.stringify(cmdStyle));
 
   await page.click('.md-dock-tab[data-md-dock="toggle"]');
@@ -2318,8 +2322,8 @@ Connections:  {
     const after = sum();
     return { tex: window.modelDesk.getState().uvTex, before, after, label: document.getElementById('mdUvTex').textContent };
   });
-  check(uvTex.tex && uvTex.after > uvTex.before && /棋盘格/.test(uvTex.label),
-    '棋盘格底图开关真正改画布像素', JSON.stringify({ tex: uvTex.tex, delta: uvTex.after - uvTex.before, label: uvTex.label }));
+  check(uvTex.tex && Math.abs(uvTex.after - uvTex.before) > 50000 && /棋盘格/.test(uvTex.label),
+    '棋盘格底图开关真正改画布像素（浅色底上变暗也算）', JSON.stringify({ tex: uvTex.tex, delta: uvTex.after - uvTex.before, label: uvTex.label }));
 
   const uvStitch = await page.evaluate(() => {
     document.querySelector('#mdUvWin [data-uvact="selAll"]').click();
@@ -2432,7 +2436,7 @@ Connections:  {
   check(uvSeamUndo.seams === uvSeam.seams0 && uvSeamUndo.faces === uvSeam.faces0,
     '撤销还原 UV 缝（缝标记进指纹与历史）', JSON.stringify({ seams: uvSeamUndo.seams, faces: uvSeamUndo.faces }));
 
-  const texFile = path.join(__dirname, '_md-uvtex.svg');
+  const texFile = RUN.artifact('uvtex.svg');
   fs.writeFileSync(texFile, '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">' +
     '<rect width="32" height="32" fill="#ff2d55"/></svg>');
   const redCount = await page.evaluate(() => {
@@ -2461,7 +2465,7 @@ Connections:  {
       tex: desk.getState().uvTex
     };
   });
-  check(uvImg.image && uvImg.name === '_md-uvtex.svg' && uvImg.red > redCount + 200,
+  check(uvImg.image && /uvtex\.svg$/i.test(uvImg.name || '') && uvImg.red > redCount + 200,
     '载入图片后 0–1 范围铺上真实底图（画布像素变化）', JSON.stringify(uvImg));
   check(uvImg.tex === false, '载入图片时自动关闭棋盘格（避免底图发花）', 'tex=' + uvImg.tex);
 
@@ -2621,8 +2625,8 @@ Connections:  {
   try {
     const uvwin = await page.$('#mdUvWin');
     if (uvwin) {
-      await uvwin.screenshot({ path: path.join(__dirname, '_md-shot-uv.png') });
-      info('UV 窗口截图', path.join(__dirname, '_md-shot-uv.png'));
+      const shot = await RUN.shot(uvwin, 'uv-window.png');
+      if (shot) info('UV 窗口截图', shot);
     }
   } catch (e) { info('UV 截图失败', String(e && e.message)); }
 
@@ -3108,20 +3112,147 @@ Connections:  {
     '属性编辑器页签可切换：占满右栏高度，切回建模后收起',
     JSON.stringify(propsTab));
 
+  /* 「占位控件落实」：视口条 5 个下拉 / 大纲三页签 / 视图行 / 工具架页签 / 命令行 */
+  const uiCtrl = await page.evaluate(async () => {
+    const q = (s) => document.querySelector(s);
+    const popItem = (text) => Array.from(document.querySelectorAll('.md-pop .md-mi'))
+      .find((b) => b.textContent.indexOf(text) >= 0);
+    const state = () => window.modelDesk.getState();
+    const out = {};
+    try {
+
+    /* 相机视图菜单：打开 → 有 7 项 → 点前视图 */
+    q('#mdViewLabel').click();
+    out.viewMenu = Array.from(document.querySelectorAll('.md-pop .md-mi span')).map((e) => e.textContent);
+    popItem('前视图').click();
+    out.viewFront = state().viewName;
+
+    /* 显示开关：栅格关 → 开 */
+    q('[data-md-pop="display"]').click();
+    popItem('栅格').click();
+    out.gridOff = window.SeedViewFlags.get('grid');
+    q('[data-md-pop="display"]').click();
+    popItem('栅格').click();
+    out.gridOn = window.SeedViewFlags.get('grid');
+
+    /* 照明预设：环境光（主光归零）→ 默认 */
+    q('[data-md-pop="light"]').click();
+    popItem('环境光').click();
+    out.lightAmbient = state().lightingPreset;
+    out.lightKeyOff = state().lightIntensity[1];
+    q('[data-md-pop="light"]').click();
+    popItem('默认').click();
+    out.lightBack = state().lightingPreset;
+
+    /* 渲染器：Reinhard + 曝光 1.25，再恢复 */
+    q('[data-md-pop="render"]').click();
+    out.renderItems = Array.from(document.querySelectorAll('.md-pop .md-mi span')).map((e) => e.textContent);
+    popItem('Reinhard').click();
+    out.tone = state().prefs.toneMapping;
+    out.renderStatus = (q('#mdStatus') || {}).textContent || '';
+    q('[data-md-pop="render"]').click();
+    popItem('曝光 1.25').click();
+    out.exposure = state().prefs.exposure;
+    q('[data-md-pop="render"]').click();
+    popItem('ACES Filmic').click();
+    q('[data-md-pop="render"]').click();
+    popItem('曝光 1.00').click();
+    out.toneBack = state().prefs.toneMapping + '/' + state().prefs.exposure;
+
+    /* 面板：隐藏 / 显示大纲 */
+    q('[data-md-pop="panel"]').click();
+    popItem('大纲视图').click();
+    out.outlineHidden = q('.md-outline').hidden;
+    q('[data-md-pop="panel"]').click();
+    popItem('大纲视图').click();
+    out.outlineBack = !q('.md-outline').hidden;
+
+    /* 大纲三页签：帮助 → 显示 */
+    q('[data-md-otab="help"]').click();
+    out.helpNote = (q('#mdOutlineList .md-note') || {}).textContent || '';
+    q('[data-md-otab="all"]').click();
+    out.outlineTabBack = state().outlineTab;
+
+    /* 大纲视图行：点 top 切顶视图，再回轴测 */
+    q('[data-md-view="top"]').click();
+    out.viewTop = state().viewName;
+    q('[data-md-view="iso"]').click();
+    out.viewIso = state().viewName;
+
+    /* 工具架页签：渲染页 → FX 空页 → 回多边形 */
+    q('[data-md-stab="render"]').click();
+    out.shelfRender = state().shelfTab;
+    out.shelfRenderVisible = Array.from(document.querySelectorAll('.md-shelf-grid .md-sico'))
+      .filter((b) => !b.hidden).length;
+    q('[data-md-stab="fx"]').click();
+    out.fxNote = q('#mdShelfNote').hidden ? '' : q('#mdShelfNote').textContent;
+    q('[data-md-stab="poly"]').click();
+    out.shelfBack = state().shelfTab;
+    out.shelfPolyVisible = Array.from(document.querySelectorAll('.md-shelf-grid .md-sico'))
+      .filter((b) => !b.hidden).length;
+
+    /* 命令行：camera / display / tone / exposure */
+    const cmd = (v) => {
+      const el = q('#mdCmd');
+      el.value = v;
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    };
+    cmd('camera back');
+    out.cmdView = state().viewName;
+    cmd('display verts off');
+    out.cmdVertsOff = window.SeedViewFlags.get('verts');
+    cmd('display verts on');
+    cmd('tone reinhard');
+    out.cmdTone = state().prefs.toneMapping;
+    cmd('exposure 1.1');
+    out.cmdExposure = state().prefs.exposure;
+    cmd('tone aces');
+    cmd('exposure 1');
+    cmd('camera iso');
+    out.cmdRestore = state().viewName;
+    } catch (e) {
+      out.error = String((e && e.stack) || e);
+    }
+    return out;
+  });
+
+  check(uiCtrl.error == null, '视口控件探针无脚本错误', uiCtrl.error || '');
+  check((uiCtrl.viewMenu || []).length === 7 && uiCtrl.viewFront === '前视图',
+    '视口「透视▾」可切 7 个相机视图', JSON.stringify({ items: (uiCtrl.viewMenu || []).length, view: uiCtrl.viewFront }));
+  check(uiCtrl.gridOff === false && uiCtrl.gridOn === true,
+    '视口「显示▾」栅格开关真实生效并可恢复', JSON.stringify({ off: uiCtrl.gridOff, on: uiCtrl.gridOn }));
+  check(uiCtrl.lightAmbient === 'ambient' && Math.abs(uiCtrl.lightKeyOff) < 1e-6 && uiCtrl.lightBack === 'default',
+    '视口「照明▾」环境光预设把主光归零，切回默认恢复', JSON.stringify(uiCtrl));
+  check(uiCtrl.tone === 'reinhard' && Math.abs(uiCtrl.exposure - 1.25) < 1e-6 && uiCtrl.toneBack === 'aces/1',
+    '视口「渲染器▾」色调映射与曝光可切换并恢复', JSON.stringify({ tone: uiCtrl.tone, exposure: uiCtrl.exposure, back: uiCtrl.toneBack }));
+  check(uiCtrl.outlineHidden === true && uiCtrl.outlineBack === true,
+    '视口「面板▾」可隐藏 / 恢复大纲', JSON.stringify({ hidden: uiCtrl.outlineHidden, back: uiCtrl.outlineBack }));
+  check(uiCtrl.helpNote != null && uiCtrl.helpNote.indexOf('显示') >= 0 && uiCtrl.outlineTabBack === 'all',
+    '大纲「显示 / 隐藏 / 帮助」页签可切换，帮助页给出说明', JSON.stringify({ note: uiCtrl.helpNote, tab: uiCtrl.outlineTabBack }));
+  check(uiCtrl.viewTop === '顶视图' && uiCtrl.viewIso === '轴测',
+    '大纲视图行可点击切换相机（top / persp）', JSON.stringify({ top: uiCtrl.viewTop, iso: uiCtrl.viewIso }));
+  check(uiCtrl.shelfRender === 'render' && uiCtrl.shelfRenderVisible >= 3 &&
+    uiCtrl.fxNote != null && uiCtrl.fxNote.indexOf('FX') >= 0 && uiCtrl.shelfBack === 'poly' && uiCtrl.shelfPolyVisible >= 10,
+    '工具架 7 个页签可切换，渲染页 3 个真工具 / FX 页给出未接入说明',
+    JSON.stringify(uiCtrl));
+  check(uiCtrl.cmdView === '后视图' && uiCtrl.cmdVertsOff === false &&
+    uiCtrl.cmdTone === 'reinhard' && Math.abs(uiCtrl.cmdExposure - 1.1) < 1e-6 && uiCtrl.cmdRestore === '轴测',
+    '命令行 camera / display / tone / exposure 全部生效',
+    JSON.stringify({ view: uiCtrl.cmdView, verts: uiCtrl.cmdVertsOff, tone: uiCtrl.cmdTone, exp: uiCtrl.cmdExposure }));
+
   /* 12. 截图（整窗 + 视口） */
-  const shotWin = path.join(__dirname, '_md-shot-win.png');
-  const shotVp = path.join(__dirname, '_md-shot-vp.png');
   try {
     const win = await page.$('#modelDeskWin');
-    if (win) await win.screenshot({ path: shotWin });
+    const shotWin = win ? await RUN.shot(win, 'window.png') : null;
     const stage = await page.$('#mdStage');
-    if (stage) await stage.screenshot({ path: shotVp });
-    info('截图', shotWin + ' , ' + shotVp);
+    const shotVp = stage ? await RUN.shot(stage, 'stage.png') : null;
+    if (shotWin || shotVp) info('截图', [shotWin, shotVp].filter(Boolean).join(' , '));
   } catch (e) { info('截图失败', String(e && e.message)); }
 
   check(errors.length === 0, '打开与操作期间无 pageerror', errors.slice(0, 3).join(' | '));
 
   await browser.close();
+  RUN.finish(fails ? ['失败 ' + fails + ' 项'] : []);
   console.log(fails ? '\n❌ 失败 ' + fails + ' 项' : '\n✅ 全部通过');
   process.exit(fails ? 1 : 0);
 })();

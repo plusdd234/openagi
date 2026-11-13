@@ -1,6 +1,6 @@
 /* 探针：多视图「UV 岛着色」图层
  * 用法：node tools/probe-mv-uvisland.js
- * 产物：tools/shots/island-*.png
+ * 产物：运行目录下的 island-*.png（见 tools/probe-run.js）
  *
  * 两个对照组，都是立方体，只差 UV：
  *   ① 每面一块独立 UV  → 6 只岛（每条空间边两侧 UV 不同 → 不连通）
@@ -12,7 +12,7 @@ const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const OUT = path.join(__dirname, 'shots');
+const OUT = require('./probe-run').runDir('probe-mv-uvisland');
 
 const V = [
   [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],

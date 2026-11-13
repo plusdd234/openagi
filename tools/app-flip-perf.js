@@ -25,7 +25,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.goto(url, { waitUntil: 'load' });
   await page.waitForTimeout(900);
 
-  const outDir = path.join(__dirname, '..', '.workbuddy', 'shots');
+  const outDir = require('./probe-run').runDir('app-flip-perf');
   fs.mkdirSync(outDir, { recursive: true });
 
   console.log('\n=== 1. 装帧探针 ===');

@@ -2,9 +2,9 @@
  * app.css 拆分 · 15-modeldesk
  * （原编号 12，与 12-media 撞号；选择器全部以 .os-win.modeldesk 开头，
  *   作用域独立，所以改号并挪到最后不影响层叠。）
- * 建模 App 外壳：按 Maya 2024 的布局重画
+ * 建模 App 外壳：按 Maya 2024 的布局排布，配色与桌面工作台统一（浅灰底 + 白卡 + 冷灰描边）。
  * 菜单条 / 状态行 / 工具架 / 主区（工具条 + 大纲 + 视口 + 右侧）/ 命令行。
- * 只作用在 .os-win.modeldesk 里，别让这些灰色面板污染别的 App。
+ * 只作用在 .os-win.modeldesk 里，别让这些面板污染别的 App。
  *
  * ⚠ 这份文件是按**原始行号连续切片**出来的，各文件之间靠 index.html 的
  *   <link> 顺序维持层叠关系。加新样式请放进对应 App 的文件，不要在这里
@@ -19,42 +19,40 @@
 
 .md-app {
   /* ---------- 色阶 ----------
-   * 五级灰，从上到下依次变亮。**每一个容器只准用这五级里的一个**：
-   *   视口外的空底 ink → 侧栏面板 panel → 卡片/分区 raise → 按钮面 ctrl → 悬停 raise-hi。
-   * 以前 #242424/#333/#363636/#3a3a3a/#3d3d3d/#3f3f3f/#444 七种灰混着用，
-   * 相邻两层的差只有 2–3，层级根本看不出来（这就是"面板糊成一片"的原因）。 */
-  --md-ink: #141414;          /* 最深：外框、窗口边、凹陷区 */
-  --md-bg: #222222;           /* 视口外的空底 */
-  --md-panel: #303030;        /* 侧栏 / 面板底 */
-  --md-raise: #383838;        /* 卡片 / 分区 / 分组底 */
-  --md-ctrl: #3f3f3f;         /* 按钮面 */
-  --md-raise-hi: #4a4a4a;     /* 悬停 / 抬起 */
-  --md-sunken: #252525;       /* 输入框 / 画布凹槽 */
+   * 浅色五级：与桌面工作台同一套（浅灰底 / 白卡 / 冷灰描边）。
+   * **每一个容器只准用这一级里的一个**：
+   *   视口外的空底 bg → 侧栏 panel → 卡片/分区 raise → 按钮面 ctrl → 悬停 raise-hi。
+   * 结构靠 1px 描边 + 轻投影分层，不靠背景色差堆叠。 */
+  --md-ink: #d9dde3;          /* 最深：外框、窗口边、凹陷区 */
+  --md-bg: #f1f3f6;           /* 视口外的空底 */
+  --md-panel: #fbfbfc;        /* 侧栏 / 面板底 */
+  --md-raise: #ffffff;        /* 卡片 / 分区 / 分组底 */
+  --md-ctrl: #ffffff;         /* 按钮面 */
+  --md-raise-hi: #f1f2f4;     /* 悬停 / 抬起 */
+  --md-sunken: #f7f8fa;       /* 输入框 / 画布凹槽 */
+  --md-panel-hi: #f5f6f8;     /* 面板标题条 */
 
-  --md-line: #141414;         /* 强分隔（面板与面板之间） */
-  --md-line-soft: #2a2a2a;    /* 弱分隔（面板内部） */
-  /* 按钮上沿的一道高光：深色 UI 里"可点"这件事主要靠它表达，
-   * 纯靠背景色差在低对比下几乎看不出来 */
-  --md-edge-top: rgba(255, 255, 255, .075);
+  --md-line: #e3e6ea;         /* 强分隔（面板与面板之间） */
+  --md-line-soft: #eceef2;    /* 弱分隔（面板内部） */
+  /* 浅色 UI 的可点感靠描边和投影表达，上沿留一条更亮的高光 */
+  --md-edge-top: #f5f6f8;
 
-  --md-txt: #d9d9d9;
-  --md-dim: #a6a6a6;
-  --md-mute: #8a8a8a;
+  --md-txt: #1f2328;
+  --md-dim: #5a6068;
+  --md-mute: #8a9098;
 
-  --md-field: var(--md-sunken);
-  --md-field-line: #161616;
+  --md-field: #ffffff;
+  --md-field-line: #d9dde3;
 
-  /* 选中蓝 / 强调金：这两个色以前各有四种写法（#4f6a84 / #4a7ea5 / #4a6a92 /
-   * #3f6d92，金 #c98f35 / #d9922f / #e0a13a / #d8a15a），
-   * 同一个"选中"在不同面板里颜色不同，用户学不会"蓝=选中" */
-  --md-on: #47719a;
-  --md-on-line: #345570;
-  --md-on-hi: #5a86b0;
-  --md-accent: #d8a04a;
-  --md-accent-line: #8a6222;
-  --md-focus: #6fa8d6;
-  --md-err: #ff9b8a;
-  --md-warn: #ffd08a;
+  /* 选中蓝 / 主操作橙：与主界面的选中节点、主按钮同色 */
+  --md-on: #2b7cd3;
+  --md-on-line: #1d5fa5;
+  --md-on-hi: #4a94e0;
+  --md-accent: #e88a00;
+  --md-accent-line: #c97a00;
+  --md-focus: #8a95a5;
+  --md-err: #c9342a;
+  --md-warn: #a35b00;
 
   --md-r-sm: 2px;             /* 小徽章 / 缩略图 */
   --md-r: 3px;                /* 控件（按钮 / 输入框 / 页签） */
@@ -63,10 +61,8 @@
 
   --md-t: background-color .12s ease, border-color .12s ease, color .12s ease;
 
-  /* 让原生控件（复选框、下拉列表、取色器、range、滚动条）按深色渲染。
-   * 不加这一条，深色面板里会冒出：纯白复选框、白底下拉列表、白色滚动槽 ——
-   * 这是"看起来像没做完"最直观的来源，而且光靠 CSS 改不动它们的内部。 */
-  color-scheme: dark;
+  /* 让原生控件（复选框、下拉列表、取色器、range、滚动条）按浅色渲染。 */
+  color-scheme: light;
 
   flex: 1 1 auto; min-width: 0; min-height: 0;
   display: flex; flex-direction: column;
@@ -83,56 +79,56 @@
   flex: 0 0 25px; height: 25px;
   display: flex; align-items: center; gap: 6px;
   padding: 0 8px;
-  background: linear-gradient(180deg, #404040 0%, #363636 100%);
+  background: linear-gradient(180deg, #f9fafb 0%, #f9fafb 100%);
   border-bottom: 1px solid var(--md-line);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
   min-width: 0;
 }
 .md-menu-brand { display: flex; align-items: baseline; gap: 5px; flex: 0 0 auto; padding-right: 6px; }
-.md-menu-brand b { font-size: 11.5px; font-weight: 700; color: #ededed; letter-spacing: .02em; }
-.md-menu-brand span { font-size: 10px; color: #9a9a9a; }
+.md-menu-brand b { font-size: 11.5px; font-weight: 700; color: #1f2328; letter-spacing: .02em; }
+.md-menu-brand span { font-size: 10px; color: #6a7488; }
 .md-menu-items { display: flex; align-items: center; gap: 1px; min-width: 0; overflow: hidden; }
 .md-mitem {
   height: 19px; padding: 0 7px; flex: 0 0 auto;
   border: 1px solid transparent; border-radius: 2px;
-  background: transparent; color: #d2d2d2;
+  background: transparent; color: #3b4147;
   font: inherit; font-size: 11px; cursor: pointer;
   white-space: nowrap;
 }
-.md-mitem:hover { background: #4b4b4b; border-color: #565656; }
-.md-mitem.open { background: #4b4b4b; border-color: #565656; }
+.md-mitem:hover { background: #fbfbfc; border-color: #eceef2; }
+.md-mitem.open { background: #fbfbfc; border-color: #eceef2; }
 /* 主菜单下拉：绝对定位在 .md-menu 下方，坐标由 mdOpenMenu 按按钮实测值写入 */
 .md-drop {
   position: absolute; z-index: 70; min-width: 196px; max-width: 300px;
   padding: 4px; border-radius: 3px;
-  background: #3b3b3b; border: 1px solid #202020;
+  background: #f9fafb; border: 1px solid #e3e6ea;
   box-shadow: 0 10px 26px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.05);
 }
 .md-drop[hidden] { display: none; }
 .md-mtitle {
-  padding: 3px 7px 5px; font-size: 10px; color: #9a9a9a; letter-spacing: .06em;
+  padding: 3px 7px 5px; font-size: 10px; color: #6a7488; letter-spacing: .06em;
 }
 .md-mi {
   display: flex; align-items: center; gap: 12px; width: 100%;
   min-height: 23px; padding: 0 8px; border: 0; border-radius: 2px;
-  background: transparent; color: #dcdcdc; font: inherit; font-size: 11.5px;
+  background: transparent; color: #2a2f36; font: inherit; font-size: 11.5px;
   text-align: left; cursor: pointer; white-space: nowrap;
 }
 .md-mi > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.md-mi > b { margin-left: auto; font-size: 10px; font-weight: 400; color: #8f8f8f; }
-.md-mi:hover:not(.off) { background: #4a6a92; color: #fff; }
-.md-mi:hover:not(.off) > b { color: #dbe6f2; }
+.md-mi > b { margin-left: auto; font-size: 10px; font-weight: 400; color: #6a7488; }
+.md-mi:hover:not(.off) { background: #3d8ee0; color: #fff; }
+.md-mi:hover:not(.off) > b { color: #2b7cd3; }
 .md-mi.off { opacity: .38; cursor: default; }
-.md-msep { display: block; height: 1px; margin: 4px 6px; background: #4d4d4d; }
+.md-msep { display: block; height: 1px; margin: 4px 6px; background: #fbfbfc; }
 .md-menu-right { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
-.md-workspace { font-size: 10px; color: #9c9c9c; white-space: nowrap; }
+.md-workspace { font-size: 10px; color: #6a7488; white-space: nowrap; }
 .md-name {
   max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 11.5px; font-weight: 600; color: #efefef;
+  font-size: 11.5px; font-weight: 600; color: #1f2328;
 }
 .md-ver {
-  font-size: 9px; letter-spacing: .08em; color: #a9a9a9;
-  border: 1px solid #545454; border-radius: 2px;
+  font-size: 9px; letter-spacing: .08em; color: #5a6068;
+  border: 1px solid #eceef2; border-radius: 2px;
   padding: 1px 4px; white-space: nowrap;
 }
 
@@ -141,7 +137,7 @@
   flex: 0 0 28px; height: 28px;
   display: flex; align-items: center; gap: 4px;
   padding: 0 8px;
-  background: #333333;
+  background: #f6f7f9;
   border-bottom: 1px solid var(--md-line);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
   overflow: hidden;
@@ -150,67 +146,67 @@
 .md-tb-right { margin-left: auto; }
 .md-sep {
   flex: 0 0 1px; width: 1px; height: 16px; margin: 0 4px;
-  background: #232323; box-shadow: 1px 0 0 #4a4a4a;
+  background: #f3f5f7; box-shadow: 1px 0 0 #4a4a4a;
 }
 .md-ico {
   display: inline-flex; align-items: center; justify-content: center;
   width: 20px; height: 20px; flex: 0 0 auto;
-  color: #b9b9b9; font-size: 12px; line-height: 1;
+  color: #3b4147; font-size: 12px; line-height: 1;
   border: 1px solid transparent; border-radius: 2px;
 }
 .md-chip {
   height: 20px; padding: 0 8px; flex: 0 0 auto;
-  border: 1px solid #252525; border-top-color: #4d4d4d; border-radius: 3px;
-  background: #3d3d3d; color: #d4d4d4;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 3px;
+  background: #f9fafb; color: #3b4147;
   font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
 }
-.md-chip:hover { background: #4a4a4a; color: #f0f0f0; }
-.md-chip.on { background: var(--md-on); border-color: var(--md-on-line); border-top-color: #66839f; color: #fff; }
+.md-chip:hover { background: #fbfbfc; color: #1f2328; }
+.md-chip.on { background: var(--md-on); border-color: var(--md-on-line); border-top-color: #7db3e6; color: #1f2328; }
 .md-act {
   height: 20px; padding: 0 8px; flex: 0 0 auto;
-  border: 1px solid #252525; border-top-color: #4d4d4d; border-radius: 3px;
-  background: #3d3d3d; color: #d4d4d4;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 3px;
+  background: #f9fafb; color: #3b4147;
   font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
 }
-.md-act:hover { background: #4a4a4a; color: #fff; }
+.md-act:hover { background: #fbfbfc; color: #1f2328; }
 /* 开关型按钮（四视图 / 单独显示）的按下态 */
-.md-act.on { background: var(--md-on); border-color: var(--md-on-line); border-top-color: #66839f; color: #fff; }
-.md-act:disabled { opacity: .4; cursor: default; background: #3d3d3d; color: #bdbdbd; }
-.md-act.primary { background: #4f6a84; border-color: #394e61; border-top-color: #6d8aa5; color: #fff; }
-.md-act.primary:hover { background: #5b7897; }
-.md-tbst { font-size: 10px; color: #8f8f8f; padding: 0 3px; white-space: nowrap; flex: 0 0 auto; }
+.md-act.on { background: var(--md-on); border-color: var(--md-on-line); border-top-color: #7db3e6; color: #1f2328; }
+.md-act:disabled { opacity: .4; cursor: default; background: #f9fafb; color: #3b4147; }
+.md-act.primary { background: #3d8ee0; border-color: #2b7cd3; border-top-color: #7db3e6; color: #fff; }
+.md-act.primary:hover { background: #3d8ee0; }
+.md-tbst { font-size: 10px; color: #6a7488; padding: 0 3px; white-space: nowrap; flex: 0 0 auto; }
 
 /* ---------- 3. 工具架 ---------- */
 .md-shelf {
   flex: 0 0 58px; height: 58px;
   display: flex; flex-direction: column; gap: 3px;
   padding: 3px 7px 4px;
-  background: linear-gradient(180deg, #3e3e3e 0%, #353535 100%);
+  background: linear-gradient(180deg, #f9fafb 0%, #f9fafb 100%);
   border-bottom: 1px solid var(--md-line);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
   overflow: hidden;
 }
 .md-shelf-tabs { display: flex; align-items: center; gap: 2px; height: 19px; overflow: hidden; }
 .md-stab {
-  font-size: 10.5px; color: #9d9d9d; padding: 0 9px;
+  font-size: 10.5px; color: #6a7488; padding: 0 9px;
   height: 19px; line-height: 18px;
   border: 1px solid transparent; border-radius: 3px; white-space: nowrap;
 }
 .md-stab.on {
-  background: #4a4a4a; border-color: #262626; border-top-color: #5c5c5c;
-  color: #f0f0f0; box-shadow: 0 1px 0 rgba(0,0,0,.25);
+  background: #fbfbfc; border-color: #e3e6ea; border-top-color: #5c5c5c;
+  color: #1f2328; box-shadow: 0 1px 0 rgba(0,0,0,.25);
 }
 .md-shelf-grid { display: flex; align-items: center; gap: 3px; height: 30px; overflow: hidden; }
 .md-sico {
   display: inline-flex; align-items: center; justify-content: center;
   width: 25px; height: 27px; flex: 0 0 auto;
   border: 1px solid transparent; border-radius: 3px;
-  color: #c9c9c9; font-size: 14px; line-height: 1;
+  color: #3b4147; font-size: 14px; line-height: 1;
   cursor: default; opacity: .88;
 }
-.md-sico { color: var(--c, #c9c9c9); }
+.md-sico { color: var(--c, #3b4147); }
 .md-sico svg { width: 17px; height: 17px; display: block; }
-.md-sico:hover { background: #4a4a4a; border-color: #262626; opacity: 1; }
+.md-sico:hover { background: #fbfbfc; border-color: #e3e6ea; opacity: 1; }
 
 /* ---------- 4. 主区 ---------- */
 .md-main { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; background: var(--md-bg); }
@@ -220,16 +216,16 @@
   flex: 0 0 34px; min-height: 0;
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   padding: 5px 0;
-  background: #333333; border-right: 1px solid var(--md-line);
+  background: #f6f7f9; border-right: 1px solid var(--md-line);
   overflow: hidden;
 }
 .md-smic {
   display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 26px; flex: 0 0 auto;
   border: 1px solid transparent; border-radius: 3px;
-  color: #bcbcbc; font-size: 13px; line-height: 1; cursor: default;
+  color: #3b4147; font-size: 13px; line-height: 1; cursor: default;
 }
-.md-smic:hover { background: #454545; border-color: #292929; color: #efefef; }
+.md-smic:hover { background: #fbfbfc; border-color: #e3e6ea; color: #1f2328; }
 
 /* 4.2 大纲视图 */
 .md-outline {
@@ -241,80 +237,80 @@
   flex: 0 0 22px; height: 22px;
   display: flex; align-items: center; gap: 6px;
   padding: 0 8px;
-  background: linear-gradient(180deg, var(--md-panel-hi) 0%, #383838 100%);
+  background: linear-gradient(180deg, var(--md-panel-hi) 0%, #f9fafb 100%);
   border-bottom: 1px solid var(--md-line);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
-  font-size: 11px; color: #dedede;
+  font-size: 11px; color: #2a2f36;
 }
 .md-panel-h em {
-  margin-left: auto; font-style: normal; font-size: 9.5px; color: #9a9a9a; white-space: nowrap;
+  margin-left: auto; font-style: normal; font-size: 9.5px; color: #6a7488; white-space: nowrap;
 }
 .md-otabs, .md-tb-tabs {
   flex: 0 0 20px; height: 20px;
   display: flex; align-items: center; gap: 2px;
   padding: 0 5px;
-  background: #363636; border-bottom: 1px solid #262626;
+  background: #f9fafb; border-bottom: 1px solid #e3e6ea;
 }
 .md-otab {
-  font-size: 10px; color: #a1a1a1; padding: 0 7px;
+  font-size: 10px; color: #5a6068; padding: 0 7px;
   height: 17px; line-height: 16px;
   border: 1px solid transparent; border-radius: 2px; white-space: nowrap;
 }
-.md-otab.on { background: #494949; border-color: #282828; color: #ececec; }
-.md-osearch { flex: 0 0 auto; padding: 4px 6px; border-bottom: 1px solid #2d2d2d; }
+.md-otab.on { background: #fbfbfc; border-color: #e3e6ea; color: #1f2328; }
+.md-osearch { flex: 0 0 auto; padding: 4px 6px; border-bottom: 1px solid #e3e6ea; }
 /* 01-base 的 input[type=text] 也是 (0,1,1)，且带 34px 高、9px 圆角、白底；
  * 这里必须挂到 .md-app 上提高一级，否则命令行的白框会盖住窗底。 */
 .md-app .md-osearch input, .md-app .md-row1 input, .md-app .md-cmd {
   height: 20px; width: 100%; min-width: 0;
   padding: 0 6px;
-  border: 1px solid var(--md-field-line); border-top-color: #161616;
+  border: 1px solid var(--md-field-line); border-top-color: #d9dde3;
   border-radius: 3px; background: var(--md-field);
-  color: #e3e3e3; font: inherit; font-size: 10.5px; outline: none;
+  color: #2a2f36; font: inherit; font-size: 10.5px; outline: none;
 }
-.md-app .md-osearch input::placeholder, .md-app .md-cmd::placeholder { color: #7c7c7c; }
-.md-app .md-osearch input:focus, .md-app .md-row1 input:focus, .md-app .md-cmd:focus { border-color: #6f88a0; }
+.md-app .md-osearch input::placeholder, .md-app .md-cmd::placeholder { color: #8a9098; }
+.md-app .md-osearch input:focus, .md-app .md-row1 input:focus, .md-app .md-cmd:focus { border-color: #7db3e6; }
 .md-tree { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 3px 2px; }
 .md-hint {
   flex: 0 0 auto; padding: 6px 8px;
-  border-top: 1px solid #2d2d2d;
-  font-size: 9.5px; line-height: 1.5; color: #8a8a8a;
+  border-top: 1px solid #e3e6ea;
+  font-size: 9.5px; line-height: 1.5; color: #6a7488;
 }
 .md-part-row {
   width: 100%; height: 19px;
   display: flex; align-items: center; gap: 6px;
   padding: 0 6px; margin: 0;
   border: 1px solid transparent; border-radius: 2px;
-  background: transparent; color: #d2d2d2;
+  background: transparent; color: #3b4147;
   font: inherit; font-size: 10.5px; text-align: left; cursor: pointer;
 }
-.md-part-row:hover:enabled { background: #464646; }
-.md-part-row.sel { background: var(--md-on); border-color: var(--md-on-line); color: #fff; }
-.md-part-row:disabled { color: #9c9c9c; cursor: default; }
+.md-part-row:hover:enabled { background: #fbfbfc; }
+.md-part-row.sel { background: var(--md-on); border-color: var(--md-on-line); color: #1f2328; }
+.md-part-row:disabled { color: #6a7488; cursor: default; }
 .md-part-row i { flex: 0 0 auto; }
 .md-ficon {
   width: 11px; height: 9px; border-radius: 1px;
-  background: linear-gradient(180deg, #c3a252 0%, #a0823a 100%);
+  background: linear-gradient(180deg, #e88a00 0%, #e88a00 100%);
   box-shadow: inset 0 0 0 1px rgba(0,0,0,.28);
 }
 .md-vicon {
   position: relative; width: 11px; height: 9px; border-radius: 2px;
-  background: linear-gradient(180deg, #9db3c7 0%, #6c8094 100%);
+  background: linear-gradient(180deg, #6aa9e8 0%, #3d8ee0 100%);
   box-shadow: inset 0 0 0 1px rgba(0,0,0,.3);
 }
 .md-vicon::after {
   content: ''; position: absolute; left: 3.5px; top: 2px;
   width: 4px; height: 4px; border-radius: 50%;
-  background: #2f3d49;
+  background: #2b7cd3;
 }
 .md-nicon {
   width: 9px; height: 9px; border-radius: 1px;
-  background: linear-gradient(180deg, #8fb2d6 0%, #5d80a6 100%);
+  background: linear-gradient(180deg, #6aa9e8 0%, #3d8ee0 100%);
   box-shadow: inset 0 0 0 1px rgba(0,0,0,.3);
 }
 .md-part-id { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.md-part-shape { flex: 0 0 auto; font-size: 9px; color: #8a8a8a; }
-.md-part-row.sel .md-part-shape, .md-part-row.sel em { color: #dbe6f1; }
-.md-part-row em { font-style: normal; font-size: 9px; color: #8a8a8a; flex: 0 0 auto; }
+.md-part-shape { flex: 0 0 auto; font-size: 9px; color: #6a7488; }
+.md-part-row.sel .md-part-shape, .md-part-row.sel em { color: #2b7cd3; }
+.md-part-row em { font-style: normal; font-size: 9px; color: #6a7488; flex: 0 0 auto; }
 /* B2b：隐藏的对象行整体压暗（不是 disabled —— 还能点它激活、再按 H 显示） */
 .md-part-row.off { opacity: .48; }
 .md-part-row.off .md-part-id { text-decoration: line-through; text-decoration-color: #8a8a8a; }
@@ -323,25 +319,25 @@
 .md-center {
   flex: 1 1 auto; min-width: 0; min-height: 0;
   display: flex; flex-direction: column;
-  background: #242424;
+  background: #f3f5f7;
 }
 .md-vpbar {
   flex: 0 0 26px; height: 26px;
   display: flex; align-items: center; gap: 1px;
   padding: 0 6px;
-  background: linear-gradient(180deg, #404040 0%, #363636 100%);
+  background: linear-gradient(180deg, #f9fafb 0%, #f9fafb 100%);
   border-bottom: 1px solid var(--md-line);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
   overflow: hidden;
 }
-.md-vplabel { font-size: 10px; color: #c4c4c4; padding: 0 4px; white-space: nowrap; flex: 0 0 auto; }
+.md-vplabel { font-size: 10px; color: #3b4147; padding: 0 4px; white-space: nowrap; flex: 0 0 auto; }
 /* 视口标题行的「着色」下拉：真控件，状态与视口同步 */
 .md-vpsel {
   /* 01-base 给所有 select 设了 width:100%，这里不压回 auto 下拉会撑满整条标题行，
    * 把后面「单独显示」等图标按钮推到最右边看不见 */
   height: 18px; width: auto; flex: 0 0 auto;
   margin: 0 3px 0 0; padding: 0 2px;
-  background: var(--md-field); color: #d8d8d8;
+  background: var(--md-field); color: #2a2f36;
   border: 1px solid var(--md-field-line); border-radius: 2px;
   font: inherit; font-size: 9.5px; line-height: 16px;
   cursor: pointer;
@@ -351,34 +347,34 @@
   width: 20px; height: 20px; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid transparent; border-radius: 2px;
-  background: transparent; color: #b7b7b7;
+  background: transparent; color: #5a6068;
   font: inherit; font-size: 11px; line-height: 1; padding: 0; cursor: default;
 }
 button.md-vpi { cursor: pointer; }
 /* 标题栏里的图标按钮用内联 SVG（◱ 这类生僻字在部分字体里又小又淡） */
 .md-vpi svg { width: 13px; height: 13px; display: block; }
-.md-vpi:hover { background: #4a4a4a; border-color: #292929; color: #eee; }
-button.md-vpi.on { background: var(--md-on); border-color: var(--md-on-line); color: #fff; }
+.md-vpi:hover { background: #fbfbfc; border-color: #e3e6ea; color: #1f2328; }
+button.md-vpi.on { background: var(--md-on); border-color: var(--md-on-line); color: #1f2328; }
 button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-vpnum { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .md-numb {
   min-width: 34px; height: 18px; line-height: 16px;
-  text-align: center; font-size: 10px; color: #d8d8d8;
+  text-align: center; font-size: 10px; color: #2a2f36;
   background: var(--md-field); border: 1px solid var(--md-field-line); border-radius: 2px;
   font-variant-numeric: tabular-nums;
 }
-.md-vpnum i { font-style: normal; font-size: 9px; color: #8f8f8f; }
+.md-vpnum i { font-style: normal; font-size: 9px; color: #6a7488; }
 .md-vpstyle {
   height: 18px; display: inline-flex; align-items: center; gap: 5px;
   margin-left: 4px; padding: 0 6px; flex: 0 0 auto;
   background: var(--md-field); border: 1px solid var(--md-field-line); border-radius: 2px;
-  font-size: 9.5px; color: #cfcfcf; white-space: nowrap;
+  font-size: 9.5px; color: #3b4147; white-space: nowrap;
 }
-.md-vpstyle i { font-style: normal; font-size: 8px; color: #8f8f8f; }
+.md-vpstyle i { font-style: normal; font-size: 8px; color: #6a7488; }
 
 .md-stage {
   position: relative; flex: 1 1 auto; min-height: 0;
-  background: linear-gradient(180deg, #63666a 0%, #56595d 58%, #4c4e51 100%);
+  background: linear-gradient(180deg, #e9ebef 0%, #f1f2f4 58%, #f1f2f4 100%);
   overflow: hidden;
 }
 #mdCanvas { display: block; width: 100%; height: 100%; outline: none; }
@@ -393,8 +389,8 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   border-radius: 8px;
   /* 箭头露在框外，所以不能裁；圆角只裁自己的底色，不影响子元素 */
   overflow: visible;
-  background: rgba(20, 22, 25, .62);
-  border: 1px solid rgba(0, 0, 0, .4);
+  background: rgba(255,255,255,0.82);
+  border: 1px solid rgba(120,132,150,0.55);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 2px 8px rgba(0, 0, 0, .28);
   cursor: grab; touch-action: none;
   opacity: .92;
@@ -415,7 +411,7 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   transition: opacity .12s, background .12s;
 }
 .md-cube.on .md-cube-turn { opacity: .8; pointer-events: auto; }
-.md-cube-turn:hover { opacity: 1; background: #ffcf86; }
+.md-cube-turn:hover { opacity: 1; background: #fff7e6; }
 .md-cube-turn.top { top: -12px; left: 50%; margin-left: -6px; transform: rotate(180deg); }
 .md-cube-turn.bottom { bottom: -12px; left: 50%; margin-left: -6px; }
 .md-cube-turn.left { left: -14px; top: 50%; margin-top: -6px; transform: rotate(90deg); }
@@ -427,19 +423,19 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-stage.quad .md-cube { display: none; }
 .md-quad-v {
   position: absolute; left: 50%; top: 0; bottom: 0; width: 1px;
-  margin-left: -.5px; background: rgba(0,0,0,.5);
+  margin-left: -.5px; background: rgba(255,255,255,0.70);
   box-shadow: 1px 0 0 rgba(255,255,255,.08);
 }
 .md-quad-h {
   position: absolute; top: 50%; left: 0; right: 0; height: 1px;
-  margin-top: -.5px; background: rgba(0,0,0,.5);
+  margin-top: -.5px; background: rgba(255,255,255,0.70);
   box-shadow: 0 1px 0 rgba(255,255,255,.08);
 }
 .md-quad-l {
   position: absolute; padding: 2px 6px;
-  font-size: 9px; line-height: 1.2; color: #e8e8e8;
-  background: rgba(24,24,24,.55);
-  border: 1px solid rgba(0,0,0,.35); border-radius: 2px;
+  font-size: 9px; line-height: 1.2; color: #2a2f36;
+  background: rgba(255,255,255,0.75);
+  border: 1px solid rgba(120,132,150,0.50); border-radius: 2px;
 }
 .md-quad-l.tl { left: 8px; top: 7px; }
 .md-quad-l.tr { right: 8px; top: 7px; }
@@ -448,7 +444,7 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 /* V7：激活格的角标高亮（四视图可导航后，用户需要知道键盘/鼠标此刻作用在哪一格） */
 .md-quad-l.on {
   color: #fff;
-  background: var(--md-on, #4f6a84);
+  background: var(--md-on, #3d8ee0);
   border-color: rgba(196, 214, 232, .85);
   box-shadow: 0 0 0 1px rgba(120, 160, 200, .45), 0 1px 4px rgba(0, 0, 0, .35);
 }
@@ -461,11 +457,11 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   position: absolute; left: 10px; bottom: 10px; max-width: 76%;
   display: flex; flex-wrap: wrap; gap: 4px 10px;
   padding: 4px 8px; border-radius: 3px;
-  background: rgba(32,32,32,.62); border: 1px solid rgba(0,0,0,.35);
-  color: #dcdcdc; font-size: 9.5px; line-height: 1.5;
+  background: rgba(255,255,255,0.82); border: 1px solid rgba(120,132,150,0.50);
+  color: #2a2f36; font-size: 9.5px; line-height: 1.5;
   pointer-events: none;
 }
-.md-hud b { color: #fff; font-weight: 600; }
+.md-hud b { color: #1f2328; font-weight: 600; }
 
 /* 4.4 右侧：一整列 + 顶部一行页签（建模工具箱 / 绘画工具箱 / 属性编辑器）。
  * 三者同时只显示一个：原来工具箱和属性编辑器上下分摊高度，两边都被挤成小窗口。 */
@@ -485,109 +481,109 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-tb-h {
   height: 18px; display: flex; align-items: center;
   padding: 0 8px; margin-top: 2px;
-  font-size: 10px; color: #c6c6c6;
-  border-top: 1px solid #2d2d2d; border-bottom: 1px solid #2a2a2a;
-  background: #353535;
+  font-size: 10px; color: #3b4147;
+  border-top: 1px solid #e3e6ea; border-bottom: 1px solid #e3e6ea;
+  background: #f9fafb;
 }
 .md-tb-h:first-child { margin-top: 0; border-top: 0; }
 .md-tb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 4px 6px 2px; }
 .md-tbtn {
   height: 21px; display: flex; align-items: center; gap: 5px;
   padding: 0 6px;
-  border: 1px solid #272727; border-top-color: #4c4c4c; border-radius: 2px;
-  background: #3f3f3f; color: #cfcfcf;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 2px;
+  background: #f9fafb; color: #3b4147;
   font-size: 10px; white-space: nowrap; overflow: hidden; cursor: default;
 }
-.md-tbtn:hover { background: #484848; color: #eee; }
+.md-tbtn:hover { background: #fbfbfc; color: #1f2328; }
 .md-tbtn i { width: 8px; height: 8px; border-radius: 1px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px rgba(0,0,0,.35); }
 
 /* 工具箱（Blender 式折叠分组 + 行按钮 + 软选择曲线） */
 .md-tb-list { padding: 3px 6px 7px; }
 .md-sec2 {
   margin-top: 4px; overflow: hidden;
-  border: 1px solid #2a2a2a; border-radius: 2px;
-  background: #3a3a3a;
+  border: 1px solid #e3e6ea; border-radius: 2px;
+  background: #f9fafb;
 }
 .md-sec2:first-child { margin-top: 0; }
 .md-sec2-h {
   width: 100%; height: 21px;
   display: flex; align-items: center; gap: 5px;
   padding: 0 6px;
-  border: 0; border-bottom: 1px solid #2a2a2a;
-  background: linear-gradient(180deg, #484848 0%, #3d3d3d 100%);
-  color: #dedede; font: inherit; font-size: 10px; text-align: left; cursor: pointer;
+  border: 0; border-bottom: 1px solid #e3e6ea;
+  background: linear-gradient(180deg, #fbfbfc 0%, #f9fafb 100%);
+  color: #2a2f36; font: inherit; font-size: 10px; text-align: left; cursor: pointer;
 }
-.md-sec2-h:hover { background: linear-gradient(180deg, #505050 0%, #454545 100%); }
-.md-sec2-arrow { font-size: 8px; color: #9d9d9d; transform: rotate(90deg); transition: transform .12s; }
+.md-sec2-h:hover { background: linear-gradient(180deg, #f1f2f4 0%, #fbfbfc 100%); }
+.md-sec2-arrow { font-size: 8px; color: #6a7488; transform: rotate(90deg); transition: transform .12s; }
 .md-sec2:not(.open) .md-sec2-arrow { transform: rotate(0deg); }
 .md-sec2:not(.open) .md-sec2-h { border-bottom: 0; }
 .md-sec2:not(.open) .md-sec2-b { display: none; }
 .md-sec2-h em {
-  margin-left: auto; font-style: normal; font-size: 9px; color: #8f8f8f;
+  margin-left: auto; font-style: normal; font-size: 9px; color: #6a7488;
 }
-.md-sec2-h em.on { color: #e0a13a; }
+.md-sec2-h em.on { color: #c77500; }
 .md-sec2-b { padding: 5px 6px 6px; }
 .md-op-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
 .md-op {
   height: 27px; min-width: 0;
   display: flex; align-items: center; gap: 6px;
   padding: 0 7px;
-  border: 1px solid #272727; border-top-color: #4d4d4d; border-radius: 2px;
-  background: linear-gradient(180deg, #454545 0%, #3b3b3b 100%);
-  color: #d8d8d8; font: inherit; font-size: 10px; text-align: left; cursor: pointer;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 2px;
+  background: linear-gradient(180deg, #fbfbfc 0%, #f9fafb 100%);
+  color: #2a2f36; font: inherit; font-size: 10px; text-align: left; cursor: pointer;
   white-space: nowrap; overflow: hidden;
 }
-.md-op:hover { background: linear-gradient(180deg, #505050 0%, #454545 100%); color: #fff; border-top-color: #5a5a5a; }
-.md-op:active { background: #363636; }
-.md-op.on { border-color: #4a7ea5; background: linear-gradient(180deg, #4a7ea5 0%, #3c6b8f 100%); color: #fff; }
-.md-op-i { flex: 0 0 18px; width: 18px; height: 18px; color: #b9c2cc; }
+.md-op:hover { background: linear-gradient(180deg, #f1f2f4 0%, #fbfbfc 100%); color: #1f2328; border-top-color: #eceef2; }
+.md-op:active { background: #f9fafb; }
+.md-op.on { border-color: #7db3e6; background: linear-gradient(180deg, #3d8ee0 0%, #3d8ee0 100%); color: #fff; }
+.md-op-i { flex: 0 0 18px; width: 18px; height: 18px; color: #2b7cd3; }
 .md-op-i svg { width: 18px; height: 18px; display: block; }
-.md-op:hover .md-op-i { color: #e8b06a; }
+.md-op:hover .md-op-i { color: #c77500; }
 .md-op-lb { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .md-switch {
   display: flex; align-items: center; gap: 6px;
   height: 22px; margin-bottom: 4px;
-  font-size: 10px; color: #cfcfcf; cursor: pointer; user-select: none;
+  font-size: 10px; color: #3b4147; cursor: pointer; user-select: none;
 }
 .md-switch input { position: absolute; opacity: 0; pointer-events: none; }
 .md-switch i {
   width: 12px; height: 12px; flex: 0 0 auto;
-  border: 1px solid #565656; border-radius: 2px;
-  background: #2f2f2f; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25);
+  border: 1px solid #eceef2; border-radius: 2px;
+  background: #f6f7f9; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25);
 }
 .md-switch input:checked + i {
-  border-color: #d9922f;
-  background: #d9922f;
+  border-color: #f0c07a;
+  background: #e88a00;
   box-shadow: inset 0 0 0 2px #2f2f2f;
 }
-.md-switch input:checked ~ span { color: #f0f0f0; }
+.md-switch input:checked ~ span { color: #1f2328; }
 .md-soft-row {
   display: grid; grid-template-columns: 26px 1fr 74px; align-items: center; gap: 5px;
   margin-bottom: 5px;
 }
-.md-soft-lb { font-size: 10px; color: #ababab; }
+.md-soft-lb { font-size: 10px; color: #5a6068; }
 .md-soft-sel, .md-soft-num {
   height: 19px; min-width: 0;
-  border: 1px solid #282828; border-radius: 2px;
-  background: #303030; color: #e4e4e4;
+  border: 1px solid #e3e6ea; border-radius: 2px;
+  background: #f6f7f9; color: #2a2f36;
   font: inherit; font-size: 10px; padding: 0 4px;
 }
 .md-soft-num { text-align: right; font-variant-numeric: tabular-nums; }
-.md-soft-sel:focus, .md-soft-num:focus { outline: 1px solid #5b87ad; outline-offset: 0; }
+.md-soft-sel:focus, .md-soft-num:focus { outline: 1px solid #7db3e6; outline-offset: 0; }
 .md-curve-wrap {
-  border: 1px solid #252525; border-radius: 2px;
-  background: #2b2b2b; overflow: hidden;
+  border: 1px solid #e3e6ea; border-radius: 2px;
+  background: #f6f7f9; overflow: hidden;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
 }
 .md-curve-wrap canvas { display: block; width: 100%; height: 54px; touch-action: none; cursor: crosshair; }
 .md-soft-reset {
   width: 100%; height: 21px; margin-top: 5px;
-  border: 1px solid #282828; border-top-color: #4c4c4c; border-radius: 2px;
-  background: #3f3f3f; color: #d0d0d0;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 2px;
+  background: #f9fafb; color: #3b4147;
   font: inherit; font-size: 10px; cursor: pointer;
 }
-.md-soft-reset:hover { background: #4a4a4a; color: #fff; }
+.md-soft-reset:hover { background: #fbfbfc; color: #1f2328; }
 
 /* 属性编辑器是第三个页签：默认不占位，切到「属性编辑器」页签才显示 */
 .md-props {
@@ -600,49 +596,49 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   flex: 0 0 23px; height: 23px;
   display: flex; align-items: flex-end; gap: 3px;
   padding: 0 5px;
-  background: #303030; border-bottom: 1px solid var(--md-line);
+  background: #f6f7f9; border-bottom: 1px solid var(--md-line);
 }
 .md-ptab {
   height: 21px; padding: 0 10px;
-  border: 1px solid #282828; border-bottom: 0; border-radius: 3px 3px 0 0;
-  background: #383838; color: #a8a8a8;
+  border: 1px solid #e3e6ea; border-bottom: 0; border-radius: 3px 3px 0 0;
+  background: #f9fafb; color: #5a6068;
   font: inherit; font-size: 10px; cursor: pointer; white-space: nowrap;
 }
-.md-ptab:hover { color: #e0e0e0; }
+.md-ptab:hover { color: #2a2f36; }
 .md-ptab.on {
-  background: linear-gradient(180deg, #4c4c4c 0%, #424242 100%);
-  border-color: #212121; border-top-color: #5d5d5d; color: #f0f0f0;
+  background: linear-gradient(180deg, #fbfbfc 0%, #fbfbfc 100%);
+  border-color: #e3e6ea; border-top-color: #5d5d5d; color: #1f2328;
 }
 .md-pbody { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 7px 7px 16px; }
 
 /* ---------- 5. 属性编辑器 / 通道盒内容 ---------- */
 .md-sec {
   margin: 0 0 7px;
-  border: 1px solid #262626; border-radius: 2px;
-  background: #3d3d3d; overflow: hidden;
+  border: 1px solid #e3e6ea; border-radius: 2px;
+  background: #f9fafb; overflow: hidden;
 }
 .md-h2 {
   height: 19px; display: flex; align-items: center; gap: 5px;
   padding: 0 7px;
-  font-size: 10px; color: #dedede; font-weight: 400;
-  background: linear-gradient(180deg, #464646 0%, #3b3b3b 100%);
-  border-bottom: 1px solid #262626;
+  font-size: 10px; color: #2a2f36; font-weight: 400;
+  background: linear-gradient(180deg, #fbfbfc 0%, #f9fafb 100%);
+  border-bottom: 1px solid #e3e6ea;
 }
-.md-h2::before { content: '▾'; font-size: 8px; color: #9a9a9a; }
+.md-h2::before { content: '▾'; font-size: 8px; color: #6a7488; }
 .md-sec-b { padding: 6px 7px 7px; }
 .md-ch-list { padding: 0; }
 .md-ch {
   display: flex; align-items: center; gap: 8px;
   height: 20px; padding: 0 7px;
-  border-bottom: 1px solid #343434;
+  border-bottom: 1px solid #e3e6ea;
   font-size: 10px;
 }
 .md-ch:last-child { border-bottom: 0; }
-.md-ch span { flex: 1 1 auto; min-width: 0; color: #ababab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-ch span { flex: 1 1 auto; min-width: 0; color: #5a6068; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md-ch em {
   flex: 0 0 auto; min-width: 70px; max-width: 60%;
   padding: 1px 6px; text-align: right;
-  font-style: normal; font-size: 10px; color: #e6e6e6;
+  font-style: normal; font-size: 10px; color: #2a2f36;
   background: var(--md-field); border: 1px solid var(--md-field-line); border-radius: 2px;
   font-variant-numeric: tabular-nums;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -651,61 +647,61 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 7px;
   margin-bottom: 6px;
 }
-.md-row1 span { font-size: 10px; color: #ababab; }
-.md-note { margin-top: 4px; font-size: 9.5px; line-height: 1.55; color: #969696; }
-.md-note b { color: #d8d8d8; font-weight: 600; }
-.md-warn { color: #ffad99; margin-left: 6px; }
+.md-row1 span { font-size: 10px; color: #5a6068; }
+.md-note { margin-top: 4px; font-size: 9.5px; line-height: 1.55; color: #6a7488; }
+.md-note b { color: #2a2f36; font-weight: 600; }
+.md-warn { color: #c9342a; margin-left: 6px; }
 /* 材质槽（P5）：一行 = 色块 / 名字 / 面数 / 指派 / 删除。名字是真输入框，回车即入库 */
 .md-slots { display: flex; flex-direction: column; gap: 4px; margin-top: 5px; }
 .md-slot {
   display: grid; grid-template-columns: 22px minmax(0, 1fr) 28px 36px 20px;
   align-items: center; gap: 5px;
   padding: 3px 4px; border-radius: 3px;
-  background: #2e2e2e; border: 1px solid #3a3a3a;
+  background: #f6f7f9; border: 1px solid #eceef2;
 }
 .md-slot-c {
-  width: 20px; height: 18px; padding: 0; border: 1px solid #4a4a4a;
-  border-radius: 2px; background: #222; cursor: pointer;
+  width: 20px; height: 18px; padding: 0; border: 1px solid #eceef2;
+  border-radius: 2px; background: #f3f5f7; cursor: pointer;
 }
 .md-slot-n {
   width: 100%; min-width: 0; height: 20px; padding: 0 5px;
   border: 1px solid transparent; border-radius: 2px;
-  background: transparent; color: #d8d8d8; font: inherit; font-size: 10px;
+  background: transparent; color: #2a2f36; font: inherit; font-size: 10px;
 }
-.md-slot-n:hover { background: #262626; border-color: #3d3d3d; }
-.md-slot-n:focus { outline: none; background: #1f1f1f; border-color: #4a90d9; color: #fff; }
-.md-slot-f { font-style: normal; font-size: 9px; color: #8e8e8e; text-align: right; }
+.md-slot-n:hover { background: #f3f5f7; border-color: #eceef2; }
+.md-slot-n:focus { outline: none; background: #f3f5f7; border-color: #7db3e6; color: #1f2328; }
+.md-slot-f { font-style: normal; font-size: 9px; color: #6a7488; text-align: right; }
 .md-slot-a {
-  height: 18px; padding: 0 5px; border: 1px solid #3d3d3d; border-radius: 2px;
-  background: #383838; color: #c8c8c8; font: inherit; font-size: 9px; cursor: pointer;
+  height: 18px; padding: 0 5px; border: 1px solid #eceef2; border-radius: 2px;
+  background: #f9fafb; color: #3b4147; font: inherit; font-size: 9px; cursor: pointer;
 }
-.md-slot-a:hover:not(:disabled) { background: #4a4a4a; color: #fff; border-color: #5a5a5a; }
+.md-slot-a:hover:not(:disabled) { background: #fbfbfc; color: #1f2328; border-color: #eceef2; }
 .md-slot-a:disabled { opacity: .35; cursor: not-allowed; }
 .md-slot-x {
   width: 20px; height: 18px; padding: 0; border: 1px solid transparent; border-radius: 2px;
-  background: transparent; color: #9a9a9a; font: inherit; font-size: 10px; cursor: pointer;
+  background: transparent; color: #6a7488; font: inherit; font-size: 10px; cursor: pointer;
 }
-.md-slot-x:hover:not(:disabled) { background: #6a2a2a; color: #fff; }
+.md-slot-x:hover:not(:disabled) { background: #c9342a; color: #fff; }
 .md-slot-x:disabled { opacity: .3; cursor: not-allowed; }
 .md-slot-foot { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .md-slot-add {
-  height: 20px; padding: 0 7px; border: 1px dashed #4a4a4a; border-radius: 2px;
-  background: transparent; color: #a9c7e8; font: inherit; font-size: 9.5px; cursor: pointer;
+  height: 20px; padding: 0 7px; border: 1px dashed #eceef2; border-radius: 2px;
+  background: transparent; color: #2b7cd3; font: inherit; font-size: 9.5px; cursor: pointer;
 }
-.md-slot-add:hover { background: #2f3a46; border-color: #5b7c9c; color: #dcecff; }
+.md-slot-add:hover { background: #2b7cd3; border-color: #7db3e6; color: #2b7cd3; }
 .md-slot-foot .md-note { margin: 0; }
 .md-wide {
   width: 100%; height: 22px; margin-top: 8px;
-  border: 1px solid #282828; border-top-color: #4f4f4f; border-radius: 2px;
-  background: #3f3f3f; color: #d5d5d5;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 2px;
+  background: #f9fafb; color: #3b4147;
   font: inherit; font-size: 10px; cursor: pointer;
 }
-.md-wide:hover { background: #4b4b4b; color: #fff; }
+.md-wide:hover { background: #fbfbfc; color: #1f2328; }
 
 /* ---------- 5b. 修改器栈（属性编辑器里的「修改器」分区） ---------- */
 .md-mod-count {
   margin-left: auto; padding: 0 5px; height: 13px; line-height: 13px;
-  border-radius: 7px; background: #333; color: #b8b8b8;
+  border-radius: 7px; background: #f6f7f9; color: #3b4147;
   font-style: normal; font-size: 9px;
 }
 .md-mod-list { display: flex; flex-direction: column; gap: 5px; }
@@ -714,95 +710,95 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   grid-template-columns: 16px 1fr auto;
   align-items: center; gap: 5px;
   padding: 5px 5px 5px 3px;
-  border: 1px solid #303030; border-radius: 2px;
-  background: #383838;
+  border: 1px solid #e3e6ea; border-radius: 2px;
+  background: #f9fafb;
 }
 .md-mod-row.off { opacity: .5; }
 .md-mod-en { position: relative; display: block; width: 16px; height: 16px; cursor: pointer; }
 .md-mod-en input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .md-mod-en i {
   position: absolute; inset: 2px;
-  border: 1px solid #2a2a2a; border-radius: 2px;
+  border: 1px solid #e3e6ea; border-radius: 2px;
   background: var(--md-field);
 }
-.md-mod-en input:checked + i { background: #c98f35; border-color: #8a5f1e; }
+.md-mod-en input:checked + i { background: #e88a00; border-color: #e88a00; }
 .md-mod-en input:checked + i::after {
   content: ''; position: absolute; left: 3px; top: 0px;
   width: 5px; height: 8px;
-  border: solid #2a1a05; border-width: 0 2px 2px 0;
+  border: solid #e88a00; border-width: 0 2px 2px 0;
   transform: rotate(42deg);
 }
-.md-mod-name { font-size: 10px; color: #e2e2e2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-mod-name { font-size: 10px; color: #2a2f36; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md-mod-ops { display: flex; gap: 2px; }
 .md-mod-ops button {
   width: 17px; height: 16px; padding: 0;
-  border: 1px solid #2a2a2a; border-top-color: #4a4a4a; border-radius: 2px;
-  background: #3f3f3f; color: #bdbdbd;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 2px;
+  background: #f9fafb; color: #3b4147;
   font: inherit; font-size: 9px; line-height: 14px; cursor: pointer;
 }
-.md-mod-ops button:hover { background: #4c4c4c; color: #fff; }
+.md-mod-ops button:hover { background: #fbfbfc; color: #1f2328; }
 .md-mod-p {
   grid-column: 1 / -1;
   display: flex; flex-wrap: wrap; gap: 4px 10px;
   padding-top: 4px;
 }
 .md-mod-p:empty { display: none; }
-.md-mod-f { display: flex; align-items: center; gap: 4px; font-size: 9.5px; color: #a9a9a9; }
+.md-mod-f { display: flex; align-items: center; gap: 4px; font-size: 9.5px; color: #5a6068; }
 .md-mod-f select, .md-mod-f input {
   width: 62px; height: 18px; padding: 0 4px;
   border: 1px solid var(--md-field-line); border-radius: 2px;
-  background: var(--md-field); color: #ddd;
+  background: var(--md-field); color: #2a2f36;
   font: inherit; font-size: 9.5px;
 }
 .md-mod-f select { width: 54px; }
 .md-mod-add { display: flex; gap: 4px; margin-top: 6px; }
 .md-mod-add button {
   flex: 1 1 0; height: 20px; padding: 0;
-  border: 1px solid #2a2a2a; border-top-color: #4a4a4a; border-radius: 2px;
-  background: #3f3f3f; color: #cfcfcf;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 2px;
+  background: #f9fafb; color: #3b4147;
   font: inherit; font-size: 9.5px; cursor: pointer;
 }
-.md-mod-add button:hover { background: #4b4b4b; color: #fff; }
+.md-mod-add button:hover { background: #fbfbfc; color: #1f2328; }
 
 /* ---------- 6. 覆盖层（四视图 / 材质槽 / 打开列表） ---------- */
-.md-overlay { position: absolute; inset: 0; display: none; z-index: 6; padding: 14px; background: rgba(24,24,24,.82); }
+.md-overlay { position: absolute; inset: 0; display: none; z-index: 6; padding: 14px; background: rgba(255,255,255,0.94); }
 .md-overlay.on { display: flex; }
 .md-ov {
   flex: 1 1 auto; min-width: 0; min-height: 0;
   display: flex; flex-direction: column;
   width: 100%; max-width: 1180px; margin: 0 auto;
-  border: 1px solid #1b1b1b; border-radius: 3px;
-  background: #333333; overflow: hidden;
+  border: 1px solid #e3e6ea; border-radius: 3px;
+  background: #f6f7f9; overflow: hidden;
   box-shadow: 0 12px 30px rgba(0,0,0,.4);
 }
 .md-ov-head {
   flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
   height: 26px; padding: 0 8px;
-  background: linear-gradient(180deg, #444444 0%, #3a3a3a 100%);
-  border-bottom: 1px solid #1b1b1b;
-  color: #efefef; font-size: 11px;
+  background: linear-gradient(180deg, #fbfbfc 0%, #f9fafb 100%);
+  border-bottom: 1px solid #e3e6ea;
+  color: #1f2328; font-size: 11px;
 }
 .md-ov-head b { font-size: 11.5px; font-weight: 600; }
-.md-ov-sub { font-size: 9.5px; color: #9a9a9a; }
+.md-ov-sub { font-size: 9.5px; color: #6a7488; }
 .md-ov-x {
   margin-left: auto; width: 20px; height: 20px; flex: 0 0 auto; padding: 0;
-  border: 1px solid #282828; border-top-color: #4f4f4f; border-radius: 2px;
-  background: #3f3f3f; color: #cfcfcf; font-size: 13px; line-height: 1; cursor: pointer;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 2px;
+  background: #f9fafb; color: #3b4147; font-size: 13px; line-height: 1; cursor: pointer;
 }
-.md-ov-x:hover { background: #4b4b4b; color: #fff; }
-.md-ov-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; background: #2b2b2b; }
+.md-ov-x:hover { background: #fbfbfc; color: #1f2328; }
+.md-ov-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; background: #f6f7f9; }
 .md-quad-img { display: block; margin: auto; max-width: 100%; max-height: 100%; object-fit: contain; }
 .md-list { display: grid; gap: 4px; padding: 8px; width: 100%; overflow: auto; align-content: start; }
 .md-asset {
   display: flex; align-items: baseline; gap: 10px;
   padding: 6px 8px;
-  border: 1px solid #262626; border-radius: 2px;
-  background: #3a3a3a; color: #dddddd;
+  border: 1px solid #e3e6ea; border-radius: 2px;
+  background: #f9fafb; color: #2a2f36;
   font: inherit; text-align: left; cursor: pointer;
 }
-.md-asset:hover { border-color: #6f88a0; background: #424242; }
+.md-asset:hover { border-color: #7db3e6; background: #fbfbfc; }
 .md-asset b { font-size: 11px; font-weight: 600; }
-.md-asset span { font-size: 9.5px; color: #8f8f8f; margin-left: auto; }
+.md-asset span { font-size: 9.5px; color: #6a7488; margin-left: auto; }
 .md-tex-host { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; position: relative; }
 
 /* ---------- 7. 命令行（底部） ---------- */
@@ -810,17 +806,17 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   flex: 0 0 26px; height: 26px;
   display: flex; align-items: center; gap: 6px;
   padding: 0 8px;
-  background: #333333; border-top: 1px solid var(--md-line);
+  background: #f6f7f9; border-top: 1px solid var(--md-line);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
 }
-.md-cmd-l { flex: 0 0 auto; font-size: 9.5px; color: #8f8f8f; }
+.md-cmd-l { flex: 0 0 auto; font-size: 9.5px; color: #6a7488; }
 .md-cmd { flex: 0 0 300px; width: 300px; height: 19px; }
 .md-status {
   flex: 1 1 auto; min-width: 0;
-  text-align: right; font-size: 10px; color: #b4b4b4;
+  text-align: right; font-size: 10px; color: #5a6068;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.md-status.err { color: #ff9b8a; }
+.md-status.err { color: #c9342a; }
 
 /* ---------- 7.5 内容浏览器（底部 dock） ----------
  * 收起时只留 26px 的页签，展开后是资产卡片网格（固定高度，不挤压视口）。
@@ -828,7 +824,7 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-dock {
   flex: 0 0 26px;
   display: flex; flex-direction: column;
-  background: #333333;
+  background: #f6f7f9;
   border-top: 1px solid var(--md-line);
   overflow: hidden;
 }
@@ -837,36 +833,36 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   flex: 0 0 26px; height: 26px;
   display: flex; align-items: center; gap: 6px;
   padding: 0 8px;
-  background: linear-gradient(180deg, #3c3c3c 0%, #333333 100%);
+  background: linear-gradient(180deg, #f9fafb 0%, #f6f7f9 100%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
-  border-bottom: 1px solid #2a2a2a;
+  border-bottom: 1px solid #e3e6ea;
 }
 .md-dock-tab {
   height: 19px; padding: 0 9px; flex: 0 0 auto;
   border: 1px solid transparent; border-radius: 2px;
-  background: transparent; color: #cfcfcf;
+  background: transparent; color: #3b4147;
   font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
 }
-.md-dock-tab:hover { background: #454545; color: #fff; }
+.md-dock-tab:hover { background: #fbfbfc; color: #1f2328; }
 .md-dock-tab.on {
-  background: #4a4a4a; border-color: #262626; border-top-color: #5c5c5c; color: #fff;
+  background: #fbfbfc; border-color: #e3e6ea; border-top-color: #5c5c5c; color: #1f2328;
 }
 .md-dock-tab i {
-  font-style: normal; font-size: 9px; color: #9a9a9a;
+  font-style: normal; font-size: 9px; color: #6a7488;
   margin-left: 6px; display: inline-block;
 }
 .md-dock.on .md-dock-tab i { transform: rotate(180deg); }
-.md-dock-sub { font-size: 9.5px; color: #8f8f8f; white-space: nowrap; }
+.md-dock-sub { font-size: 9.5px; color: #6a7488; white-space: nowrap; }
 .md-dock-acts { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .md-dock:not(.on) .md-dock-acts { display: none; }
 .md-dock-mini {
   height: 19px; padding: 0 8px; flex: 0 0 auto;
-  border: 1px solid #252525; border-top-color: #4d4d4d; border-radius: 3px;
-  background: #3d3d3d; color: #d4d4d4;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 3px;
+  background: #f9fafb; color: #3b4147;
   font: inherit; font-size: 10px; cursor: pointer; white-space: nowrap;
 }
-.md-dock-mini:hover { background: #4a4a4a; color: #fff; }
-.md-dock-body { flex: 1 1 auto; min-height: 0; overflow: auto; background: #2b2b2b; }
+.md-dock-mini:hover { background: #fbfbfc; color: #1f2328; }
+.md-dock-body { flex: 1 1 auto; min-height: 0; overflow: auto; background: #f6f7f9; }
 .md-cb-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   gap: 6px; padding: 8px;
@@ -874,37 +870,37 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-cb-card {
   display: flex; align-items: center; gap: 8px; min-width: 0;
   padding: 6px;
-  border: 1px solid #262626; border-radius: 3px;
-  background: #353535;
+  border: 1px solid #e3e6ea; border-radius: 3px;
+  background: #f9fafb;
 }
-.md-cb-card:hover { border-color: #4f6a84; background: #3a3a3a; }
+.md-cb-card:hover { border-color: #7db3e6; background: #f9fafb; }
 .md-cb-thumb {
   flex: 0 0 46px; width: 46px; height: 46px;
   display: flex; align-items: center; justify-content: center;
-  border: 1px solid #242424; border-radius: 2px; overflow: hidden;
-  background: radial-gradient(circle at 50% 35%, #4a5663 0%, #2e3339 75%);
+  border: 1px solid #e3e6ea; border-radius: 2px; overflow: hidden;
+  background: radial-gradient(circle at 50% 35%, #3d8ee0 0%, #f6f7f9 75%);
 }
 .md-cb-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.md-cb-thumb span { font-size: 9px; letter-spacing: .08em; color: #a9bccd; font-weight: 700; }
+.md-cb-thumb span { font-size: 9px; letter-spacing: .08em; color: #2b7cd3; font-weight: 700; }
 .md-cb-meta { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
 .md-cb-meta b {
-  font-size: 10.5px; font-weight: 600; color: #e3e3e3;
+  font-size: 10.5px; font-weight: 600; color: #2a2f36;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.md-cb-meta span { font-size: 9px; color: #8f8f8f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md-cb-meta span { font-size: 9px; color: #6a7488; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .md-cb-acts { flex: 0 0 auto; display: flex; flex-direction: column; gap: 3px; }
 .md-cb-btn {
   height: 20px; padding: 0 8px;
-  border: 1px solid #252525; border-top-color: #4d4d4d; border-radius: 3px;
-  background: #3d3d3d; color: #d4d4d4;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 3px;
+  background: #f9fafb; color: #3b4147;
   font: inherit; font-size: 10px; cursor: pointer; white-space: nowrap;
 }
-.md-cb-btn:hover { background: #4a4a4a; color: #fff; }
-.md-cb-btn.primary { background: #4f6a84; border-color: #394e61; border-top-color: #6d8aa5; color: #fff; }
-.md-cb-btn.primary:hover { background: #5b7897; }
-.md-cb-tag { padding: 3px 6px; font-size: 9px; color: #8f8f8f; border: 1px dashed #4a4a4a; border-radius: 3px; white-space: nowrap; }
-.md-cb-empty { padding: 18px 12px; text-align: center; font-size: 10.5px; line-height: 1.6; color: #9a9a9a; }
-.md-cb-empty.err { color: #ff9b8a; }
+.md-cb-btn:hover { background: #fbfbfc; color: #1f2328; }
+.md-cb-btn.primary { background: #3d8ee0; border-color: #2b7cd3; border-top-color: #7db3e6; color: #fff; }
+.md-cb-btn.primary:hover { background: #3d8ee0; }
+.md-cb-tag { padding: 3px 6px; font-size: 9px; color: #6a7488; border: 1px dashed #eceef2; border-radius: 3px; white-space: nowrap; }
+.md-cb-empty { padding: 18px 12px; text-align: center; font-size: 10.5px; line-height: 1.6; color: #6a7488; }
+.md-cb-empty.err { color: #c9342a; }
 
 /* ---------- 8. 窄窗口退让 ---------- */
 @media (max-width: 1120px) {
@@ -924,29 +920,29 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   background: none; border: 1px solid transparent; padding: 0;
   font: inherit; cursor: pointer;
 }
-.md-shelf-grid button.md-sico:hover { border-color: #262626; }
-.md-shelf-grid button.md-sico:active { background: #3c3c3c; }
+.md-shelf-grid button.md-sico:hover { border-color: #e3e6ea; }
+.md-shelf-grid button.md-sico:active { background: #f9fafb; }
 
 .md-prim { display: grid; gap: 11px; padding: 12px 14px; width: 100%; align-content: start; }
 .md-prim-tabs { display: flex; flex-wrap: wrap; gap: 5px; }
 .md-prim-tab {
   font: inherit; font-size: 10.5px; line-height: 1;
   padding: 5px 10px; border-radius: 3px;
-  border: 1px solid #262626; border-top-color: #4f4f4f;
-  background: #3a3a3a; color: #cfcfcf; cursor: pointer;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2;
+  background: #f9fafb; color: #3b4147; cursor: pointer;
 }
-.md-prim-tab:hover { background: #454545; color: #fff; }
-.md-prim-tab.on { background: #b98a4c; border-color: #8a6636; border-top-color: #d8a15a; color: #1d1a15; font-weight: 600; }
+.md-prim-tab:hover { background: #fbfbfc; color: #1f2328; }
+.md-prim-tab.on { background: #e88a00; border-color: #e88a00; border-top-color: #f0c07a; color: #8a5a00; font-weight: 600; }
 .md-prim-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1fr); gap: 8px; align-items: end; }
 .md-pf { display: grid; gap: 4px; min-width: 0; }
-.md-pf span { font-size: 9.5px; color: #a9a9a9; }
+.md-pf span { font-size: 9.5px; color: #5a6068; }
 .md-pf input {
   height: 21px; width: 100%; min-width: 0; padding: 0 6px;
-  border: 1px solid var(--md-field-line); border-top-color: #161616;
+  border: 1px solid var(--md-field-line); border-top-color: #d9dde3;
   border-radius: 3px; background: var(--md-field);
-  color: #e3e3e3; font: inherit; font-size: 10.5px; outline: none;
+  color: #2a2f36; font: inherit; font-size: 10.5px; outline: none;
 }
-.md-pf input:focus { border-color: #6f88a0; }
+.md-pf input:focus { border-color: #7db3e6; }
 .md-pf input:disabled { opacity: .3; }
 .md-prim .md-note { margin: 0; }
 .md-prim-go { margin-top: 2px; height: 24px; }
@@ -963,30 +959,30 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   width: 28px; height: 28px; flex: 0 0 auto; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid transparent; border-radius: 3px;
-  background: none; color: #c3c3c3; cursor: pointer;
+  background: none; color: #3b4147; cursor: pointer;
 }
 .md-tool svg { width: 19px; height: 19px; display: block; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
-.md-tool:hover { background: #454545; border-color: #292929; color: #fff; }
-.md-tool.on { background: #4a7ea5; border-color: #3a6588; color: #f4f9ff; }
-.md-tool-sep { width: 18px; height: 1px; margin: 3px 0; background: #4a4a4a; }
+.md-tool:hover { background: #fbfbfc; border-color: #e3e6ea; color: #1f2328; }
+.md-tool.on { background: #3d8ee0; border-color: #2b7cd3; color: #2b7cd3; }
+.md-tool-sep { width: 18px; height: 1px; margin: 3px 0; background: #fbfbfc; }
 
 /* ---------- 11. 手势覆盖层（框选 / 套索 / 画笔圈） ---------- */
 .md-gest { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
 .md-gest-box {
   position: absolute; display: none;
-  border: 1px dashed #8fc7e8; background: rgba(143,199,232,.10);
+  border: 1px dashed #b9d6f2; background: rgba(143,199,232,.10);
 }
 .md-gest-lasso { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
-.md-gest-lasso polyline { fill: rgba(143,199,232,.10); stroke: #8fc7e8; stroke-width: 1; stroke-dasharray: 4 3; }
+.md-gest-lasso polyline { fill: rgba(143,199,232,.10); stroke: #2b7cd3; stroke-width: 1; stroke-dasharray: 4 3; }
 .md-gest-brush {
   position: absolute; display: none;
-  border: 1.5px solid #8fc7e8; border-radius: 50%;
+  border: 1.5px solid #b9d6f2; border-radius: 50%;
   box-shadow: inset 0 0 0 1px rgba(0,0,0,.35);
 }
 .md-gest.on .md-gest-box { display: block; }
 .md-gest.lasso .md-gest-lasso { display: block; }
-.md-gest.knife .md-gest-lasso polyline { fill: none; stroke: #e0a13a; stroke-width: 2; stroke-dasharray: none; }
-.md-part-row.multi { background: #3f4650; box-shadow: inset 2px 0 0 #4a7ea5; }
+.md-gest.knife .md-gest-lasso polyline { fill: none; stroke: #c77500; stroke-width: 2; stroke-dasharray: none; }
+.md-part-row.multi { background: #fbfbfc; box-shadow: inset 2px 0 0 #4a7ea5; }
 
 /* ---------- 12. 建模工具箱：组件模式条（对象 / 顶点 / 边 / 面 / UV 岛） ---------- */
 .md-tb-tabs .md-otab {
@@ -995,21 +991,21 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-modebar {
   display: flex; align-items: center; justify-content: center; gap: 8px;
   padding: 8px 7px 6px;
-  border-bottom: 1px solid #2d2d2d;
+  border-bottom: 1px solid #e3e6ea;
 }
 .md-mode {
   width: 30px; height: 27px; flex: 0 0 auto; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid transparent; border-radius: 3px;
-  background: none; color: #c0c0c0; cursor: pointer;
+  background: none; color: #3b4147; cursor: pointer;
 }
 .md-mode svg { width: 21px; height: 21px; display: block; }
-.md-mode:hover { background: #454545; border-color: #292929; color: #fff; }
-.md-mode.on { background: #4a7ea5; border-color: #3a6588; color: #f4f9ff; }
+.md-mode:hover { background: #fbfbfc; border-color: #e3e6ea; color: #1f2328; }
+.md-mode.on { background: #3d8ee0; border-color: #2b7cd3; color: #2b7cd3; }
 .md-mode-hint {
   padding: 2px 9px 6px;
-  font-size: 9.5px; color: #9a9a9a;
-  border-bottom: 1px solid #2d2d2d;
+  font-size: 9.5px; color: #6a7488;
+  border-bottom: 1px solid #e3e6ea;
 }
 
 /* ---------- 13. 热盒（按住空格弹出，Maya marking menu 的还原） ---------- */
@@ -1025,93 +1021,93 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-hb-zone {
   min-width: 0; display: flex; flex-direction: column; gap: 2px;
   padding: 5px 6px 6px; overflow: hidden;
-  background: rgba(26, 27, 30, .95);
-  border: 1px solid #3b3c42; border-radius: 8px;
+  background: rgba(255,255,255,0.94);
+  border: 1px solid #eceef2; border-radius: 8px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, .5);
 }
 .md-hb-zone b {
-  font-size: 9.5px; font-weight: 600; color: #8f959c;
+  font-size: 9.5px; font-weight: 600; color: #6a7488;
   letter-spacing: .04em; padding: 0 2px 2px;
 }
 /* 一行 = [图标] 名字 [快捷键] [□ 选项]。方框是独立按钮，点它进参数面板。 */
 .md-hb-row { display: flex; align-items: center; gap: 2px; border-radius: 4px; }
-.md-hb-row:hover { background: #3a3c42; }
+.md-hb-row:hover { background: #f9fafb; }
 .md-hb-run {
   flex: 1 1 auto; min-width: 0;
   display: flex; align-items: center; gap: 5px;
   padding: 1px 4px; line-height: 1.6;
   background: transparent; border: 0; border-radius: 4px;
-  font: inherit; font-size: 11px; color: #d8dbe0; text-align: left; cursor: pointer;
+  font: inherit; font-size: 11px; color: #2a2f36; text-align: left; cursor: pointer;
 }
 .md-hb-run span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.md-hb-run em { margin-left: auto; font-style: normal; font-size: 9.5px; color: #7f858c; }
-.md-hb-ico { width: 13px; height: 13px; flex: 0 0 auto; display: inline-flex; color: #9aa0a6; }
+.md-hb-run em { margin-left: auto; font-style: normal; font-size: 9.5px; color: #6a7488; }
+.md-hb-ico { width: 13px; height: 13px; flex: 0 0 auto; display: inline-flex; color: #5a6068; }
 .md-hb-ico svg { width: 13px; height: 13px; display: block; }
 .md-hb-opt {
   width: 14px; height: 14px; flex: 0 0 auto; padding: 0;
   border: 1px solid #6d737a; border-radius: 2px; background: transparent;
-  color: #9aa0a6; font-size: 9px; line-height: 1; cursor: pointer;
+  color: #5a6068; font-size: 9px; line-height: 1; cursor: pointer;
 }
-.md-hb-opt:hover { background: #4a7ea5; border-color: #4a7ea5; color: #fff; }
-.md-hb-row.on .md-hb-run { color: #9fd0f0; }
-.md-hb-row.on .md-hb-run em { color: #7fa8c4; }
-.md-hb-row.off .md-hb-run { color: #8b9097; cursor: not-allowed; }
+.md-hb-opt:hover { background: #3d8ee0; border-color: #7db3e6; color: #fff; }
+.md-hb-row.on .md-hb-run { color: #2b7cd3; }
+.md-hb-row.on .md-hb-run em { color: #2b7cd3; }
+.md-hb-row.off .md-hb-run { color: #6a7488; cursor: not-allowed; }
 .md-hb-row.off .md-hb-ico { opacity: .7; }
 
 /* ---------- 14. 工具参数面板（Maya 的 option box） ---------- */
 .md-hbp {
   position: fixed; z-index: 70; width: 244px;
-  background: #26272a; border: 1px solid #3b3c42; border-radius: 8px;
+  background: #f6f7f9; border: 1px solid #eceef2; border-radius: 8px;
   box-shadow: 0 12px 30px rgba(0, 0, 0, .55);
-  color: #d8dbe0; font-size: 11px;
+  color: #2a2f36; font-size: 11px;
 }
 .md-hbp-h {
   display: flex; align-items: center; justify-content: space-between;
   padding: 6px 9px; border-radius: 8px 8px 0 0;
-  background: linear-gradient(180deg, #3a3b40 0%, #313237 100%);
-  border-bottom: 1px solid #222;
+  background: linear-gradient(180deg, #f9fafb 0%, #f6f7f9 100%);
+  border-bottom: 1px solid #e3e6ea;
 }
 .md-hbp-h b { font-size: 11.5px; font-weight: 600; }
 .md-hbp-h button {
   width: 18px; height: 18px; padding: 0; cursor: pointer;
-  border: 1px solid #2b2b2b; border-top-color: #4f4f4f; border-radius: 3px;
-  background: #3f4046; color: #cfd3d8; font-size: 12px; line-height: 1;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 3px;
+  background: #fbfbfc; color: #3b4147; font-size: 12px; line-height: 1;
 }
 .md-hbp-b { padding: 8px 9px; display: grid; gap: 6px; }
 .md-hbp-row { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 8px; }
-.md-hbp-row span { color: #a8adb3; font-size: 10.5px; }
+.md-hbp-row span { color: #5a6068; font-size: 10.5px; }
 .md-hbp-row input {
   height: 20px; width: 100%; padding: 0 6px;
-  background: #1f2023; border: 1px solid #3a3b40; border-radius: 3px;
-  color: #e3e6e9; font: inherit; font-size: 10.5px; outline: none;
+  background: #f3f5f7; border: 1px solid #eceef2; border-radius: 3px;
+  color: #2a2f36; font: inherit; font-size: 10.5px; outline: none;
 }
-.md-hbp-row input:focus { border-color: #6f88a0; }
+.md-hbp-row input:focus { border-color: #7db3e6; }
 .md-hbp-row input:disabled { opacity: .45; }
-.md-hbp-note { font-size: 9.5px; line-height: 1.5; color: #8b9097; }
+.md-hbp-note { font-size: 9.5px; line-height: 1.5; color: #6a7488; }
 .md-hbp-f { padding: 0 9px 9px; }
 .md-hbp-apply {
   width: 100%; height: 22px; cursor: pointer;
-  border: 1px solid #3a6588; border-radius: 3px;
-  background: #4a7ea5; color: #fff; font: inherit; font-size: 10.5px;
+  border: 1px solid #2b7cd3; border-radius: 3px;
+  background: #3d8ee0; color: #fff; font: inherit; font-size: 10.5px;
 }
-.md-hbp-apply:hover { background: #558cb5; }
-.md-hbp-apply:disabled { background: #3a3b40; border-color: #2b2b2c; color: #777; cursor: not-allowed; }
+.md-hbp-apply:hover { background: #6aa9e8; }
+.md-hbp-apply:disabled { background: #f9fafb; border-color: #e3e6ea; color: #8a9098; cursor: not-allowed; }
 
 /* 工具会话参数面板（挤出等）：固定贴在视口右上，标题随工具名；行标签更宽、带开关 */
 .md-toolpanel { right: 18px; top: 96px; width: 252px; z-index: 72; }
 .md-toolpanel .md-hbp-row { grid-template-columns: 92px 1fr; }
 .md-tp-sw {
   height: 20px; cursor: pointer; border-radius: 10px;
-  border: 1px solid #3a3b40; background: #1f2023; color: #a8adb3;
+  border: 1px solid #eceef2; background: #f3f5f7; color: #5a6068;
   font: inherit; font-size: 10.5px; line-height: 1;
 }
-.md-tp-sw.on { background: #4a7ea5; border-color: #3a6588; color: #fff; }
-.md-tp-sw:hover { border-color: #6f88a0; }
+.md-tp-sw.on { background: #3d8ee0; border-color: #2b7cd3; color: #fff; }
+.md-tp-sw:hover { border-color: #7db3e6; }
 .md-hb-zone.off { opacity: .72; }
-.md-hb-zone button.off { color: #8b9097; cursor: not-allowed; }
-.md-hb-zone button.off i { color: #6f747a; }
+.md-hb-zone button.off { color: #6a7488; cursor: not-allowed; }
+.md-hb-zone button.off i { color: #8a9098; }
 .md-hb-zone button.off.hover,
-.md-hb-zone button.off:hover { background: #3a3c42; color: #cfd3d8; }
+.md-hb-zone button.off:hover { background: #f9fafb; color: #3b4147; }
 /* 用显式行列代替 grid-template-areas：区域名少写一个，整块就会被自动排到别处（踩过） */
 .md-hb-n { grid-area: 1 / 2 / 2 / 3; }
 .md-hb-s { grid-area: 3 / 2 / 4 / 3; }
@@ -1123,11 +1119,11 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   width: 112px; height: 112px; align-self: center; justify-self: center;
   border-radius: 50%;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  background: rgba(26, 27, 30, .95); border: 1px solid #3b3c42;
-  color: #cfd3d8; font-size: 10.5px;
+  background: rgba(255,255,255,0.94); border: 1px solid #eceef2;
+  color: #3b4147; font-size: 10.5px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, .5);
 }
-.md-hb-core i { font-style: normal; font-size: 9px; color: #7f858c; }
+.md-hb-core i { font-style: normal; font-size: 9px; color: #6a7488; }
 
 /* ============================================================
  * UV 编辑器（X5a–X5e）
@@ -1138,8 +1134,8 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   position: absolute; left: 170px; top: 88px; right: 18px; bottom: 40px;
   z-index: 30; min-width: 480px; min-height: 320px;
   display: flex; flex-direction: column;
-  background: #2f2f2f; color: var(--md-txt);
-  border: 1px solid #101010; border-radius: 3px;
+  background: #f6f7f9; color: var(--md-txt);
+  border: 1px solid #d9dde3; border-radius: 3px;
   box-shadow: 0 18px 44px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .045);
   overflow: hidden; outline: none;
 }
@@ -1151,106 +1147,106 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-uv-head {
   flex: 0 0 27px; height: 27px;
   display: flex; align-items: center; gap: 8px; padding: 0 8px;
-  background: linear-gradient(180deg, #464646 0%, #383838 100%);
-  border-bottom: 1px solid #191919;
+  background: linear-gradient(180deg, #fbfbfc 0%, #f9fafb 100%);
+  border-bottom: 1px solid #d9dde3;
   cursor: move;
 }
-.md-uv-head b { font-size: 11.5px; color: #f2f2f2; font-weight: 700; }
+.md-uv-head b { font-size: 11.5px; color: #1f2328; font-weight: 700; }
 .md-uv-target {
-  font-size: 10px; color: #9a9a9a; white-space: nowrap;
+  font-size: 10px; color: #6a7488; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; max-width: 46%;
 }
 .md-uv-headbtns { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .md-uv-hbtn {
   height: 19px; padding: 0 7px;
-  border: 1px solid #252525; border-top-color: #4f4f4f; border-radius: 2px;
-  background: #3d3d3d; color: #d4d4d4; font: inherit; font-size: 10px; cursor: pointer;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 2px;
+  background: #f9fafb; color: #3b4147; font: inherit; font-size: 10px; cursor: pointer;
 }
-.md-uv-hbtn:hover { background: #4a4a4a; color: #fff; }
+.md-uv-hbtn:hover { background: #fbfbfc; color: #1f2328; }
 
 .md-uv-menubar {
   flex: 0 0 23px; height: 23px;
   display: flex; align-items: center; gap: 1px; padding: 0 5px;
-  background: #3a3a3a; border-bottom: 1px solid #1b1b1b;
+  background: #f9fafb; border-bottom: 1px solid #e3e6ea;
   overflow: hidden;
 }
 .md-uv-mitem {
   height: 19px; padding: 0 6px; flex: 0 0 auto;
   border: 1px solid transparent; border-radius: 2px;
-  background: transparent; color: #d2d2d2;
+  background: transparent; color: #3b4147;
   font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
 }
-.md-uv-mitem:hover { background: #4b4b4b; border-color: #565656; }
+.md-uv-mitem:hover { background: #fbfbfc; border-color: #eceef2; }
 
 .md-uv-drop {
   position: absolute; z-index: 60; min-width: 186px;
-  background: #3f3f3f; border: 1px solid #161616; border-radius: 2px;
+  background: #f9fafb; border: 1px solid #d9dde3; border-radius: 2px;
   box-shadow: 0 10px 26px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(255, 255, 255, .05);
   padding: 4px;
 }
 .md-uv-drop[hidden] { display: none; }
 .md-uv-mtitle {
-  padding: 3px 7px 5px; color: #8f8f8f; font-size: 9.5px;
+  padding: 3px 7px 5px; color: #6a7488; font-size: 9.5px;
   letter-spacing: .06em; text-transform: uppercase;
 }
 .md-uv-mi {
   width: 100%; height: 23px; padding: 0 7px;
   display: flex; align-items: center; gap: 8px;
   border: 0; border-radius: 2px; background: transparent;
-  color: #d6d6d6; font: inherit; font-size: 10.5px; text-align: left; cursor: pointer;
+  color: #3b4147; font: inherit; font-size: 10.5px; text-align: left; cursor: pointer;
 }
-.md-uv-mi:hover { background: var(--md-on); color: #fff; }
-.md-uv-mi b { margin-left: auto; font-weight: 400; color: #8f8f8f; font-size: 9.5px; }
-.md-uv-mi:hover b { color: #dce8f2; }
-.md-uv-mi.off { color: #7d7d7d; cursor: default; }
-.md-uv-mi.off:hover { background: #454545; color: #9a9a9a; }
-.md-uv-msep { display: block; height: 1px; margin: 3px 2px; background: #2b2b2b; }
+.md-uv-mi:hover { background: var(--md-on); color: #1f2328; }
+.md-uv-mi b { margin-left: auto; font-weight: 400; color: #6a7488; font-size: 9.5px; }
+.md-uv-mi:hover b { color: #2b7cd3; }
+.md-uv-mi.off { color: #8a9098; cursor: default; }
+.md-uv-mi.off:hover { background: #fbfbfc; color: #6a7488; }
+.md-uv-msep { display: block; height: 1px; margin: 3px 2px; background: #f6f7f9; }
 
 .md-uv-tools {
   flex: 0 0 30px; height: 30px;
   display: flex; align-items: center; gap: 4px; padding: 0 6px;
-  background: #333333; border-bottom: 1px solid #1b1b1b;
+  background: #f6f7f9; border-bottom: 1px solid #e3e6ea;
   overflow: hidden;
 }
 .md-uv-tgrp { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .md-uv-tsep {
   flex: 0 0 1px; width: 1px; height: 17px; margin: 0 2px;
-  background: #232323; box-shadow: 1px 0 0 #474747;
+  background: #f3f5f7; box-shadow: 1px 0 0 #474747;
 }
 .md-uv-tbtn {
   height: 23px; min-width: 24px; padding: 0 3px;
   display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 0 0 auto;
-  border: 1px solid #242424; border-top-color: #4c4c4c; border-radius: 2px;
-  background: #3b3b3b; color: #bdbdbd;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 2px;
+  background: #f9fafb; color: #3b4147;
   font: inherit; font-size: 9px; line-height: 1; cursor: pointer;
 }
 .md-uv-tbtn svg { width: 13px; height: 13px; }
-.md-uv-tbtn span { font-size: 8.5px; color: #b5b5b5; margin-top: 1px; }
-.md-uv-tbtn:hover { background: #4a4a4a; color: #fff; }
-.md-uv-tbtn.on { background: var(--md-on); border-color: var(--md-on-line); border-top-color: #6d8aa5; color: #fff; }
-.md-uv-tbtn.on span { color: #eaf3fb; }
+.md-uv-tbtn span { font-size: 8.5px; color: #5a6068; margin-top: 1px; }
+.md-uv-tbtn:hover { background: #fbfbfc; color: #1f2328; }
+.md-uv-tbtn.on { background: var(--md-on); border-color: var(--md-on-line); border-top-color: #7db3e6; color: #1f2328; }
+.md-uv-tbtn.on span { color: #2b7cd3; }
 .md-uv-tbtn.txt { width: auto; padding: 0 7px; flex-direction: row; font-size: 10.5px; }
 .md-uv-tread {
   margin-left: auto; padding-left: 8px; flex: 0 1 auto;
-  font-size: 10px; color: #9a9a9a; white-space: nowrap;
+  font-size: 10px; color: #6a7488; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis;
 }
 .md-uv-tex {
   flex: 0 0 auto; margin-left: 6px; padding: 1px 6px;
-  font: inherit; font-size: 9.5px; color: #d3a354; cursor: pointer;
-  border: 1px solid #5a4826; border-radius: 2px; background: #3a3325;
+  font: inherit; font-size: 9.5px; color: #c77500; cursor: pointer;
+  border: 1px solid #e88a00; border-radius: 2px; background: #b26a00;
   white-space: nowrap;
 }
-.md-uv-tex:hover { background: #463d2b; border-color: #7a6536; }
-.md-uv-tex.on { background: #4f6a84; border-color: #394e61; color: #fff; }
+.md-uv-tex:hover { background: #b26a00; border-color: #e88a00; }
+.md-uv-tex.on { background: #3d8ee0; border-color: #2b7cd3; color: #fff; }
 
 .md-uv-toast {
   position: absolute; left: 50%; top: 34px; z-index: 3;
   transform: translateX(-50%) translateY(-6px);
   max-width: 88%; padding: 5px 12px;
   border: 1px solid #5c5c5c; border-radius: 3px;
-  background: rgba(20,20,20,.93); color: #ececec;
+  background: rgba(255,255,255,0.94); color: #1f2328;
   font-size: 11px; line-height: 1.5; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis;
   opacity: 0; pointer-events: none;
@@ -1258,37 +1254,37 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   box-shadow: 0 4px 14px rgba(0,0,0,.45);
 }
 .md-uv-toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
-.md-uv-toast.err { border-color: #8a4a3a; color: #ffd3c2; }
+.md-uv-toast.err { border-color: #c9342a; color: #c9342a; }
 
-.md-uv-body { flex: 1 1 auto; min-height: 0; display: flex; background: #232323; }
+.md-uv-body { flex: 1 1 auto; min-height: 0; display: flex; background: #f3f5f7; }
 .md-uv-cvwrap { flex: 1 1 auto; min-width: 0; position: relative; }
 #mdUvCanvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: default; }
 .md-uv-hint {
   position: absolute; left: 26px; right: 12px; bottom: 7px;
-  font-size: 10px; color: #9c9c9c; pointer-events: none;
+  font-size: 10px; color: #6a7488; pointer-events: none;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   text-shadow: 0 1px 2px #000;
 }
 
 .md-uv-kit {
   flex: 0 0 224px; width: 224px; overflow-y: auto; overflow-x: hidden;
-  background: #363636; border-left: 1px solid #1b1b1b;
+  background: #f9fafb; border-left: 1px solid #e3e6ea;
   font-size: 10.5px;
 }
 .md-uv-kit::-webkit-scrollbar { width: 9px; }
-.md-uv-kit::-webkit-scrollbar-thumb { background: #4c4c4c; border-radius: 5px; border: 2px solid #363636; }
+.md-uv-kit::-webkit-scrollbar-thumb { background: #fbfbfc; border-radius: 5px; border: 2px solid #e3e6ea; }
 .md-uvk-head {
   position: sticky; top: 0; z-index: 2;
   height: 27px; display: flex; align-items: center; gap: 6px; padding: 0 8px;
-  background: #404040; border-bottom: 1px solid #1b1b1b;
+  background: #f9fafb; border-bottom: 1px solid #e3e6ea;
 }
-.md-uvk-head b { font-size: 11px; color: #e4e4e4; }
+.md-uvk-head b { font-size: 11px; color: #2a2f36; }
 .md-uvk-help {
   margin-left: auto; height: 18px; padding: 0 6px;
-  border: 1px solid #252525; border-top-color: #4d4d4d; border-radius: 2px;
-  background: #3d3d3d; color: #cfcfcf; font: inherit; font-size: 9.5px; cursor: pointer;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 2px;
+  background: #f9fafb; color: #3b4147; font: inherit; font-size: 9.5px; cursor: pointer;
 }
-.md-uvk-help:hover { background: #4a4a4a; }
+.md-uvk-help:hover { background: #fbfbfc; }
 
 /* 右侧工具箱的两个页签（建模 / 绘画） */
 .md-tbkinds { display: flex; align-items: center; gap: 2px; }
@@ -1301,37 +1297,37 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   padding: 10px 10px 14px;
   display: flex; flex-direction: column; gap: 10px;
-  background: linear-gradient(180deg, #343434 0%, #303030 100%);
+  background: linear-gradient(180deg, #f6f7f9 0%, #f6f7f9 100%);
   font-size: 11px;
 }
 .md-paint[hidden] { display: none; }
 .md-paint::-webkit-scrollbar { width: 8px; }
-.md-paint::-webkit-scrollbar-thumb { background: #545454; border-radius: 4px; border: 2px solid #343434; }
-.md-paint::-webkit-scrollbar-thumb:hover { background: #626262; }
+.md-paint::-webkit-scrollbar-thumb { background: #f1f2f4; border-radius: 4px; border: 2px solid #e3e6ea; }
+.md-paint::-webkit-scrollbar-thumb:hover { background: #f1f2f4; }
 
 /* 笔刷分组：一块浅一层的卡片，把滑杆和色块从面板底色里托出来 */
 .md-paint-card {
   flex: 0 0 auto;
   display: flex; flex-direction: column; gap: 8px;
   padding: 8px 9px 10px;
-  border: 1px solid #262626; border-radius: 6px;
-  background: linear-gradient(180deg, #3b3b3b 0%, #333333 100%);
+  border: 1px solid #e3e6ea; border-radius: 6px;
+  background: linear-gradient(180deg, #f9fafb 0%, #f6f7f9 100%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 1px 2px rgba(0,0,0,.18);
 }
 .md-paint-card-h { display: flex; align-items: center; gap: 6px; }
 .md-paint-card-h i,
 .md-mix-head i {
   width: 2px; height: 12px; border-radius: 1px;
-  background: linear-gradient(180deg, #7fb3dc 0%, #4b7fa6 100%);
+  background: linear-gradient(180deg, #6aa9e8 0%, #3d8ee0 100%);
   box-shadow: 0 0 6px rgba(91,155,213,.35);
 }
-.md-paint-card-h span { font-size: 11px; font-weight: 600; color: #e4e8ec; letter-spacing: .2px; }
-.md-paint-card-h em { margin-left: auto; font-style: normal; font-size: 9.5px; color: #8c8c8c; }
+.md-paint-card-h span { font-size: 11px; font-weight: 600; color: #2b7cd3; letter-spacing: .2px; }
+.md-paint-card-h em { margin-left: auto; font-style: normal; font-size: 9.5px; color: #6a7488; }
 
-.md-paint-row { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #c9c9c9; min-width: 0; }
-.md-paint-row > span { flex: 0 0 56px; color: #a9a9a9; }
+.md-paint-row { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #3b4147; min-width: 0; }
+.md-paint-row > span { flex: 0 0 56px; color: #5a6068; }
 .md-paint-row b {
-  flex: 0 0 44px; text-align: right; font-weight: 400; font-size: 10px; color: #dbe0e5;
+  flex: 0 0 44px; text-align: right; font-weight: 400; font-size: 10px; color: #2b7cd3;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1344,22 +1340,22 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-paint input[type=range]::-webkit-slider-runnable-track,
 .md-mix-line input[type=range]::-webkit-slider-runnable-track {
   height: 4px; border-radius: 2px;
-  background: #222222;
-  border: 1px solid #1b1b1b;
+  background: #f3f5f7;
+  border: 1px solid #e3e6ea;
   box-shadow: inset 0 1px 2px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.04);
 }
 .md-paint input[type=range]::-webkit-slider-thumb,
 .md-mix-line input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
   width: 12px; height: 12px; margin-top: -5px; border-radius: 50%;
-  background: linear-gradient(180deg, #f6fafd 0%, #c8ddf1 100%);
-  border: 1px solid #3d6e94;
+  background: linear-gradient(180deg, #e8f1fc 0%, #e8f1fc 100%);
+  border: 1px solid #7db3e6;
   box-shadow: 0 1px 3px rgba(0,0,0,.45);
   transition: box-shadow .12s, border-color .12s;
 }
 .md-paint input[type=range]:hover::-webkit-slider-thumb,
 .md-mix-line input[type=range]:hover::-webkit-slider-thumb {
-  border-color: #6ea6d0;
+  border-color: #7db3e6;
   box-shadow: 0 0 0 3px rgba(91,155,213,.18), 0 1px 3px rgba(0,0,0,.45);
 }
 
@@ -1367,35 +1363,35 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-paint-row select, .md-mix-slot, .md-mix-blend {
   -webkit-appearance: none; appearance: none;
   min-width: 0; height: 22px; padding: 0 18px 0 7px;
-  font-size: 10.5px; color: #e0e0e0; font-family: inherit;
-  background-color: #2d2d2d;
+  font-size: 10.5px; color: #2a2f36; font-family: inherit;
+  background-color: #f6f7f9;
   background-image:
-    linear-gradient(45deg, transparent 50%, #8a8a8a 50%),
-    linear-gradient(135deg, #8a8a8a 50%, transparent 50%);
+    linear-gradient(45deg, transparent 50%, #e3e6ea 50%),
+    linear-gradient(135deg, #e3e6ea 50%, transparent 50%);
   background-position: calc(100% - 10px) 9px, calc(100% - 6px) 9px;
   background-size: 4px 4px;
   background-repeat: no-repeat;
-  border: 1px solid #242424; border-top-color: #4a4a4a; border-radius: 4px;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 4px;
   outline: none; text-overflow: ellipsis;
 }
 .md-paint-row select { flex: 1 1 auto; }
-.md-paint-row select:hover, .md-mix-slot:hover, .md-mix-blend:hover { border-color: #4f4f4f; }
+.md-paint-row select:hover, .md-mix-slot:hover, .md-mix-blend:hover { border-color: #eceef2; }
 .md-paint-row select:focus, .md-mix-slot:focus, .md-mix-blend:focus {
-  border-color: #5b9bd5; box-shadow: 0 0 0 1px rgba(91,155,213,.22);
+  border-color: #7db3e6; box-shadow: 0 0 0 1px rgba(91,155,213,.22);
 }
 
 .md-paint-row input[type=color] {
   flex: 0 0 34px; width: 34px; height: 22px; padding: 0;
-  border: 1px solid #262626; border-radius: 4px; background: #3a3a3a; cursor: pointer;
+  border: 1px solid #e3e6ea; border-radius: 4px; background: #f9fafb; cursor: pointer;
 }
-.md-paint-row input[type=color]:hover { border-color: #4f4f4f; }
+.md-paint-row input[type=color]:hover { border-color: #eceef2; }
 .md-paint-chk {
   margin-left: auto;
   display: flex; align-items: center; gap: 5px;
-  font-size: 10px; color: #b9c3cd; cursor: pointer; white-space: nowrap;
+  font-size: 10px; color: #2b7cd3; cursor: pointer; white-space: nowrap;
 }
 .md-paint-chk input { width: 13px; height: 13px; margin: 0; accent-color: #5b9bd5; }
-.md-paint-hint { font-size: 9.5px; line-height: 1.6; color: #828282; padding: 0 2px; }
+.md-paint-hint { font-size: 9.5px; line-height: 1.6; color: #6a7488; padding: 0 2px; }
 
 /* ---------------- 纹理混合 ----------------
  * 和模型库同一套配置，视觉上做成「独立分区 + 图层卡片」：
@@ -1404,17 +1400,17 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column; gap: 8px;
   margin-top: 2px; padding-top: 10px;
-  border-top: 1px solid #2a2a2a;
+  border-top: 1px solid #e3e6ea;
 }
 .md-mix-head { display: flex; align-items: center; gap: 6px; height: 18px; }
-.md-mix-head > span { font-size: 11px; font-weight: 600; color: #e4e8ec; letter-spacing: .2px; }
+.md-mix-head > span { font-size: 11px; font-weight: 600; color: #2b7cd3; letter-spacing: .2px; }
 .md-mix-count {
   margin-left: auto; min-width: 30px; height: 16px; line-height: 16px;
   padding: 0 6px; border-radius: 8px; text-align: center;
-  background: #2a2a2a; border: 1px solid #242424;
-  font-size: 9.5px; font-weight: 400; color: #9fa8b2;
+  background: #f6f7f9; border: 1px solid #e3e6ea;
+  font-size: 9.5px; font-weight: 400; color: #5a6068;
 }
-.md-mix-slotrow { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #a9a9a9; }
+.md-mix-slotrow { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #5a6068; }
 .md-mix-slotrow > span { flex: 0 0 32px; }
 .md-mix-slot { flex: 1 1 auto; font-weight: 400; }
 
@@ -1422,75 +1418,75 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-mix-row {
   display: flex; flex-direction: column; gap: 6px;
   padding: 7px 8px 8px;
-  border: 1px solid #262626; border-radius: 6px;
-  background: linear-gradient(180deg, #383838 0%, #323232 100%);
+  border: 1px solid #e3e6ea; border-radius: 6px;
+  background: linear-gradient(180deg, #f9fafb 0%, #f6f7f9 100%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 1px 2px rgba(0,0,0,.16);
 }
-.md-mix-line { display: flex; align-items: center; gap: 5px; font-size: 10px; color: #c9c9c9; min-width: 0; }
+.md-mix-line { display: flex; align-items: center; gap: 5px; font-size: 10px; color: #3b4147; min-width: 0; }
 .md-mix-thumb {
   flex: 0 0 38px; width: 38px; height: 38px; border-radius: 4px;
-  overflow: hidden; background: #0a0b0e; border: 1px solid #1d1d1d;
+  overflow: hidden; background: #2b7cd3; border: 1px solid #e3e6ea;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.04);
 }
 .md-mix-thumb canvas { width: 38px; height: 38px; display: block; }
-.md-mix-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; color: #d6d6d6; }
+.md-mix-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; color: #3b4147; }
 .md-mix-mini {
   flex: 0 0 auto; min-width: 22px; height: 22px; padding: 0 5px;
   font-size: 10px; line-height: 20px; font-family: inherit;
-  background: #2f2f2f; color: #c9c9c9;
-  border: 1px solid #232323; border-top-color: #454545; border-radius: 4px;
+  background: #f6f7f9; color: #3b4147;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 4px;
   cursor: pointer; transition: background .12s, border-color .12s;
 }
-.md-mix-mini:hover { background: #3c3c3c; border-color: #3a3a3a; }
+.md-mix-mini:hover { background: #f9fafb; border-color: #eceef2; }
 .md-mix-mini:active { transform: translateY(1px); }
-.md-mix-mini.is-del { color: #ff8d8d; }
-.md-mix-mini.is-del:hover { background: #3a2a2a; border-color: #5a3232; }
-.md-mix-mini.is-on { border-color: #4a7ea5; color: #a6d4ff; background: #2b3a48; }
+.md-mix-mini.is-del { color: #c9342a; }
+.md-mix-mini.is-del:hover { background: #c9342a; border-color: #c9342a; }
+.md-mix-mini.is-on { border-color: #7db3e6; color: #2b7cd3; background: #2b7cd3; }
 .md-mix-blend { flex: 0 0 92px; width: 92px; }
 .md-mix-line b {
-  flex: 0 0 32px; text-align: right; font-weight: 400; font-size: 10px; color: #d7dde4;
+  flex: 0 0 32px; text-align: right; font-weight: 400; font-size: 10px; color: #2b7cd3;
   font-variant-numeric: tabular-nums;
 }
 .md-mix-mask {
   flex: 1 1 auto; min-width: 0; height: 18px; line-height: 16px; padding: 0 7px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  border-radius: 9px; background: #2b2b2b; border: 1px solid #242424;
-  font-size: 9.5px; color: #a7b0b9;
+  border-radius: 9px; background: #f6f7f9; border: 1px solid #e3e6ea;
+  font-size: 9.5px; color: #5a6068;
 }
 
 .md-mix-empty {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 14px 12px;
-  border: 1px dashed #454545; border-radius: 6px;
+  border: 1px dashed #eceef2; border-radius: 6px;
   background: rgba(0,0,0,.12);
   text-align: center;
 }
-.md-mix-empty b { font-size: 16px; line-height: 1; color: #7fa9cb; font-weight: 400; }
-.md-mix-empty span { font-size: 10.5px; color: #c9c9c9; }
-.md-mix-empty em { font-style: normal; font-size: 9.5px; line-height: 1.5; color: #828282; }
+.md-mix-empty b { font-size: 16px; line-height: 1; color: #2b7cd3; font-weight: 400; }
+.md-mix-empty span { font-size: 10.5px; color: #3b4147; }
+.md-mix-empty em { font-style: normal; font-size: 9.5px; line-height: 1.5; color: #6a7488; }
 
 .md-mix-base { display: flex; }
 .md-mix-chip {
   padding: 2px 8px; border-radius: 9px;
-  background: #2b2b2b; border: 1px solid #242424;
-  font-size: 9.5px; color: #95a2ad;
+  background: #f6f7f9; border: 1px solid #e3e6ea;
+  font-size: 9.5px; color: #5a6068;
 }
 .md-mix-acts { display: flex; gap: 6px; }
 .md-mix-acts .md-mix-mini { flex: 1 1 0; height: 24px; line-height: 22px; }
 .md-mix-mini.md-mix-add {
-  background: linear-gradient(180deg, #4a7ba3 0%, #3d688b 100%);
-  border-color: #345a78; border-top-color: #6b98bb;
-  color: #f2f8ff; font-weight: 600;
+  background: linear-gradient(180deg, #3d8ee0 0%, #3d8ee0 100%);
+  border-color: #2b7cd3; border-top-color: #7db3e6;
+  color: #2b7cd3; font-weight: 600;
 }
-.md-mix-mini.md-mix-add:hover { background: linear-gradient(180deg, #5589b3 0%, #467399 100%); }
-.md-mix-hint { font-size: 9.5px; line-height: 1.55; color: #828282; }
-.md-mix-hint.is-warn { color: #e0b56b; }
+.md-mix-mini.md-mix-add:hover { background: linear-gradient(180deg, #3d8ee0 0%, #3d8ee0 100%); }
+.md-mix-hint { font-size: 9.5px; line-height: 1.55; color: #6a7488; }
+.md-mix-hint.is-warn { color: #c77500; }
 
 /* ---------- 图层拖动排序 ---------- */
-.md-mix-grip { flex: 0 0 10px; font-size: 10px; line-height: 1; color: #767676; cursor: grab; user-select: none; }
+.md-mix-grip { flex: 0 0 10px; font-size: 10px; line-height: 1; color: #8a9098; cursor: grab; user-select: none; }
 .md-mix-grip:active { cursor: grabbing; }
 .md-mix-row.is-drag { opacity: .5; }
-.md-mix-row.is-drop { border-color: #4a7ea5; box-shadow: 0 0 0 1px rgba(74,126,165,.45); }
+.md-mix-row.is-drop { border-color: #7db3e6; box-shadow: 0 0 0 1px rgba(74,126,165,.45); }
 
 /* ---------- 资产库选图 / 手绘遮罩弹层 ---------- */
 .md-mix-gback {
@@ -1501,14 +1497,14 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-mix-gpop {
   width: min(560px, 86vw); max-height: 78vh;
   display: flex; flex-direction: column; overflow: hidden;
-  border: 1px solid #3a3a3a; border-radius: 8px; background: #242424;
+  border: 1px solid #eceef2; border-radius: 8px; background: #f3f5f7;
   box-shadow: 0 18px 48px rgba(0,0,0,.55);
 }
 .md-mix-ghead {
   display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px;
-  background: #2b2b2b; border-bottom: 1px solid #333;
+  background: #f6f7f9; border-bottom: 1px solid #e3e6ea;
 }
-.md-mix-ghead > span { font-size: 11.5px; font-weight: 600; color: #e2e2e2; }
+.md-mix-ghead > span { font-size: 11.5px; font-weight: 600; color: #2a2f36; }
 .md-mix-ghead .md-mix-mini { margin-left: auto; }
 .md-mix-ggrid {
   flex: 1 1 auto; padding: 10px; overflow: auto;
@@ -1516,20 +1512,20 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 }
 .md-mix-gcell {
   display: flex; flex-direction: column; gap: 5px; padding: 6px;
-  border: 1px solid #363636; border-radius: 6px; background: #2c2c2c;
-  color: #cfcfcf; font: inherit; text-align: left; cursor: pointer; overflow: hidden;
+  border: 1px solid #e3e6ea; border-radius: 6px; background: #f6f7f9;
+  color: #3b4147; font: inherit; text-align: left; cursor: pointer; overflow: hidden;
 }
-.md-mix-gcell:hover { border-color: #4a7ea5; background: #303840; }
+.md-mix-gcell:hover { border-color: #7db3e6; background: #2b7cd3; }
 .md-mix-gthumb {
   display: flex; align-items: center; justify-content: center;
   height: 64px; border-radius: 4px; overflow: hidden;
-  background: #111; color: #5d6a75; font-size: 10px;
+  background: #f0f2f5; color: #8a9098; font-size: 10px;
 }
 .md-mix-gthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .md-mix-gcell span { font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md-mix-gfoot {
   display: flex; gap: 8px; padding: 9px 10px;
-  background: #262626; border-top: 1px solid #333;
+  background: #f3f5f7; border-top: 1px solid #e3e6ea;
 }
 .md-mix-gfoot .md-mix-mini { flex: 0 0 auto; height: 24px; line-height: 22px; }
 .md-mix-gfoot .md-mix-mini.md-mix-add { flex: 1 1 auto; }
@@ -1538,15 +1534,15 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-mix-maskpop { width: min(680px, 90vw); }
 .md-mix-maskbar {
   display: flex; align-items: center; gap: 8px; padding: 8px 10px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid #e3e6ea;
 }
 .md-mix-maskbar .md-mix-mini { height: 22px; }
 .md-mix-maskbar input[type=range] { flex: 1 1 auto; min-width: 90px; }
-.md-mix-maskbar b { flex: 0 0 42px; font-size: 9.5px; font-weight: 400; color: #b8c4cf; text-align: right; }
+.md-mix-maskbar b { flex: 0 0 42px; font-size: 9.5px; font-weight: 400; color: #2b7cd3; text-align: right; }
 .md-mix-maskstage {
   position: relative; flex: 1 1 auto; min-height: 200px; padding: 10px;
   display: grid; place-items: center; overflow: auto;
-  background: #1b1b1b;
+  background: #f0f2f5;
 }
 .md-mix-maskstage canvas {
   grid-area: 1 / 1; display: block;
@@ -1556,66 +1552,66 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-mix-masktag {
   position: absolute; left: 10px; bottom: 10px;
   padding: 2px 8px; border-radius: 9px;
-  background: rgba(0,0,0,.55); font-size: 9.5px; color: #c9d2da;
+  background: rgba(255,255,255,0.75); font-size: 9.5px; color: #2b7cd3;
 }
 
 /* 模型表面画遮罩：视口底部的浮动工具条 */
 .md-maskbar {
   position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
   z-index: 1300; display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px; border: 1px solid #3d3d3d; border-radius: 9px;
-  background: rgba(36,36,36,.96); box-shadow: 0 10px 30px rgba(0,0,0,.5);
-  color: #cfcfcf; font-size: 10px;
+  padding: 8px 12px; border: 1px solid #eceef2; border-radius: 9px;
+  background: rgba(255,255,255,0.94); box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  color: #3b4147; font-size: 10px;
 }
 .md-maskbar-t {
-  padding-right: 5px; border-right: 1px solid #3a3a3a;
-  font-size: 10.5px; color: #dfe7ee;
+  padding-right: 5px; border-right: 1px solid #eceef2;
+  font-size: 10.5px; color: #2b7cd3;
 }
 .md-maskbar input[type=range] { width: 116px; }
-.md-maskbar b { min-width: 40px; font-size: 9.5px; font-weight: 400; color: #b8c4cf; text-align: right; }
-.md-mix-mini.is-on { background: #3a5a72; border-color: #4a7ea5; color: #eaf4ff; }
+.md-maskbar b { min-width: 40px; font-size: 9.5px; font-weight: 400; color: #2b7cd3; text-align: right; }
+.md-mix-mini.is-on { background: #3d8ee0; border-color: #7db3e6; color: #2b7cd3; }
 /* 3D 遮罩绘制进行中：混合面板只读，避免换槽 / 加层把遮罩画到别处 */
 .md-paint-mix.is-masking { pointer-events: none; opacity: .55; }
 .md-maskbar .md-mix-mini { height: 22px; border-radius: 3px; }
 
-.md-uvk-sec { padding: 7px 8px 8px; border-bottom: 1px solid #2b2b2b; }
-.md-uvk-title { color: #c7c7c7; margin-bottom: 6px; font-size: 10.5px; }
+.md-uvk-sec { padding: 7px 8px 8px; border-bottom: 1px solid #e3e6ea; }
+.md-uvk-title { color: #3b4147; margin-bottom: 6px; font-size: 10.5px; }
 .md-uvk-grid { display: flex; align-items: stretch; gap: 3px; flex-wrap: wrap; }
 .md-uvk-grid .md-uv-tbtn { flex: 1 1 0; width: auto; min-width: 50px; height: 30px; }
 .md-uvk-grid .md-uv-tbtn span { font-size: 9px; }
 .md-uvk-row {
   display: flex; justify-content: space-between; gap: 8px;
-  padding: 2px 0; color: #a9a9a9;
+  padding: 2px 0; color: #5a6068;
 }
-.md-uvk-row b { font-weight: 400; color: #d0d0d0; text-align: right; }
-.md-uvk-row b.off { color: #777; }
+.md-uvk-row b { font-weight: 400; color: #3b4147; text-align: right; }
+.md-uvk-row b.off { color: #8a9098; }
 .md-uvk-acts { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 4px; }
 .md-uvk-acts button {
   height: 19px; padding: 0 7px; flex: 0 0 auto;
-  border: 1px solid #252525; border-top-color: #4d4d4d; border-radius: 2px;
-  background: #3d3d3d; color: #d4d4d4; font: inherit; font-size: 10px; cursor: pointer;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 2px;
+  background: #f9fafb; color: #3b4147; font: inherit; font-size: 10px; cursor: pointer;
 }
-.md-uvk-acts button:hover { background: var(--md-on); color: #fff; border-color: var(--md-on-line); }
+.md-uvk-acts button:hover { background: var(--md-on); color: #1f2328; border-color: var(--md-on-line); }
 .md-uvk-acts.wide button { flex: 1 1 0; min-width: 58px; }
-.md-uvk-grp { border-bottom: 1px solid #2b2b2b; }
+.md-uvk-grp { border-bottom: 1px solid #e3e6ea; }
 .md-uvk-gt {
   width: 100%; height: 24px; display: flex; align-items: center; gap: 5px; padding: 0 8px;
-  border: 0; background: transparent; color: #d0d0d0;
+  border: 0; background: transparent; color: #3b4147;
   font: inherit; font-size: 10.5px; text-align: left; cursor: pointer;
 }
-.md-uvk-gt:hover { background: #3f3f3f; }
-.md-uvk-gt i { font-style: normal; color: #8f8f8f; transition: transform .15s; }
+.md-uvk-gt:hover { background: #f9fafb; }
+.md-uvk-gt i { font-style: normal; color: #6a7488; transition: transform .15s; }
 .md-uvk-grp.open > .md-uvk-gt i { transform: rotate(90deg); }
 .md-uvk-gb { display: none; padding: 5px 8px 8px; }
 .md-uvk-grp.open > .md-uvk-gb { display: block; }
-.md-uvk-note { color: #7f7f7f; font-size: 10px; line-height: 1.55; }
+.md-uvk-note { color: #8a9098; font-size: 10px; line-height: 1.55; }
 
 .md-uv-rs {
   position: absolute; right: 5px; bottom: 5px; width: 12px; height: 12px;
   cursor: nwse-resize; z-index: 5;
   background:
-    linear-gradient(135deg, transparent 44%, #8a8a8a 44%, #8a8a8a 56%, transparent 56%),
-    linear-gradient(135deg, transparent 68%, #666 68%, #666 80%, transparent 80%);
+    linear-gradient(135deg, transparent 44%, #e3e6ea 44%, #e3e6ea 56%, transparent 56%),
+    linear-gradient(135deg, transparent 68%, #f1f2f4 68%, #f1f2f4 80%, transparent 80%);
 }
 
 @media (max-width: 1100px) {
@@ -1633,8 +1629,8 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   position: absolute; left: 150px; top: 76px; right: 34px; bottom: 46px;
   z-index: 31; min-width: 620px; min-height: 420px;
   display: flex; flex-direction: column;
-  background: #2c2c2c; color: var(--md-txt);
-  border: 1px solid #101010; border-radius: 3px;
+  background: #f6f7f9; color: var(--md-txt);
+  border: 1px solid #d9dde3; border-radius: 3px;
   box-shadow: 0 20px 48px rgba(0, 0, 0, .58), 0 0 0 1px rgba(255, 255, 255, .045);
   overflow: hidden; outline: none;
 }
@@ -1643,40 +1639,40 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-pb-head {
   flex: 0 0 27px; height: 27px;
   display: flex; align-items: center; gap: 8px; padding: 0 8px;
-  background: linear-gradient(180deg, #474747 0%, #373737 100%);
-  border-bottom: 1px solid #191919;
+  background: linear-gradient(180deg, #fbfbfc 0%, #f9fafb 100%);
+  border-bottom: 1px solid #d9dde3;
   cursor: move; user-select: none;
 }
-.md-pb-head b { font-size: 11.5px; font-weight: 700; color: #f2f2f2; }
-.md-pb-target { font-size: 10px; color: #9a9a9a; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-pb-head b { font-size: 11.5px; font-weight: 700; color: #1f2328; }
+.md-pb-target { font-size: 10px; color: #6a7488; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md-pb-headbtns { margin-left: auto; display: flex; gap: 4px; align-items: center; }
 .md-pb-hbtn {
   height: 19px; padding: 0 8px; font-size: 10.5px; line-height: 17px;
-  color: #d8d8d8; background: #3c3c3c; border: 1px solid #1c1c1c; border-radius: 2px; cursor: pointer;
+  color: #2a2f36; background: #f9fafb; border: 1px solid #e3e6ea; border-radius: 2px; cursor: pointer;
 }
-.md-pb-hbtn:hover { background: #4a4a4a; color: #fff; }
+.md-pb-hbtn:hover { background: #fbfbfc; color: #1f2328; }
 
-.md-pb-body { flex: 1 1 auto; display: flex; min-height: 0; background: #242424; }
+.md-pb-body { flex: 1 1 auto; display: flex; min-height: 0; background: #f3f5f7; }
 .md-pb-pane { flex: 1 1 50%; min-width: 0; display: flex; flex-direction: column; }
 .md-pb-ptitle {
   flex: 0 0 22px; height: 22px; display: flex; align-items: center; gap: 7px;
-  padding: 0 8px; background: #333; border-bottom: 1px solid #1b1b1b;
-  font-size: 10.5px; color: #cfcfcf;
+  padding: 0 8px; background: #f6f7f9; border-bottom: 1px solid #e3e6ea;
+  font-size: 10.5px; color: #3b4147;
 }
 .md-pb-ptitle > span:first-child { font-weight: 600; }
-.md-pb-ptitle em { font-style: normal; color: #8c8c8c; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-pb-ptitle em { font-style: normal; color: #6a7488; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md-pb-pbtns { margin-left: auto; display: flex; gap: 4px; }
 .md-pb-tbtn {
   height: 17px; padding: 0 7px; font-size: 10px; line-height: 15px;
-  background: #3d3d3d; color: #d6d6d6; border: 1px solid #1d1d1d; border-radius: 2px; cursor: pointer;
+  background: #f9fafb; color: #3b4147; border: 1px solid #e3e6ea; border-radius: 2px; cursor: pointer;
 }
-.md-pb-tbtn:hover { background: #4c4c4c; color: #fff; }
+.md-pb-tbtn:hover { background: #fbfbfc; color: #1f2328; }
 /* 「上传原画」是个 label[for]：按钮样式要自己补，label 默认是 inline 且不吃 height */
 label.md-pb-tbtn {
   display: inline-flex; align-items: center; box-sizing: border-box;
   user-select: none; -webkit-user-select: none;
 }
-label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px; }
+label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px; }
 /* file input 用「挪到视口外」隐藏，不能用 hidden / display:none ——
  * 那种状态下某些外壳会拒绝激活文件对话框，
  * 症状就是「点击上传原画毫无反应」（对话框根本不弹）。 */
@@ -1697,15 +1693,15 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-pb-empty {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 6px; text-align: center;
-  color: #7d7d7d; font-size: 11.5px; pointer-events: none; padding: 20px;
+  color: #8a9098; font-size: 11.5px; pointer-events: none; padding: 20px;
 }
 .md-pb-empty[hidden] { display: none; }
-.md-pb-empty b { font-size: 13px; color: #a8a8a8; font-weight: 600; }
-.md-pb-empty em { font-style: normal; font-size: 10.5px; color: #6a6a6a; }
+.md-pb-empty b { font-size: 13px; color: #5a6068; font-weight: 600; }
+.md-pb-empty em { font-style: normal; font-size: 10.5px; color: #8a9098; }
 /* 没原画却去拖岛时闪一下：整条落位链路这时是空转的，不给视觉反馈
  * 用户只会觉得「拖不动」。只动 opacity，不动尺寸，避免触发重排。 */
 .md-pb-empty.attn { animation: mdPbEmptyAttn 1s ease-in-out 2; }
-.md-pb-empty.attn b { color: #ffd08a; }
+.md-pb-empty.attn b { color: #c77500; }
 @keyframes mdPbEmptyAttn {
   0%, 100% { opacity: .55; }
   50% { opacity: 1; }
@@ -1714,18 +1710,18 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-pb-toast, .md-pb-hint {
   position: absolute; left: 10px; bottom: 10px; max-width: calc(100% - 20px);
   padding: 5px 9px; border-radius: 3px; font-size: 10.5px; line-height: 1.45;
-  background: rgba(18, 18, 18, .88); color: #d8d8d8; border: 1px solid rgba(255, 255, 255, .08);
+  background: rgba(255,255,255,0.94); color: #2a2f36; border: 1px solid rgba(255, 255, 255, .08);
   opacity: 0; transform: translateY(4px); transition: opacity .16s, transform .16s;
   pointer-events: none;
 }
 .md-pb-toast.on { opacity: 1; transform: none; }
-.md-pb-toast.err { color: #ffb4a8; border-color: rgba(220, 110, 90, .45); }
+.md-pb-toast.err { color: #c9342a; border-color: rgba(220, 110, 90, .45); }
 .md-pb-hint {
-  opacity: 1; transform: none; color: #9aa7ad;
+  opacity: 1; transform: none; color: #5a6068;
   left: 6px; bottom: 6px; padding: 3px 7px; font-size: 10px;
-  max-width: 74%; background: rgba(18, 18, 18, .82);
+  max-width: 74%; background: rgba(255,255,255,0.94);
 }
-.md-pb-hint.warn { color: #ffd08a; border-color: rgba(224, 160, 58, .42); background: rgba(38, 28, 12, .92); }
+.md-pb-hint.warn { color: #c77500; border-color: rgba(224, 160, 58, .42); background: rgba(38, 28, 12, .92); }
 /* 左栏的缩放提示放**左上**：右下已经被 toast 占了，两条叠在一起会互相盖 */
 .md-pb-zhint { top: 6px; bottom: auto; }
 .md-pb-hint[hidden] { display: none; }
@@ -1738,26 +1734,26 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
   position: absolute; top: 8px; right: 8px; width: 168px;
   max-height: calc(100% - 16px);
   display: flex; flex-direction: column;
-  background: rgba(30, 30, 30, .95);
-  border: 1px solid #101010; border-radius: 3px;
+  background: rgba(255,255,255,0.94);
+  border: 1px solid #d9dde3; border-radius: 3px;
   box-shadow: 0 8px 22px rgba(0, 0, 0, .55);
-  font-size: 10.5px; color: #cfcfcf; z-index: 3;
+  font-size: 10.5px; color: #3b4147; z-index: 3;
   backdrop-filter: blur(2px);
 }
 .md-pb-lypanel[hidden] { display: none; }
 .md-pb-lyhd {
   flex: 0 0 20px; height: 20px; display: flex; align-items: center; gap: 6px;
-  padding: 0 4px 0 7px; background: linear-gradient(180deg, #3d3d3d, #333);
-  border-bottom: 1px solid #1a1a1a; border-radius: 2px 2px 0 0;
+  padding: 0 4px 0 7px; background: linear-gradient(180deg, #f9fafb, #f6f7f9);
+  border-bottom: 1px solid #e3e6ea; border-radius: 2px 2px 0 0;
 }
-.md-pb-lyhd b { font-size: 10.5px; font-weight: 600; color: #eaeaea; }
-.md-pb-lyhd em { font-style: normal; color: #8a8a8a; font-size: 9.5px; }
+.md-pb-lyhd b { font-size: 10.5px; font-weight: 600; color: #2a2f36; }
+.md-pb-lyhd em { font-style: normal; color: #6a7488; font-size: 9.5px; }
 .md-pb-lyx {
   margin-left: auto; width: 16px; height: 15px; line-height: 13px; padding: 0;
-  font-size: 11px; color: #9a9a9a; background: transparent;
+  font-size: 11px; color: #6a7488; background: transparent;
   border: 0; border-radius: 2px; cursor: pointer;
 }
-.md-pb-lyx:hover { background: #4d4d4d; color: #fff; }
+.md-pb-lyx:hover { background: #fbfbfc; color: #1f2328; }
 
 .md-pb-lylist { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 3px; }
 .md-pb-ly {
@@ -1778,88 +1774,88 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-pb-lyeye {
   flex: 0 0 16px; width: 16px; height: 16px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  color: #9fb4bb; background: transparent; border: 0; border-radius: 2px; cursor: pointer;
+  color: #2b7cd3; background: transparent; border: 0; border-radius: 2px; cursor: pointer;
 }
-.md-pb-lyeye:hover { color: #dff4fa; background: rgba(255, 255, 255, .08); }
+.md-pb-lyeye:hover { color: #2b7cd3; background: rgba(255, 255, 255, .08); }
 .md-pb-ly.off .md-pb-lyeye { color: #5c5c5c; }
 
 /* 缩略图底用棋盘格标「透明」：层的形状之外是透明的，涂成纯黑会让人以为
  * 那一层本来就是黑的（PS 用棋盘格也是这个道理）。 */
 .md-pb-lyth {
   flex: 0 0 18px; width: 18px; height: 18px;
-  border-radius: 2px; border: 1px solid #111;
-  background-color: #232323;
+  border-radius: 2px; border: 1px solid #d9dde3;
+  background-color: #f3f5f7;
   background-image:
-    linear-gradient(45deg, #313131 25%, transparent 25%, transparent 75%, #313131 75%),
-    linear-gradient(45deg, #313131 25%, transparent 25%, transparent 75%, #313131 75%);
+    linear-gradient(45deg, #f6f7f9 25%, transparent 25%, transparent 75%, #f6f7f9 75%),
+    linear-gradient(45deg, #f6f7f9 25%, transparent 25%, transparent 75%, #f6f7f9 75%);
   background-size: 6px 6px;
   background-position: 0 0, 3px 3px;
 }
 .md-pb-lynm {
   flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: #d2d2d2;
+  color: #3b4147;
 }
-.md-pb-lyop { font-style: normal; color: #8fb8c4; font-size: 9.5px; }
+.md-pb-lyop { font-style: normal; color: #2b7cd3; font-size: 9.5px; }
 .md-pb-lylock {
-  font-style: normal; font-size: 9px; color: #7a7a7a;
-  border: 1px solid #3c3c3c; border-radius: 2px; padding: 0 3px; line-height: 13px;
+  font-style: normal; font-size: 9px; color: #8a9098;
+  border: 1px solid #eceef2; border-radius: 2px; padding: 0 3px; line-height: 13px;
 }
 .md-pb-lydel {
   flex: 0 0 14px; width: 14px; height: 14px; padding: 0; line-height: 12px;
-  font-size: 12px; color: #9a9a9a; background: transparent;
+  font-size: 12px; color: #6a7488; background: transparent;
   border: 0; border-radius: 2px; cursor: pointer; opacity: 0;
 }
 .md-pb-ly:hover .md-pb-lydel { opacity: 1; }
-.md-pb-lydel:hover { background: rgba(220, 110, 90, .28); color: #ffd3cb; }
+.md-pb-lydel:hover { background: rgba(220, 110, 90, .28); color: #c9342a; }
 
 .md-pb-lyfoot {
   flex: 0 0 24px; display: flex; align-items: center; gap: 5px;
-  padding: 0 6px; border-top: 1px solid #1a1a1a; background: #2e2e2e;
+  padding: 0 6px; border-top: 1px solid #e3e6ea; background: #f6f7f9;
   border-radius: 0 0 2px 2px;
 }
 .md-pb-lyfoot[hidden] { display: none; }
-.md-pb-lyfoot span { color: #8f8f8f; white-space: nowrap; }
+.md-pb-lyfoot span { color: #6a7488; white-space: nowrap; }
 .md-pb-lyfoot input[type="range"] {
   flex: 1 1 auto; min-width: 40px; height: 12px; margin: 0;
   accent-color: var(--md-accent); cursor: pointer;
 }
 .md-pb-lyfoot em {
-  font-style: normal; flex: 0 0 30px; text-align: right; color: #b6b6b6; font-size: 9.5px;
+  font-style: normal; flex: 0 0 30px; text-align: right; color: #5a6068; font-size: 9.5px;
 }
 /* 图层面板开着时，「图层」按钮要亮着 —— 否则用户不知道面板从哪来的 */
 .md-pb-tbtn.on {
-  background: #46585e; color: #d8f2f9; border-color: #6d94a0;
+  background: #3d8ee0; color: #2b7cd3; border-color: #7db3e6;
 }
 
 .md-pb-split {
   flex: 0 0 5px; width: 5px; cursor: col-resize;
-  background: linear-gradient(90deg, #1e1e1e, #313131 50%, #1e1e1e);
+  background: linear-gradient(90deg, #f3f5f7, #f6f7f9 50%, #f3f5f7);
 }
 .md-pb-split:hover { background: var(--md-accent); }
 
 .md-pb-foot {
   flex: 0 0 32px; height: 32px; display: flex; align-items: center; gap: 8px;
-  padding: 0 10px; background: #333; border-top: 1px solid #1b1b1b; font-size: 10.5px;
+  padding: 0 10px; background: #f6f7f9; border-top: 1px solid #e3e6ea; font-size: 10.5px;
   white-space: nowrap;
 }
 /* 底栏每一项都不许被压扁：窄窗口下宁可让「状态」省略也不能让按钮换行 */
 .md-pb-foot > * { flex: 0 0 auto; }
-.md-pb-flab { color: #909090; }
+.md-pb-flab { color: #6a7488; }
 .md-pb-sel {
-  height: 20px; width: 104px; font-size: 10.5px; color: #d8d8d8;
-  background: #262626; border: 1px solid #1a1a1a; border-radius: 2px; padding: 0 4px;
+  height: 20px; width: 104px; font-size: 10.5px; color: #2a2f36;
+  background: #f3f5f7; border: 1px solid #e3e6ea; border-radius: 2px; padding: 0 4px;
 }
-.md-pb-chk { display: inline-flex; align-items: center; gap: 4px; color: #b8b8b8; cursor: pointer; }
+.md-pb-chk { display: inline-flex; align-items: center; gap: 4px; color: #3b4147; cursor: pointer; }
 .md-pb-chk input { width: 11px; height: 11px; accent-color: var(--md-accent); }
-.md-pb-fsep { width: 1px; height: 16px; background: #1c1c1c; }
+.md-pb-fsep { width: 1px; height: 16px; background: #f0f2f5; }
 .md-pb-go {
   height: 22px; padding: 0 16px; font-size: 11px; font-weight: 600;
-  color: #2a1c05; background: linear-gradient(180deg, #e0a63f, #c98f35);
-  border: 1px solid #7c5714; border-radius: 2px; cursor: pointer;
+  color: #8a5a00; background: linear-gradient(180deg, #e88a00, #e88a00);
+  border: 1px solid #e88a00; border-radius: 2px; cursor: pointer;
 }
-.md-pb-go:hover { background: linear-gradient(180deg, #eeb44c, #d69a3c); }
+.md-pb-go:hover { background: linear-gradient(180deg, #e88a00, #e88a00); }
 .md-pb-go:active { transform: translateY(1px); }
-.md-pb-stat { margin-left: auto; color: #8c8c8c; font-size: 10px; flex: 0 1 auto !important; overflow: hidden; text-overflow: ellipsis; }
+.md-pb-stat { margin-left: auto; color: #6a7488; font-size: 10px; flex: 0 1 auto !important; overflow: hidden; text-overflow: ellipsis; }
 
 .md-pb-rs {
   position: absolute; right: 0; bottom: 0; width: 14px; height: 14px;
@@ -1892,11 +1888,11 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-app ::-webkit-scrollbar { width: 9px; height: 9px; }
 .md-app ::-webkit-scrollbar-track { background: transparent; }
 .md-app ::-webkit-scrollbar-thumb {
-  background: #4a4a4a; background-clip: padding-box;
+  background: #fbfbfc; background-clip: padding-box;
   border: 2px solid transparent; border-radius: 6px;
 }
-.md-app ::-webkit-scrollbar-thumb:hover { background: #5e5e5e; background-clip: padding-box; }
-.md-app ::-webkit-scrollbar-thumb:active { background: #6b6b6b; background-clip: padding-box; }
+.md-app ::-webkit-scrollbar-thumb:hover { background: #f1f2f4; background-clip: padding-box; }
+.md-app ::-webkit-scrollbar-thumb:active { background: #e9ebef; background-clip: padding-box; }
 .md-app ::-webkit-scrollbar-corner { background: transparent; }
 
 /* ---------- 15.2 焦点环：只有键盘导航才画 ----------
@@ -1931,11 +1927,11 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-app .md-uv-tbtn,
 .md-app .md-pb-hbtn,
 .md-app .md-pb-tbtn {
-  border: 1px solid #1e1e1e;
+  border: 1px solid #e3e6ea;
   border-top-color: var(--md-edge-top);
   border-radius: var(--md-r);
   background: var(--md-ctrl);
-  color: #d6d6d6;
+  color: #3b4147;
   transition: var(--md-t);
 }
 .md-app .md-act:hover,
@@ -1955,7 +1951,7 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-app .md-pb-tbtn:hover {
   background: var(--md-raise-hi);
   border-top-color: rgba(255, 255, 255, .12);
-  color: #fff;
+  color: #1f2328;
 }
 /* 按下：往下压一档，不位移（位移会让 1px 边框发虚） */
 .md-app .md-act:active:not(:disabled),
@@ -1966,14 +1962,14 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-app .md-wide:active:not(:disabled),
 .md-app .md-uv-tbtn:active:not(:disabled),
 .md-app .md-pb-hbtn:active:not(:disabled),
-.md-app .md-pb-tbtn:active:not(:disabled) { background: #363636; border-top-color: #1e1e1e; }
+.md-app .md-pb-tbtn:active:not(:disabled) { background: #f9fafb; border-top-color: #e3e6ea; }
 .md-app .md-act:disabled,
 .md-app .md-cb-btn:disabled,
 .md-app .md-dock-mini:disabled,
 .md-app .md-uv-tbtn:disabled,
 .md-app .md-pb-tbtn:disabled {
-  opacity: .38; background: #363636; color: #a2a2a2;
-  border-top-color: #1e1e1e; cursor: default;
+  opacity: .38; background: #f9fafb; color: #5a6068;
+  border-top-color: #e3e6ea; cursor: default;
 }
 
 /* 选中态（按钮型开关）：统一成同一个蓝，不再各写各的 */
@@ -1984,14 +1980,14 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
   background: var(--md-on);
   border-color: var(--md-on-line);
   border-top-color: var(--md-on-hi);
-  color: #fff;
+  color: #1f2328;
 }
 .md-app .md-act.primary,
 .md-app .md-cb-btn.primary {
   background: var(--md-on);
   border-color: var(--md-on-line);
   border-top-color: var(--md-on-hi);
-  color: #fff; font-weight: 600;
+  color: #1f2328; font-weight: 600;
   box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
 }
 .md-app .md-act.primary:hover,
@@ -2019,14 +2015,14 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-app .md-dock-tab:hover,
 .md-app .md-stab:hover {
   background: rgba(255, 255, 255, .06);
-  color: #e4e4e4;
+  color: #2a2f36;
 }
 .md-app .md-otab.on,
 .md-app .md-dock-tab.on,
 .md-app .md-stab.on {
   background: var(--md-ctrl);
-  border-color: #1e1e1e; border-top-color: var(--md-edge-top);
-  color: #f2f2f2; font-weight: 600;
+  border-color: #e3e6ea; border-top-color: var(--md-edge-top);
+  color: #1f2328; font-weight: 600;
   box-shadow: 0 1px 2px rgba(0, 0, 0, .28);
 }
 /* 页签条本身退成面板色，别用比面板更亮的 #363636 ——
@@ -2041,110 +2037,110 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 /* 属性编辑器的文件夹页签保留"贴住内容区"的造型，只换配色 */
 .md-app .md-ptabs { background: var(--md-panel); border-bottom: 1px solid var(--md-line); }
 .md-app .md-ptab {
-  background: #383838; color: var(--md-mute);
-  border-color: #1e1e1e; border-bottom: 0;
+  background: #f9fafb; color: var(--md-mute);
+  border-color: #e3e6ea; border-bottom: 0;
   border-radius: var(--md-r) var(--md-r) 0 0;
   transition: var(--md-t);
 }
-.md-app .md-ptab:hover { color: #e6e6e6; background: #3f3f3f; }
+.md-app .md-ptab:hover { color: #2a2f36; background: #f9fafb; }
 .md-app .md-ptab.on {
-  background: linear-gradient(180deg, #4b4b4b 0%, #414141 100%);
-  border-color: #1a1a1a; border-top-color: rgba(255, 255, 255, .12);
-  color: #f2f2f2; font-weight: 600;
+  background: linear-gradient(180deg, #fbfbfc 0%, #f9fafb 100%);
+  border-color: #e3e6ea; border-top-color: rgba(255, 255, 255, .12);
+  color: #1f2328; font-weight: 600;
 }
 
 /* ---------- 15.5 分组标题：这是一段的"头"，得看得出来 ---------- */
 .md-app .md-sec2-h,
 .md-app .md-tb-h {
   height: 22px;
-  background: linear-gradient(180deg, #414141 0%, #373737 100%);
-  border-bottom: 1px solid #262626;
-  color: #e8e8e8;
+  background: linear-gradient(180deg, #f9fafb 0%, #f9fafb 100%);
+  border-bottom: 1px solid #e3e6ea;
+  color: #2a2f36;
   font-weight: 600; font-size: 10px;
   letter-spacing: .02em;
   transition: background-color .12s ease;
 }
-.md-app .md-sec2-h:hover { background: linear-gradient(180deg, #484848 0%, #3e3e3e 100%); }
-.md-app .md-sec2-open { border-bottom: 1px solid #262626; }
+.md-app .md-sec2-h:hover { background: linear-gradient(180deg, #fbfbfc 0%, #f9fafb 100%); }
+.md-app .md-sec2-open { border-bottom: 1px solid #e3e6ea; }
 /* 右侧状态值（"关"、"3 项"…）：原来 9px #8f8f8f 贴在灰底上，
  * 字重又太细，等于看不见。改成带底的小胶囊。 */
 .md-app .md-sec2-h em,
 .md-app .md-tb-h em {
   padding: 1px 6px;
   border-radius: 8px;
-  background: #2b2b2b;
-  border: 1px solid #242424;
+  background: #f6f7f9;
+  border: 1px solid #e3e6ea;
   font-size: 9px; font-weight: 400; letter-spacing: 0;
-  color: #a8a8a8;
+  color: #5a6068;
 }
 .md-app .md-sec2-h em.on,
 .md-app .md-tb-h em.on {
-  background: #3b3122; border-color: #60491f; color: var(--md-accent);
+  background: #b26a00; border-color: #e88a00; color: var(--md-accent);
 }
 /* 折叠箭头：0.12s 旋转已经有了，这里只把它对齐到视觉中线 */
 .md-app .md-sec2-arrow {
   width: 10px; text-align: center;
-  color: #b0b0b0; font-size: 9px;
+  color: #5a6068; font-size: 9px;
 }
 .md-app .md-sec2:not(.open) .md-sec2-h { border-bottom-color: transparent; }
 /* 分区容器：靠 1px 深边 + 6px 圆角把自己从面板里"切"出来 */
 .md-app .md-sec2 {
-  border: 1px solid #1f1f1f;
+  border: 1px solid #e3e6ea;
   border-radius: var(--md-r-lg);
   background: var(--md-raise);
   box-shadow: 0 1px 2px rgba(0, 0, 0, .16);
 }
 .md-app .md-sec {
-  border: 1px solid #1f1f1f;
+  border: 1px solid #e3e6ea;
   border-radius: var(--md-r-lg);
   background: var(--md-raise);
   box-shadow: 0 1px 2px rgba(0, 0, 0, .16);
 }
 .md-app .md-h2 {
-  background: linear-gradient(180deg, #414141 0%, #373737 100%);
-  border-bottom: 1px solid #262626;
-  color: #e8e8e8; font-weight: 600;
+  background: linear-gradient(180deg, #f9fafb 0%, #f9fafb 100%);
+  border-bottom: 1px solid #e3e6ea;
+  color: #2a2f36; font-weight: 600;
 }
-.md-app .md-h2::before { color: #b0b0b0; }
+.md-app .md-h2::before { color: #5a6068; }
 
 /* ---------- 15.6 顶部三条：菜单 / 工具条 / 工具架 ----------
  * 三条的高度和底色本来各写一份，现在统一到"上亮下暗"的同一条渐变，
  * 视觉上它们是一个整体（顶部 chrome），只是分了三行。 */
 .md-app .md-menu,
 .md-app .md-vpbar {
-  background: linear-gradient(180deg, #3d3d3d 0%, #333333 100%);
+  background: linear-gradient(180deg, #f9fafb 0%, #f6f7f9 100%);
   border-bottom: 1px solid var(--md-line);
 }
-.md-app .md-toolbar { background: #2e2e2e; }
+.md-app .md-toolbar { background: #f6f7f9; }
 .md-app .md-shelf {
-  background: linear-gradient(180deg, #373737 0%, #2f2f2f 100%);
+  background: linear-gradient(180deg, #f9fafb 0%, #f6f7f9 100%);
   border-bottom: 1px solid var(--md-line);
 }
 /* 菜单项：文字按钮不该有边框感的 hover，只给底 */
 .md-app .md-mitem {
   border-radius: var(--md-r);
-  color: #d0d0d0;
+  color: #3b4147;
   transition: var(--md-t);
 }
 .md-app .md-mitem:hover,
 .md-app .md-mitem.open {
   background: rgba(255, 255, 255, .09);
   border-color: transparent;
-  color: #fff;
+  color: #1f2328;
 }
 /* 下拉：圆角与阴影跟其它弹层一致（原来是 3px + 硬阴影） */
 .md-app .md-drop {
   border-radius: var(--md-r-pop);
-  border-color: #101010;
-  background: #353535;
+  border-color: #d9dde3;
+  background: #f9fafb;
   box-shadow: 0 14px 34px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .06);
   padding: 5px;
 }
 .md-app .md-mi { border-radius: var(--md-r); transition: var(--md-t); }
 .md-app .md-mi:hover:not(.off) { background: var(--md-on); }
-.md-app .md-msep { background: #2b2b2b; margin: 5px 8px; }
+.md-app .md-msep { background: #f6f7f9; margin: 5px 8px; }
 /* 工具条里的只读标签（对齐 / 单位）压暗，别和按钮抢 */
-.md-app .md-tbst { color: #7f7f7f; font-size: 9.5px; }
+.md-app .md-tbst { color: #8a9098; font-size: 9.5px; }
 /* 工具架图标：文本字形（▣ ◉ ▤…）和 SVG 图标混排，
  * 14px 的字形在 17px 的 SVG 旁边明显偏小 → 统一到 16px 并居中 */
 .md-app .md-sico {
@@ -2155,83 +2151,88 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 }
 .md-app .md-sico svg { width: 18px; height: 18px; }
 .md-app .md-sico { opacity: .92; }
-.md-app .md-sico:hover { background: var(--md-raise-hi); border-color: #1e1e1e; opacity: 1; }
+.md-app .md-sico:hover { background: var(--md-raise-hi); border-color: #e3e6ea; opacity: 1; }
 /* 工具架分组分隔线：二十多个图标连成一条，找"UV 在哪"要靠数 */
 .md-app .md-sico-sep {
   flex: 0 0 1px; width: 1px; height: 18px; margin: 0 4px;
-  background: #232323; box-shadow: 1px 0 0 rgba(255, 255, 255, .05);
+  background: #f3f5f7; box-shadow: 1px 0 0 rgba(255, 255, 255, .05);
 }
 /* 左侧竖工具条 */
 .md-app .md-tool {
   border-radius: var(--md-r);
   transition: var(--md-t);
 }
-.md-app .md-tool:hover { background: var(--md-raise-hi); border-color: #1e1e1e; }
+.md-app .md-tool:hover { background: var(--md-raise-hi); border-color: #e3e6ea; }
 .md-app .md-tool.on {
   background: var(--md-on);
   border-color: var(--md-on-line);
-  color: #f4f9ff;
+  color: #2b7cd3;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14);
 }
 
 /* ---------- 15.7 视口标题行 ---------- */
-/* 占位项（照明 / 显示 / 渲染器 / 面板）不是控件，压到比真控件更暗，
- * 免得用户以为能点；真正当前视图的那个标签提亮。 */
-.md-app .md-vplabel { color: #909090; }
-.md-app .md-vplabel#mdViewLabel { color: #dcdcdc; font-weight: 600; }
+/* 照明 / 显示 / 渲染器 / 面板是按钮式下拉；默认压暗，悬停提亮。 */
+.md-app .md-vplabel { color: #5a6068; }
+.md-app button.md-vplabel {
+  border: 0; background: transparent; font: inherit;
+  cursor: pointer; white-space: nowrap;
+}
+.md-app button.md-vplabel:hover { color: #1f2328; }
+.md-app button.md-vpstyle { font-family: inherit; cursor: pointer; }
+.md-app .md-vplabel#mdViewLabel { color: #2a2f36; font-weight: 600; }
 .md-app .md-vpsel {
   height: 19px;
   border-radius: var(--md-r);
-  border-color: #1a1a1a; border-top-color: rgba(255, 255, 255, .07);
+  border-color: #e3e6ea; border-top-color: rgba(255, 255, 255, .07);
   background: var(--md-sunken);
   transition: var(--md-t);
   /* 自绘箭头：系统箭头在 19px 高的控件里是一坨双 V，比按钮上的图标还显眼 */
   -webkit-appearance: none; appearance: none;
   padding: 0 17px 0 6px;
   background-image:
-    linear-gradient(45deg, transparent 50%, #9a9a9a 50%),
-    linear-gradient(135deg, #9a9a9a 50%, transparent 50%);
+    linear-gradient(45deg, transparent 50%, #e3e6ea 50%),
+    linear-gradient(135deg, #e3e6ea 50%, transparent 50%);
   background-position: calc(100% - 10px) 8px, calc(100% - 6px) 8px;
   background-size: 4px 4px;
   background-repeat: no-repeat;
 }
-.md-app .md-vpsel:hover { border-color: #3f3f3f; color: #fff; }
+.md-app .md-vpsel:hover { border-color: #eceef2; color: #1f2328; }
 .md-app .md-vpi { border-radius: var(--md-r); transition: var(--md-t); }
-.md-app .md-vpi:hover { background: var(--md-raise-hi); border-color: #1e1e1e; }
+.md-app .md-vpi:hover { background: var(--md-raise-hi); border-color: #e3e6ea; }
 .md-app .md-numb {
   border-radius: var(--md-r);
-  border-color: #1a1a1a;
-  color: #bfbfbf;
+  border-color: #e3e6ea;
+  color: #3b4147;
 }
 .md-app .md-vpstyle {
   border-radius: 8px;
   background: rgba(0, 0, 0, .22);
-  border-color: #1e1e1e;
-  color: #a8a8a8;
+  border-color: #e3e6ea;
+  color: #5a6068;
 }
 /* 视口 HUD：信息条压薄，别挡模型 */
 .md-app .md-hud {
   border-radius: var(--md-r-lg);
-  background: rgba(20, 20, 20, .58);
+  background: rgba(255,255,255,0.78);
   backdrop-filter: blur(3px);
   border-color: rgba(255, 255, 255, .06);
-  color: #cfcfcf;
+  color: #3b4147;
 }
 
 /* ---------- 15.8 大纲视图 ---------- */
 .md-app .md-outline { background: var(--md-panel); }
 .md-app .md-panel-h {
-  background: linear-gradient(180deg, #3d3d3d 0%, #343434 100%);
+  background: linear-gradient(180deg, #f9fafb 0%, #f6f7f9 100%);
   border-bottom: 1px solid var(--md-line);
-  color: #e4e4e4; font-weight: 600;
+  color: #2a2f36; font-weight: 600;
 }
-.md-app .md-panel-h em { color: #909090; font-weight: 400; }
+.md-app .md-panel-h em { color: #6a7488; font-weight: 400; }
 /* 搜索框：凹槽要真的"凹"下去（比面板更暗 + 内阴影） */
 .md-app .md-osearch { padding: 5px 6px; border-bottom: 1px solid var(--md-line-soft); }
 .md-app .md-osearch input,
 .md-app .md-row1 input {
   border-radius: var(--md-r);
-  border-color: #161616;
+  border-color: #d9dde3;
   background: var(--md-sunken);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35);
   transition: var(--md-t);
@@ -2247,18 +2248,18 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-app .md-part-row {
   height: 20px;
   border-radius: var(--md-r);
-  color: #cfcfcf;
+  color: #3b4147;
   transition: var(--md-t);
 }
 .md-app .md-part-row:hover:enabled { background: rgba(255, 255, 255, .065); }
 .md-app .md-part-row.sel {
   background: var(--md-on);
   border-color: var(--md-on-line);
-  color: #fff;
+  color: #1f2328;
   box-shadow: inset 2px 0 0 var(--md-on-hi);
 }
 .md-app .md-part-row.multi {
-  background: #3d4750;
+  background: #2b7cd3;
   box-shadow: inset 2px 0 0 var(--md-on-hi);
 }
 /* 类型图标：三种（面 / 视图 / 节点）尺寸要一致，否则行首像没对齐 */
@@ -2266,7 +2267,7 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
   width: 10px; height: 10px;
 }
 .md-app .md-nicon { width: 9px; height: 9px; }
-.md-app .md-hint { color: #7d7d7d; font-size: 9px; line-height: 1.6; border-top-color: var(--md-line-soft); }
+.md-app .md-hint { color: #8a9098; font-size: 9px; line-height: 1.6; border-top-color: var(--md-line-soft); }
 
 /* ---------- 15.9 右侧面板 ---------- */
 .md-app .md-right { background: var(--md-panel); }
@@ -2277,25 +2278,25 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 /* 模式条：五个模式图标是这一栏最重要的东西，给它一条自己的底 */
 .md-app .md-modebar {
   gap: 6px; padding: 7px 7px 6px;
-  background: #2b2b2b;
+  background: #f6f7f9;
   border-bottom: 1px solid var(--md-line);
 }
 .md-app .md-mode {
   border-radius: var(--md-r);
-  color: #b8b8b8;
+  color: #3b4147;
   transition: var(--md-t);
 }
-.md-app .md-mode:hover { background: var(--md-raise-hi); border-color: #1e1e1e; color: #fff; }
+.md-app .md-mode:hover { background: var(--md-raise-hi); border-color: #e3e6ea; color: #1f2328; }
 .md-app .md-mode.on {
   background: var(--md-on);
   border-color: var(--md-on-line);
-  color: #f4f9ff;
+  color: #2b7cd3;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14);
 }
 .md-app .md-mode-hint {
   padding: 5px 9px 6px;
-  color: #9a9a9a; font-size: 9.5px;
-  background: #2b2b2b;
+  color: #6a7488; font-size: 9.5px;
+  background: #f6f7f9;
   border-bottom: 1px solid var(--md-line);
 }
 .md-app .md-tb-body { padding: 4px 0 6px; }
@@ -2303,24 +2304,24 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 /* 算子按钮：两列网格，图标 + 文字。原来边框色和悬停态跟别的按钮不一样 */
 .md-app .md-op {
   height: 27px;
-  border: 1px solid #1e1e1e; border-top-color: var(--md-edge-top);
+  border: 1px solid #e3e6ea; border-top-color: var(--md-edge-top);
   border-radius: var(--md-r);
   background: var(--md-ctrl);
-  color: #d6d6d6;
+  color: #3b4147;
   transition: var(--md-t);
 }
 .md-app .md-op:hover {
   background: var(--md-raise-hi);
   border-top-color: rgba(255, 255, 255, .12);
-  color: #fff;
+  color: #1f2328;
 }
-.md-app .md-op:active { background: #363636; }
+.md-app .md-op:active { background: #f9fafb; }
 .md-app .md-op.on {
   background: var(--md-on);
   border-color: var(--md-on-line);
-  color: #fff;
+  color: #1f2328;
 }
-.md-app .md-op-i { color: #b4c0cc; }
+.md-app .md-op-i { color: #2b7cd3; }
 .md-app .md-op:hover .md-op-i { color: var(--md-accent); }
 /* 复选框：方框稍大一点（12px 在 100% DPI 下只有 12 个像素，很难点准） */
 .md-app .md-switch i { width: 13px; height: 13px; border-radius: var(--md-r-sm); }
@@ -2329,17 +2330,17 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
   background: var(--md-accent);
   box-shadow: inset 0 0 0 2px #2f2f2f;
 }
-.md-app .md-switch { height: 21px; color: #c9c9c9; }
+.md-app .md-switch { height: 21px; color: #3b4147; }
 /* 软选择的三个控件同一行：网格列宽对齐，下拉和数字框等高 */
 .md-app .md-soft-sel, .md-app .md-soft-num {
   border-radius: var(--md-r);
-  border-color: #161616; border-top-color: #1e1e1e;
+  border-color: #d9dde3; border-top-color: #e3e6ea;
   background: var(--md-sunken);
 }
 .md-app .md-curve-wrap {
   border-radius: var(--md-r);
-  border-color: #1a1a1a;
-  background: #202020;
+  border-color: #e3e6ea;
+  background: #f3f5f7;
 }
 
 /* ---------- 15.10 属性编辑器 ---------- */
@@ -2349,21 +2350,21 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-app .md-ch em {
   border: 1px solid transparent;
   background: transparent;
-  color: #dedede;
+  color: #2a2f36;
   border-radius: var(--md-r);
   transition: var(--md-t);
 }
-.md-app .md-ch:hover em { background: var(--md-sunken); border-color: #1a1a1a; }
-.md-app .md-ch span { color: #9e9e9e; }
-.md-app .md-row1 span { color: #9e9e9e; }
+.md-app .md-ch:hover em { background: var(--md-sunken); border-color: #e3e6ea; }
+.md-app .md-ch span { color: #6a7488; }
+.md-app .md-row1 span { color: #6a7488; }
 /* 材质槽行 */
 .md-app .md-slot {
   border-radius: var(--md-r-lg);
-  border-color: #1f1f1f;
+  border-color: #e3e6ea;
   background: var(--md-ctrl);
   transition: var(--md-t);
 }
-.md-app .md-slot:hover { border-color: #2f2f2f; }
+.md-app .md-slot:hover { border-color: #e3e6ea; }
 /* ⚠ 这个输入框原来在深色面板里是**纯白 34px 高的大框**：
  * `01-base` 的 `input[type=text]`（0,1,1）压过了 `.md-slot-n`（0,1,0），
  * 而 base 那条给的是 `background: var(--panel2)`（浅色主题下接近白）。
@@ -2372,23 +2373,23 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
   height: 21px;
   background: transparent;
   border-color: transparent;
-  color: #dcdcdc;
+  color: #2a2f36;
   font: inherit; font-size: 10px;
   border-radius: var(--md-r-sm);
 }
-.md-app .md-slot-n:focus { border-color: var(--md-on-line); background: #1d1d1d; }
-.md-app .md-slot-x:hover:not(:disabled) { background: #6a2a2a; }
+.md-app .md-slot-n:focus { border-color: var(--md-on-line); background: #f0f2f5; }
+.md-app .md-slot-x:hover:not(:disabled) { background: #c9342a; }
 .md-app .md-slot-add {
   border-radius: var(--md-r);
-  border-color: #454545;
-  color: #9fc4e6;
+  border-color: #eceef2;
+  color: #2b7cd3;
   transition: var(--md-t);
 }
-.md-app .md-slot-add:hover { background: #2c3743; border-color: var(--md-on-line); color: #dcecff; }
+.md-app .md-slot-add:hover { background: #2b7cd3; border-color: var(--md-on-line); color: #2b7cd3; }
 /* 修改器 */
 .md-app .md-mod-row {
   border-radius: var(--md-r-lg);
-  border-color: #1f1f1f;
+  border-color: #e3e6ea;
   background: var(--md-ctrl);
 }
 .md-app .md-mod-en input:checked + i { background: var(--md-accent); border-color: var(--md-accent-line); }
@@ -2396,33 +2397,33 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 /* ---------- 15.11 内容浏览器 / 命令行 ---------- */
 .md-app .md-dock { background: var(--md-panel); }
 .md-app .md-dock-tabs {
-  background: linear-gradient(180deg, #383838 0%, #303030 100%);
+  background: linear-gradient(180deg, #f9fafb 0%, #f6f7f9 100%);
   border-bottom: 1px solid var(--md-line);
 }
-.md-app .md-dock-body { background: #262626; }
-.md-app .md-dock-sub { color: #909090; }
+.md-app .md-dock-body { background: #f3f5f7; }
+.md-app .md-dock-sub { color: #6a7488; }
 .md-app .md-cb-card {
   border-radius: var(--md-r-lg);
-  border-color: #1f1f1f;
+  border-color: #e3e6ea;
   background: var(--md-raise);
   transition: var(--md-t);
 }
 .md-app .md-cb-card:hover {
   border-color: var(--md-on-line);
-  background: #3d3d3d;
+  background: #f9fafb;
   box-shadow: 0 2px 8px rgba(0, 0, 0, .28);
 }
-.md-app .md-cb-thumb { border-radius: var(--md-r-sm); border-color: #1a1a1a; }
-.md-app .md-cb-card:hover .md-cb-thumb { border-color: #38414a; }
-.md-app .md-cb-tag { border-radius: var(--md-r); border-color: #3a3a3a; color: #7f7f7f; }
-.md-app .md-cmdrow { background: #2e2e2e; }
+.md-app .md-cb-thumb { border-radius: var(--md-r-sm); border-color: #e3e6ea; }
+.md-app .md-cb-card:hover .md-cb-thumb { border-color: #2b7cd3; }
+.md-app .md-cb-tag { border-radius: var(--md-r); border-color: #eceef2; color: #8a9098; }
+.md-app .md-cmdrow { background: #f6f7f9; }
 .md-app .md-cmd {
   border-radius: var(--md-r);
-  border-color: #161616;
+  border-color: #d9dde3;
   background: var(--md-sunken);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35);
 }
-.md-app .md-status { color: #a8a8a8; }
+.md-app .md-status { color: #5a6068; }
 .md-app .md-status.err { color: var(--md-err); }
 
 
@@ -2438,14 +2439,14 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-app .md-pbwin,
 .md-app .md-uvwin {
   border-radius: var(--md-r-lg);
-  border-color: #0d0d0d;
-  background: #2a2a2a;
+  border-color: #d9dde3;
+  background: #f6f7f9;
   box-shadow: 0 22px 52px rgba(0, 0, 0, .62), 0 0 0 1px rgba(255, 255, 255, .05);
 }
 .md-app .md-pb-head,
 .md-app .md-uv-head {
-  background: linear-gradient(180deg, #434343 0%, #353535 100%);
-  border-bottom: 1px solid #101010;
+  background: linear-gradient(180deg, #fbfbfc 0%, #f9fafb 100%);
+  border-bottom: 1px solid #d9dde3;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .09);
   border-radius: var(--md-r-lg) var(--md-r-lg) 0 0;
 }
@@ -2458,7 +2459,7 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
   border-radius: 9px;
   background: rgba(0, 0, 0, .28);
   border: 1px solid rgba(255, 255, 255, .05);
-  color: #9e9e9e; font-size: 9.5px;
+  color: #6a7488; font-size: 9.5px;
 }
 .md-app .md-pb-hbtn,
 .md-app .md-uv-hbtn { height: 20px; padding: 0 9px; font-size: 10px; }
@@ -2469,7 +2470,7 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 }
 .md-app .md-pb-hbtn[data-pbact="close"]:hover,
 .md-app .md-uv-hbtn[data-uvact="close"]:hover {
-  background: #7a3232; border-top-color: #a04a4a; color: #fff;
+  background: #c9342a; border-top-color: #f0c3be; color: #fff;
 }
 
 /* ---------- 16.2 两栏结构 ---------- */
@@ -2481,32 +2482,32 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-app #mdPbRight { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .85), inset 0 0 44px rgba(0, 0, 0, .55); }
 .md-app .md-pb-ptitle {
   height: 24px; flex: 0 0 24px;
-  background: #2d2d2d;
-  border-bottom: 1px solid #101010;
-  color: #cfcfcf;
+  background: #f6f7f9;
+  border-bottom: 1px solid #d9dde3;
+  color: #3b4147;
 }
 .md-app .md-pb-ptitle > span:first-child {
-  font-weight: 600; color: #e6e6e6; font-size: 10.5px;
+  font-weight: 600; color: #2a2f36; font-size: 10.5px;
 }
 .md-app .md-pb-ptitle em {
-  font-size: 9.5px; color: #8a8a8a;
+  font-size: 9.5px; color: #6a7488;
 }
-.md-app .md-pb-pane:last-child .md-pb-ptitle { border-left: 1px solid #101010; }
+.md-app .md-pb-pane:last-child .md-pb-ptitle { border-left: 1px solid #d9dde3; }
 /* 分栏把手：原来 5px 渐变几乎和背景同色，等于藏起来了 */
 .md-app .md-pb-split {
   position: relative;            /* ::after 的定位基准，漏了它竖纹会跑到窗口中间 */
   background: #1a1a1a;
-  border-left: 1px solid #0e0e0e;
-  border-right: 1px solid #3a3a3a;
+  border-left: 1px solid #d9dde3;
+  border-right: 1px solid #eceef2;
   transition: background-color .12s ease;
 }
 .md-app .md-pb-split::after {
   content: ''; position: absolute; top: 50%; left: 50%;
   width: 1px; height: 26px; margin: -13px 0 0 -.5px;
-  background: #4a4a4a; border-radius: 1px;
+  background: #fbfbfc; border-radius: 1px;
 }
 .md-app .md-pb-split:hover { background: var(--md-accent); }
-.md-app .md-pb-split:hover::after { background: #3a2a08; }
+.md-app .md-pb-split:hover::after { background: #b26a00; }
 
 /* ---------- 16.3 空态：从三行灰字改成一块引导卡 ---------- */
 .md-app .md-pb-empty {
@@ -2522,15 +2523,15 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 }
 .md-app .md-pb-empty-i svg { width: 100%; height: 100%; display: block; }
 .md-app .md-pb-empty b {
-  font-size: 13px; color: #c2c2c2; font-weight: 600; letter-spacing: .02em;
+  font-size: 13px; color: #3b4147; font-weight: 600; letter-spacing: .02em;
 }
 .md-app .md-pb-empty > span {
   margin-top: 6px; max-width: 300px;
-  font-size: 10.5px; line-height: 1.6; color: #8f8f8f;
+  font-size: 10.5px; line-height: 1.6; color: #6a7488;
 }
 .md-app .md-pb-empty > em {
   margin-top: 12px; max-width: 300px;
-  font-size: 9.5px; line-height: 1.55; color: #6b6b6b;
+  font-size: 9.5px; line-height: 1.55; color: #8a9098;
 }
 /* 空态里的主按钮：这是这一屏唯一该点的东西，做成实心金 */
 .md-app .md-pb-empty-go {
@@ -2538,37 +2539,37 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
   margin-top: 14px; height: 28px; padding: 0 18px;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--md-accent-line);
-  border-top-color: #e8bb6a;
+  border-top-color: #f0c07a;
   border-radius: var(--md-r);
-  background: linear-gradient(180deg, #e0a63f, #c98f35);
-  color: #2a1c05; font-size: 11.5px; font-weight: 600;
+  background: linear-gradient(180deg, #e88a00, #e88a00);
+  color: #8a5a00; font-size: 11.5px; font-weight: 600;
   cursor: pointer; user-select: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
   transition: var(--md-t);
 }
-.md-app .md-pb-empty-go:hover { background: linear-gradient(180deg, #eeb44c, #d69a3c); }
-.md-app .md-pb-empty-go:active { background: linear-gradient(180deg, #c98f35, #b87e2b); }
+.md-app .md-pb-empty-go:hover { background: linear-gradient(180deg, #e88a00, #e88a00); }
+.md-app .md-pb-empty-go:active { background: linear-gradient(180deg, #e88a00, #e88a00); }
 
 /* ---------- 16.4 图层面板 ---------- */
 .md-app .md-pb-lypanel {
   border-radius: var(--md-r-lg);
-  border-color: #0d0d0d;
-  background: rgba(26, 26, 26, .96);
+  border-color: #d9dde3;
+  background: rgba(255,255,255,0.94);
   box-shadow: 0 10px 26px rgba(0, 0, 0, .6);
   overflow: hidden;
 }
 .md-app .md-pb-lyhd {
   height: 22px; flex: 0 0 22px;
   padding: 0 4px 0 8px;
-  background: linear-gradient(180deg, #3d3d3d 0%, #323232 100%);
-  border-bottom: 1px solid #151515;
+  background: linear-gradient(180deg, #f9fafb 0%, #f6f7f9 100%);
+  border-bottom: 1px solid #d9dde3;
   border-radius: 0;
 }
 .md-app .md-pb-lyhd b { font-size: 10.5px; }
 .md-app .md-pb-lyhd em {
   padding: 0 5px; height: 14px; line-height: 14px;
   border-radius: 7px; background: rgba(255, 255, 255, .07);
-  color: #a0a0a0; font-size: 9px;
+  color: #5a6068; font-size: 9px;
 }
 .md-app .md-pb-lyx { border-radius: var(--md-r-sm); }
 .md-app .md-pb-ly { height: 24px; padding: 0 4px; border-radius: var(--md-r); }
@@ -2579,27 +2580,27 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
   box-shadow: inset 2px 0 0 rgba(120, 214, 236, .75);
 }
 .md-app .md-pb-lyth { border-radius: var(--md-r-sm); }
-.md-app .md-pb-lynm { font-size: 10.5px; color: #d6d6d6; }
-.md-app .md-pb-lyop { color: #86b4c2; font-size: 9px; }
-.md-app .md-pb-lyfoot { background: #2a2a2a; border-top-color: #151515; }
+.md-app .md-pb-lynm { font-size: 10.5px; color: #3b4147; }
+.md-app .md-pb-lyop { color: #2b7cd3; font-size: 9px; }
+.md-app .md-pb-lyfoot { background: #f6f7f9; border-top-color: #d9dde3; }
 .md-app .md-pb-lyfoot input[type="range"] { accent-color: var(--md-accent); }
 
 /* ---------- 16.5 底栏：统一 22px 高，主次分明 ---------- */
 .md-app .md-pb-foot {
-  background: linear-gradient(180deg, #333333 0%, #2c2c2c 100%);
-  border-top: 1px solid #101010;
+  background: linear-gradient(180deg, #f6f7f9 0%, #f6f7f9 100%);
+  border-top: 1px solid #d9dde3;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
   gap: 7px;
 }
-.md-app .md-pb-flab { color: #8f8f8f; font-size: 10px; }
+.md-app .md-pb-flab { color: #6a7488; font-size: 10px; }
 .md-app .md-pb-sel {
   height: 22px; width: 116px;
   border-radius: var(--md-r);
-  border-color: #1a1a1a; border-top-color: rgba(255, 255, 255, .06);
+  border-color: #e3e6ea; border-top-color: rgba(255, 255, 255, .06);
   background: var(--md-sunken);
   transition: var(--md-t);
 }
-.md-app .md-pb-sel:hover { border-color: #3f3f3f; }
+.md-app .md-pb-sel:hover { border-color: #eceef2; }
 /* 底栏里这几个按钮原来没定义过 → 用的是侧栏那个 17px 的小按钮样式，
  * 比旁边的「烘焙」(22px) 矮一截，看着像次要到不该点 */
 .md-app .md-pb-tbtn.txt {
@@ -2609,28 +2610,28 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 /* 主操作：金。第二重要（固化）给金边 —— 它是"导出前必点"的那一步，
  * 和"清除绑定 / 重建 UV"这种偶尔用的不能长一样 */
 .md-app .md-pb-tbtn.txt[data-pbact="flatten"] {
-  border-color: #5c4620; border-top-color: #8a6a2e;
-  color: #e8c58a;
+  border-color: #e88a00; border-top-color: #e88a00;
+  color: #c77500;
 }
 .md-app .md-pb-tbtn.txt[data-pbact="flatten"]:hover {
-  background: #4a3a20; border-color: #7a5c26; color: #ffd99a;
+  background: #b26a00; border-color: #e88a00; color: #c77500;
 }
 .md-app .md-pb-go {
   height: 22px; padding: 0 18px;
   border-radius: var(--md-r);
   border-color: var(--md-accent-line);
-  border-top-color: #e8bb6a;
+  border-top-color: #f0c07a;
   box-shadow: 0 1px 4px rgba(0, 0, 0, .3);
 }
-.md-app .md-pb-go:active { transform: none; background: linear-gradient(180deg, #c98f35, #b87e2b); }
-.md-app .md-pb-chk { font-size: 10px; color: #b4b4b4; }
-.md-app .md-pb-fsep { background: #1c1c1c; box-shadow: 1px 0 0 rgba(255, 255, 255, .05); height: 18px; }
-.md-app .md-pb-stat { color: #8a8a8a; font-size: 9.5px; }
+.md-app .md-pb-go:active { transform: none; background: linear-gradient(180deg, #e88a00, #e88a00); }
+.md-app .md-pb-chk { font-size: 10px; color: #5a6068; }
+.md-app .md-pb-fsep { background: #f0f2f5; box-shadow: 1px 0 0 rgba(255, 255, 255, .05); height: 18px; }
+.md-app .md-pb-stat { color: #6a7488; font-size: 9.5px; }
 /* 栏内提示 / 吐司 */
 .md-app .md-pb-hint,
 .md-app .md-pb-toast {
   border-radius: var(--md-r);
-  background: rgba(14, 14, 14, .86);
+  background: rgba(255,255,255,0.94);
   border-color: rgba(255, 255, 255, .07);
   backdrop-filter: blur(3px);
 }
@@ -2642,70 +2643,70 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-app .md-pb-tbtn.on {
   background: var(--md-on);
   border-color: var(--md-on-line);
-  color: #eaf4ff;
+  color: #2b7cd3;
 }
 
 /* ---------- 16.6 UV 编辑器 ---------- */
-.md-app .md-uv-menubar { background: #333333; border-bottom-color: #101010; }
+.md-app .md-uv-menubar { background: #f6f7f9; border-bottom-color: #d9dde3; }
 .md-app .md-uv-mitem { border-radius: var(--md-r); transition: var(--md-t); }
-.md-app .md-uv-mitem:hover { background: rgba(255, 255, 255, .09); border-color: transparent; color: #fff; }
+.md-app .md-uv-mitem:hover { background: rgba(255, 255, 255, .09); border-color: transparent; color: #1f2328; }
 .md-app .md-uv-drop {
   border-radius: var(--md-r-pop);
-  border-color: #101010;
-  background: #353535;
+  border-color: #d9dde3;
+  background: #f9fafb;
   box-shadow: 0 14px 34px rgba(0, 0, 0, .6);
   padding: 5px;
 }
 .md-app .md-uv-mi { border-radius: var(--md-r); transition: var(--md-t); }
-.md-app .md-uv-msep { background: #2b2b2b; }
+.md-app .md-uv-msep { background: #f6f7f9; }
 .md-app .md-uv-tools {
-  background: #2e2e2e;
-  border-bottom-color: #101010;
+  background: #f6f7f9;
+  border-bottom-color: #d9dde3;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
 }
-.md-app .md-uv-tbtn span { color: #a8a8a8; transition: color .12s ease; }
-.md-app .md-uv-tbtn.on span { color: #eaf3fb; }
-.md-app .md-uv-tread { color: #8f8f8f; font-size: 9.5px; }
+.md-app .md-uv-tbtn span { color: #5a6068; transition: color .12s ease; }
+.md-app .md-uv-tbtn.on span { color: #2b7cd3; }
+.md-app .md-uv-tread { color: #6a7488; font-size: 9.5px; }
 .md-app .md-uv-tex {
   border-radius: var(--md-r);
-  border-color: #5a4826; background: #37301f;
+  border-color: #e88a00; background: #b26a00;
   transition: var(--md-t);
 }
-.md-app .md-uv-tex:hover { background: #443a26; border-color: #7a6536; }
+.md-app .md-uv-tex:hover { background: #b26a00; border-color: #e88a00; }
 .md-app .md-uv-tex.on {
-  background: var(--md-on); border-color: var(--md-on-line); color: #fff;
+  background: var(--md-on); border-color: var(--md-on-line); color: #1f2328;
 }
-.md-app #mdUvCanvas { background: #1d1d1d; }
+.md-app #mdUvCanvas { background: #f0f2f5; }
 .md-app .md-uv-hint {
-  color: #a2a2a2; font-size: 9.5px;
+  color: #5a6068; font-size: 9.5px;
   text-shadow: 0 1px 3px #000, 0 0 8px rgba(0, 0, 0, .8);
 }
 /* 右侧工具包 */
-.md-app .md-uv-kit { background: #2e2e2e; border-left-color: #101010; }
-.md-app .md-uv-kit::-webkit-scrollbar-thumb { background: #4a4a4a; border-color: transparent; }
+.md-app .md-uv-kit { background: #f6f7f9; border-left-color: #d9dde3; }
+.md-app .md-uv-kit::-webkit-scrollbar-thumb { background: #fbfbfc; border-color: transparent; }
 .md-app .md-uvk-head {
   height: 24px;
-  background: linear-gradient(180deg, #3d3d3d 0%, #343434 100%);
-  border-bottom: 1px solid #101010;
+  background: linear-gradient(180deg, #f9fafb 0%, #f6f7f9 100%);
+  border-bottom: 1px solid #d9dde3;
 }
 .md-app .md-uvk-head b { font-size: 10.5px; font-weight: 600; }
 .md-app .md-uvk-help { height: 18px; border-radius: var(--md-r); }
-.md-app .md-uvk-grp { border-bottom: 1px solid #252525; }
+.md-app .md-uvk-grp { border-bottom: 1px solid #e3e6ea; }
 .md-app .md-uvk-gt {
-  height: 25px; color: #c9c9c9;
+  height: 25px; color: #3b4147;
   transition: var(--md-t);
 }
-.md-app .md-uvk-gt:hover { background: rgba(255, 255, 255, .05); color: #fff; }
-.md-app .md-uvk-gt i { color: #9a9a9a; font-size: 9px; }
-.md-app .md-uvk-title { color: #b8b8b8; font-size: 10px; letter-spacing: .02em; }
-.md-app .md-uvk-row { color: #9a9a9a; }
-.md-app .md-uvk-row b { color: #d4d4d4; }
-.md-app .md-uvk-note { color: #7d7d7d; }
+.md-app .md-uvk-gt:hover { background: rgba(255, 255, 255, .05); color: #1f2328; }
+.md-app .md-uvk-gt i { color: #6a7488; font-size: 9px; }
+.md-app .md-uvk-title { color: #3b4147; font-size: 10px; letter-spacing: .02em; }
+.md-app .md-uvk-row { color: #6a7488; }
+.md-app .md-uvk-row b { color: #3b4147; }
+.md-app .md-uvk-note { color: #8a9098; }
 .md-app .md-uvk-grid .md-uv-tbtn { height: 32px; }
 .md-app .md-uv-rs {
   background:
-    linear-gradient(135deg, transparent 42%, #8a8a8a 42%, #8a8a8a 56%, transparent 56%),
-    linear-gradient(135deg, transparent 66%, #5a5a5a 66%, #5a5a5a 80%, transparent 80%);
+    linear-gradient(135deg, transparent 42%, #e3e6ea 42%, #e3e6ea 56%, transparent 56%),
+    linear-gradient(135deg, transparent 66%, #f1f2f4 66%, #f1f2f4 80%, transparent 80%);
 }
 .md-app .md-pb-rs {
   background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, .22) 50%);
@@ -2714,16 +2715,16 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 /* ---------- 16.7 手绘遮罩 / 选图弹层（跨窗口用具，一起收圆角） ---------- */
 .md-app .md-mix-gpop,
 .md-app .md-mix-gback { border-radius: var(--md-r-pop); }
-.md-app .md-mix-ghead { background: #303030; border-bottom-color: #1a1a1a; }
-.md-app .md-mix-gfoot { background: #2b2b2b; border-top-color: #1a1a1a; }
+.md-app .md-mix-ghead { background: #f6f7f9; border-bottom-color: #e3e6ea; }
+.md-app .md-mix-gfoot { background: #f6f7f9; border-top-color: #e3e6ea; }
 .md-app .md-mix-gcell {
   border-radius: var(--md-r-lg);
-  border-color: #1f1f1f;
+  border-color: #e3e6ea;
   background: var(--md-raise);
   transition: var(--md-t);
 }
-.md-app .md-mix-gcell:hover { border-color: var(--md-on-line); background: #3b434c; }
-.md-app .md-maskbar { border-radius: 10px; background: rgba(30, 30, 30, .97); }
+.md-app .md-mix-gcell:hover { border-color: var(--md-on-line); background: #fbfbfc; }
+.md-app .md-maskbar { border-radius: 10px; background: rgba(255,255,255,0.94); }
 
 
 /* ---------- 16.8 UV 工具条与工具包的细节 ---------- */
@@ -2745,12 +2746,12 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
  * 用户看不出"这三个按钮属于变换"还是"属于下面那个折叠组" */
 .md-app .md-uvk-sec { padding: 8px 9px 9px; }
 .md-app .md-uvk-title {
-  color: #dcdcdc; font-size: 10.5px; font-weight: 600;
+  color: #2a2f36; font-size: 10.5px; font-weight: 600;
   letter-spacing: .02em; margin-bottom: 7px;
 }
-.md-app .md-uvk-gt { color: #b4b4b4; font-size: 10px; font-weight: 400; }
-.md-app .md-uvk-gt:hover { color: #ececec; }
-.md-app .md-uvk-grp.open > .md-uvk-gt { color: #dcdcdc; }
+.md-app .md-uvk-gt { color: #5a6068; font-size: 10px; font-weight: 400; }
+.md-app .md-uvk-gt:hover { color: #1f2328; }
+.md-app .md-uvk-grp.open > .md-uvk-gt { color: #2a2f36; }
 .md-app .md-uvk-gb { padding: 3px 9px 9px; }
 .md-app .md-uvk-row { font-size: 9.5px; }
 /* 折叠用的三角：字符 ▸ 在小字号下几乎看不见，换成三角形 */
@@ -2769,36 +2770,36 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 /* ---------- 17. 对话框（覆盖层：基础体 / 材质槽 / 打开列表） ---------- */
 .md-app .md-overlay {
   padding: 18px;
-  background: rgba(14, 15, 17, .74);
+  background: rgba(255,255,255,0.94);
   backdrop-filter: blur(1.5px);
 }
 .md-app .md-ov {
   border-radius: var(--md-r-pop);
-  border-color: #0d0d0d;
-  background: #2e2e2e;
+  border-color: #d9dde3;
+  background: #f6f7f9;
   box-shadow: 0 26px 60px rgba(0, 0, 0, .66), 0 0 0 1px rgba(255, 255, 255, .05);
 }
 .md-app .md-ov-head {
   height: 30px;
-  background: linear-gradient(180deg, #414141 0%, #343434 100%);
-  border-bottom: 1px solid #101010;
+  background: linear-gradient(180deg, #f9fafb 0%, #f6f7f9 100%);
+  border-bottom: 1px solid #d9dde3;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
   border-radius: var(--md-r-pop) var(--md-r-pop) 0 0;
 }
 .md-app .md-ov-head b { font-size: 11.5px; letter-spacing: .01em; }
-.md-app .md-ov-sub { color: #8f8f8f; }
+.md-app .md-ov-sub { color: #6a7488; }
 .md-app .md-ov-x { border-radius: var(--md-r); transition: var(--md-t); }
-.md-app .md-ov-x:hover { background: #7a3232; border-top-color: #a04a4a; color: #fff; }
-.md-app .md-ov-body { background: #262626; }
+.md-app .md-ov-x:hover { background: #c9342a; border-top-color: #f0c3be; color: #fff; }
+.md-app .md-ov-body { background: #f3f5f7; }
 /* 基础体表单：标签提亮、输入框去掉那对又小又亮的原生上下箭头 */
 .md-app .md-pf span {
-  color: #a8a8a8; font-size: 9.5px;
+  color: #5a6068; font-size: 9.5px;
   letter-spacing: .02em;
 }
 .md-app .md-pf input {
   height: 24px;
   border-radius: var(--md-r);
-  border-color: #161616;
+  border-color: #d9dde3;
   background: var(--md-sunken);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35);
   font-variant-numeric: tabular-nums;
@@ -2817,62 +2818,62 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
   border: 1px solid var(--md-on-line);
   border-top-color: var(--md-on-hi);
   border-radius: var(--md-r);
-  background: linear-gradient(180deg, #4d7ba8 0%, #3f688d 100%);
+  background: linear-gradient(180deg, #3d8ee0 0%, #3d8ee0 100%);
   color: #fff; font-size: 11px; font-weight: 600;
   letter-spacing: .02em;
   transition: var(--md-t);
 }
-.md-app .md-prim-go:hover { background: linear-gradient(180deg, #5888b6 0%, #477099 100%); }
-.md-app .md-prim-go:active { background: #3b6183; }
+.md-app .md-prim-go:hover { background: linear-gradient(180deg, #6aa9e8 0%, #3d8ee0 100%); }
+.md-app .md-prim-go:active { background: #3d8ee0; }
 .md-app .md-prim-tab {
   border-radius: var(--md-r);
-  border-color: #1e1e1e; border-top-color: var(--md-edge-top);
-  background: var(--md-ctrl); color: #d0d0d0;
+  border-color: #e3e6ea; border-top-color: var(--md-edge-top);
+  background: var(--md-ctrl); color: #3b4147;
   transition: var(--md-t);
 }
-.md-app .md-prim-tab:hover { background: var(--md-raise-hi); color: #fff; }
+.md-app .md-prim-tab:hover { background: var(--md-raise-hi); color: #1f2328; }
 .md-app .md-prim-tab.on {
-  background: linear-gradient(180deg, #d9a44e, #c08c38);
-  border-color: var(--md-accent-line); border-top-color: #e8c078;
-  color: #241a08; font-weight: 600;
+  background: linear-gradient(180deg, #e88a00, #e88a00);
+  border-color: var(--md-accent-line); border-top-color: #f0c07a;
+  color: #8a5a00; font-weight: 600;
 }
-.md-app .md-prim .md-note { color: #8a8a8a; line-height: 1.7; }
+.md-app .md-prim .md-note { color: #6a7488; line-height: 1.7; }
 .md-app .md-ov-head .md-ov-sub { margin-left: 2px; }
 
 /* 打开列表 / 材质槽 */
 .md-app .md-asset {
   border-radius: var(--md-r-lg);
-  border-color: #1f1f1f;
+  border-color: #e3e6ea;
   background: var(--md-ctrl);
   transition: var(--md-t);
 }
-.md-app .md-asset:hover { border-color: var(--md-on-line); background: #3d3d3d; }
-.md-app .md-list { background: #262626; }
+.md-app .md-asset:hover { border-color: var(--md-on-line); background: #f9fafb; }
+.md-app .md-list { background: #f3f5f7; }
 
 
 /* ---------- 18. 热盒（按住空格弹出） ----------
  * 它是浮在**视口**上的，而视口是浅灰渐变 —— 半透明深底会被透出的亮色冲淡，
  * 结果卡片里的字要盯着看才认得出。这里把底子压得更实一点，并补一道上沿高光。 */
 .md-app .md-hb-zone {
-  background: rgba(23, 24, 27, .965);
-  border-color: #43454c;
+  background: rgba(255,255,255,0.94);
+  border-color: #eceef2;
   border-top-color: #5a5d66;
   box-shadow: 0 14px 34px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .05);
 }
-.md-app .md-hb-zone b { color: #9aa1a9; font-size: 9.5px; letter-spacing: .06em; }
-.md-app .md-hb-row:hover { background: #3b3f47; }
-.md-app .md-hb-run { color: #dfe3e9; }
-.md-app .md-hb-run em { color: #8b9299; }
+.md-app .md-hb-zone b { color: #5a6068; font-size: 9.5px; letter-spacing: .06em; }
+.md-app .md-hb-row:hover { background: #f9fafb; }
+.md-app .md-hb-run { color: #2b7cd3; }
+.md-app .md-hb-run em { color: #6a7488; }
 .md-app .md-hb-core {
-  background: rgba(23, 24, 27, .965);
-  border-color: #43454c;
-  color: #dfe3e9;
+  background: rgba(255,255,255,0.94);
+  border-color: #eceef2;
+  color: #2b7cd3;
   box-shadow: 0 14px 34px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .05);
 }
-.md-app .md-hb-core i { color: #8b9299; }
+.md-app .md-hb-core i { color: #6a7488; }
 /* 内容浏览器的空态：视口/面板都是暗的，一行小字飘在中间像加载失败 */
 .md-app .md-cb-empty {
-  color: #8a8a8a; font-size: 10.5px; line-height: 1.8;
+  color: #6a7488; font-size: 10.5px; line-height: 1.8;
   padding: 34px 14px; text-align: center;
 }
 .md-app .md-cb-empty.err { color: var(--md-err); }
@@ -2897,6 +2898,706 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #6aa9ff; outline-offset: 1px
 .md-app span.md-otab.on:hover,
 .md-app span.md-stab.on:hover {
   background: var(--md-ctrl);
-  color: #f2f2f2;
+  color: #1f2328;
 }
 
+
+/* ---------- 15.9 视口条下拉 / 占位控件落实 ---------- */
+/* 视口条的下拉挂在 .md-app 上，按按钮实测坐标定位，不参与菜单条布局 */
+.md-app .md-pop {
+  position: absolute;
+  z-index: 76;
+  min-width: 176px;
+  padding: 5px;
+}
+.md-app .md-pop .md-mi { gap: 7px; }
+.md-app .md-pop .md-mi .md-chk {
+  width: 10px; flex: 0 0 10px;
+  font-style: normal; font-size: 10px; color: #c77500;
+}
+/* 工具架页签切页后，隐藏的图标不能继续占位 */
+.md-app [hidden] { display: none !important; }
+.md-shelf-note {
+  display: inline-flex; align-items: center;
+  padding: 0 8px; font-size: 10px; color: #6a7488; white-space: nowrap;
+}
+/* 工具条上的选择工具改成真按钮后，去掉浏览器默认底色 */
+.md-app button.md-ico {
+  background: transparent; border: 1px solid transparent;
+  font: inherit; cursor: pointer;
+}
+.md-app button.md-ico:hover { background: var(--md-raise-hi); color: #1f2328; }
+.md-app button.md-ico.on { color: #c77500; }
+/* 尚未接入的货架图标：可点（给出台阶说明），但不要像可用工具那样亮 */
+.md-app button.md-sico { background: transparent; font: inherit; padding: 0; cursor: pointer; }
+.md-app button.md-sico[data-md-todo]:hover { opacity: .75; }
+.md-app { position: relative; }
+
+
+/* ============================================================
+ * 20. 浅色皮肤精修（与桌面工作台统一）
+ *
+ * 上一步把深色值整体换成了浅色值，但「深色 UI 靠亮色描边表达层级」的
+ * 那些写法换过来会失效：悬停只是从 #fbfbfc 到 #ffffff、选中蓝底上留深色字、
+ * 分隔线用了浅灰背景……这一节按主界面的语言重写这些语义：
+ *   白卡 + #e3e6ea 描边 + 轻投影分层；悬停压深一档；选中蓝底一律白字；
+ *   主操作统一成橙色（和 .btn.primary 同色），弹层统一 8–12px 圆角。
+ * ============================================================ */
+
+/* ---------- 20.1 菜单条 / 下拉 ---------- */
+.md-app .md-menu {
+  background: linear-gradient(180deg, #ffffff 0%, #fbfbfc 100%);
+  border-bottom: 1px solid #e3e6ea;
+  box-shadow: 0 1px 0 rgba(28, 38, 60, .03);
+}
+.md-app .md-mitem { border-radius: 4px; color: #3b4147; }
+.md-app .md-mitem:hover,
+.md-app .md-mitem.open { background: #f1f2f4; border-color: #e3e6ea; color: #1f2328; }
+.md-app .md-drop {
+  border-radius: 8px;
+  border-color: #d9dde3;
+  background: #ffffff;
+  box-shadow: 0 12px 32px -6px rgba(28, 38, 60, .18), 0 2px 8px rgba(28, 38, 60, .06);
+}
+.md-app .md-mtitle { color: #8a9098; }
+.md-app .md-mi { border-radius: 4px; color: #2a2f36; }
+.md-app .md-mi:hover:not(.off) { background: #eef4fc; color: #1d5fa5; }
+.md-app .md-mi:hover:not(.off) > b { color: #2b7cd3; }
+.md-app .md-msep { background: #e3e6ea; }
+.md-app .md-ver { border-color: #d9dde3; color: #8a9098; background: #ffffff; }
+
+/* ---------- 20.2 状态行 / 工具按钮 ---------- */
+.md-app .md-toolbar {
+  background: #fbfbfc;
+  border-bottom: 1px solid #e3e6ea;
+  box-shadow: none;
+}
+.md-app .md-sep { background: #e3e6ea; box-shadow: none; }
+.md-app .md-chip,
+.md-app .md-act {
+  height: 21px;
+  border: 1px solid #d9dde3;
+  border-top-color: #e3e6ea;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #3b4147;
+  box-shadow: 0 1px 1px rgba(28, 38, 60, .04);
+}
+.md-app .md-chip:hover,
+.md-app .md-act:hover { background: #f7f8fa; border-color: #c9d0d9; color: #1f2328; }
+.md-app .md-chip.on,
+.md-app .md-act.on {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  border-top-color: var(--md-on-hi);
+  color: #ffffff;
+  box-shadow: none;
+}
+.md-app .md-act.primary {
+  background: var(--md-accent);
+  border-color: var(--md-accent-line);
+  border-top-color: #f5b04d;
+  color: #ffffff;
+}
+.md-app .md-act.primary:hover { background: #f39b12; }
+.md-app .md-act:disabled { background: #f7f8fa; color: #a6adb6; box-shadow: none; }
+.md-app .md-tbst { color: #8a9098; }
+
+/* ---------- 20.3 工具架 ---------- */
+.md-app .md-shelf {
+  background: linear-gradient(180deg, #fbfbfc 0%, #f7f8fa 100%);
+  border-bottom: 1px solid #e3e6ea;
+  box-shadow: none;
+}
+.md-app .md-stab { border-radius: 4px; color: #6a7488; }
+.md-app .md-stab:hover { background: #f1f2f4; color: #2a2f36; }
+.md-app .md-stab.on {
+  background: #ffffff;
+  border-color: #d9dde3;
+  border-top-color: #ffffff;
+  color: #1f2328;
+  box-shadow: 0 1px 2px rgba(28, 38, 60, .08);
+}
+.md-app .md-sico {
+  color: var(--c, #5a6068);
+  opacity: 1;
+  width: 26px;
+  height: 28px;
+  border: 1px solid #eceef2;
+  border-radius: 4px;
+  background: #ffffff;
+}
+.md-app .md-sico svg { filter: saturate(1.35) brightness(.76); }
+.md-app .md-sico:hover {
+  background: #ffffff;
+  border-color: #7db3e6;
+  box-shadow: 0 2px 6px rgba(28, 38, 60, .10);
+}
+.md-app .md-sico:hover svg { filter: saturate(1.45) brightness(.7); }
+.md-app .md-shelf-note { color: #8a9098; }
+
+/* ---------- 20.4 左侧工具条 ---------- */
+.md-app .md-strip { background: #fbfbfc; border-right: 1px solid #e3e6ea; }
+.md-app .md-smic,
+.md-app .md-tool { color: #5a6068; border-radius: 4px; }
+.md-app .md-smic:hover,
+.md-app .md-tool:hover { background: #f1f2f4; border-color: #e3e6ea; color: #1f2328; }
+.md-app .md-tool.on {
+  background: #e8f1fc;
+  border-color: #7db3e6;
+  color: #1d5fa5;
+}
+.md-app .md-tool-sep { background: #e3e6ea; }
+.md-app .md-toolpanel .md-tp-sw { border-radius: 10px; }
+
+/* ---------- 20.5 大纲 ---------- */
+.md-app .md-outline { background: #fbfbfc; border-right: 1px solid #e3e6ea; }
+.md-app .md-panel-h {
+  background: linear-gradient(180deg, #ffffff 0%, #f5f6f8 100%);
+  border-bottom: 1px solid #e3e6ea;
+  box-shadow: none;
+  color: #2a2f36;
+}
+.md-app .md-otabs,
+.md-app .md-tb-tabs { background: #fbfbfc; border-bottom: 1px solid #e3e6ea; }
+.md-app .md-otab { border-radius: 4px; color: #6a7488; }
+.md-app .md-otab:hover { background: #f1f2f4; color: #2a2f36; }
+.md-app .md-otab.on {
+  background: #ffffff;
+  border-color: #d9dde3;
+  color: #1f2328;
+  box-shadow: 0 1px 2px rgba(28, 38, 60, .06);
+}
+.md-app .md-part-row { border-radius: 4px; color: #3b4147; }
+.md-app .md-part-row:hover:enabled { background: #f1f2f4; }
+.md-app .md-part-row.sel {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  color: #ffffff;
+}
+.md-app .md-part-row.sel .md-part-shape,
+.md-app .md-part-row.sel em { color: rgba(255, 255, 255, .82); }
+.md-app .md-part-row.multi {
+  background: #eef4fc;
+  box-shadow: inset 2px 0 0 #2b7cd3;
+}
+.md-app .md-part-row.off .md-part-id { text-decoration-color: #b0b7c0; }
+.md-app .md-hint { border-top: 1px solid #e3e6ea; color: #8a9098; }
+
+/* ---------- 20.6 视口条 / 视口 ---------- */
+.md-app .md-vpbar {
+  background: #ffffff;
+  border-bottom: 1px solid #e3e6ea;
+  box-shadow: none;
+}
+.md-app .md-vpi { border-radius: 4px; color: #5a6068; }
+.md-app .md-vpi:hover { background: #f1f2f4; border-color: #e3e6ea; color: #1f2328; }
+.md-app button.md-vpi.on {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  color: #ffffff;
+}
+.md-app .md-vpsel,
+.md-app .md-numb,
+.md-app .md-vpstyle {
+  background: #ffffff;
+  border-color: #d9dde3;
+  border-radius: 4px;
+  color: #2a2f36;
+}
+.md-app .md-vpsel:focus,
+.md-app .md-numb:hover,
+.md-app .md-vpstyle:hover { border-color: #8a95a5; }
+.md-app .md-stage { background: linear-gradient(180deg, #f7f9fb 0%, #e9edf2 100%); }
+
+/* 视图立方体 / 四视图标签 / HUD：从「深底浅字」改为「毛玻璃白卡」 */
+.md-app .md-cube {
+  background: rgba(255, 255, 255, .86);
+  border-color: rgba(120, 132, 150, .35);
+  box-shadow: 0 4px 14px rgba(28, 38, 60, .12), inset 0 1px 0 #ffffff;
+  opacity: 1;
+}
+.md-app .md-cube-turn { background: rgba(90, 96, 104, .30); }
+.md-app .md-cube-turn:hover { background: var(--md-accent); }
+.md-app .md-quad-v,
+.md-app .md-quad-h {
+  background: rgba(90, 96, 104, .35);
+  box-shadow: 1px 0 0 rgba(255, 255, 255, .9);
+}
+.md-app .md-quad-l {
+  background: rgba(255, 255, 255, .92);
+  border-color: #d9dde3;
+  border-radius: 4px;
+  color: #5a6068;
+  box-shadow: 0 1px 3px rgba(28, 38, 60, .08);
+}
+.md-app .md-quad-l.on {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(43, 124, 211, .28);
+}
+.md-app .md-hud {
+  background: rgba(255, 255, 255, .92);
+  border-color: #e3e6ea;
+  border-radius: 6px;
+  color: #5a6068;
+  box-shadow: 0 2px 8px rgba(28, 38, 60, .08);
+}
+.md-app .md-hud b { color: #1f2328; }
+.md-app .md-gest-box { border: 1px dashed #7db3e6; background: rgba(43, 124, 211, .08); }
+.md-app .md-gest-brush { border-color: #2b7cd3; box-shadow: 0 0 0 1px rgba(255, 255, 255, .8); }
+.md-app .md-gest-lasso polyline { fill: rgba(43, 124, 211, .08); stroke: #2b7cd3; }
+
+/* ---------- 20.7 右侧工具箱 / 属性编辑器 ---------- */
+.md-app .md-right { background: #fbfbfc; border-left: 1px solid #e3e6ea; }
+.md-app .md-tb-h {
+  background: #f5f6f8;
+  border-top: 1px solid #e3e6ea;
+  border-bottom: 1px solid #e3e6ea;
+  color: #3b4147;
+}
+.md-app .md-tbtn {
+  border: 1px solid #d9dde3;
+  border-top-color: #ffffff;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #3b4147;
+  box-shadow: 0 1px 1px rgba(28, 38, 60, .04);
+}
+.md-app .md-tbtn:hover { background: #f7f8fa; border-color: #c9d0d9; color: #1f2328; }
+.md-app .md-tbtn i { box-shadow: inset 0 0 0 1px rgba(28, 38, 60, .16); }
+.md-app .md-sec2 {
+  border-color: #e3e6ea;
+  border-radius: 6px;
+  background: #ffffff;
+}
+.md-app .md-sec2-h {
+  background: #fbfbfc;
+  border-bottom: 1px solid #e3e6ea;
+  color: #2a2f36;
+}
+.md-app .md-sec2-h:hover { background: #f1f2f4; }
+.md-app .md-op {
+  border: 1px solid #d9dde3;
+  border-top-color: #ffffff;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #2a2f36;
+  box-shadow: 0 1px 1px rgba(28, 38, 60, .04);
+}
+.md-app .md-op:hover { background: #f7f8fa; border-color: #c9d0d9; }
+.md-app .md-op.on {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  color: #ffffff;
+  box-shadow: none;
+}
+.md-app .md-op.on .md-op-i { color: #ffffff; }
+.md-app .md-op:active { background: #f1f2f4; }
+.md-app .md-op-i { color: #5a6068; }
+.md-app .md-op:hover .md-op-i { color: var(--md-accent); }
+.md-app .md-modebar { border-bottom: 1px solid #e3e6ea; }
+.md-app .md-mode { border-radius: 4px; color: #5a6068; }
+.md-app .md-mode:hover { background: #f1f2f4; border-color: #e3e6ea; color: #1f2328; }
+.md-app .md-mode.on { background: #e8f1fc; border-color: #7db3e6; color: #1d5fa5; }
+.md-app .md-mode-hint { color: #8a9098; border-bottom: 1px solid #e3e6ea; }
+
+/* 复选框 / 开关：浅色方框 + 蓝底白勾 */
+.md-app .md-switch i {
+  background: #ffffff;
+  border-color: #c9d0d9;
+  box-shadow: none;
+}
+.md-app .md-switch input:checked + i {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  box-shadow: none;
+}
+.md-app .md-mod-en i { background: #ffffff; border-color: #c9d0d9; }
+.md-app .md-mod-en input:checked + i { background: var(--md-on); border-color: var(--md-on-line); }
+.md-app .md-mod-en input:checked + i::after { border-color: #ffffff; }
+
+/* 输入 / 下拉 / 数字框：白底 + 冷灰描边，聚焦时灰蓝描边 + 柔光环 */
+.md-app .md-osearch input,
+.md-app .md-row1 input,
+.md-app .md-cmd,
+.md-app .md-soft-sel,
+.md-app .md-soft-num,
+.md-app .md-mod-f select,
+.md-app .md-mod-f input {
+  background: #ffffff;
+  border-color: #d9dde3;
+  border-radius: 4px;
+  color: #2a2f36;
+}
+.md-app .md-osearch input:focus,
+.md-app .md-row1 input:focus,
+.md-app .md-cmd:focus,
+.md-app .md-soft-sel:focus,
+.md-app .md-soft-num:focus,
+.md-app .md-mod-f select:focus,
+.md-app .md-mod-f input:focus {
+  border-color: #8a95a5;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(138, 149, 165, .18);
+}
+.md-app .md-osearch input::placeholder,
+.md-app .md-cmd::placeholder { color: #a0a7b0; }
+
+/* 属性页签：白卡压在浅灰条上（和主界面的页签一致） */
+.md-app .md-ptabs { background: #f5f6f8; border-bottom: 1px solid #e3e6ea; }
+.md-app .md-ptab {
+  border: 1px solid transparent;
+  border-bottom: 0;
+  background: transparent;
+  color: #6a7488;
+  border-radius: 5px 5px 0 0;
+}
+.md-app .md-ptab:hover { color: #2a2f36; }
+.md-app .md-ptab.on {
+  background: #ffffff;
+  border-color: #d9dde3;
+  border-bottom-color: #ffffff;
+  color: #1f2328;
+  box-shadow: 0 -1px 2px rgba(28, 38, 60, .04);
+}
+.md-app .md-sec { background: #ffffff; border-color: #e3e6ea; border-radius: 6px; }
+.md-app .md-h2 {
+  background: #fbfbfc;
+  border-bottom: 1px solid #e3e6ea;
+  color: #2a2f36;
+}
+.md-app .md-ch { border-bottom-color: #eceef2; }
+.md-app .md-ch em { color: #2a2f36; }
+.md-app .md-ch:hover em { background: #f7f8fa; border-color: #e3e6ea; }
+.md-app .md-slot { background: #f7f8fa; border-color: #eceef2; }
+.md-app .md-slot-n:hover { background: #ffffff; border-color: #eceef2; }
+.md-app .md-slot-n:focus { background: #ffffff; border-color: #8a95a5; }
+.md-app .md-slot-a,
+.md-app .md-wide,
+.md-app .md-soft-reset,
+.md-app .md-mod-add button,
+.md-app .md-mod-ops button {
+  background: #ffffff;
+  border: 1px solid #d9dde3;
+  border-top-color: #ffffff;
+  border-radius: 4px;
+  color: #3b4147;
+  box-shadow: 0 1px 1px rgba(28, 38, 60, .04);
+}
+.md-app .md-slot-a:hover:not(:disabled),
+.md-app .md-wide:hover,
+.md-app .md-soft-reset:hover,
+.md-app .md-mod-add button:hover,
+.md-app .md-mod-ops button:hover { background: #f7f8fa; border-color: #c9d0d9; color: #1f2328; }
+.md-app .md-slot-add {
+  border-color: #b9d6f2;
+  border-radius: 4px;
+  color: #2b7cd3;
+}
+.md-app .md-slot-add:hover { background: #eef4fc; border-color: #7db3e6; color: #1d5fa5; }
+.md-app .md-mod-count { background: #f1f2f4; border-color: #e3e6ea; color: #5a6068; }
+.md-app .md-mod-row { background: #ffffff; border-color: #e3e6ea; }
+.md-app .md-curve-wrap { background: #f7f8fa; border-color: #e3e6ea; box-shadow: none; }
+
+/* ---------- 20.8 内容浏览器 / 命令行 ---------- */
+.md-app .md-dock { background: #fbfbfc; border-top: 1px solid #e3e6ea; }
+.md-app .md-dock-tabs {
+  background: #f5f6f8;
+  border-bottom: 1px solid #e3e6ea;
+  box-shadow: none;
+}
+.md-app .md-dock-tab { border-radius: 4px; color: #5a6068; }
+.md-app .md-dock-tab:hover { background: #f1f2f4; color: #1f2328; }
+.md-app .md-dock-tab.on {
+  background: #ffffff;
+  border-color: #d9dde3;
+  color: #1f2328;
+  box-shadow: 0 1px 2px rgba(28, 38, 60, .06);
+}
+.md-app .md-dock-mini,
+.md-app .md-cb-btn {
+  background: #ffffff;
+  border: 1px solid #d9dde3;
+  border-top-color: #ffffff;
+  border-radius: 4px;
+  color: #3b4147;
+  box-shadow: 0 1px 1px rgba(28, 38, 60, .04);
+}
+.md-app .md-dock-mini:hover,
+.md-app .md-cb-btn:hover { background: #f7f8fa; border-color: #c9d0d9; color: #1f2328; }
+.md-app .md-cb-btn.primary {
+  background: #ffffff;
+  border-color: #f0c07a;
+  border-top-color: #ffffff;
+  color: #a35b00;
+  box-shadow: none;
+}
+.md-app .md-cb-btn.primary:hover { background: #fff7e6; border-color: #e88a00; color: #8a5a00; }
+.md-app .md-dock-body { background: #f7f8fa; }
+.md-app .md-cb-card {
+  background: #ffffff;
+  border-color: #e3e6ea;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(28, 38, 60, .05);
+}
+.md-app .md-cb-card:hover {
+  border-color: #7db3e6;
+  box-shadow: 0 6px 16px -4px rgba(28, 38, 60, .14);
+}
+.md-app .md-cb-thumb {
+  border-color: #e3e6ea;
+  background: radial-gradient(circle at 50% 35%, #e8f1fc 0%, #ffffff 75%);
+}
+.md-app .md-cb-tag { border-color: #d9dde3; color: #8a9098; }
+.md-app .md-cb-empty { color: #8a9098; }
+.md-app .md-cmdrow { background: #fbfbfc; border-top: 1px solid #e3e6ea; box-shadow: none; }
+.md-app .md-status { color: #5a6068; }
+
+/* ---------- 20.9 覆盖层 / 对话框 ---------- */
+.md-app .md-overlay {
+  background: rgba(20, 28, 40, .32);
+  backdrop-filter: blur(2px);
+}
+.md-app .md-ov {
+  border: 1px solid #e3e6ea;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 24px 64px -12px rgba(28, 38, 60, .35), 0 4px 16px rgba(28, 38, 60, .08);
+}
+.md-app .md-ov-head {
+  height: 38px;
+  padding: 0 14px;
+  background: #ffffff;
+  border-bottom: 1px solid #e3e6ea;
+  box-shadow: none;
+  border-radius: 12px 12px 0 0;
+}
+.md-app .md-ov-x { border-radius: 6px; background: #ffffff; border-color: #d9dde3; color: #5a6068; }
+.md-app .md-ov-x:hover { background: #c9342a; border-color: #c9342a; color: #ffffff; }
+.md-app .md-ov-body { background: #ffffff; }
+.md-app .md-list { background: #f7f8fa; }
+.md-app .md-asset { background: #ffffff; border-color: #e3e6ea; border-radius: 8px; }
+.md-app .md-asset:hover { border-color: #7db3e6; background: #ffffff; box-shadow: 0 4px 12px -2px rgba(28, 38, 60, .12); }
+.md-app .md-prim { background: #ffffff; }
+.md-app .md-prim-tab {
+  background: #ffffff;
+  border: 1px solid #d9dde3;
+  border-top-color: #ffffff;
+  border-radius: 6px;
+  color: #3b4147;
+  box-shadow: 0 1px 1px rgba(28, 38, 60, .04);
+}
+.md-app .md-prim-tab:hover { background: #f7f8fa; border-color: #c9d0d9; color: #1f2328; }
+.md-app .md-prim-tab.on {
+  background: var(--md-accent);
+  border-color: var(--md-accent-line);
+  border-top-color: #f5b04d;
+  color: #ffffff;
+}
+.md-app .md-prim-go {
+  background: var(--md-accent);
+  border-color: var(--md-accent-line);
+  border-top-color: #f5b04d;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(232, 138, 0, .25);
+}
+.md-app .md-prim-go:hover { background: #f39b12; }
+.md-app .md-prim-go:active { background: #d97e00; }
+
+/* ---------- 20.10 热盒 ---------- */
+.md-app .md-hb-zone,
+.md-app .md-hb-core {
+  background: rgba(255, 255, 255, .97);
+  border: 1px solid #e3e6ea;
+  border-top-color: #ffffff;
+  box-shadow: 0 18px 48px -8px rgba(28, 38, 60, .22), 0 2px 8px rgba(28, 38, 60, .08);
+}
+.md-app .md-hb-zone b { color: #8a9098; }
+.md-app .md-hb-row:hover { background: #eef4fc; }
+.md-app .md-hb-run { color: #2a2f36; }
+.md-app .md-hb-run em { color: #8a9098; }
+.md-app .md-hb-ico { color: #5a6068; }
+.md-app .md-hb-opt { border-color: #c9d0d9; background: #ffffff; color: #5a6068; }
+.md-app .md-hb-opt:hover { background: var(--md-on); border-color: var(--md-on-line); color: #ffffff; }
+.md-app .md-hb-row.on .md-hb-run,
+.md-app .md-hb-row.on .md-hb-run em { color: #1d5fa5; }
+.md-app .md-hb-core { color: #3b4147; }
+.md-app .md-hb-core i { color: #8a9098; }
+
+/* ---------- 20.11 UV 编辑器 ---------- */
+.md-app .md-uvwin {
+  background: #ffffff;
+  border-color: #e3e6ea;
+  border-radius: 10px;
+  box-shadow: 0 24px 60px -12px rgba(28, 38, 60, .30), 0 4px 16px rgba(28, 38, 60, .08);
+}
+.md-app .md-uv-head {
+  background: #ffffff;
+  border-bottom: 1px solid #e3e6ea;
+  border-radius: 10px 10px 0 0;
+}
+.md-app .md-uv-hbtn,
+.md-app .md-uvk-help {
+  background: #ffffff;
+  border: 1px solid #d9dde3;
+  border-radius: 4px;
+  color: #3b4147;
+}
+.md-app .md-uv-hbtn:hover,
+.md-app .md-uvk-help:hover { background: #f7f8fa; border-color: #c9d0d9; }
+.md-app .md-uv-menubar { background: #fbfbfc; border-bottom: 1px solid #e3e6ea; }
+.md-app .md-uv-mitem { color: #3b4147; }
+.md-app .md-uv-mitem:hover { background: #f1f2f4; border-color: #e3e6ea; color: #1f2328; }
+.md-app .md-uv-drop {
+  background: #ffffff;
+  border-color: #d9dde3;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px -6px rgba(28, 38, 60, .20), 0 2px 8px rgba(28, 38, 60, .06);
+}
+.md-app .md-uv-mi { color: #2a2f36; border-radius: 4px; }
+.md-app .md-uv-mi:hover { background: #eef4fc; color: #1d5fa5; }
+.md-app .md-uv-mi:hover b { color: #2b7cd3; }
+.md-app .md-uv-mi.off:hover { background: #f7f8fa; color: #8a9098; }
+.md-app .md-uv-msep { background: #e3e6ea; }
+.md-app .md-uv-tools { background: #fbfbfc; border-bottom: 1px solid #e3e6ea; box-shadow: none; }
+.md-app .md-uv-tsep { background: #e3e6ea; box-shadow: none; }
+.md-app .md-uv-tbtn {
+  background: #ffffff;
+  border: 1px solid #d9dde3;
+  border-top-color: #ffffff;
+  border-radius: 4px;
+  color: #3b4147;
+  box-shadow: 0 1px 1px rgba(28, 38, 60, .04);
+}
+.md-app .md-uv-tbtn:hover { background: #f7f8fa; border-color: #c9d0d9; color: #1f2328; }
+.md-app .md-uv-tbtn.on {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  color: #ffffff;
+}
+.md-app .md-uv-tbtn.on span { color: rgba(255, 255, 255, .85); }
+.md-app .md-uv-tbtn span { color: #6a7488; }
+.md-app .md-uv-tex {
+  background: #fff7e6;
+  border-color: #f0c07a;
+  border-radius: 4px;
+  color: #a35b00;
+}
+.md-app .md-uv-tex:hover { background: #ffefd2; border-color: #e88a00; }
+.md-app .md-uv-tex.on {
+  background: var(--md-on);
+  border-color: var(--md-on-line);
+  color: #ffffff;
+}
+.md-app #mdUvCanvas { background: #f7f8fa; }
+.md-app .md-uv-hint { color: #8a9098; text-shadow: 0 1px 0 #ffffff; }
+.md-app .md-uv-kit { background: #fbfbfc; border-left: 1px solid #e3e6ea; }
+.md-app .md-uvk-head { background: #fbfbfc; border-bottom: 1px solid #e3e6ea; }
+.md-app .md-uvk-gt:hover { background: #f1f2f4; color: #1f2328; }
+.md-app .md-uvk-gt i { border-left-color: #8a9098; }
+.md-app .md-uvk-grp.open > .md-uvk-gt i { border-left-color: #5a6068; }
+.md-app .md-uvk-gt:hover i { border-left-color: #2a2f36; }
+.md-app .md-uv-rs {
+  background:
+    linear-gradient(135deg, transparent 42%, #d9dde3 42%, #d9dde3 56%, transparent 56%),
+    linear-gradient(135deg, transparent 66%, #eceef2 66%, #eceef2 80%, transparent 80%);
+}
+
+/* ---------- 20.12 绘画 / 纹理混合 ---------- */
+.md-app .md-paint { background: #fbfbfc; }
+.md-app .md-paint-card,
+.md-app .md-mix-row {
+  background: #ffffff;
+  border: 1px solid #e3e6ea;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(28, 38, 60, .05);
+}
+.md-app .md-paint-card-h span,
+.md-app .md-mix-head > span { color: #1f2328; }
+.md-app .md-paint-card-h i,
+.md-app .md-mix-head i {
+  background: var(--md-accent);
+  box-shadow: none;
+}
+.md-app .md-paint-row b,
+.md-app .md-mix-line b,
+.md-app .md-paint-chk { color: #1d5fa5; }
+.md-app .md-paint-row select,
+.md-app .md-mix-slot,
+.md-app .md-mix-blend {
+  background-color: #ffffff;
+  border: 1px solid #d9dde3;
+  border-radius: 4px;
+  color: #2a2f36;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #8a9098 50%),
+    linear-gradient(135deg, #8a9098 50%, transparent 50%);
+}
+.md-app .md-paint input[type=range]::-webkit-slider-runnable-track,
+.md-app .md-mix-line input[type=range]::-webkit-slider-runnable-track {
+  background: #e9ebef;
+  border-color: #d9dde3;
+  box-shadow: none;
+}
+.md-app .md-paint input[type=range]::-webkit-slider-thumb,
+.md-app .md-mix-line input[type=range]::-webkit-slider-thumb {
+  background: #ffffff;
+  border-color: #8a95a5;
+  box-shadow: 0 1px 3px rgba(28, 38, 60, .28);
+}
+.md-app .md-mix-thumb { background: #f1f2f4; border-color: #e3e6ea; box-shadow: none; }
+.md-app .md-mix-mini {
+  background: #ffffff;
+  border: 1px solid #d9dde3;
+  border-top-color: #ffffff;
+  border-radius: 4px;
+  color: #3b4147;
+}
+.md-app .md-mix-mini:hover { background: #f7f8fa; border-color: #c9d0d9; }
+.md-app .md-mix-mini.is-on { background: var(--md-on); border-color: var(--md-on-line); color: #ffffff; }
+.md-app .md-mix-mini.is-del:hover { background: #c9342a; border-color: #c9342a; color: #ffffff; }
+.md-app .md-mix-empty {
+  background: #f7f8fa;
+  border-color: #d9dde3;
+  border-radius: 8px;
+}
+.md-app .md-mix-empty b { color: #8a9098; }
+.md-app .md-mix-count,
+.md-app .md-mix-mask { background: #f7f8fa; border-color: #e3e6ea; }
+
+/* 投影烘焙 / 资产选择等浮层里仍是深色的小件 */
+.md-app .md-pb-split { background: #eceef2; }
+.md-app .md-pb-target,
+.md-app .md-uv-target {
+  background: #f1f2f4;
+  border-color: #e3e6ea;
+  color: #6a7488;
+}
+.md-pb-hint,
+.md-app .md-pb-hint {
+  background: #f7f8fa;
+  border-color: #e3e6ea;
+  color: #5a6068;
+}
+.md-pb-hint.warn,
+.md-app .md-pb-hint.warn {
+  background: #fff7e6;
+  border-color: #f0c07a;
+  color: #8a5a00;
+}
+.md-mix-gback { background: rgba(20, 28, 40, .32); }
+
+/* ---------- 20.13 滚动条 / 原生控件 ---------- */
+.md-app ::-webkit-scrollbar-thumb {
+  background: #cdd3db;
+  border-color: transparent;
+  background-clip: padding-box;
+}
+.md-app ::-webkit-scrollbar-thumb:hover { background: #b7bfc9; background-clip: padding-box; }
+.md-app ::-webkit-scrollbar-thumb:active { background: #a3acb8; background-clip: padding-box; }
+.md-app .md-uv-kit::-webkit-scrollbar-thumb,
+.md-app .md-uv-kit::-webkit-scrollbar-thumb:hover { background: #cdd3db; }
+.md-app input[type=color] { background: #ffffff; }
+.md-app ::selection { background: #cfe2f6; color: #1f2328; }

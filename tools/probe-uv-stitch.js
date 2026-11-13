@@ -12,7 +12,9 @@ const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const fs = require('fs');
 const path = require('path');
+const { createRun } = require('./probe-run');
 
+const RUN = createRun('probe-uv-stitch');
 const ROOT = path.join(__dirname, '..');
 const TARGET = pathToFileURL(path.join(ROOT, 'index.html')).href + '?nostore=1';
 const OBJ = path.join(ROOT, 'assets', 'models', 'mwby1p3x-d569ed18.obj');
@@ -131,7 +133,7 @@ const check = (name, ok, info) => {
       for (let off = 0; off < len; off += 400000) {
         s += await page.evaluate(o => window.__lastAtlas.substr(o, 400000), off);
       }
-      fs.writeFileSync(path.join(__dirname, file), Buffer.from(s, 'base64'));
+      fs.writeFileSync(RUN.artifact(file), Buffer.from(s, 'base64'));
       return true;
     });
   });
@@ -154,7 +156,7 @@ const check = (name, ok, info) => {
   check('概览给出岛数', !!s0.islands && s0.islands > 100, String(s0.islands));
   check('三角面读到了', !!s0.tris && s0.tris > 1000, String(s0.tris));
   const islands0 = s0.islands, tris0 = s0.tris;
-  await page.screenshot({ path: path.join(__dirname, '_stitch_ui_before.png') });
+  await RUN.shot(page, 'stitch-ui-before.png');
   await dumpAtlas('_stitch_before.png');
 
   console.log('=== 2. 缝合碎岛 ===');
@@ -170,7 +172,7 @@ const check = (name, ok, info) => {
   check('缝合无报错', !s1.err, s1.err);
   const islands1 = s1.islands;
   await dumpAtlas('_stitch_after.png');
-  await page.screenshot({ path: path.join(__dirname, '_stitch_ui.png') });
+  await RUN.shot(page, 'stitch-ui.png');
 
   console.log('=== 3. 缝合后自动排布 ===');
   await clickText('自动排布');

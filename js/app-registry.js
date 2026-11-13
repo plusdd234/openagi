@@ -122,7 +122,7 @@ function registerApp(def){
     return null;
   }
 
-  /* 窗口 id 默认由 App id 推：`img2svg` → `img2svgWin`。
+  /* 窗口 id 默认由 App id 推：`my-app` → `myAppWin`。
    * ⚠ 先按连字符驼峰化：`my-app` 直接拼成 `my-appWin` 是个**写得进 getElementById、
    *   写不进 CSS 选择器**的 id（`#my-appWin` 会被解析成 `#my` + 元素 `appWin`），
    *   谁想给它写一行 `#my-appWin { … }` 就是一条静默失效的样式。→ `myAppWin`。 */

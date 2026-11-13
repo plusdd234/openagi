@@ -141,6 +141,14 @@ function blobLoadFromDisk(){
   const want = new Set();
   try{ if(typeof FLOWS !== 'undefined' && FLOWS) blobCollectIds(FLOWS, want, new WeakSet()); }catch(e){}
   try{ if(typeof bp !== 'undefined' && bp) blobCollectIds(bp, want, new WeakSet()); }catch(e){}
+  /* 桌面壁纸的图不挂在 FLOWS 里，单独补一条：否则重启后存根解析不出来，
+   * 桌面直接变白——用户看到的就是「设过的壁纸没了」。 */
+  try{
+    const w = JSON.parse(localStorage.getItem('hf_desk_wallpaper') || 'null');
+    if(w && typeof w.image === 'string' && w.image.indexOf(BLOB_STUB) === 0){
+      want.add(w.image.slice(BLOB_STUB.length));
+    }
+  }catch(e){}
   if(!want.size) return Promise.resolve(0);
   let n = 0;
   return Promise.all(Array.from(want).map(id => {

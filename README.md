@@ -14,6 +14,9 @@
 
 ---
 
+> **开发前必读：[AGENTS.md](AGENTS.md)** —— App 开发、测试、文件管理与并行协作的总规范。
+> App 目录细则见 [`apps/README.md`](apps/README.md)。
+
 ## 这是什么
 
 一个**桌面工作台**：左边是工作流列表，中间是节点画布，右边是参数面板。
@@ -115,7 +118,6 @@ js/
   desk-chat-log.js      AI 对话：上下文 / 附件 / 消息渲染与持久化
   desk-chat-gen.js      AI 对话：对话内生图
   desk-chat-send.js     AI 对话：输入模式 / 发送 / init
-  bare-chat.js          裸聊 App：无 system / 无上下文 / 无历史（基准线）
   desk-image.js         生图纯逻辑（意图 / 改写 / 来源分支）
   provider.js           多引擎生图
 electron/

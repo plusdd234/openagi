@@ -30,6 +30,10 @@
     mode: 'translate', space: 'world', snap: false,
     rightTab: 'props', outlineQuery: '', showGrid: true, gridHelper: null,
     shading: 'shaded-wire', quad: false, quadCams: null, viewName: '透视',
+    /* 视口条上的下拉：灯光预设 / 大纲页签 / 工具架页签 / 面板显隐 */
+    lightingPreset: 'default', outlineTab: 'all', shelfTab: 'poly',
+    panels: { outline: true, right: true, shelf: true },
+    pop: null, popItems: null,
     /* 单独显示（隔离所选）：只影响视口，不写文档里的 node.visible */
     isolate: false,
     /* 右侧工具箱两个页签：建模 / 绘画。绘画 = 把笔刷颜色直接画进当前材质槽的基础色贴图 */
@@ -349,7 +353,7 @@
       '  </div>',
       '  <div class="md-toolbar">',
       '    <div class="md-tb-left">',
-      '      <span class="md-ico" title="选择工具：M2 起接入">➤</span>',
+      '      <button type="button" class="md-ico" data-md-tool="select" title="选择工具（Q）：点选；按住拖动 = 框选">➤</button>',
       '      <span class="md-sep"></span>',
       '      <button type="button" class="md-chip" data-md-mode="translate" title="移动手柄（W）">移动</button>',
       '      <button type="button" class="md-chip" data-md-mode="rotate" title="旋转手柄（E）">旋转</button>',
@@ -373,45 +377,46 @@
       '  </div>',
       '  <div class="md-shelf">',
       '    <div class="md-shelf-tabs">',
-      '      <span class="md-stab on">多边形建模</span>',
-      '      <span class="md-stab">曲线</span>',
-      '      <span class="md-stab">曲面</span>',
-      '      <span class="md-stab">动画</span>',
-      '      <span class="md-stab">FX</span>',
-      '      <span class="md-stab">渲染</span>',
-      '      <span class="md-stab">动力学</span>',
+      '      <button type="button" class="md-stab on" data-md-stab="poly">多边形建模</button>',
+      '      <button type="button" class="md-stab" data-md-stab="curve">曲线</button>',
+      '      <button type="button" class="md-stab" data-md-stab="surface">曲面</button>',
+      '      <button type="button" class="md-stab" data-md-stab="anim">动画</button>',
+      '      <button type="button" class="md-stab" data-md-stab="fx">FX</button>',
+      '      <button type="button" class="md-stab" data-md-stab="render">渲染</button>',
+      '      <button type="button" class="md-stab" data-md-stab="dyn">动力学</button>',
       '    </div>',
       '    <div class="md-shelf-grid">',
-      '      <button type="button" class="md-sico" style="--c:#c9a24e" title="立方体：新建并调尺寸" data-md-prim="box">' + SHELF_ICONS.box + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#7fa9d8" title="球体：新建并调半径 / 段数" data-md-prim="sphere">' + SHELF_ICONS.sphere + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#9ec27b" title="圆柱：新建并调上下半径 / 段数" data-md-prim="cylinder">' + SHELF_ICONS.cylinder + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#c98fb3" title="平面：新建并调宽高" data-md-prim="plane">' + SHELF_ICONS.plane + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#e0a13a" title="圆环：新建并调主半径 / 管半径" data-md-prim="torus">' + SHELF_ICONS.torus + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#d8a15a" title="圆锥：新建并调底半径 / 高" data-md-prim="cone">' + SHELF_ICONS.cone + '</button>',
+      '      <span class="md-shelf-note" id="mdShelfNote" hidden></span>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#c9a24e" title="立方体：新建并调尺寸" data-md-prim="box">' + SHELF_ICONS.box + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#7fa9d8" title="球体：新建并调半径 / 段数" data-md-prim="sphere">' + SHELF_ICONS.sphere + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#9ec27b" title="圆柱：新建并调上下半径 / 段数" data-md-prim="cylinder">' + SHELF_ICONS.cylinder + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#c98fb3" title="平面：新建并调宽高" data-md-prim="plane">' + SHELF_ICONS.plane + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#e0a13a" title="圆环：新建并调主半径 / 管半径" data-md-prim="torus">' + SHELF_ICONS.torus + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#d8a15a" title="圆锥：新建并调底半径 / 高" data-md-prim="cone">' + SHELF_ICONS.cone + '</button>',
       /* 分组分隔：二十多个图标连成一条时，用户要靠"数第几个"找工具。
        * 三条分隔把工具架切成「基础体 / 建模编辑 / 贴图 / 占位」四段。 */
-      '      <span class="md-sico-sep" aria-hidden="true"></span>',
-      '      <span class="md-sico" style="--c:#b8b8b8" title="重新拓扑（后续接入）">' + SHELF_ICONS.retopo + '</span>',
-      '      <button type="button" class="md-sico" style="--c:#8cb6a6" data-md-op="knife" title="多切割：视口拖线切割">' + OP_ICONS.knife + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#d8b06a" data-md-op="target-weld" title="目标焊接：最后选中的点作目标">' + OP_ICONS.targetWeld + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#9aa8c9" data-md-op="bridge" title="桥接：两个同边数面">' + OP_ICONS.bridge + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#c7a0d6" data-md-op="extrude" title="挤出：沿法线挤出选中面">' + OP_ICONS.extrude + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#a8a8a8" data-md-op="bevel" title="倒角：选中面内缩 + 深度">' + OP_ICONS.bevel + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#d98b3f" data-md-op="loopcut" title="环切：沿选中边所在的四边环切分">' + OP_ICONS.loopcut + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#8fc7a8" data-md-op="tris-to-quads" title="三角转四边：成对三角并成四边面">' + OP_ICONS.tris2quads + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#8fb5b8" data-md-op="separate" title="分离（大纲多选后可用结合）">' + OP_ICONS.separate + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#8fb5b8" data-md-op="split-islands" title="拆分岛：把选中的 UV 岛拆成独立对象">' + OP_ICONS.islandSplit + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#c9b27c" data-md-op="smooth" title="平滑：选中顶点或整体">' + OP_ICONS.smooth + '</button>',
-      '      <span class="md-sico-sep" aria-hidden="true"></span>',
-      '      <span class="md-sico" style="--c:#c88a8a" title="纹理（M5 接入）">' + SHELF_ICONS.texture + '</span>',
-      '      <button type="button" class="md-sico" style="--c:#9fc0e0" data-md-act="uv" title="UV 编辑器：二维 UV 视图 / 选择 / 变换 / 展开排布">' + SHELF_ICONS.uv + '</button>',
-      '      <button type="button" class="md-sico" style="--c:#e0b06a" data-md-act="projbake" title="投射烘焙：把当前视角的 UV 岛拖到原画上重采样（修 AI 图糊掉的眼睛等细节）">' + SHELF_ICONS.projbake + '</button>',
-      '      <span class="md-sico-sep" aria-hidden="true"></span>',
-      '      <span class="md-sico" style="--c:#d0b080" title="曲线工具（后续接入）">' + SHELF_ICONS.curve + '</span>',
-      '      <span class="md-sico" style="--c:#b0b0b0" title="曲面放样（后续接入）">' + SHELF_ICONS.surface + '</span>',
-      '      <span class="md-sico" style="--c:#d8a15a" title="动画（M7 接入）">' + SHELF_ICONS.anim + '</span>',
-      '      <span class="md-sico" style="--c:#d8c45a" title="渲染设置（M8 接入）">' + SHELF_ICONS.render + '</span>',
-      '      <span class="md-sico" style="--c:#8fa8b6" title="动力学（M8 接入）">' + SHELF_ICONS.dyn + '</span>',
+      '      <span class="md-sico-sep" data-shelf="poly" aria-hidden="true"></span>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#b8b8b8" data-md-todo="重新拓扑" data-md-plan="B7" title="重新拓扑：尚未接入（计划表 B7）">' + SHELF_ICONS.retopo + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#8cb6a6" data-md-op="knife" title="多切割：视口拖线切割">' + OP_ICONS.knife + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#d8b06a" data-md-op="target-weld" title="目标焊接：最后选中的点作目标">' + OP_ICONS.targetWeld + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#9aa8c9" data-md-op="bridge" title="桥接：两个同边数面">' + OP_ICONS.bridge + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#c7a0d6" data-md-op="extrude" title="挤出：沿法线挤出选中面">' + OP_ICONS.extrude + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#a8a8a8" data-md-op="bevel" title="倒角：选中面内缩 + 深度">' + OP_ICONS.bevel + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#d98b3f" data-md-op="loopcut" title="环切：沿选中边所在的四边环切分">' + OP_ICONS.loopcut + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#8fc7a8" data-md-op="tris-to-quads" title="三角转四边：成对三角并成四边面">' + OP_ICONS.tris2quads + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#8fb5b8" data-md-op="separate" title="分离（大纲多选后可用结合）">' + OP_ICONS.separate + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#8fb5b8" data-md-op="split-islands" title="拆分岛：把选中的 UV 岛拆成独立对象">' + OP_ICONS.islandSplit + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#c9b27c" data-md-op="smooth" title="平滑：选中顶点或整体">' + OP_ICONS.smooth + '</button>',
+      '      <span class="md-sico-sep" data-shelf="render" aria-hidden="true"></span>',
+      '      <button type="button" class="md-sico" data-shelf="render" style="--c:#c88a8a" data-md-act="tex" title="材质槽 / 纹理：打开 3D 查看器编辑贴图">' + SHELF_ICONS.texture + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="render" style="--c:#9fc0e0" data-md-act="uv" title="UV 编辑器：二维 UV 视图 / 选择 / 变换 / 展开排布">' + SHELF_ICONS.uv + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="render" style="--c:#e0b06a" data-md-act="projbake" title="投射烘焙：把当前视角的 UV 岛拖到原画上重采样（修 AI 图糊掉的眼睛等细节）">' + SHELF_ICONS.projbake + '</button>',
+      '      <span class="md-sico-sep" data-shelf="curve" aria-hidden="true"></span>',
+      '      <button type="button" class="md-sico" data-shelf="curve" style="--c:#d0b080" data-md-todo="曲线工具" data-md-plan="M7" title="曲线工具：尚未接入（计划表 M7）">' + SHELF_ICONS.curve + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="surface" style="--c:#b0b0b0" data-md-todo="曲面放样" data-md-plan="M7" title="曲面放样：尚未接入（计划表 M7）">' + SHELF_ICONS.surface + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="anim" style="--c:#d8a15a" data-md-todo="动画" data-md-plan="M7" title="动画：尚未接入（计划表 M7）">' + SHELF_ICONS.anim + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="render" style="--c:#d8c45a" data-md-todo="渲染设置" data-md-plan="M8" title="渲染设置：尚未接入（计划表 M8）">' + SHELF_ICONS.render + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="dyn" style="--c:#8fa8b6" data-md-todo="动力学" data-md-plan="M8" title="动力学：尚未接入（计划表 M8）">' + SHELF_ICONS.dyn + '</button>',
       '    </div>',
       '  </div>',
       '  <div class="md-hb" id="mdHotbox" aria-hidden="true"></div>',
@@ -427,14 +432,14 @@
       '    </div>',
       '    <aside class="md-outline">',
       '      <div class="md-panel-h"><span>大纲视图</span><em id="mdOutlineCount">0 个对象</em></div>',
-      '      <div class="md-otabs"><span class="md-otab on">显示</span><span class="md-otab">隐藏</span><span class="md-otab">帮助</span></div>',
+      '      <div class="md-otabs"><button type="button" class="md-otab on" data-md-otab="all">显示</button><button type="button" class="md-otab" data-md-otab="hidden">隐藏</button><button type="button" class="md-otab" data-md-otab="help">帮助</button></div>',
       '      <div class="md-osearch"><input id="mdOutlineSearch" type="search" placeholder="按名称搜索节点" autocomplete="off" spellcheck="false"></div>',
       '      <div class="md-tree" id="mdOutlineList"></div>',
       '      <div class="md-hint">F8–F11 切对象 / 顶点 / 边 / 面，Shift 加选、Ctrl 减选；框选随 S3、挤出等算子随 M6。</div>',
       '    </aside>',
       '    <div class="md-center">',
       '      <div class="md-vpbar">',
-      '        <span class="md-vplabel" id="mdViewLabel">透视 ▾</span>',
+      '        <button type="button" class="md-vplabel md-popbtn" id="mdViewLabel" data-md-pop="view" title="切换相机视图">透视 ▾</button>',
       '        <span class="md-vplabel">着色</span>',
       '        <select class="md-vpsel" id="mdShadeSel" title="着色模式">',
       '          <option value="shaded-wire">实体 + 线框</option>',
@@ -449,16 +454,16 @@
       '            <path d="M12 6.6 17 9.3v5.4L12 17.4 7 14.7V9.3z"/>' +
       '            <path d="M12 11.9 17 9.3v5.4L12 17.4z" fill="currentColor" stroke="none" opacity=".85"/>' +
       '          </svg></button>',
-      '        <span class="md-vplabel">照明 ▾</span>',
-      '        <span class="md-vplabel">显示 ▾</span>',
-      '        <span class="md-vplabel">渲染器 ▾</span>',
-      '        <span class="md-vplabel">面板 ▾</span>',
+      '        <button type="button" class="md-vplabel md-popbtn" data-md-pop="light" id="mdLightLabel" title="切换灯光预设">照明 ▾</button>',
+      '        <button type="button" class="md-vplabel md-popbtn" data-md-pop="display" title="显示开关：栅格 / 边线 / 顶点 / 背面 / 材质 / 纹理 / 光照 / 线框">显示 ▾</button>',
+      '        <button type="button" class="md-vplabel md-popbtn" data-md-pop="render" title="渲染器：色调映射与曝光">渲染器 ▾</button>',
+      '        <button type="button" class="md-vplabel md-popbtn" data-md-pop="panel" title="显示 / 隐藏面板">面板 ▾</button>',
       '        <span class="md-sep"></span>',
       '        <button type="button" class="md-vpi" data-md-act="grid" id="mdGridBtn" title="显示 / 隐藏地面栅格">⌗</button>',
       '        <button type="button" class="md-vpi" data-md-act="shade-cycle" id="mdShadeBtn" title="切换着色模式（实体 / 实体+线框 / 线框）">▦</button>',
-      '        <span class="md-vpi" title="透视视角（M4 接入）">◍</span>',
+      '        <button type="button" class="md-vpi" data-md-act="view-iso" title="复位到轴测视图（与双击 ViewCube 同效果）">◍</button>',
       '        <span class="md-vpnum"><span class="md-numb">0.00</span><i>/</i><span class="md-numb">1.00</span></span>',
-      '        <span class="md-vpstyle">ACES 1.0 SDR-video (sRGB)<i>▾</i></span>',
+      '        <button type="button" class="md-vpstyle md-popbtn" data-md-pop="render">ACES 1.0 SDR-video (sRGB)<i>▾</i></button>',
       '      </div>',
       '      <div class="md-stage" id="mdStage">',
       '        <canvas id="mdCanvas"></canvas>',
@@ -486,9 +491,9 @@
       '    </div>',
       '    <aside class="md-right">',
       '      <div class="md-panel-h md-right-h"><span class="md-tbkinds">' +
-      '        <button type="button" class="md-otab on" data-md-tbk="model" title="建模工具箱">建模工具箱</button>' +
-      '        <button type="button" class="md-otab" data-md-tbk="paint" title="绘画工具箱：笔刷直接画进基础色贴图">绘画工具箱</button>' +
-      '        <button type="button" class="md-otab" data-md-tbk="props" title="属性编辑器：变换 / 材质槽 / 操作历史">属性编辑器</button>' +
+      '        <button type="button" class="md-otab on" data-md-tbk="model" title="建模工具箱">建模</button>' +
+      '        <button type="button" class="md-otab" data-md-tbk="paint" title="绘画工具箱：笔刷直接画进基础色贴图">绘画</button>' +
+      '        <button type="button" class="md-otab" data-md-tbk="props" title="属性编辑器：变换 / 材质槽 / 操作历史">属性</button>' +
       '      </span><em id="mdTbMode">对象</em></div>',
       '      <section class="md-tb">',
       '        <div class="md-tb-tabs"><button type="button" class="md-otab md-tbtab on" data-md-tbtab="object">对象</button><button type="button" class="md-otab md-tbtab" data-md-tbtab="component">多组件</button></div>',
@@ -545,7 +550,7 @@
       '  </div>',
       '  <div class="md-cmdrow">',
       '    <span class="md-cmd-l">命令行</span>',
-      '    <input id="mdCmd" class="md-cmd" type="text" autocomplete="off" spellcheck="false" placeholder="输入命令后回车（M3 起接入）">',
+      '    <input id="mdCmd" class="md-cmd" type="text" autocomplete="off" spellcheck="false" placeholder="输入命令：camera front / shading wire / display grid off / tone aces / exposure 1.2 / mesh.extrude">',
       '    <div class="md-status" id="mdStatus"></div>',
       '  </div>',
       '</div>'
@@ -572,14 +577,21 @@
     host.addEventListener('keydown', onKeyDown);
     global.addEventListener('keydown', onKeyLayer, false);
 
-    /* 主菜单下拉：点外面 / 按 Esc 收起。捕获阶段处理，先于工具层的 Esc。 */
+    /* 主菜单下拉 / 视口条下拉：点外面 / 按 Esc 收起。捕获阶段处理，先于工具层的 Esc。 */
     document.addEventListener('pointerdown', function (e) {
-      if (!st.menu) return;
       var tg = e.target;
+      if (st.pop && !(tg && tg.closest && (tg.closest('.md-pop') || tg.closest('.md-popbtn')))) closePop();
+      if (!st.menu) return;
       if (tg && tg.closest && (tg.closest('#mdDrop') || tg.closest('.md-mitem'))) return;
       mdCloseMenu();
     }, true);
     document.addEventListener('keydown', function (e) {
+      if (st.pop && (e.key === 'Escape' || e.key === 'Esc')) {
+        closePop();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (st.menu && (e.key === 'Escape' || e.key === 'Esc')) {
         mdCloseMenu();
         e.preventDefault();
@@ -656,8 +668,21 @@
     }
     var viewLabel = $('mdViewLabel');
     if (viewLabel) viewLabel.textContent = (st.quad ? quadViewText() : (st.viewName || '透视')) + ' ▾';
+    var lightLabel = $('mdLightLabel');
+    if (lightLabel && LIGHT_PRESETS && LIGHT_PRESETS[st.lightingPreset]) {
+      lightLabel.textContent = '照明：' + LIGHT_PRESETS[st.lightingPreset].label + ' ▾';
+    }
     document.querySelectorAll('.md-tool[data-md-tool]').forEach(function (b) {
       b.classList.toggle('on', b.dataset.mdTool === st.tool);
+    });
+    document.querySelectorAll('.md-ico[data-md-tool]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.mdTool === st.tool);
+    });
+    document.querySelectorAll('[data-md-otab]').forEach(function (b) {
+      b.classList.toggle('on', (b.dataset.mdOtab || 'all') === (st.outlineTab || 'all'));
+    });
+    document.querySelectorAll('[data-md-stab]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.mdStab === (st.shelfTab || 'poly'));
     });
     /* 组件模式条：五个图标 + 标题右侧的当前模式 + 对象/多组件页签 */
     document.querySelectorAll('.md-mode[data-md-selmode]').forEach(function (b) {
@@ -697,8 +722,8 @@
     return (st.doc && SeedModel.Scene.getMesh(st.doc)) || st.mesh;
   }
 
-  /* 大纲里固定这几行是 Maya 的默认节点：M1 没有透视视图 / 灯光集，
-   * 它们是禁用占位，让树的层级看起来完整。 */
+  /* 大纲里固定这几行是 Maya 的默认节点：视图行可点击切换相机，
+   * 灯光集 / 对象集没有对应后端，保持禁用占位。 */
   var FAKE_OUTLINE = [
     { name: 'persp', type: '视图' },
     { name: 'top', type: '视图' },
@@ -707,6 +732,7 @@
     { name: 'defaultLightSet', type: '集' },
     { name: 'defaultObjectSet', type: '集' }
   ];
+  var OUTLINE_VIEW = { persp: 'iso', top: 'top', front: 'front', side: 'right' };
 
   /* B2b：大纲每行是一个**真节点**，行内是「名字 + 类型 + 面数 + 可见性」。
    * 行高亮跟着 doc.activeNodeId 走（不是 st.selected —— 那是老的单对象下标）。
@@ -718,19 +744,28 @@
     if (!st.nodeIds) st.nodeIds = [];
     if (!st.nodeIds.length && st.doc.activeNodeId) st.nodeIds = [st.doc.activeNodeId];
     var q = String(st.outlineQuery || '').trim().toLowerCase();
+    var tab = st.outlineTab || 'all';
     var countEl = $('mdOutlineCount');
     if (countEl) countEl.textContent = st.doc.nodes.length + ' 个对象';
-    var rows = FAKE_OUTLINE.filter(function (f) {
+    if (tab === 'help') {
+      list.innerHTML = '<div class="md-note">显示：列出相机与全部对象<br>隐藏：只看隐藏对象<br>双击对象行可重命名；搜索框按名称过滤。</div>';
+      return;
+    }
+    var rows = tab === 'all' ? FAKE_OUTLINE.filter(function (f) {
       return !q || f.name.toLowerCase().indexOf(q) >= 0;
     }).map(function (f) {
-      return '<button type="button" class="md-part-row fake" disabled>' +
+      var vk = f.type === '视图' ? OUTLINE_VIEW[f.name] : null;
+      return '<button type="button" class="md-part-row fake' + (vk ? ' view' : '') + '"' +
+        (vk ? ' data-md-view="' + vk + '" title="切换到 ' + esc(f.name) + ' 视图"' : ' disabled') + '>' +
         '<i class="' + (f.type === '视图' ? 'md-vicon' : 'md-ficon') + '"></i>' +
         '<span class="md-part-id">' + esc(f.name) + '</span>' +
         '<span class="md-part-shape">' + esc(f.type) + '</span>' +
         '</button>';
-    }).join('');
+    }).join('') : '';
     rows += st.doc.nodes.map(function (n) {
       if (q && String(n.name).toLowerCase().indexOf(q) < 0) return '';
+      var vis = n.visible !== false;
+      if (tab === 'hidden' && vis) return '';
       var faces = 0;
       try {
         var m = SeedModel.Scene.getMesh(st.doc, n);
@@ -738,7 +773,6 @@
       } catch (e) {}
       var isAct = n.id === st.doc.activeNodeId;
       var inMulti = st.nodeIds && st.nodeIds.indexOf(n.id) >= 0;
-      var vis = n.visible !== false;
       return '<button type="button" class="md-part-row' + (isAct ? ' sel' : '') + (inMulti && !isAct ? ' multi' : '') + (vis ? '' : ' off') + '" data-md-node="' + esc(n.id) + '">' +
         '<i class="md-nicon"></i>' +
         '<span class="md-part-id">' + esc(n.name) + '</span>' +
@@ -746,7 +780,7 @@
         '<em>' + faces + ' 面</em>' +
         '</button>';
     }).join('');
-    list.innerHTML = rows || '<div class="md-note">没有匹配的节点</div>';
+    list.innerHTML = rows || '<div class="md-note">' + (tab === 'hidden' ? '没有隐藏对象' : '没有匹配的节点') + '</div>';
   }
 
   /* 大纲点行 = 换激活对象（与视口里点另一个对象同一入口）。
@@ -2266,7 +2300,7 @@
     if ('outputEncoding' in st.renderer) st.renderer.outputEncoding = THREE.sRGBEncoding;
 
     st.scene = new THREE.Scene();
-    st.scene.background = new THREE.Color('#5a5d61');
+    st.scene.background = new THREE.Color('#dfe4ea');
     /* 灯光配比（V1）：环境 0.18 只负责不死黑，主光 0.85 定形体，补光/轮廓 0.26/0.19 保住背面。
      * 实测三个可见面 ≈ 219 / 181 / 168（背景 93），峰谷差 50 级、不过曝。 */
     var ambient = new THREE.AmbientLight(0xffffff, 0.18);
@@ -2283,10 +2317,14 @@
     /* 灯光开关（A4）用：记下出厂强度，关灯时只留环境光，别把形体照成全黑 */
     st.lights = [ambient, key, fill, rim];
     st.lights.forEach(function (l) { l.userData.mdBaseIntensity = l.intensity; });
+    /* 工具架页签 / 面板显隐 / 照明预设标签在视口就绪时对齐一次 */
+    setShelfTab(st.shelfTab || 'poly');
+    syncPanels();
 
     /* 栅格压暗（V2）：这个 three 构建没开 ColorManagement，GridHelper 顶点色会被当线性值
-     * 再走一遍 ACES + sRGB 编码，实测比给定色亮 ~1.5 档。 */
-    var grid = new THREE.GridHelper(8, 16, 0x53565a, 0x45484c);
+     * 再走一遍 ACES + sRGB 编码，实测比给定色亮 ~1.5 档。
+     * 浅色皮肤下给的是中灰，显示出来才是一道不抢模型的浅灰线。 */
+    var grid = new THREE.GridHelper(8, 16, 0xa8b1bd, 0xc3cad3);
     grid.position.y = 0;
     /* 栅格显隐的唯一来源是显示开关表（A4）；st.showGrid 只是给 UI 高亮读的镜像 */
     st.showGrid = global.SeedViewFlags ? global.SeedViewFlags.get('grid') !== false : st.showGrid;
@@ -2916,7 +2954,7 @@
     geo.computeBoundingSphere();
     var p = st.prefs || prefs();
     var mat = new THREE.LineBasicMaterial({
-      color: new THREE.Color(st.shading === 'wire' ? '#d7dde3' : p.edgeColor),
+      color: new THREE.Color(st.shading === 'wire' ? '#5a6470' : p.edgeColor),
       /* 不透明 + 不混合：透明管线会把 1px 线再压一层，实测对比度掉 20 左右 */
       transparent: false,
       depthWrite: false
@@ -3011,6 +3049,24 @@
   /* backface / material / texture / lighting → 材质与灯光。
    * 只在开关变化时调用（不在渲染循环里分支）。 */
   var CLAY = '#c9ccd4';
+  /* 视口条「照明」菜单的四个预设：默认 / 双灯 / 仅主光 / 环境光。
+   * 强度顺序固定对应 st.lights = [ambient, key, fill, rim]（见视口初始化）。 */
+  var LIGHT_PRESETS = {
+    default: { label: '默认', ambient: 0.18, key: 0.85, fill: 0.26, rim: 0.19 },
+    two: { label: '双灯', ambient: 0.30, key: 0.95, fill: 0.45, rim: 0 },
+    key: { label: '仅主光', ambient: 0.10, key: 1.15, fill: 0.06, rim: 0.05 },
+    ambient: { label: '环境光', ambient: 0.95, key: 0, fill: 0, rim: 0 }
+  };
+  function applyLighting() {
+    var preset = LIGHT_PRESETS[st.lightingPreset] || LIGHT_PRESETS.default;
+    var lit = vfOn('lighting');
+    var keys = ['ambient', 'key', 'fill', 'rim'];
+    (st.lights || []).forEach(function (l, i) {
+      var base = preset[keys[i]] != null ? preset[keys[i]] : l.userData.mdBaseIntensity;
+      l.userData.mdBaseIntensity = base;
+      l.intensity = lit ? base : (l.isAmbientLight ? base : 0);
+    });
+  }
   function applyViewFlags() {
     var side = vfOn('backface') ? THREE.DoubleSide : THREE.FrontSide;
     var useMat = vfOn('material'), useTex = vfOn('texture'), lit = vfOn('lighting');
@@ -3030,11 +3086,7 @@
       });
     });
     /* 关灯只保留环境光：主/补/轮廓归零，形体变平但不会全黑 */
-    (st.lights || []).forEach(function (l) {
-      var base = l.userData.mdBaseIntensity;
-      if (base == null) { base = l.intensity; l.userData.mdBaseIntensity = base; }
-      l.intensity = lit ? base : (l.isAmbientLight ? base : 0);
-    });
+    applyLighting();
   }
 
   /* ---------------- 着色风格：平涂 / UV 岛着色 ----------------
@@ -3162,7 +3214,7 @@
     var isoComp = !!st.isoComp;
     var side = vfOn('backface') ? THREE.DoubleSide : THREE.FrontSide;
     if (st.edgeLines) {
-      st.edgeLines.material.color.set(mode === 'wire' ? '#d7dde3' : p.edgeColor);
+      st.edgeLines.material.color.set(mode === 'wire' ? '#5a6470' : p.edgeColor);
     }
     /* 顶点只在顶点模式下显示（Maya 的行为）：816 面的球体上每个点都画会糊成一片 */
     var showVerts = st.selMode === 'vertex' && vfOn('verts');
@@ -3192,7 +3244,7 @@
           o.visible = mode !== 'wire';
         } else if (part === 'edges') {
           o.visible = showEdges;
-          if (o.material) o.material.color.set(mode === 'wire' ? '#d7dde3' : p.edgeColor);
+          if (o.material) o.material.color.set(mode === 'wire' ? '#5a6470' : p.edgeColor);
         }
       });
     }
@@ -4480,12 +4532,87 @@
     applyName(el);
   }
 
+  /* 命令行里的「视图 / 显示 / 渲染器」快捷命令。
+   * 这些不是网格算子，没有进 SeedCommands 表，所以在查表前先拦截。
+   * 返回 true = 已处理，false = 继续走 SeedCommands。 */
+  function runDeskCommand(v) {
+    var parts = String(v || '').trim().split(/\s+/);
+    var k = (parts[0] || '').toLowerCase();
+    var a = (parts[1] || '').toLowerCase();
+    var b = (parts[2] || '').toLowerCase();
+    if (k === 'camera' || k === 'view') {
+      var map = { persp: 'iso', perspective: 'iso', iso: 'iso', front: 'front', back: 'back',
+        left: 'left', right: 'right', top: 'top', bottom: 'bottom' };
+      if (!map[a]) { setStatus('camera 参数：persp / iso / front / back / left / right / top / bottom', true); return true; }
+      viewFromPreset(map[a]);
+      return true;
+    }
+    if (k === 'shading' || k === 'shade') {
+      if (['shaded-wire', 'shaded', 'wire', 'flat', 'uv'].indexOf(a) < 0) {
+        setStatus('shading 参数：shaded-wire / shaded / wire / flat / uv', true);
+        return true;
+      }
+      setShading(a);
+      return true;
+    }
+    if (k === 'display') {
+      var VF = global.SeedViewFlags;
+      var names = VF ? VF.all().map(function (f) { return f.name; }) : [];
+      if (names.indexOf(a) < 0) {
+        setStatus('display 参数：' + (names.join(' / ') || '栅格 / 边线 / 顶点 / 背面 / 材质 / 纹理 / 光照 / 线框'), true);
+        return true;
+      }
+      var cur = !!VF.get(a);
+      var next = b === 'off' || b === '0' || b === 'false' ? false
+        : b === 'on' || b === '1' || b === 'true' ? true : !cur;
+      VF.set(a, next);
+      setStatus('显示：' + a + ' = ' + (next ? '开' : '关'));
+      return true;
+    }
+    if (k === 'tone' || k === 'tonemapping') {
+      if (['aces', 'reinhard', 'none'].indexOf(a) < 0) {
+        setStatus('tone 参数：aces / reinhard / none', true);
+        return true;
+      }
+      savePrefs({ toneMapping: a });
+      applyRenderTone();
+      setStatus('色调映射：' + toneLabel(a));
+      return true;
+    }
+    if (k === 'exposure') {
+      var n = Number(parts[1]);
+      if (!isFinite(n)) { setStatus('exposure 需要一个数字，例如 exposure 1.2', true); return true; }
+      n = Math.max(0.05, Math.min(4, n));
+      savePrefs({ exposure: n });
+      applyRenderTone();
+      setStatus('曝光：' + n.toFixed(2));
+      return true;
+    }
+    if (k === 'select') {
+      if (['object', 'vertex', 'edge', 'face', 'island'].indexOf(a) < 0) {
+        setStatus('select 参数：object / vertex / edge / face / island', true);
+        return true;
+      }
+      setSelMode(a);
+      return true;
+    }
+    if (k === 'isolate') { toggleIsolate(); return true; }
+    if (k === 'uv') { openUVEditor(); return true; }
+    if (k === 'tex' || k === 'texture') { openTextureEditor(); return true; }
+    if (k === 'projbake') { openProjBake(); return true; }
+    return false;
+  }
+
   function onKeyDown(e) {
     var el = e.target;
     if (!el || el.id !== 'mdCmd' || e.key !== 'Enter') return;
     var v = String(el.value || '').trim();
     el.value = '';
-    if (!v) { setStatus('M1 命令行为占位，M3 起接入'); return; }
+    if (!v) {
+      setStatus('命令示例：camera front / shading wire / display grid off / tone aces / exposure 1.2 / mesh.extrude');
+      return;
+    }
+    if (runDeskCommand(v)) return;
     /* M6a：命令行查同一张命令表（菜单 / Shelf / 工具箱 / 快捷键同源） */
     var SeedCommands = global.SeedCommands;
     if (SeedCommands) {
@@ -4500,7 +4627,7 @@
       setStatus('命令不可用：' + v + (r.reason === 'not-available' ? '（当前上下文不满足）' : '（未注册）'), true);
       return;
     }
-    setStatus(v ? '命令行「' + v + '」：M1 命令行为占位，M3 起接入' : 'M1 命令行为占位，M3 起接入');
+    setStatus(v ? '命令行「' + v + '」：未注册（可以是注册命令或 camera / shading / display / tone / exposure / select / isolate / uv）' : '');
   }
 
   /* ---------------- 快捷键层（S4） ---------------- */
@@ -5206,6 +5333,159 @@
     btn.classList.add('open');
   }
 
+  /* 视口条下拉（相机 / 照明 / 显示 / 渲染器 / 面板）：与主菜单共用 .md-drop 外观，
+   * 但挂在 .md-app 上按按钮实测坐标定位，所以不会撑开菜单条。 */
+  function closePop() {
+    if (st.pop && st.pop.parentNode) st.pop.parentNode.removeChild(st.pop);
+    st.pop = null; st.popItems = null; st.popAnchor = null;
+  }
+  function syncPanels() {
+    var o = document.querySelector('.md-outline');
+    var r = document.querySelector('.md-right');
+    var s = document.querySelector('.md-shelf');
+    if (o) o.hidden = !st.panels.outline;
+    if (r) r.hidden = !st.panels.right;
+    if (s) s.hidden = !st.panels.shelf;
+  }
+  function setShelfTab(key) {
+    if (!key) return;
+    st.shelfTab = key;
+    document.querySelectorAll('[data-md-stab]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.mdStab === key);
+    });
+    var shown = 0;
+    document.querySelectorAll('.md-shelf-grid [data-shelf]').forEach(function (el) {
+      var on = el.dataset.shelf === key;
+      el.hidden = !on;
+      if (on && el.classList.contains('md-sico')) shown++;
+    });
+    var note = $('mdShelfNote');
+    if (note) {
+      note.hidden = shown > 0;
+      if (!shown) note.textContent = key === 'fx' ? 'FX 工具尚未接入（计划表 M8）' : '该页签工具尚未接入';
+    }
+  }
+  function popSpec(kind) {
+    if (kind === 'view') {
+      var views = [['轴测', 'iso'], ['前视图', 'front'], ['后视图', 'back'], ['左视图', 'left'],
+        ['右视图', 'right'], ['顶视图', 'top'], ['底视图', 'bottom']];
+      return {
+        title: '相机视图', items: views.map(function (v) {
+          return {
+            label: v[0], on: st.viewName === VP_LABEL[v[1]],
+            run: function () { viewFromPreset(v[1]); }
+          };
+        })
+      };
+    }
+    if (kind === 'light') {
+      return {
+        title: '照明预设', items: Object.keys(LIGHT_PRESETS).map(function (k) {
+          return {
+            label: LIGHT_PRESETS[k].label, on: st.lightingPreset === k,
+            run: function () {
+              st.lightingPreset = k;
+              applyViewFlags();
+              var lb = $('mdLightLabel');
+              if (lb) lb.textContent = '照明：' + LIGHT_PRESETS[k].label + ' ▾';
+              setStatus('照明：' + LIGHT_PRESETS[k].label);
+            }
+          };
+        })
+      };
+    }
+    if (kind === 'display') {
+      var VF = global.SeedViewFlags;
+      return {
+        title: '显示开关', items: VF ? VF.all().map(function (f) {
+          return {
+            label: f.label, on: !!f.value,
+            run: function () { VF.set(f.name, !f.value); }
+          };
+        }) : []
+      };
+    }
+    if (kind === 'render') {
+      var p = st.prefs || prefs();
+      var setTone = function (k) {
+        return function () {
+          savePrefs({ toneMapping: k });
+          applyRenderTone();
+          setStatus('色调映射：' + toneLabel(k));
+        };
+      };
+      var setExp = function (n) {
+        return function () {
+          savePrefs({ exposure: n });
+          applyRenderTone();
+          setStatus('曝光：' + n.toFixed(2));
+        };
+      };
+      return {
+        title: '渲染器 · 色调 / 曝光', items: [
+          { label: 'ACES Filmic', on: p.toneMapping === 'aces', run: setTone('aces') },
+          { label: 'Reinhard', on: p.toneMapping === 'reinhard', run: setTone('reinhard') },
+          { label: '无色调映射', on: p.toneMapping === 'none', run: setTone('none') },
+          { sep: 1 },
+          { label: '曝光 0.75', on: Math.abs(p.exposure - 0.75) < 1e-6, run: setExp(0.75) },
+          { label: '曝光 1.00', on: Math.abs(p.exposure - 1) < 1e-6, run: setExp(1) },
+          { label: '曝光 1.25', on: Math.abs(p.exposure - 1.25) < 1e-6, run: setExp(1.25) },
+          { label: '曝光 1.50', on: Math.abs(p.exposure - 1.5) < 1e-6, run: setExp(1.5) }
+        ]
+      };
+    }
+    if (kind === 'panel') {
+      var flip = function (k, label) {
+        return function () {
+          st.panels[k] = !st.panels[k];
+          syncPanels();
+          setStatus((st.panels[k] ? '显示' : '隐藏') + '：' + label);
+        };
+      };
+      return {
+        title: '面板', items: [
+          { label: '大纲视图', on: !!st.panels.outline, run: flip('outline', '大纲视图') },
+          { label: '右侧工具箱', on: !!st.panels.right, run: flip('right', '右侧工具箱') },
+          { label: '工具架', on: !!st.panels.shelf, run: flip('shelf', '工具架') },
+          { sep: 1 },
+          { label: '内容浏览器', on: !!st.dockOpen, run: function () { setDock(!st.dockOpen); } }
+        ]
+      };
+    }
+    return null;
+  }
+  function openPop(btn, kind) {
+    if (st.pop && st.popAnchor === btn) { closePop(); return; }
+    closePop();
+    var spec = popSpec(kind);
+    var app = document.querySelector('.md-app');
+    if (!spec || !app) return;
+    var box = document.createElement('div');
+    box.className = 'md-drop md-pop';
+    box.dataset.mdPop = kind;
+    var html = '<div class="md-mtitle">' + esc(spec.title) + '</div>';
+    spec.items.forEach(function (it, i) {
+      if (it.sep) { html += '<i class="md-msep"></i>'; return; }
+      html += '<button type="button" class="md-mi" data-md-pi="' + i + '">' +
+        '<i class="md-chk">' + (it.on ? '✓' : '') + '</i>' +
+        '<span>' + esc(it.label) + '</span><b>' + esc(it.hint || '') + '</b></button>';
+    });
+    box.innerHTML = html;
+    app.appendChild(box);
+    var ar = btn.getBoundingClientRect(), ap = app.getBoundingClientRect();
+    box.style.left = Math.max(4, Math.min(ar.left - ap.left, app.clientWidth - box.offsetWidth - 4)) + 'px';
+    box.style.top = (ar.bottom - ap.top + 3) + 'px';
+    st.pop = box; st.popItems = spec.items; st.popAnchor = btn;
+    box.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-md-pi]') : null;
+      if (!b) return;
+      var it = st.popItems && st.popItems[Number(b.dataset.mdPi)];
+      if (!it || it.sep) return;
+      closePop();
+      if (it.run) it.run();
+    });
+  }
+
   function mdRun(c) {
     mdCloseMenu();
     var m;
@@ -5278,6 +5558,29 @@
     }
     if (t.dataset.mdcmd) {
       mdRun(t.dataset.mdcmd);
+      return;
+    }
+    if (t.dataset.mdPop) {
+      openPop(t, t.dataset.mdPop);
+      return;
+    }
+    if (t.dataset.mdStab) {
+      setShelfTab(t.dataset.mdStab);
+      return;
+    }
+    if (t.dataset.mdOtab) {
+      st.outlineTab = t.dataset.mdOtab;
+      paintOutline();
+      updateChrome();
+      return;
+    }
+    if (t.dataset.mdView) {
+      viewFromPreset(t.dataset.mdView);
+      return;
+    }
+    if (t.dataset.mdTodo) {
+      setStatus('「' + t.dataset.mdTodo + '」尚未接入' +
+        (t.dataset.mdPlan ? '（计划表 ' + t.dataset.mdPlan + '）' : ''), true);
       return;
     }
     if (t.dataset.mdTab) {
@@ -5386,6 +5689,7 @@
         break;
       }
       case 'quad': toggleQuad(); break;
+      case 'view-iso': viewFromPreset('iso'); break;
       case 'isolate': toggleIsolate(); break;
       case 'uv': openUVEditor(); break;
       case 'projbake': openProjBake(); break;
@@ -5551,7 +5855,8 @@
       hbItem(st.node && st.node.visible === false ? '显示对象' : '隐藏对象', 'H', function () { toggleActiveVisible(); }, false, false, '', false, { icon: 'eye', panel: hbPanelSpec('隐藏 / 显示', [], null, '隐藏只影响视口显示，不写几何。') }),
       hbTodo('分组', 'B6', 'group', hbPanelSpec('分组', [{ key: 'n', label: '组名', value: 0, min: 0, max: 1, step: 1, off: true }], null, '分组尚未接入（计划表 B6）。')),
       hbTodo('父子', 'B2b', 'group', hbPanelSpec('父子关系', [], null, '层级尚未接入（计划表 B2b）。')),
-      hbTodo('隔离', 'B6', 'eye', hbPanelSpec('隔离显示', [], null, '隔离尚未接入（计划表 B6）。'))
+      hbItem('隔离', 'B6', function () { toggleIsolate(); }, st.isolate, false, '', false,
+        { icon: 'eye', panel: hbPanelSpec('隔离显示', [], null, '只显示当前对象；再执行一次恢复全部。等价于视口工具条的「隔离」。') })
     ];
   }
 
@@ -5582,7 +5887,8 @@
       }, false, false, '', false, { icon: 'edge', panel: HB_PANEL.loopcut() }),
       hbTodo('倒角', 'A12', 'edge', hbPanelSpec('倒角', [], null, '边倒角尚未接入；请用面倒角（面模式）。')),
       hbTodo('桥接', 'A12', 'edge', hbPanelSpec('桥接', [], null, '边桥接尚未接入；请用面桥接（选中两个面）。')),
-      hbTodo('删除边', 'B4', 'del', hbPanelSpec('删除边', [], null, '算子尚未接入（计划表 B4）。'))
+      hbItem('删除边', 'B4', function () { runOp('mesh.dissolve'); }, false, false, '', false,
+        { icon: 'del', panel: hbPanelSpec('删除边', [], null, '溶解选中边：边必须恰好被两个面共享，两邻面会并成一个面（B4 轻量实现）。') })
     ];
   }
 
@@ -5607,7 +5913,8 @@
         { icon: 'island', panel: hbPanelSpec('展开 UV', [], null, '打开 UV 编辑器并按壳的主平面拍平，然后装箱到 0–1。') }),
       hbItem('排布', '', function () { openUVEditor(); uvCommand('pack'); }, false, false, '', false,
         { icon: 'island', panel: hbPanelSpec('排布 UV', [], null, '货架装箱：按壳高度排序后从左到右摆进 0–1，间距 2%。') }),
-      hbTodo('分离', 'X5g', 'island', HB_PANEL.uv('分离 UV', '缝隙', '—')),
+      hbItem('分离', 'X5g', function () { openUVEditor(); uvCommand('sepShells'); }, false, false, '', false,
+        { icon: 'island', panel: hbPanelSpec('分离 UV', [], null, '把选中的 UV 岛从原壳拆成独立壳；先在 UV 编辑器里选中 UV 点 / 面。') }),
       hbItem('缝合', '', function () { openUVEditor(); uvCommand('stitch'); }, false, false, '', false,
         { icon: 'island', panel: hbPanelSpec('缝合 UV', [], null, '把 2% 容差内的选中 UV 点并到平均位置；先在 UV 编辑器里选点。') }),
       hbItem('投影', '', function () { openUVEditor(); uvCommand('projBox'); }, false, false, '', false,
@@ -6946,6 +7253,17 @@
         quadActive: st.quadActive,
         quadMax: st.quadMax,
         viewName: st.viewName,
+        /* 视口条下拉：照明预设 / 显示开关 / 面板显隐 / 大纲与工具架页签 */
+        lightingPreset: st.lightingPreset,
+        lightIntensity: (st.lights || []).map(function (l) { return l.intensity; }),
+        prefs: (function () {
+          var p = st.prefs || prefs();
+          return { toneMapping: p.toneMapping, exposure: p.exposure };
+        })(),
+        outlineTab: st.outlineTab,
+        shelfTab: st.shelfTab,
+        panels: { outline: !!st.panels.outline, right: !!st.panels.right, shelf: !!st.panels.shelf, dock: !!st.dockOpen },
+        texOpen: !!st.texOpen,
         edgeObjects: !!st.edgeLines,
         vertexObjects: !!st.vertPoints,
         undo: st.history.undo.length,

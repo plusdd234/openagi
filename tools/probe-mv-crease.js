@@ -1,6 +1,6 @@
 /* 探针：多视图「角度线框」的粗细 / 随角度渐变 / 颜色（像素级）
  * 用法：node tools/probe-mv-crease.js
- * 产物：tools/shots/crease-*.png
+ * 产物：运行目录下的 crease-*.png（见 tools/probe-run.js）
  *
  * 场景用一段**折扇**（4 片薄面，相邻夹角 25° / 45° / 75°）：
  * 立方体做不到这件事——它全是 90°，"随角度变粗"在 90° 上退化成"全都一样粗"，
@@ -11,7 +11,7 @@ const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const OUT = path.join(__dirname, 'shots');
+const OUT = require('./probe-run').runDir('probe-mv-crease');
 
 /* 折扇：angles 是相邻两片的夹角（度）。返回 OBJ 文本。
  * 顶点按「每条折边两个点（下/上）」排，面按统一绕序生成，法线才都朝同一侧

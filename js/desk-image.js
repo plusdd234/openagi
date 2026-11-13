@@ -211,6 +211,7 @@
     if(typeof llmStreamRequest !== 'function') return '';
     const raw = await llmStreamRequest(REFINE_SYS, [{ role:'user', content: String(text) }], o.onDelta, {
       conn: conn,
+      app: 'image',
       // 20 秒够改写 150 字了；再久就是在等一个卡住的模型，
       // 与其让用户干等，不如直接拿原话去生图
       timeoutMs: Math.max(6000, Number(o.timeoutMs) || 20000)

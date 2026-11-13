@@ -768,8 +768,21 @@ async function createWindow(){
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      spellcheck: false
+      spellcheck: false,
+      /* 「浏览器」App 用 <webview> 内嵌网页：它是独立 guest，不受 X-Frame-Options 限制，
+         所以 Tripo 这类禁止 iframe 的站也能在工作台里打开。
+         代价是渲染层多了一个可创建 guest 的入口 —— 内容全部来自本地，且下面会把
+         guest 的 preload / Node 能力剥掉，不把主窗口的桥带进外站。 */
+      webviewTag: true
     }
+  });
+
+  /* 外站是任意第三方代码：guest 绝不能继承主窗口的 preload，也不能拿到 Node。
+     这几行是 webviewTag 打开后必须配套的护栏。 */
+  win.webContents.on('will-attach-webview', (_e, webPreferences) => {
+    delete webPreferences.preload;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
   });
 
   const qs = new URLSearchParams({
@@ -955,7 +968,7 @@ if(!gotLock){
     const mediaRoot = app.isPackaged
       ? path.join(app.getPath('userData'), 'media')
       : path.join(REPO_ROOT, 'media');
-    MEDIA = mediaStoreMod.createMediaStore(mediaRoot, { dl: ollamaDl });
+    MEDIA = mediaStoreMod.createMediaStore(mediaRoot, { dl: ollamaDl, trash: p => shell.trashItem(p) });
 
     /* 媒体协议：openagi-media://media/<encodeURIComponent(相对路径)>
      *
@@ -1557,6 +1570,17 @@ if(!gotLock){
     }
   });
 
+  /* 改名：只动索引里的显示名，不动磁盘文件、不改 id ——
+   * 改了 id，所有 blob: 存根和流程引用会一起断。 */
+  ipcMain.handle('asset:rename', async (e, req) => {
+    const r = req || {};
+    try{
+      return await ASSETS.rename(r.ids || (r.id ? [r.id] : []), r.name);
+    }catch(err){
+      return { ok: false, message: String((err && err.message) || err) };
+    }
+  });
+
   /* 从磁盘导入：用户自己攒的图和 glb 也要能进库，
    * 只认程序生成的东西等于又造了一个封闭花园。 */
   ipcMain.handle('asset:import', async () => {
@@ -1601,6 +1625,13 @@ if(!gotLock){
   ipcMain.handle('media:list', () => MEDIA.list());
   ipcMain.handle('media:stat', () => MEDIA.stat());
   ipcMain.handle('media:remove', (e, ids) => MEDIA.remove(ids));
+  ipcMain.handle('media:rename', async (e, req) => {
+    try{
+      return await MEDIA.rename(String((req && req.id) || ''), String((req && req.name) || ''));
+    }catch(err){
+      return { ok: false, message: String((err && err.message) || err) };
+    }
+  });
   ipcMain.handle('media:reveal', async (e, id) => {
     try{
       const abs = MEDIA.absOf(String(id || ''));

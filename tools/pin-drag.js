@@ -5,6 +5,8 @@ const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
 
+const OUT = require('./probe-run').runDir('pin-drag');
+
 const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';   // 禁止测试写入真实本地存储
 
 (async () => {
@@ -89,7 +91,7 @@ const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?
   }));
   console.log('\n当前连线数: ' + info.links.length + ' · SVG 线段数: ' + info.dashed);
 
-  await page.screenshot({ path: path.join(__dirname, '..', 'samples', 'pin_drag.png') });
+  await page.screenshot({ path: path.join(OUT, 'pin_drag.png') });
   console.log('\n错误: ' + errors.length);
   errors.forEach(e => console.log(' - ' + e));
   await browser.close();

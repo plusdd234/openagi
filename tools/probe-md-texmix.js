@@ -17,8 +17,11 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
+const { createRun } = require('./probe-run');
+
+const RUN = createRun('probe-md-texmix');
 const ROOT = path.join(__dirname, '..');
-const TMP_PNG = path.join(__dirname, '_texmix-probe.png');
+const TMP_PNG = RUN.artifact('texmix-probe.png');
 
 let pass = 0, fail = 0;
 const check = (name, ok, info) => {
@@ -372,6 +375,7 @@ function writePNG(file, w, h, rgb) {
     await browser.close().catch(() => {});
     try { fs.unlinkSync(TMP_PNG); } catch (e) {}
   }
+  RUN.finish(fail ? ['失败 ' + fail + ' 项'] : []);
   console.log('\n' + (fail ? '❌ ' + fail + ' 项失败 / ' + pass + ' 项通过' : '✅ 全部通过（' + pass + ' 项）'));
   process.exit(fail ? 1 : 0);
 })();

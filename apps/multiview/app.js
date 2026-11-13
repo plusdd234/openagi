@@ -1,4 +1,4 @@
-/* 多视图 —— 模型转三视图 / 六视图 / 八视图。
+/* 视图工坊 —— 模型多视图出图 / 深度遮罩 / 贴图回投。
  *
  * 它同时是**桌面 App** 和**独立工具页**（multiview.html，双击就能用、不需要桌面）。
  * 所以它的窗口 DOM 单独放在 apps/multiview/body.js 里，两边共用同一份 ——
@@ -13,9 +13,9 @@
 
   registerApp({
     id: 'multiview',
-    name: '多视图',
-    title: '多视图',
-    sub: '模型转三视图 / 六视图 / 八视图',
+    name: '视图工坊',
+    title: '视图工坊',
+    sub: '多视图出图 · 深度遮罩 · 贴图回投',
     glyph: 'mv',
     order: 11,
     cls: 'mv',

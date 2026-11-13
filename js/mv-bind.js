@@ -63,6 +63,15 @@
       try { new ResizeObserver(fitStage).observe(stageHost); } catch (e) {}
     }
 
+    /* 右栏页签：图层 / 导出 / 投射 */
+    var tabs = $('mvRightTabs');
+    if (tabs) {
+      Array.prototype.forEach.call(tabs.querySelectorAll('[data-mv-tab]'), function (b) {
+        b.addEventListener('click', function () { MV.setRightTab(b.dataset.mvTab); });
+      });
+    }
+    MV.setRightTab(state.rightTab || 'layers');
+
     var closeBtn = $('btnMvWinClose');
     if (closeBtn) closeBtn.addEventListener('click', function () { MV.close(); });
 
@@ -178,6 +187,36 @@
     var pjLib = $('mvProjLib');
     if (pjLib) pjLib.addEventListener('click', function () {
       if (window.MVProject) MVProject.saveLib();
+    });
+
+    /* 投射参数（右侧「投射」页）：按 MVProject.FIELDS 绑定，加参数只改那边 */
+    if (window.MVProject) {
+      MVProject.syncSettingsUI();
+      (MVProject.FIELDS || []).forEach(function (f) {
+        var el = $(f.id);
+        if (!el) return;
+        el.addEventListener(f.check ? 'change' : 'input', function () {
+          MVProject.setSetting(f.k, f.check ? !!el.checked : Number(el.value));
+        });
+      });
+    }
+    /* 重新投射：用上次的图 + 当前参数复烘；入口在右栏与结果弹层各一处 */
+    function reproj() { if (window.MVProject) MVProject.reproject(); }
+    var rpBtn = $('mvProjReproj');
+    if (rpBtn) rpBtn.addEventListener('click', reproj);
+    Array.prototype.forEach.call(document.querySelectorAll('[data-mv-proj-reproj]'), function (b) {
+      b.addEventListener('click', reproj);
+    });
+
+    /* 画布级「恢复默认参数」 */
+    var resetBtn = $('mvReset');
+    if (resetBtn) resetBtn.addEventListener('click', function () {
+      MV.resetSet();
+      syncInputs();
+      MV.paintLayers();
+      paintExport();
+      render();
+      say('参数已恢复默认');
     });
 
     /* 生图结果常直接躺在剪贴板里（截图 / 生图页复制）：Ctrl+V 也能投。

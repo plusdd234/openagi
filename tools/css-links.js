@@ -57,8 +57,9 @@ check(dupNums.length === 0, '编号不重复（撞号 = 层叠顺序未定义）
 console.log('\n=== 4. 每份都有来源注释 ===');
 /* 规则 4 只对「从 app.css 拆出来的那些」有意义。
  * 13-imagelab.css 是后来**新增的独立 App 样式**（图像工坊，作用域 .os-win.imglab），
- * 它从来不是 app.css 的一部分，硬给它编一句「拆分来源」反而误导人 —— 白名单放行。 */
-const NOT_SPLIT = ['13-imagelab.css', '14-code.css'];
+ * 16-imgedit.css 同理（专业版图片编辑器 + 图库补充，作用域 .os-win.imgedit / .os-win.lib），
+ * 它们从来不是 app.css 的一部分，硬给它们编一句「拆分来源」反而误导人 —— 白名单放行。 */
+const NOT_SPLIT = ['13-imagelab.css', '14-code.css', '16-imgedit.css'];
 const noHdr = orderedDisk.filter(f => {
   if (NOT_SPLIT.indexOf(f) >= 0) return false;
   const head = fs.readFileSync(path.join(ROOT, 'css', f), 'utf8').slice(0, 200);

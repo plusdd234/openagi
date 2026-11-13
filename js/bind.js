@@ -39,7 +39,12 @@ document.addEventListener('keydown', e => {
   if($('settingsBackdrop').classList.contains('hidden')){
     if(!$('imgEditWin').classList.contains('hidden')) $('imgEditWin').classList.add('hidden');
     else if(!$('modelViewWin').classList.contains('hidden')) { if(window.Model3D) Model3D.closePreview(); }
-    else if(!$('libWin').classList.contains('hidden')) deskCloseWin($('libWin'));
+    /* 图库有选中项时 Esc 先清空选择（library.js 自己处理），再按一次才关窗口——
+     * 否则用户只想取消选中，结果整个库被关掉。 */
+    else if(!$('libWin').classList.contains('hidden')){
+      const libSelN = (typeof libState !== 'undefined' && libState && libState.sel) ? libState.sel.size : 0;
+      if(!libSelN) deskCloseWin($('libWin'));
+    }
     else if(!$('comfyWin').classList.contains('hidden')) deskCloseWin($('comfyWin'));
     else if(!$('storeWin').classList.contains('hidden')) deskCloseWin($('storeWin'));
     else if(!$('modelsWin').classList.contains('hidden')) closeModelsWin();

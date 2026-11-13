@@ -59,6 +59,7 @@
       if (!r || !r.ok || !r.dataURL) throw new Error('文件已丢失');
       state.cur = { id: id, name: m.name, src: r.dataURL };
       state.error = '';
+      if (window.MVProject && MVProject.clearResult) MVProject.clearResult();
       MV.paintModels();
       MV.render();                     // 选完立刻出图：改参数会自动重渲，选模型也该一样
     } catch (e) {
@@ -81,6 +82,7 @@
     rd.onload = function () {
       state.cur = { id: '', name: file.name, src: String(rd.result || '') };
       state.error = '';
+      if (window.MVProject && MVProject.clearResult) MVProject.clearResult();
       MV.paintModels();
       MV.render();
     };

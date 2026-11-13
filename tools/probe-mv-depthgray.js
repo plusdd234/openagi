@@ -1,6 +1,6 @@
 /* 探针：多视图「深度灰」（模型表面到相机的距离 → 灰度）
  * 用法：node tools/probe-mv-depthgray.js
- * 产物：tools/shots/depthgray-*.png
+ * 产物：运行目录下的 depthgray-*.png（见 tools/probe-run.js）
  *
  * 场景是**四条竖板，前后错开成 4 档**：
  * 正视图下就是 4 条灰度不同的竖带，越靠相机越白。
@@ -11,7 +11,7 @@ const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const OUT = path.join(__dirname, 'shots');
+const OUT = require('./probe-run').runDir('probe-mv-depthgray');
 
 function box(c, s) {
   const [cx, cy, cz] = c, [sx, sy, sz] = s.map(v => v / 2);

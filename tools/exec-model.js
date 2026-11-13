@@ -10,6 +10,7 @@ const fs = require('fs');
 
 const TARGET = pathToFileURL(path.join(__dirname, '..', 'index.html')).href + '?nostore=1';   // 禁止测试写入真实本地存储
 const IMG = path.join(__dirname, '..', 'samples', 'ui_linked.png');
+const OUT = require('./probe-run').runDir('exec-model');
 
 (async () => {
   const errors = [];
@@ -206,7 +207,7 @@ const IMG = path.join(__dirname, '..', 'samples', 'ui_linked.png');
 
   console.log('\n=== 错误 (' + errors.length + ') ===');
   errors.slice(0, 8).forEach(e => console.log(' - ' + e));
-  await page.screenshot({ path: path.join(__dirname, '..', 'samples', 'exec_model.png') });
+  await page.screenshot({ path: path.join(OUT, 'exec_model.png') });
   await browser.close();
   const ok = !pureWithExec.length && icOk && idleOk && noneRan && numPulled && edgeUsed && migOk && lockOk && delWorks && dupOk && !errors.length;
   console.log('\n总体: ' + (ok ? '符合新执行模型 ✅' : '存在偏差 ❌'));

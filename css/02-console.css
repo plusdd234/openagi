@@ -190,7 +190,6 @@
   .lib-card:hover { border-color: #cdd3db; box-shadow: 0 1px 4px rgba(20,30,50,.06); }
   .lib-card.on { border-color: #e88a00; background: #fffdf8; box-shadow: 0 0 0 1px #e88a00 inset; }
   .lib-card.miss { border-color: #f0c2be; background: #fffafa; }
-  .lib-card.dragging { opacity: .42; }
   .lib-thumb img { -webkit-user-drag: none; user-select: none; }
   .lib-check {
     position: absolute; top: 8px; left: 8px; z-index: 2; display: flex; padding: 2px;
@@ -230,24 +229,6 @@
     padding: 7px 10px; font-size: 11.5px; line-height: 1.6; color: #1f8a4c;
     background: #f0f9f3; border: 1px solid #cfe8d8; border-radius: 8px;
   }
-  /* 浮动选中条：挂在窗口本体上（不在 libBody 流里）。
-   * ⚠ 绝对不能回到文档流：框选过程中第一次选中会让它插入排版，
-   * 网格整体下移，卡片在手底下跳走，框选就废了 */
-  .lib-selbar {
-    position: absolute; z-index: 72; left: 50%; bottom: 16px;
-    display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 14px;
-    font-size: 11.5px; color: #3a4048; background: rgba(255,255,255,.97);
-    border: 1px solid #dde3ec; border-radius: 999px;
-    box-shadow: 0 10px 26px rgba(20,30,50,.18);
-    opacity: 0; visibility: hidden; pointer-events: none;
-    transform: translateX(-50%) translateY(10px);
-    transition: opacity .16s, transform .16s;
-  }
-  .lib-selbar.show {
-    opacity: 1; visibility: visible; pointer-events: auto;
-    transform: translateX(-50%);
-  }
-  .lib-selcount { font-variant-numeric: tabular-nums; }
   /* 框选进行中：禁掉文本选择，避免整页变蓝 */
   .lib-selecting, .lib-selecting * { user-select: none !important; -webkit-user-select: none !important; }
 
@@ -256,39 +237,6 @@
     position: fixed; z-index: 80; pointer-events: none; border-radius: 4px;
     border: 1px solid #e88a00; background: rgba(232,138,0,.12);
   }
-  /* 拖拽幽灵：跟着指针走，显示「几项」 */
-  .lib-drag-ghost {
-    position: fixed; z-index: 95; pointer-events: none; left: 0; top: 0;
-    display: flex; align-items: center; gap: 8px; padding: 7px 12px 7px 8px;
-    background: #c9342a; color: #fff; border-radius: 999px;
-    font-size: 11.5px; font-weight: 600; white-space: nowrap;
-    box-shadow: 0 10px 24px rgba(201,52,42,.34);
-  }
-  .lib-drag-ghost .lib-drag-n {
-    display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px;
-    background: rgba(255,255,255,.24); border-radius: 999px; font-variant-numeric: tabular-nums;
-  }
-
-  /* 垃圾桶：有选中项才显形，拖拽悬停时变红放大 */
-  .lib-trashcan {
-    position: absolute; z-index: 70; right: 14px; bottom: 14px;
-    display: flex; flex-direction: column; align-items: center; gap: 3px;
-    width: 92px; padding: 11px 8px; border-radius: 12px;
-    background: rgba(255,255,255,.94); border: 1.5px dashed #cfd4dc; color: #8a9098;
-    font-size: 10.5px; line-height: 1.3; text-align: center; cursor: default;
-    box-shadow: 0 6px 16px rgba(20,30,50,.10);
-    opacity: 0; visibility: hidden; transform: translateY(8px) scale(.96);
-    transition: opacity .16s, transform .16s, border-color .12s, background .12s, color .12s;
-  }
-  .lib-trashcan svg { color: #9aa2ad; transition: color .12s; }
-  .lib-trashcan.show { opacity: 1; visibility: visible; transform: none; }
-  .lib-trashcan.hot {
-    border-style: solid; border-color: #c9342a; color: #c9342a;
-    background: #fff1ef; transform: scale(1.07);
-    box-shadow: 0 10px 24px rgba(201,52,42,.28);
-  }
-  .lib-trashcan.hot svg { color: #c9342a; }
-
   /* 卡片磁贴上的 UV 快捷入口：悬停才露出来，不干扰网格本身 */
   .lib-thumb-act {
     position: absolute; right: 6px; bottom: 6px; z-index: 2;
@@ -470,3 +418,237 @@
     color: #1f6b45; background: rgba(240,251,245,.95); border-color: #bfe4d1;
   }
   .lib-thumb-acts .lib-thumb-act[data-lib-ref]:hover { border-color: #1f8a4c; color: #14603a; }
+
+  /* ---- 右键菜单（改名 / 设为壁纸 / 导出 / 删除）----
+   * 常驻 body、绝对定位；点外部或 Esc 关闭（见 library.js 的 libContextOutside/Key）。 */
+  .lib-ctx {
+    position: fixed; z-index: 9000; min-width: 190px; padding: 5px;
+    background: #fff; border: 1px solid #e3e6ea; border-radius: 10px;
+    box-shadow: 0 12px 32px -10px rgba(20,30,50,.28), 0 2px 6px rgba(20,30,50,.08);
+  }
+  .lib-ctx-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 7px 10px; border: 0; border-radius: 6px; background: transparent;
+    font: inherit; font-size: 12px; color: #1f2328; text-align: left; cursor: pointer;
+  }
+  .lib-ctx-item > span { flex: 1; }
+  .lib-ctx-item kbd {
+    font: 10px/1 ui-monospace, Menlo, Consolas, monospace; color: #9aa2ad;
+    padding: 2px 5px; border-radius: 4px; background: #f4f5f7; border: 1px solid #e8eaee;
+  }
+  .lib-ctx-item:hover:not(:disabled) { background: #f2f4f7; }
+  .lib-ctx-item.danger { color: #c9342a; }
+  .lib-ctx-item.danger:hover:not(:disabled) { background: #fdf2f1; }
+  .lib-ctx-item:disabled { opacity: .4; cursor: default; }
+  .lib-ctx-sep { height: 1px; margin: 4px 6px; background: #eef0f3; }
+
+  /* ---- 改名输入框（自绘，替掉 Electron 不支持的 window.prompt）----
+   * 挂在 #libWin 里用 position:absolute（不是 fixed！）：
+   * App 页的祖先 #deskPageApps 带 transform，会抢走 fixed 的包含块 ——
+   * 实测遮罩会按整页而非窗口排（比窗口每边大 37px）。#libWin 自己就是 absolute，
+   * 直接拿它当包含块，遮罩正好等于窗口矩形，和 .lib-mv / .wp-drawer 的做法一致。 */
+  .lib-ask {
+    position: absolute; inset: 0; z-index: 9100;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(24,32,44,.26);
+  }
+  .lib-ask-card {
+    width: min(340px, 86%); padding: 14px 14px 12px;
+    background: #fff; border: 1px solid #e3e6ea; border-radius: 12px;
+    box-shadow: 0 18px 44px -12px rgba(20,30,50,.34), 0 2px 6px rgba(20,30,50,.08);
+  }
+  .lib-ask-title { font-size: 12.5px; font-weight: 600; color: #1f2328; margin-bottom: 9px; }
+  .lib-ask-input {
+    width: 100%; height: 32px; padding: 0 9px;
+    font: inherit; font-size: 12.5px; color: #1f2328;
+    background: #fff; border: 1px solid #d5d9df; border-radius: 7px; outline: none;
+  }
+  .lib-ask-input:focus { border-color: #6b8cff; box-shadow: 0 0 0 3px rgba(107,140,255,.16); }
+  .lib-ask-tip { margin-top: 6px; font-size: 10.5px; line-height: 1.4; color: #98a0aa; }
+  .lib-ask-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+  /* 文件名可双击改名：给个 hover 提示，否则没人知道这个名字能点 */
+  .lib-name[data-lib-rename] { cursor: text; }
+  .lib-name[data-lib-rename]:hover { color: #a35f00; }
+
+  /* =============================================================
+   * 图库界面重设计（2026-11-13）
+   * 目标：更简洁、信息层级更清晰。改动点——
+   *   头部：标题 + 副题 + 占用（右对齐胶囊），去掉大数字抢戏；
+   *   工具栏：搜索框带放大镜图标 + 排序胶囊 + 导入主按钮 + 更多菜单，
+   *           低频操作（重命名/核对磁盘/清空回收站）收进「⋮」。
+   *   卡片：缩略图 + 单行信息（名字 + 徽标），大小/日期合并一行；
+   *   空态：图标 + 标题 + 说明 + 导入按钮。
+   * 保留全部功能：重命名 / 设为壁纸 / 右键菜单 / 框选 / 拖删。
+   * ============================================================= */
+
+  /* ---- 头部：一行内放标题/副题/占用，不再摆两行 ---- */
+  .lib-head {
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  .lib-title { font-size: 15px; font-weight: 650; color: var(--text); }
+  .lib-sub { font-size: 11px; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lib-usage {
+    display: flex; align-items: baseline; gap: 7px; flex: none;
+    padding: 3px 10px; border-radius: 999px;
+    background: #f4f6f9; border: 1px solid #e7eaef;
+  }
+  .lib-usage b { font-size: 13px; font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; }
+  .lib-usage span { font-size: 10.5px; color: var(--muted); }
+
+  /* ---- 工具栏：搜索（带图标）/ 排序 / 操作 ---- */
+  .lib-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 0 2px;
+  }
+  .lib-searchwrap {
+    position: relative; flex: 1; min-width: 160px; display: flex; align-items: center;
+  }
+  .lib-search-ico {
+    position: absolute; left: 9px; width: 13px; height: 13px; color: #9aa2ad; pointer-events: none;
+  }
+  .lib-search {
+    width: 100%; height: 30px; padding: 0 30px 0 28px; font-size: 12px;
+    border: 1px solid #dfe2e7; border-radius: 8px; background: #fff; color: var(--text);
+    outline: none; transition: border-color .13s, box-shadow .13s;
+  }
+  .lib-search::placeholder { color: #a6adba; }
+  .lib-search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,143,217,.13); }
+  .lib-search-clear {
+    position: absolute; right: 6px; width: 20px; height: 20px; border: 0; border-radius: 5px;
+    background: transparent; color: #9aa2ad; font-size: 14px; line-height: 1; cursor: pointer;
+  }
+  .lib-search-clear:hover { background: #f0f2f5; color: var(--text); }
+
+  .lib-sorts { display: flex; gap: 3px; padding: 2px; background: #f2f4f7; border-radius: 8px; }
+  .lib-chip {
+    height: 24px; padding: 0 10px; font-size: 11px; border: 0; border-radius: 6px;
+    background: transparent; color: #6a7488; cursor: pointer; transition: background .12s, color .12s;
+  }
+  .lib-chip:hover { color: var(--text); }
+  .lib-chip.on { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(20,30,50,.08); }
+
+  .lib-acts { display: flex; align-items: center; gap: 6px; }
+  .btn.icon {
+    width: 30px; height: 30px; padding: 0; display: inline-flex; align-items: center;
+    justify-content: center; border-radius: 8px;
+  }
+
+  /* ---- 网格：占满整高，卡片从上往下铺 ---- */
+  .lib-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 12px; align-content: start;
+  }
+
+  /* ---- 卡片：缩略图 + 单行信息 ---- */
+  .lib-card {
+    position: relative; display: flex; flex-direction: column; gap: 0;
+    padding: 0; overflow: hidden;
+    border: 1px solid var(--border); border-radius: 12px; background: #fff; cursor: pointer;
+    user-select: none; -webkit-user-select: none;
+    transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease;
+  }
+  .lib-card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(20,30,50,.10); }
+  .lib-card.on { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(91,143,217,.18); }
+  .lib-card.miss { border-color: #f0c2be; background: #fffafa; }
+
+  /* 缩略图：撑满卡片宽度，不留边框缝隙 */
+  .lib-thumb {
+    position: relative; width: 100%; aspect-ratio: 4 / 3; overflow: hidden;
+    background: #f4f5f7; display: flex; align-items: center; justify-content: center;
+  }
+  .lib-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .lib-thumb img { -webkit-user-drag: none; user-select: none; }
+  .lib-card:hover .lib-thumb img { transform: scale(1.035); }
+  .lib-thumb img { transition: transform .28s ease; }
+  .lib-thumb.model {
+    background: linear-gradient(150deg, #fbfcfe 0%, #eef1f6 55%, #e3e7ee 100%);
+    box-shadow: inset 0 0 0 1px rgba(20,30,50,.05);
+  }
+  .lib-ext {
+    font-size: 12px; font-weight: 700; letter-spacing: .5px; color: #9aa2ad;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .lib-loading { font-size: 12px; color: #b8bec7; }
+  .lib-miss { font-size: 10.5px; color: #c9342a; }
+
+  /* 选中勾：左上角小方块，悬停/选中时浮现 */
+  .lib-check {
+    position: absolute; top: 8px; left: 8px; z-index: 3; display: flex; padding: 2px;
+    border-radius: 6px; background: rgba(255,255,255,.92); box-shadow: 0 1px 4px rgba(20,30,50,.12);
+    opacity: 0; transition: opacity .12s;
+  }
+  .lib-card:hover .lib-check, .lib-card.on .lib-check { opacity: 1; }
+  .lib-check input { margin: 0; cursor: pointer; }
+
+  /* 卡片信息区：名字一行（含徽标），大小/日期一行 */
+  .lib-card-info {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 8px 10px 9px;
+  }
+  .lib-name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .lib-name {
+    flex: 1; min-width: 0;
+    font-size: 12px; font-weight: 500; color: #1f2328; line-height: 1.4;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .lib-name[data-lib-rename] { cursor: text; }
+  .lib-name[data-lib-rename]:hover { color: var(--accent); }
+  .lib-badges { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+  .lib-meta {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 10.5px; color: #9aa2ad; font-variant-numeric: tabular-nums;
+  }
+  .lib-meta .lib-date { margin-left: auto; }
+  .lib-ref { color: #1f8a4c; }
+  .lib-refbadge {
+    padding: 1px 6px; border-radius: 999px; font-size: 9.5px; font-weight: 600;
+    color: #1f6b45; background: #e8f6ee; border: 1px solid #bfe4d1;
+  }
+  .lib-bad { color: #c9342a; font-weight: 600; }
+
+  /* 空态：图标 + 标题 + 说明 + 按钮 */
+  .lib-empty {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    padding: 48px 20px; text-align: center; font-size: 11.5px; line-height: 1.7; color: var(--muted);
+    border: 1px dashed #dfe2e7; border-radius: 12px; background: #fcfcfd;
+  }
+  .lib-empty-ico { font-size: 26px; line-height: 1; }
+  .lib-empty b { font-size: 13px; color: var(--text); }
+  .lib-empty p { margin: 0; }
+
+  /* 磁贴操作按钮（壁纸 / 参考 / UV）：右下角一组，悬停浮现 */
+  .lib-thumb-acts {
+    position: absolute; right: 6px; bottom: 6px; z-index: 2;
+    display: flex; gap: 4px; opacity: 0; transition: opacity .12s;
+  }
+  .lib-card:hover .lib-thumb-acts, .lib-card.on .lib-thumb-acts { opacity: 1; }
+  .lib-thumb-act {
+    height: 20px; padding: 0 8px; font-size: 10px; font-weight: 700; letter-spacing: .06em;
+    color: #3a4048; background: rgba(255,255,255,.93); border: 1px solid #dfe2e7;
+    border-radius: 6px; cursor: pointer;
+    transition: border-color .12s, color .12s;
+  }
+  .lib-thumb-act:hover { border-color: var(--accent); color: var(--accent); }
+  .lib-thumb-acts .lib-thumb-act[data-lib-ref] {
+    color: #1f6b45; background: rgba(240,251,245,.95); border-color: #bfe4d1;
+  }
+  .lib-thumb-acts .lib-thumb-act[data-lib-ref]:hover { border-color: #1f8a4c; color: #14603a; }
+
+  /* 「当前壁纸」卡片描边与徽标 */
+  .lib-card.is-wall::after {
+    content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    box-shadow: 0 0 0 1.5px #a78bfa inset;
+  }
+  .lib-wallbadge {
+    padding: 1px 6px; border-radius: 999px; font-size: 9.5px; font-weight: 600;
+    color: #5b21b6; background: #f3ecff; border: 1px solid #ddd0f5;
+  }
+
+  /* 滚动条（图库/模型库窗口） */
+  #libBody::-webkit-scrollbar { width: 9px; }
+  #libBody::-webkit-scrollbar-thumb { background: #d8dce3; border-radius: 999px; }
+  #libBody::-webkit-scrollbar-thumb:hover { background: #c3c9d2; }
+
+  /* 更多菜单用的「⋮」按钮弹层从此位置向下展开 */
+  .lib-more { margin-top: 2px; }

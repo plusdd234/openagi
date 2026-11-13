@@ -44,13 +44,91 @@
   var state = MV.state;
   var $ = MV.$;
 
-  /* 拟合后往内缩的 texel 数：躲 AI 重绘的轮廓漂移。太小压不住串色，太大会
-   * 啃掉岛的边缘细节。 */
-  var INSET_PX = 1;
   /* 边界拟合的 RDP 容差（px）：小于它视为共线，光栅锯齿被这一步抹掉 */
   var FIT_EPS = 0.75;
   /* 暴露面积判定的深度图分辨率：只用来选视图，不用来落笔 */
   var EXPO_RES = 512;
+
+  /* ---------------- 投射参数（常驻右侧「投射」页） ----------------
+   * inset  拟合后往内缩的 texel 数：躲 AI 重绘的轮廓漂移
+   * fill   次优视图补角的触发门槛（占最佳视图暴露面积的比例，0 = 不补角）
+   * bleed  岛边缘颜色向外扩散的 texel 数：抵消实时渲染的接缝
+   * flipV  UV 的 V 轴与导出图相反时整体上下翻转
+   * 存档独立于 hf_mv_set：改投射参数不该触发整套渲染重跑。 */
+  var SET_KEY = 'hf_mv_proj';
+  var PROJ_FIELDS = [
+    { k: 'inset', def: 1, min: 0, max: 4, step: 1, id: 'mvProjInset', out: 'mvProjInsetV',
+      fmt: function (v) { return v + ' px'; } },
+    { k: 'fill', def: 15, min: 0, max: 60, step: 5, id: 'mvProjFill', out: 'mvProjFillV',
+      fmt: function (v) { return v + '%'; } },
+    { k: 'bleed', def: 0, min: 0, max: 8, step: 1, id: 'mvProjBleed', out: 'mvProjBleedV',
+      fmt: function (v) { return v + ' px'; } },
+    { k: 'flipV', def: false, check: true, id: 'mvProjFlipV' }
+  ];
+  var settings = {};
+
+  function clampField(f, v) {
+    if (f.check) return !!v;
+    v = Number(v);
+    if (!isFinite(v)) v = f.def;
+    return Math.max(f.min, Math.min(f.max, Math.round(v / f.step) * f.step));
+  }
+
+  (function loadSettings() {
+    var raw = null;
+    try { raw = JSON.parse(localStorage.getItem(SET_KEY) || 'null'); } catch (e) { raw = null; }
+    for (var i = 0; i < PROJ_FIELDS.length; i++) {
+      var f = PROJ_FIELDS[i];
+      settings[f.k] = clampField(f, raw ? raw[f.k] : f.def);
+    }
+  })();
+
+  function saveSettings() {
+    try { localStorage.setItem(SET_KEY, JSON.stringify(settings)); } catch (e) {}
+  }
+
+  function syncSettingsUI() {
+    for (var i = 0; i < PROJ_FIELDS.length; i++) {
+      var f = PROJ_FIELDS[i];
+      var el = $(f.id);
+      if (!el) continue;
+      if (f.check) { el.checked = !!settings[f.k]; continue; }
+      el.value = settings[f.k];
+      var out = $(f.out);
+      if (out) out.textContent = f.fmt(Number(settings[f.k]));
+    }
+  }
+
+  function setSetting(k, v) {
+    for (var i = 0; i < PROJ_FIELDS.length; i++) {
+      if (PROJ_FIELDS[i].k !== k) continue;
+      settings[k] = clampField(PROJ_FIELDS[i], v);
+      syncSettingsUI();
+      saveSettings();
+      return settings[k];
+    }
+    return null;
+  }
+
+  function setProgress(pct, txt) {
+    state.projProg = pct == null ? null : { pct: Math.max(0, Math.min(100, pct)), txt: txt || '' };
+    paintProgress();
+  }
+
+  function paintProgress() {
+    var g = state.projProg;
+    var box = $('mvProjProg'), bar = $('mvProjProgBar'), txt = $('mvProjProgTxt');
+    if (box) box.classList.toggle('hidden', !g);
+    if (g) {
+      if (bar) bar.style.width = g.pct + '%';
+      if (txt) txt.textContent = g.txt + ' · ' + g.pct + '%';
+    }
+    var quick = $('mvProjQuick');
+    if (quick && g) quick.textContent = g.txt + ' · ' + g.pct + '%';
+  }
+
+  /* 让出主线程一帧：长任务期间进度条和文字才有机会真正画出来 */
+  function tick() { return new Promise(function (r) { setTimeout(r, 0); }); }
 
   /* ---------------- 小工具 ---------------- */
 
@@ -485,7 +563,7 @@
     for (var i = 0, j = 3; i < mask.length; i++, j += 4) if (d[j] > 127) mask[i] = 1;
     var raw = traceRings(mask, w, h);
     if (!raw.length) return { loc: loc, rings: null };
-    var inset = insetPx == null ? INSET_PX : insetPx;
+    var inset = insetPx == null ? settings.inset : insetPx;
     var rings = [];
     for (var k = 0; k < raw.length; k++) {
       var r = trimClosed(fitRing(raw[k], FIT_EPS), FIT_EPS);
@@ -594,9 +672,69 @@
     return n;
   }
 
+  /* 接缝扩散：把岛边缘颜色向外推 px 个 texel。
+   * 只从「紧邻透明的不透明像素」出发逐层外扩，不扫描整张画布；
+   * 写出的像素当轮不再作为新的采样源继续传，避免同一轮里把颜色拉花。 */
+  function bleedCanvas(cv, px) {
+    var W = cv.width, H = cv.height;
+    var ctx = cv.getContext('2d');
+    var img = ctx.getImageData(0, 0, W, H);
+    var d = img.data;
+    var frontier = [];
+    for (var y = 0; y < H; y++) {
+      for (var x = 0; x < W; x++) {
+        var i = (y * W + x) * 4;
+        if (d[i + 3] < 8) continue;
+        if (x === 0 || y === 0 || x === W - 1 || y === H - 1) { frontier.push(i); continue; }
+        if (d[(y * W + x - 1) * 4 + 3] < 8 || d[(y * W + x + 1) * 4 + 3] < 8 ||
+          d[((y - 1) * W + x) * 4 + 3] < 8 || d[((y + 1) * W + x) * 4 + 3] < 8) frontier.push(i);
+      }
+    }
+    for (var it = 0; it < px && frontier.length; it++) {
+      var next = [];
+      for (var fi = 0; fi < frontier.length; fi++) {
+        var p = frontier[fi] / 4, fx = p % W, fy = Math.floor(p / W);
+        for (var k = 0; k < 4; k++) {
+          var nx = fx + (k === 0 ? -1 : k === 1 ? 1 : 0);
+          var ny = fy + (k === 2 ? -1 : k === 3 ? 1 : 0);
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          var j = (ny * W + nx) * 4;
+          if (d[j + 3] >= 8) continue;
+          var r = 0, g = 0, b = 0, n = 0;
+          for (var m = 0; m < 4; m++) {
+            var mx = nx + (m === 0 ? -1 : m === 1 ? 1 : 0);
+            var my = ny + (m === 2 ? -1 : m === 3 ? 1 : 0);
+            if (mx < 0 || my < 0 || mx >= W || my >= H) continue;
+            var o = (my * W + mx) * 4;
+            if (d[o + 3] < 8) continue;
+            r += d[o]; g += d[o + 1]; b += d[o + 2]; n++;
+          }
+          if (!n) continue;
+          d[j] = r / n; d[j + 1] = g / n; d[j + 2] = b / n; d[j + 3] = 255;
+          next.push(j);
+        }
+      }
+      frontier = next;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  /* V 轴翻转：烘焙是按模型 UV 落笔的；当模型采样方向与导出图相反时，
+   * 整张贴图上下镜像一次即可对齐（岛与掩膜一起翻，不会局部错位）。 */
+  function flipCanvas(cv) {
+    var out = document.createElement('canvas');
+    out.width = cv.width; out.height = cv.height;
+    var x = out.getContext('2d');
+    x.translate(0, cv.height);
+    x.scale(1, -1);
+    x.drawImage(cv, 0, 0);
+    return out;
+  }
+
   /* ---------------- 主流程 ---------------- */
 
   async function runImage(dataUrl, name) {
+    if (state.busy === 'proj') return;      // 防止连点重复烘焙
     if (!state.cur || !state.cur.src) { MV.say('先选一个模型'); return; }
     if (!window.TexPaint || typeof TexPaint.bakeProject !== 'function') {
       MV.say('投影烘焙模块未加载（js/texpaint.js）');
@@ -612,7 +750,16 @@
     MV.setBusy('proj');
     MV.paint();
     try {
+      setProgress(4, '读取生图与模型');
+      await tick();
       var img = await loadImage(dataUrl);
+      /* 源图留在 state：改参数后「重新投射」不必再选一次文件 */
+      state.projSrc = {
+        dataUrl: dataUrl, name: name || '',
+        w: img.naturalWidth || img.width, h: img.naturalHeight || img.height
+      };
+      setProgress(8, '解析导出布局');
+      await tick();
       var L = MV.exportLayout(state.views.length, state.exSize, state.exGap, state.cols, state.compact);
       var model = await Model3D.load(state.cur.src);
       if (!modelHasUV(model)) {
@@ -625,6 +772,8 @@
       });
 
       /* ① 岛收集 + 全模型遮挡件（占据统计走 2D 光栅，不需要再建 WebGL 件） */
+      setProgress(13, '收集 UV 岛与遮挡件');
+      await tick();
       var got = collectIslands(model);
       var islands = got.islands;
       if (!islands.length) throw new Error('模型里没有可投射的 UV 岛');
@@ -639,6 +788,8 @@
       }
       var depths = {};
       for (var di = 0; di < views.length; di++) {
+        setProgress(18 + Math.round((di + 1) / views.length * 22), '计算' + MV.viewName(views[di]) + '深度');
+        await tick();
         depths[views[di]] = renderDepth(blocker, cams[di], EXPO_RES);
       }
       var expoBias = model.radius * 0.01;
@@ -647,6 +798,9 @@
       var groups2 = {};     // **次优视图补角** → [island...]
       var viewCount = {};
       var fillCount = {};
+      var lost = 0;         // 所有视图都照不见的岛（贴图上保持透明）
+      var fillTotal = 0;
+      var fillRatio = settings.fill / 100;
       for (var ii = 0; ii < islands.length; ii++) {
         var best = '', bestA = 0, second = '', secondA = 0;
         for (var wi = 0; wi < views.length; wi++) {
@@ -655,18 +809,21 @@
           if (a > bestA) { secondA = bestA; second = best; bestA = a; best = vk; }
           else if (a > secondA) { secondA = a; second = vk; }
         }
-        if (!best) continue;                    // 哪个视图都照不见 → 保持透明
+        if (!best) { lost++; continue; }        // 哪个视图都照不见 → 保持透明
         (groups[best] || (groups[best] = [])).push(islands[ii]);
         viewCount[best] = (viewCount[best] || 0) + 1;
         /* 包裹型岛（一圈绕住肢体的）只朝一个视图的话，背向那半边会被正面剔除
-         * 吃掉。给一个「次优视图补角」通道：面积占比 ≥ 15% 才值得补，
-         * 且只填主视图完全没落笔的 texel —— 每个采样点仍然只认一个视图，
-         * 两块地盘的边界是硬切换，不做混色。 */
-        if (second && secondA > bestA * 0.15) {
+         * 吃掉。给一个「次优视图补角」通道：面积占比达到阈值才值得补
+         * （fillRatio = 右侧「补角阈值」，0 = 关闭），且只填主视图完全没落笔的
+         * texel —— 每个采样点仍然只认一个视图，两块地盘硬切换、不混色。 */
+        if (fillRatio > 0 && second && secondA > bestA * fillRatio) {
           (groups2[second] || (groups2[second] = [])).push(islands[ii]);
           fillCount[second] = (fillCount[second] || 0) + 1;
+          fillTotal++;
         }
       }
+      setProgress(44, '归类最佳视图');
+      await tick();
 
       /* 裁格：位置按导出布局算，大小按导入图实际尺寸等比缩 */
       var sx = (img.naturalWidth || img.width) / L.w;
@@ -730,12 +887,15 @@
         return r.canvas;
       }
 
-      /* ③④ 主通道：组 = 该视图的全部岛；组内再按岛做矢量化掩膜（内缩 1 texel） */
+      /* ③④ 主通道：组 = 该视图的全部岛；组内再按岛做矢量化掩膜
+       *     （内缩 = 右侧「边缘内缩」，默认 1 texel） */
       var base = null;
       for (var gi = 0; gi < views.length; gi++) {
         var list = groups[views[gi]];
         if (!list || !list.length) continue;
-        var baked = bakeGroup(gi, list, INSET_PX);
+        setProgress(50 + Math.round(gi / views.length * 16), '烘焙' + MV.viewName(views[gi]));
+        await tick();
+        var baked = bakeGroup(gi, list, settings.inset);
         base = base ? mergeInto(base, baked) : baked;
       }
       if (!base) throw new Error('没有任何岛投上颜色：换一张与当前布局对齐的生图，或多勾几个视图');
@@ -745,8 +905,24 @@
       for (var gj = 0; gj < views.length; gj++) {
         var list2 = groups2[views[gj]];
         if (!list2 || !list2.length) continue;
+        setProgress(68 + Math.round(gj / views.length * 14), '补角' + MV.viewName(views[gj]));
+        await tick();
         mergeInto(base, bakeGroup(gj, list2, 0), true);
       }
+
+      /* ⑥ 后处理：接缝扩散（可选）→ V 轴翻转（可选） */
+      if (settings.bleed > 0) {
+        setProgress(86, '扩散接缝');
+        await tick();
+        bleedCanvas(base, settings.bleed);
+      }
+      if (settings.flipV) {
+        setProgress(90, '翻转 V 轴');
+        await tick();
+        base = flipCanvas(base);
+      }
+      setProgress(94, '统计覆盖率');
+      await tick();
 
       var occCount = uvOccupancyCanvas(islands, texSize);
       var id0 = base.getContext('2d').getImageData(0, 0, texSize, texSize).data;
@@ -770,17 +946,47 @@
         painted: painted, occCount: occCount,
         pct: occCount ? Math.round(painted / occCount * 100) : 0,
         islands: islands.length,
+        lost: lost,
+        fillTotal: fillTotal,
+        used: {
+          inset: settings.inset, fill: settings.fill,
+          bleed: settings.bleed, flipV: settings.flipV
+        },
         offScale: offScale, perView: perView,
         root: model.root, name: name || ''
       };
+      state.projProg = null;
       openPanel();
       genPreview();
     } catch (e) {
       MV.say('投射失败：' + MV.friendly(e));
     } finally {
+      state.projProg = null;
       MV.setBusy('');
       MV.paint();
     }
+  }
+
+  /* 换模型时清掉整套投射状态：旧贴图和生图源都是按上一个模型的
+   * 四视图布局烘/生成的，留到新模型上只会悄悄投歪，必须作废。 */
+  function clearResult() {
+    state.proj = null;
+    state.projSrc = null;
+    state.projProg = null;
+    var p = $('mvProjPanel');
+    if (p) p.classList.add('hidden');
+    paint();
+  }
+
+  /* 重新投射：用上次导入的图 + 当前参数复烘。参数改了不必再选文件。 */
+  async function reproject() {
+    var s = state.projSrc;
+    if (!s || !s.dataUrl) {
+      MV.say('还没有可复用的生图——先「导入生图投射」一次');
+      return;
+    }
+    if (!state.cur || !state.cur.src) { MV.say('先选一个模型'); return; }
+    await runImage(s.dataUrl, s.name);
   }
 
   async function fromFile(file) {
@@ -838,57 +1044,159 @@
   /* ---------------- 弹层 ---------------- */
 
   function paint() {
-    var p = $('mvProjPanel');
-    if (!p) return;
     var pr = state.proj;
-    if (!pr) return;
     var img = $('mvProjOut');
-    if (img) { img.src = pr.png; img.classList.remove('hidden'); }
+    if (img) {
+      if (pr && pr.png) { img.src = pr.png; img.classList.remove('hidden'); }
+      else { img.removeAttribute('src'); img.classList.add('hidden'); }
+    }
     var prev = $('mvProjPrev');
-    if (prev && pr.preview) { prev.src = pr.preview; prev.classList.remove('hidden'); }
+    if (prev) {
+      if (pr && pr.preview) { prev.src = pr.preview; prev.classList.remove('hidden'); }
+      else { prev.removeAttribute('src'); prev.classList.add('hidden'); }
+    }
+
+    /* 生图源缩略图：重新投射时确认「复用的是哪一张」 */
+    var src = $('mvProjSrc'), srcBox = $('mvProjSrcBox');
+    if (src && srcBox) {
+      if (state.projSrc) {
+        if (src.getAttribute('src') !== state.projSrc.dataUrl) src.src = state.projSrc.dataUrl;
+        srcBox.classList.add('has');
+      } else {
+        src.removeAttribute('src');
+        srcBox.classList.remove('has');
+      }
+    }
+
+    var stat = $('mvProjStats');
+    if (stat) {
+      if (!pr) stat.innerHTML = '';
+      else {
+        var lostTxt = pr.islands + ' 个 · 归类 ' + (pr.islands - (pr.lost || 0)) +
+          ' · 补角 ' + (pr.fillTotal || 0);
+        var use = pr.used || {};
+        var useTxt = '内缩 ' + (use.inset == null ? '-' : use.inset) + ' px · 补角 ' +
+          (use.fill == null ? '-' : use.fill) + '% · 扩散 ' + (use.bleed == null ? '-' : use.bleed) + ' px' +
+          (use.flipV ? ' · V 翻转' : '');
+        stat.innerHTML =
+          '<span>贴图 <b>' + pr.size + ' × ' + pr.size + '</b></span>' +
+          '<span>覆盖 <b>' + pr.pct + '%</b>（' + MV.fmtN(pr.painted) + ' / ' + MV.fmtN(pr.occCount) + ' texel）</span>' +
+          '<span>UV 岛 <b>' + lostTxt + '</b></span>' +
+          (pr.lost ? '<span>未覆盖 <b class="is-warn">' + pr.lost + ' 个</b>（保持透明）</span>' : '') +
+          '<span>参数 <b>' + useTxt + '</b></span>';
+      }
+    }
+
     var info = $('mvProjInfo');
     if (info) {
-      var s = pr.size + '×' + pr.size + ' · ' + pr.islands + ' UV 岛 · 覆盖 ' + pr.pct +
-        '%（' + MV.fmtN(pr.painted) + ' / ' + MV.fmtN(pr.occCount) + ' texel）';
-      var who = pr.perView.filter(function (v) { return v.islands > 0; })
-        .map(function (v) { return v.name + ' ' + v.islands + (v.fill ? '（补 ' + v.fill + '）' : ''); })
-        .join(' / ');
-      if (who) s += ' · 归类：' + who;
-      if (pr.offScale) s += ' · ⚠ 导入图与当前导出布局尺寸不一致，已等比对齐（建议用导出的网格原图去生图）';
-      s += ' · 空白透明（预览/GLB 以浅灰显示）';
-      if (pr.previewErr) s += ' · 上色预览失败：' + pr.previewErr;
-      info.textContent = s;
+      if (!pr) info.textContent = '';
+      else {
+        var s = pr.size + '×' + pr.size + ' · ' + pr.islands + ' UV 岛 · 覆盖 ' + pr.pct +
+          '%（' + MV.fmtN(pr.painted) + ' / ' + MV.fmtN(pr.occCount) + ' texel）';
+        var who = pr.perView.filter(function (v) { return v.islands > 0; })
+          .map(function (v) { return v.name + ' ' + v.islands + (v.fill ? '（补 ' + v.fill + '）' : ''); })
+          .join(' / ');
+        if (who) s += ' · 归类：' + who;
+        if (pr.lost) s += ' · 未覆盖 ' + pr.lost + ' 个岛（保持透明）';
+        if (pr.offScale) s += ' · ⚠ 导入图与当前导出布局尺寸不一致，已等比对齐（建议用导出的网格原图去生图）';
+        s += ' · 空白透明（预览/GLB 以浅灰显示）';
+        if (pr.previewErr) s += ' · 上色预览失败：' + pr.previewErr;
+        info.textContent = s;
+      }
     }
+
     var sub = $('mvProjSub');
-    if (sub) sub.textContent = (state.cur && state.cur.name) || '';
+    if (sub) {
+      sub.textContent = (state.cur && state.cur.name) || '';
+      if (pr && pr.name) sub.textContent = (sub.textContent ? sub.textContent + ' · ' : '') + pr.name;
+    }
+
+    /* 右侧「投射」页的状态：忙碌时锁按钮，参数改完可直接重新投射 */
+    var busy = !!state.busy;
+    var canRun = !!(state.cur && state.cur.src) && !busy;
+    var pj = $('mvProj');
+    if (pj) pj.disabled = !canRun;
+    var canRepro = canRun && !!(state.projSrc && state.projSrc.dataUrl);
+    var rp = $('mvProjReproj');
+    if (rp) rp.disabled = !canRepro;
+    var re2 = document.querySelectorAll('[data-mv-proj-reproj]');
+    for (var ri = 0; ri < re2.length; ri++) re2[ri].disabled = !canRepro;
+
+    var quick = $('mvProjQuick');
+    if (quick && !state.projProg) {
+      if (pr) quick.textContent = '已投射 · 覆盖 ' + pr.pct + '% · 改参数后可重新投射';
+      else if (state.projSrc) quick.textContent = '已缓存上次生图，可直接重新投射';
+      else quick.textContent = '选一张与当前导出布局对齐的生图';
+    }
+    paintProgress();
+
+    /* 弹层里的导出反馈：按钮换字 + 状态行（底部 say 会被弹层挡住） */
+    var es = MV.exportStatus ? MV.exportStatus() : { kind: '', txt: '', log: null };
+    var PB = [
+      ['mvProjDl', '下载贴图 PNG', 'proj-png'],
+      ['mvProjGlb', '下载带贴图 GLB', 'proj-glb'],
+      ['mvProjLib', '存入图库', 'proj-lib']
+    ];
+    for (var pi = 0; pi < PB.length; pi++) {
+      var pb = $(PB[pi][0]);
+      if (!pb) continue;
+      var pon = es.kind === PB[pi][2];
+      pb.textContent = pon ? '处理中…' : PB[pi][1];
+      if (pon) pb.classList.add('is-busy'); else pb.classList.remove('is-busy');
+    }
+    var stBox = $('mvProjStatus'), stTxt = $('mvProjStatusTxt');
+    if (stBox) {
+      var show = !!(es.kind || es.log);
+      stBox.classList.toggle('hidden', !show);
+      stBox.classList.toggle('is-busy', !!es.kind);
+      stBox.classList.toggle('is-ok', !!(es.log && es.log.ok));
+      stBox.classList.toggle('is-err', !!(es.log && !es.log.ok));
+      if (stTxt) stTxt.textContent = es.kind ? es.txt : (es.log ? es.log.txt : '');
+    }
+
+    var canDl = !!(pr && pr.png) && !busy;
     var dl = $('mvProjDl'), gl = $('mvProjGlb'), lb = $('mvProjLib');
-    if (dl) dl.disabled = !pr.png;
-    if (gl) gl.disabled = !pr.png;
-    if (lb) lb.disabled = !pr.png || !MV.hasDesk();
+    if (dl) dl.disabled = !canDl;
+    if (gl) gl.disabled = !canDl;
+    if (lb) lb.disabled = !canDl || !MV.hasDesk();
   }
 
-  function openPanel() { paint(); var p = $('mvProjPanel'); if (p) p.classList.remove('hidden'); }
+  function openPanel() {
+    syncSettingsUI();
+    if (MV.setRightTab) MV.setRightTab('proj');
+    paint();
+    var p = $('mvProjPanel');
+    if (p) p.classList.remove('hidden');
+  }
   function close() { var p = $('mvProjPanel'); if (p) p.classList.add('hidden'); }
   function isOpen() { var p = $('mvProjPanel'); return !!(p && !p.classList.contains('hidden')); }
 
   /* ---------------- 交出去 ---------------- */
 
-  function downloadPNG() {
+  async function downloadPNG() {
     var pr = state.proj;
-    if (!pr) return;
-    MV.saveBlob(MV.dataUrlToBlob(pr.png), MV.baseName() + '_贴图.png');
-    MV.say('已导出贴图 · ' + pr.size + '×' + pr.size + ' · 未投射区域为透明');
+    if (!pr || state.busy) return;
+    var fn = MV.baseName() + '_贴图.png';
+    MV.exportBegin('proj-png', '正在写出贴图 PNG…');
+    MV.setBusy('export');
+    await tick();                       // 先让按钮换字和扫光画出来
+    var bytes = MV.saveBlob(MV.dataUrlToBlob(pr.png), fn);
+    MV.setBusy('');
+    MV.exportDone('proj-png', fn, bytes, pr.size + '×' + pr.size + ' · 未投射区域透明');
   }
 
   /* 上色 GLB：把烘焙贴图挂到模型上，交 GLTFExporter 内嵌导出。
    * pr.root 是 load() 给的克隆件，随便改材质不脏缓存。 */
   async function downloadGLB() {
     var pr = state.proj;
-    if (!pr || !pr.root) return;
+    if (!pr || !pr.root || state.busy) return;
     if (!window.ModelSplit || typeof ModelSplit.toGLB !== 'function') {
-      MV.say('GLB 导出不可用（js/model-split.js 未加载）');
+      MV.exportFail('proj-glb', 'GLB 导出组件未加载（js/model-split.js）');
       return;
     }
+    var fn = MV.baseName() + '_上色.glb';
+    MV.exportBegin('proj-glb', '正在打包上色 GLB（贴图内嵌）…');
+    MV.setBusy('export');
     try {
       /* 字节直通 + unlit：跟预览同一个口径，颜色不会暗一档、不会多出打光明暗。
        * 用浅灰底合成图，未投射的区域在别的软件里是中性灰而不是黑洞。 */
@@ -913,40 +1221,54 @@
         o.material = flat;
       });
       var buf = await ModelSplit.toGLB(pr.root);
-      MV.saveBlob(MV.dataUrlToBlob(ModelSplit.bufToDataURL(buf, 'model/gltf-binary')), MV.baseName() + '_上色.glb');
-      MV.say('已导出上色 GLB · 贴图已内嵌');
+      var bytes = MV.saveBlob(MV.dataUrlToBlob(ModelSplit.bufToDataURL(buf, 'model/gltf-binary')), fn);
+      MV.setBusy('');
+      MV.exportDone('proj-glb', fn, bytes, '贴图已内嵌');
     } catch (e) {
-      MV.say('导出 GLB 失败：' + MV.friendly(e));
+      MV.setBusy('');
+      MV.exportFail('proj-glb', MV.friendly(e));
     }
   }
 
   async function saveLib() {
     var pr = state.proj;
-    if (!pr) return;
+    if (!pr || state.busy) return;
     var d = MV.lib();
     if (!d || typeof d.assetPut !== 'function') {
-      MV.say('浏览器里存不进图库，用「下载贴图 PNG」');
+      MV.exportFail('proj-lib', '浏览器里存不进图库，用「下载贴图 PNG」');
       return;
     }
+    MV.exportBegin('proj-lib', '正在把贴图写入图库…');
+    MV.setBusy('saving');
+    var r = null, err = '';
     try {
-      var r = await d.assetPut({
+      r = await d.assetPut({
         kind: 'image', name: MV.baseName() + '_贴图.png', ext: 'png',
         data: pr.png, source: 'multiview'
       });
-      MV.say(r && r.ok ? '贴图已存入图库' : '入库失败：' + ((r && r.message) || '未知原因'));
     } catch (e) {
-      MV.say('入库失败：' + MV.friendly(e));
+      err = MV.friendly(e);
     }
+    MV.setBusy('');
+    if (!err && r && r.ok) MV.exportDone('proj-lib', MV.baseName() + '_贴图.png', 0, '图库里能看到这张');
+    else MV.exportFail('proj-lib', err || (r && r.message) || '未知原因');
   }
 
   window.MVProject = {
     fromFile: fromFile,
     runImage: runImage,
+    reproject: reproject,
+    clearResult: clearResult,
     downloadPNG: downloadPNG,
     downloadGLB: downloadGLB,
     saveLib: saveLib,
     close: close,
     isOpen: isOpen,
-    paint: paint
+    paint: paint,
+    /* 右侧「投射」页的参数控件：绑定与回填由 mv-bind / mv-project 共用一份表 */
+    FIELDS: PROJ_FIELDS,
+    settings: function () { return JSON.parse(JSON.stringify(settings)); },
+    setSetting: setSetting,
+    syncSettingsUI: syncSettingsUI
   };
 })();

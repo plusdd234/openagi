@@ -1,5 +1,8 @@
 # apps/ —— 一个目录就是一个 App
 
+> 总规范见根目录 [`AGENTS.md`](../AGENTS.md)：App 开发、测试、文件管理、并行协作以那里为准。
+> 本文件只补充 App 目录层面的细则。
+
 **给并行开发的 AI 看的三句话**：只写你自己的 `apps/<id>/` 目录；不要碰 `index.html`、`js/`、`css/`；
 写完跑 `node tools/app-scan.js`，再跑 `node tools/app-registry.js` 确认没踩坑。
 
@@ -158,7 +161,7 @@ window.MV_BODY = `<div class="mv-wrap"> … </div>`;
 
 ---
 
-## 迁移状态：14 个 App 全部在这儿了（2026-11-12）
+## 迁移状态：全部 App 都在 `apps/` 里了（2026-11-12）
 
 老写法是「`index.html` 里一段 `.os-win` 块 + `desk-shell.js` 里三张表各加一行」，
 两处都是**所有 App 共用的同一段文本**，两路 AI 同时加 App 必冲突。现在：
@@ -166,8 +169,6 @@ window.MV_BODY = `<div class="mv-wrap"> … </div>`;
 | App id | 目录 | 备注 |
 | --- | --- | --- |
 | `chat` | `apps/chat/` | 输入条 `#deskAiWrap` 跟着窗口归属搬进 `#chatWin` |
-| `bare` | `apps/bare/` | |
-| `img2svg` | `apps/img2svg/` | 用 `bodyCls: 'isvg-body'` |
 | `store` | `apps/store/` | |
 | `comfy` | `apps/comfy/` | |
 | `gallery` | `apps/gallery/` | 同时注册 `modelLib`，两者共用 `#libWin` |

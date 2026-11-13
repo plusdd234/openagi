@@ -1,0 +1,418 @@
+/* 浏览器 App 的样式。作用域收在 .os-win.browser / .bw-*，不会波及别的 App。
+ *
+ * 观感跟着整站浅色桌面走：白底、#dfe3e9 细边、#f0b429 作为唯一强调色。
+ * 这里必须把窗口 body 的内边距清掉 —— 网页要贴着边缘铺满，1px 的留白都会显得像图片框。 */
+
+.os-win.browser .os-win-body {
+  padding: 0;
+  display: flex;
+  overflow: hidden;
+  background: #fff;
+}
+
+.bw-app {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  color: #1f2328;
+  font: inherit;
+  font-size: 13px;
+}
+
+/* ---------- 地址栏 ---------- */
+.bw-bar {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
+  background: linear-gradient(180deg, #fcfdfe 0%, #f2f4f7 100%);
+  border-bottom: 1px solid #e4e8ee;
+}
+
+/* 加载进度：只在真的在加载时出现，从左侧滑过一条金色短线 */
+.bw-bar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 34%;
+  height: 2px;
+  border-radius: 2px;
+  background: #f0b429;
+  opacity: 0;
+  transform: translateX(-110%);
+}
+.bw-app.is-loading .bw-bar::after {
+  opacity: 1;
+  animation: bw-run 1.1s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+@keyframes bw-run {
+  from { transform: translateX(-110%); }
+  to   { transform: translateX(330%); }
+}
+
+.bw-btn {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #4b5563;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.bw-btn svg { width: 17px; height: 17px; }
+.bw-btn:hover { background: #eaeef3; border-color: #e0e5ec; color: #1f2328; }
+.bw-btn:active { background: #e1e6ed; }
+.bw-btn:disabled { opacity: .32; cursor: default; background: transparent; border-color: transparent; }
+.bw-btn-ext { margin-left: 1px; }
+
+.bw-addr {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  border: 1px solid #dfe3e9;
+  border-radius: 999px;
+  background: #fff;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.bw-addr:focus-within {
+  border-color: #f0b429;
+  box-shadow: 0 0 0 3px rgba(240, 180, 41, .16);
+}
+
+.bw-sec {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: #9aa1ab;
+  transition: color .15s ease;
+}
+.bw-sec svg { width: 14px; height: 14px; }
+.bw-sec.is-warn { color: #d19a1c; }
+
+.bw-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #1f2328;
+  font: inherit;
+  font-size: 12.5px;
+  letter-spacing: .1px;
+}
+.bw-input::placeholder { color: #a6adb7; }
+
+.bw-go {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #8b93a0;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.bw-go svg { width: 15px; height: 15px; }
+.bw-go:hover { background: #fdf3dc; color: #b67a05; }
+
+/* ---------- 视口 ---------- */
+.bw-view {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #fff;
+}
+
+.bw-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+/* webview 默认是 inline-flex + 300×150，这里让它跟着视口铺满 */
+.bw-webview { display: flex; }
+
+/* webview 不能用 display:none（guest 会被压成 0 尺寸），收起时用 visibility */
+.bw-frame.is-off {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* ---------- 起始页：AI 创作导航 ---------- */
+.bw-start {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 28px 34px 40px;
+  background:
+    radial-gradient(920px 440px at 50% -14%, #fff8e8 0%, rgba(255, 255, 255, 0) 62%),
+    radial-gradient(620px 320px at 100% 0%, #f2f7ff 0%, rgba(255, 255, 255, 0) 58%),
+    #fff;
+}
+
+.bw-start-in { max-width: 880px; margin: 0 auto; }
+
+.bw-hero { display: flex; align-items: center; gap: 14px; }
+.bw-hero-ico {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: linear-gradient(160deg, #fff6e1, #ffe3a6);
+  border: 1px solid #f6e2b8;
+  color: #b67a05;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 10px 22px -16px rgba(166, 118, 26, .6);
+}
+.bw-hero-ico svg { width: 24px; height: 24px; }
+.bw-hero h1 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: .2px;
+}
+.bw-hero p {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  color: #6b7280;
+}
+.bw-hero-tip {
+  margin: 7px 0 0 60px;
+  font-size: 11.5px;
+  color: #a6adb7;
+}
+
+/* 分组：一条金色短杠 + 组名 + 右侧释义，读完就知道这排是干什么的 */
+.bw-nav { margin-top: 22px; }
+.bw-group { margin-top: 19px; }
+.bw-group:first-child { margin-top: 0; }
+.bw-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 2px 9px;
+}
+.bw-group-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: #5f6673;
+}
+.bw-group-title::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 3px;
+  height: 11px;
+  border-radius: 2px;
+  background: #f0b429;
+}
+.bw-group-hint { font-size: 10.5px; color: #a6adb7; }
+
+.bw-quick {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
+  gap: 9px;
+}
+
+.bw-link {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  text-align: left;
+  border: 1px solid #e8ebef;
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+.bw-link:hover {
+  border-color: #f0c96a;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px -16px rgba(28, 38, 60, .5);
+}
+.bw-link:active { transform: translateY(0); }
+
+/* 瓷贴图标：单字 / 缩写 + 站点自己的色相，不用外链 favicon */
+.bw-link-ico {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--tint, #f2f4f7);
+  color: var(--ink, #4a5568);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: .01em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .8), inset 0 0 0 1px rgba(28, 38, 60, .04);
+}
+
+.bw-link-main { flex: 1 1 auto; min-width: 0; }
+.bw-link-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bw-link-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #1f2328;
+}
+.bw-link-badge {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border: 1px solid #f0d79a;
+  border-radius: 999px;
+  background: #fdf6e6;
+  color: #8a6108;
+  font-size: 9.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.bw-link-note {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.8px;
+  color: #9aa1ab;
+}
+.bw-link-go {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: #ccd1d8;
+  transition: color .15s ease, transform .15s ease;
+}
+.bw-link:hover .bw-link-go { color: #b67a05; transform: translate(1px, -1px); }
+
+.bw-note {
+  margin-top: 26px;
+  padding: 12px 14px;
+  border: 1px solid #f3e4c4;
+  border-radius: 12px;
+  background: #fdf9f0;
+  color: #7a6326;
+  font-size: 12px;
+  line-height: 1.75;
+}
+.bw-note b { color: #5f4c17; }
+
+/* ---------- 状态栏 ---------- */
+.bw-status {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  padding: 0 12px;
+  border-top: 1px solid #edf0f4;
+  background: #fbfcfd;
+  font-size: 11.5px;
+  color: #9aa1ab;
+}
+
+.bw-status-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.bw-status-msg {
+  flex: 0 0 auto;
+  color: #b67a05;
+}
+
+.bw-status-ext {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #8b93a0;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.bw-status-ext:hover { color: #b67a05; }
+.bw-status-ext:disabled { opacity: .4; cursor: default; }
+
+/* ---------- 缩放 ----------
+   只有 webview 有 setZoomFactor；iframe 模式下整组控件不出现，免得点了没反应。 */
+.bw-app:not(.is-web) .bw-zoom { display: none; }
+
+.bw-zoom {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+}
+.bw-zoom-btn, .bw-zoom-val, .bw-zoom-fit {
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #8b93a0;
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bw-zoom-btn { width: 20px; padding: 0; font-size: 13px; }
+.bw-zoom-val { min-width: 40px; font-variant-numeric: tabular-nums; }
+.bw-zoom-fit { border-color: #e4e8ee; }
+.bw-zoom-btn:hover, .bw-zoom-val:hover, .bw-zoom-fit:hover {
+  background: #eef1f5;
+  color: #1f2328;
+}
+.bw-zoom-fit.is-on {
+  color: #b67a05;
+  border-color: #f0c96a;
+  background: #fdf6e6;
+}
+
+/* 窄窗口时把起始页留白收一点，卡片列数自动下降 */
+@media (max-width: 720px) {
+  .bw-start { padding: 22px 20px 28px; }
+  .bw-quick { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+  .bw-hero-tip { margin-left: 0; }
+}

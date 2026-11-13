@@ -92,6 +92,18 @@
   }
 
   async function chat(c, messages, maxTokens) {
+    /* 统一走多 Key 路由层：同一 base 下有多条 Key 时按 app 选空闲的。
+       独立页也加载了 llm-router.js，因此这里不再是旁路。 */
+    if (typeof window !== 'undefined' && window.LLMRouter && typeof window.LLMRouter.postChat === 'function') {
+      return await window.LLMRouter.postChat({
+        app: 'split',
+        conn: { base: c.base, key: c.key, model: c.model, via: 'local' },
+        messages: messages,
+        temperature: 0,
+        max_tokens: maxTokens || 1600,
+        timeoutMs: TIMEOUT
+      });
+    }
     var url = c.base + '/chat/completions';
     var body = JSON.stringify({
       model: c.model,

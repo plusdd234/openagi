@@ -7,7 +7,9 @@
 const { chromium } = require('playwright-core');
 const { pathToFileURL } = require('url');
 const path = require('path');
+const { createRun } = require('./probe-run');
 
+const RUN = createRun('desk-tabs');
 let fails = 0;
 const check = (ok, name, extra) => {
   console.log((ok ? ' ✅ ' : ' ❌ ') + name + (extra ? ' · ' + String(extra).slice(0, 160) : ''));
@@ -197,7 +199,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log('\n=== 9. 页面零错误 ===');
   check(errors.length === 0, '无页面异常', errors.slice(0, 3).join(' | '));
 
-  await page.screenshot({ path: 'C:/Users/30297/AppData/Local/Temp/desk_tabs.png' });
+  await RUN.shot(page, 'desk-tabs.png');
   await browser.close();
 
   console.log('\n=== ' + (fails === 0 ? '全部通过' : fails + ' 项失败') + ' ===');
