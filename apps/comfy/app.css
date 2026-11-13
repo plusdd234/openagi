@@ -1,0 +1,133 @@
+/* 本地生图（ComfyUI）App 的窗口层样式。
+ *
+ * 结构：顶部状态条（引擎生命周期） + 下方舞台（内嵌 ComfyUI 网页 / 管理面板）。
+ * 作用域全部收在 `.os-win.comfy` 与 `.cf-*` 下，不会波及别的 App；
+ * 面板内部原有的 `.cf-hero / .cf-facts / .cf-log` 仍在 02-console.css 里，这里只补外壳。
+ *
+ * ⚠ 窗口 body 的内边距必须清掉：网页要贴着边缘铺满，1px 留白都像图片框。
+ *   这与浏览器 App 的做法一致，选择器带 `.os-win.comfy` 前缀，不影响公共类。 */
+
+.os-win.comfy .os-win-body {
+  padding: 0;
+  display: flex;
+  overflow: hidden;
+  background: #fff;
+}
+
+/* 外壳自己撑满：App 页里由 .dapp-host 定尺寸，浮动窗口时靠 min-height 兜底。 */
+.cf-app {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background: #fff;
+  color: #1f2328;
+}
+
+/* ---------- 顶部状态条 ---------- */
+.cf-bar {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 10px 0 12px;
+  background: linear-gradient(180deg, #fcfdfe 0%, #f2f4f7 100%);
+  border-bottom: 1px solid #e4e8ee;
+}
+
+.cf-bar-title {
+  flex: 0 0 auto;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: .1px;
+  color: #1f2328;
+}
+
+.cf-bar-state {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1.7;
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: #f4f5f7;
+  color: #6a7488;
+}
+.cf-bar-state.ok { background: #eaf6ee; color: #1f8a4c; }
+.cf-bar-state.wait { background: #fff4e5; color: #a35f00; }
+
+.cf-bar-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #a6adb7;
+  font-variant-numeric: tabular-nums;
+}
+
+.cf-tb {
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid #e0e5ec;
+  border-radius: 7px;
+  background: #fff;
+  color: #4b5563;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 22px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.cf-tb:hover { background: #eef1f5; border-color: #d6dbe3; color: #1f2328; }
+.cf-tb:active { background: #e6eaf0; }
+.cf-tb.primary { background: #fdf6e6; border-color: #f0c96a; color: #8a6108; }
+.cf-tb.primary:hover { background: #fbecc9; }
+.cf-tb:disabled { opacity: .4; cursor: default; background: #fff; border-color: #e0e5ec; color: #4b5563; }
+.cf-tb.primary:disabled { background: #fff; border-color: #e0e5ec; color: #4b5563; }
+.cf-tb[hidden] { display: none; }
+
+/* ---------- 舞台：网页与面板叠在同一块区域 ---------- */
+.cf-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 320px;
+  background: #fff;
+}
+
+.cf-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+/* webview 默认 inline-flex + 300×150，这里让它跟着舞台铺满 */
+.cf-frame.cf-webview { display: flex; }
+
+/* webview 不能用 display:none（guest 会被压成 0 尺寸），收起时用 visibility */
+.cf-frame.is-off { visibility: hidden; pointer-events: none; }
+
+/* 管理面板：引擎状态、安装、日志。和网页界面互斥显示。 */
+.cf-panel {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 16px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #f7f8fa;
+}
+.cf-panel.is-off { display: none; }
+
+/* 面板是窄窗口，卡片别拉成一条长线 */
+.cf-panel > * { max-width: 760px; }

@@ -25,6 +25,261 @@ const cfState = {
   error: '', log: '', stats: null
 };
 
+/* ComfyUI 自己就是一个网页界面。内嵌之后，「启动引擎 → 打开网页」这条外部流程
+ * 就收进了这个窗口：顶部状态条管生命周期，中间舞台直接显示工作流画布。
+ *
+ * 容器选择与浏览器 App 一致：
+ *   · Electron（主进程开了 webviewTag）→ <webview>，不受 X-Frame-Options 限制；
+ *   · 普通浏览器 / 探针 → <iframe>（ComfyUI 是本地 aiohttp，没有 XFO，实测可嵌）。
+ *
+ * ⚠ webview 必须有初始 src=about:blank，否则不会创建 guest、也不会派发 dom-ready，
+ *   之后 loadURL 必抛错（浏览器 App 里踩过，一次白屏）。
+ * ⚠ 不要用 display:none 收 webview：guest 会被压成 0 尺寸。收起统一用 .is-off（visibility）。
+ */
+const CF_UI = 'http://127.0.0.1:8188/';
+
+const cfUi = {
+  frame: null,
+  web: false,        /* true = Electron webview */
+  ready: false,      /* webview 要等 dom-ready 才允许 loadURL */
+  loaded: false,     /* 界面已经加载过（避免每次重绘都重新导航） */
+  pending: '',
+  manage: false,     /* 用户手动切到管理面板 */
+  fail: '',          /* 界面加载失败原因 */
+  wasRunning: false,
+  retry: 0,
+  poll: 0
+};
+
+/* 外壳只画一次。之后 cfPaint() 只重写 .cf-panel 的内容 ——
+ * 以前它整块重写 #cfApp，内嵌网页会被一起销毁再重建（工作流状态全丢）。 */
+function cfShellHtml(){
+  return '<div class="cf-bar">' +
+      '<span class="cf-dot off"></span>' +
+      '<span class="cf-bar-title">ComfyUI</span>' +
+      '<span class="cf-bar-state">检测中…</span>' +
+      '<span class="cf-bar-url">127.0.0.1:8188</span>' +
+      '<button type="button" class="cf-tb" data-cf-act="reload" hidden>刷新界面</button>' +
+      '<button type="button" class="cf-tb" data-cf-act="manage" hidden>管理</button>' +
+      '<button type="button" class="cf-tb" data-cf-act="openui" hidden>浏览器打开</button>' +
+      '<button type="button" class="cf-tb" data-cf-act="launch" hidden>启动</button>' +
+      '<button type="button" class="cf-tb" data-cf-act="stop" hidden>停止</button>' +
+    '</div>' +
+    '<div class="cf-stage">' +
+      '<div class="cf-panel"></div>' +
+    '</div>';
+}
+
+function cfEnsureShell(){
+  const box = $('cfApp');
+  if(!box) return false;
+  if(typeof box.querySelector === 'function' && box.querySelector('.cf-bar')) return true;
+  box.innerHTML = cfShellHtml();
+  cfBuildFrame();
+  cfWireBar();
+  return true;
+}
+
+/* 面板节点：真实 DOM 里是 .cf-panel；老测试沙箱没有子结构，退回整块 #cfApp。 */
+function cfPanel(){
+  const box = $('cfApp');
+  if(!box) return null;
+  const p = (typeof box.querySelector === 'function') ? box.querySelector('.cf-panel') : null;
+  return p || box;
+}
+
+function cfBuildFrame(){
+  if(cfUi.frame) return;
+  const box = $('cfApp');
+  const stage = (box && typeof box.querySelector === 'function') ? box.querySelector('.cf-stage') : null;
+  if(!stage || typeof document === 'undefined' || typeof document.createElement !== 'function') return;
+
+  let el = null;
+  let web = false;
+  try{
+    const wv = document.createElement('webview');
+    if(wv && typeof wv.loadURL === 'function'){ el = wv; web = true; }
+  }catch(e){ /* 普通浏览器里没有 webview */ }
+  if(!el){
+    el = document.createElement('iframe');
+    el.setAttribute('referrerpolicy', 'no-referrer');
+  }
+
+  el.className = 'cf-frame' + (web ? ' cf-webview' : '') + ' is-off';
+  el.setAttribute('title', 'ComfyUI 界面');
+  if(web){
+    el.setAttribute('webpreferences', 'nodeIntegration=no, contextIsolation=yes');
+    el.setAttribute('src', 'about:blank');
+  }
+
+  stage.appendChild(el);
+  cfUi.frame = el;
+  cfUi.web = web;
+  cfUi.ready = !web;
+  cfWireFrame();
+}
+
+function cfWireFrame(){
+  const f = cfUi.frame;
+  if(!f) return;
+
+  if(cfUi.web){
+    f.addEventListener('dom-ready', () => {
+      cfUi.ready = true;
+      const url = cfUi.pending;
+      cfUi.pending = '';
+      if(url || cfState.running) cfLoadFrame(true);
+      cfSyncChrome();
+    });
+    f.addEventListener('did-start-loading', () => cfSyncChrome());
+    f.addEventListener('did-stop-loading', () => {
+      cfUi.fail = '';
+      cfSyncChrome();
+    });
+    f.addEventListener('did-fail-load', e => {
+      if(e && e.errorCode === -3) return;   /* -3 = 主动中止 / 切换地址 */
+      cfFrameFailed('界面加载失败：' + ((e && e.errorDescription) || (e && e.errorCode) || '未知原因'));
+    });
+    return;
+  }
+
+  /* iframe 加载失败没有可靠事件（被拦时也只派发 load），
+     只在引擎明明在跑、页面却迟迟没 load 的情况下给一句提示。 */
+  f.addEventListener('load', () => {
+    cfUi.fail = '';
+    cfSyncChrome();
+  });
+}
+
+function cfLoadFrame(force){
+  cfBuildFrame();
+  if(!cfUi.frame) return;
+  if(!cfUi.ready){ cfUi.pending = CF_UI; return; }
+  if(!force && cfUi.loaded) return;
+  cfUi.fail = '';
+  cfUi.loaded = true;
+  try{
+    if(cfUi.web) cfUi.frame.loadURL(CF_UI);
+    else cfUi.frame.src = CF_UI;
+  }catch(e){
+    cfFrameFailed('界面加载失败：' + ((e && e.message) || e));
+  }
+}
+
+/* 刷新必须绕开「src 赋同值不重载」：iframe 加一个一次性参数，webview 直接 reload。 */
+function cfReloadFrame(){
+  cfBuildFrame();
+  if(!cfUi.frame) return;
+  if(!cfUi.ready){ cfUi.pending = CF_UI; return; }
+  if(cfUi.web){
+    try{ cfUi.frame.reload(); cfUi.fail = ''; cfSyncChrome(); return; }
+    catch(e){ /* 还没加载过就退回 loadURL */ }
+  }
+  cfUi.loaded = false;
+  cfUi.fail = '';
+  const url = CF_UI + (CF_UI.indexOf('?') < 0 ? '?' : '&') + '_r=' + Date.now();
+  try{ cfUi.frame.src = url; }catch(e){ cfUi.fail = String((e && e.message) || e); }
+  cfSyncChrome();
+}
+
+/* 引擎停了就把界面卸掉：留着旧的错误页只会在下次启动时先闪一下白屏。 */
+function cfUnloadFrame(){
+  cfUi.loaded = false;
+  if(!cfUi.frame) return;
+  try{
+    if(cfUi.web) cfUi.frame.loadURL('about:blank');
+    else cfUi.frame.src = 'about:blank';
+  }catch(e){ /* dom-ready 还没来，下一次加载会覆盖 */ }
+}
+
+function cfFrameFailed(msg){
+  cfUi.fail = msg;
+  cfUi.loaded = false;
+  cfUi.manage = true;
+  cfPaint();
+  /* 引擎刚起来时 8188 会短暂拒绝连接：等两秒自动再接一次，不逼用户点按钮 */
+  clearTimeout(cfUi.retry);
+  cfUi.retry = setTimeout(() => {
+    cfDetect(true).then(() => {
+      if(!cfState.running) return;
+      cfUi.manage = false;
+      cfUi.fail = '';
+      cfLoadFrame(true);
+      cfPaint();
+    }).catch(() => {});
+  }, 2200);
+}
+
+function cfWireBar(){
+  const box = $('cfApp');
+  const bar = (box && typeof box.querySelector === 'function') ? box.querySelector('.cf-bar') : null;
+  if(!bar || bar.dataset.wired === '1') return;
+  bar.dataset.wired = '1';
+  bar.addEventListener('click', e => {
+    const btn = (e.target && typeof e.target.closest === 'function') ? e.target.closest('[data-cf-act]') : null;
+    if(!btn || btn.disabled) return;
+    cfDoAct(btn.getAttribute('data-cf-act'));
+  });
+}
+
+/* 状态条的按钮与状态词：三态（运行中 / 启动中 / 未启动）对应三组按钮。 */
+function cfSyncChrome(){
+  const box = $('cfApp');
+  const bar = (box && typeof box.querySelector === 'function') ? box.querySelector('.cf-bar') : null;
+  if(!bar) return;
+
+  const running = cfState.running;
+  const starting = cfState.busy === '启动中';
+  const desk = !!cfDesk();
+
+  let word = '未启动';
+  let tone = 'off';
+  if(!desk){ word = '网页版'; }
+  else if(running){ word = '运行中'; tone = 'ok'; }
+  else if(starting){ word = '启动中'; tone = 'wait'; }
+  else if(cfState.installed){ word = '已停止'; }
+
+  const dot = bar.querySelector('.cf-dot');
+  if(dot) dot.className = 'cf-dot ' + tone;
+  const state = bar.querySelector('.cf-bar-state');
+  if(state){
+    state.textContent = word;
+    state.className = 'cf-bar-state' + (tone === 'ok' ? ' ok' : tone === 'wait' ? ' wait' : '');
+  }
+
+  const show = (act, on) => {
+    const b = bar.querySelector('[data-cf-act="' + act + '"]');
+    if(b) b.hidden = !on;
+  };
+  const able = (act, on) => {
+    const b = bar.querySelector('[data-cf-act="' + act + '"]');
+    if(b) b.disabled = !on;
+  };
+
+  show('reload', running);
+  show('manage', running);
+  show('openui', running);
+  show('launch', desk && cfState.installed && !running && !starting);
+  show('stop', running);
+  able('launch', !cfState.busy && cfState.installed);
+  able('stop', !cfState.busy);
+  able('openui', running);
+  able('reload', running);
+
+  const manageBtn = bar.querySelector('[data-cf-act="manage"]');
+  if(manageBtn) manageBtn.textContent = cfUi.manage ? '返回界面' : '管理';
+
+  /* 面板与网页互斥：管理态、未运行、加载失败时显示面板。 */
+  const showPanel = !running || cfUi.manage || !!cfUi.fail;
+  const panel = (typeof box.querySelector === 'function') ? box.querySelector('.cf-panel') : null;
+  if(panel) panel.classList.toggle('is-off', !showPanel);
+  if(cfUi.frame) cfUi.frame.classList.toggle('is-off', showPanel);
+
+  if(running && !showPanel) cfLoadFrame();
+  if(cfUi.wasRunning && !running) cfUnloadFrame();
+  cfUi.wasRunning = running;
+}
+
 function cfEsc(s){
   if(typeof mcEsc === 'function') return mcEsc(s);
   return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -300,6 +555,9 @@ function cfBtn(act, label, cls){
 function cfPaint(){
   const box = $('cfApp');
   if(!box) return;
+  cfEnsureShell();
+  const target = cfPanel();
+  if(!target) return;
   const desk = !!cfDesk();
   const running = cfState.running;
   const installed = cfState.installed;
@@ -315,7 +573,8 @@ function cfPaint(){
     sub = '本地生图要启动本机进程，网页版做不到。请用 The seed 桌面版打开这个 app。';
   } else if(running){
     stateWord = '运行中'; dot = 'ok';
-    sub = '引擎已就绪，监听 127.0.0.1:8188。生图切到「本地生成」后就走本机显卡，不再消耗云端额度。';
+    sub = '引擎已就绪，监听 127.0.0.1:8188。工作流界面已内嵌在本窗口（点顶部「返回界面」），' +
+      '不用再去系统浏览器单开网页；生图切到「本地生成」后就走本机显卡，不再消耗云端额度。';
   } else if(busy === '启动中'){
     /* 正在起的时候徽标不能还写着「未启动」——那和下面的进度条自相矛盾，
        用户第一反应就是「卡住了」 */
@@ -337,7 +596,8 @@ function cfPaint(){
   } else if(!desk){
     btns.push('<button type="button" class="btn sm" disabled>桌面版可用</button>');
   } else if(running){
-    btns.push(cfBtn('openui', '打开使用界面', 'primary'));
+    if(cfUi.manage) btns.push(cfBtn('showui', '返回工作流界面', 'primary'));
+    btns.push(cfBtn('openui', '在浏览器打开'));
     btns.push(cfBtn('stop', '停止引擎'));
     btns.push(cfBtn('store', '装生图模型'));
   } else if(installed){
@@ -402,7 +662,7 @@ function cfPaint(){
       '</details>'
     : '';
 
-  box.innerHTML =
+  target.innerHTML =
     '<div class="cf-hero">' +
       '<div class="cf-hero-top">' +
         '<span class="cf-dot ' + dot + '"></span>' +
@@ -413,25 +673,41 @@ function cfPaint(){
       '<div class="cf-acts">' + btns.join('') + '</div>' +
       prog +
       (cfState.error ? '<div class="cf-err">' + cfEsc(cfState.error) + '</div>' : '') +
+      (cfUi.fail ? '<div class="cf-err">' + cfEsc(cfUi.fail) + '</div>' : '') +
       toolHint +
     '</div>' +
     steps +
     factHtml +
     logBox;
 
-  box.querySelectorAll('[data-cf-act]').forEach(b => {
-    b.addEventListener('click', () => {
-      const a = b.dataset.cfAct;
-      if(a === 'install') cfInstall();
-      else if(a === 'launch') cfLaunch();
-      else if(a === 'stop') cfStop();
-      else if(a === 'openui') cfOpenUi();
-      else if(a === 'pick') cfPick();
-      else if(a === 'store') cfGoStore();
-      else if(a === 'cancel') cfCancelInstall();
-      else if(a === 'refresh'){ cfDetect().then(cfPaint); }
-    });
+  target.querySelectorAll('[data-cf-act]').forEach(b => {
+    b.addEventListener('click', () => cfDoAct(b.dataset.cfAct));
   });
+
+  cfSyncChrome();
+}
+
+/* 面板和状态条共用一套动作。 */
+function cfDoAct(a){
+  if(a === 'install') cfInstall();
+  else if(a === 'launch') cfLaunch();
+  else if(a === 'stop') cfStop();
+  else if(a === 'openui') cfOpenUi();
+  else if(a === 'pick') cfPick();
+  else if(a === 'store') cfGoStore();
+  else if(a === 'cancel') cfCancelInstall();
+  else if(a === 'refresh'){ cfDetect().then(cfPaint); }
+  else if(a === 'reload') cfReloadFrame();
+  else if(a === 'manage'){
+    cfUi.manage = !cfUi.manage;
+    cfUi.fail = '';
+    cfPaint();
+  }
+  else if(a === 'showui'){
+    cfUi.manage = false;
+    cfUi.fail = '';
+    cfPaint();
+  }
 }
 
 async function cfCancelInstall(){
@@ -450,13 +726,30 @@ async function openComfyApp(){
   /* 统一走 App 页翻页（deskMountApp 定义在 desk-shell.js）；拿不到时退回弹窗 */
   if(typeof deskMountApp === 'function') deskMountApp(win, '本地生图', 'ComfyUI 引擎');
   else win.classList.remove('hidden');
+  cfEnsureShell();
   cfBindProgress();
   cfBindEngines();
   cfSyncAuto();
   if(!cfState.checked) cfPaint();     // 先出骨架，别让窗口空白等检测
   await cfDetect(true);
   cfPaint();
+  cfStartPoll();
   return true;
+}
+
+/* 窗口开着时轻量对表：引擎可能在外部被停掉 / 被别人启动，
+ * 不轮询的话状态条会一直停在旧快照。只在可见且没有安装/启动任务时跑。 */
+function cfStartPoll(){
+  if(cfUi.poll || typeof setInterval !== 'function') return;
+  cfUi.poll = setInterval(async () => {
+    const win = $('comfyWin');
+    if(!win || win.classList.contains('hidden')) return;
+    if(!cfDesk() || cfState.busy) return;
+    const before = cfState.running + '|' + cfState.installed;
+    await cfDetect(true);
+    if(before !== cfState.running + '|' + cfState.installed) cfPaint();
+    else cfSyncChrome();
+  }, 5000);
 }
 
 /* 启动时静默探一次，让工作台图标上的状态点从一开始就是准的。

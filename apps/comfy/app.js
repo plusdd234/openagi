@@ -19,6 +19,10 @@
     order: 4,
     cls: 'comfy',
     win: 'comfyWin',
+    /* ComfyUI 本身就是一个网页界面（8188）。这里把它内嵌进窗口：
+     * 顶部状态条管引擎的启动 / 停止 / 重载，下面直接显示工作流画布，
+     * 不用每次再去系统浏览器单开一个标签页。 */
+    css: ['apps/comfy/app.css'],
     body: '<div class="cf-app" id="cfApp"></div>',
     open: function () {
       if (typeof openComfyApp === 'function') openComfyApp();
