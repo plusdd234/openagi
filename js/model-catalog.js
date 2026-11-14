@@ -110,6 +110,187 @@ const MODEL_CATALOG = [
     desc: '2023 年的方案，识图细节和中文 OCR 都明显落后于 Qwen3-VL。留着是因为很多人已经装了——要更好的识别效果请换上面任一只。'
   },
 
+  /* ---------------- 语音合成（系统语音，零下载） ----------------
+   * 本项目的 TTS 一律走浏览器 / 系统的 speechSynthesis，不引第三方引擎，
+   * 所以这一类的「模型」= 系统已安装的语音包。voice 是用来在
+   * speechSynthesis.getVoices() 里认出对应音色的匹配规则；匹配不到时
+   * 商店显示「系统未安装」，并提示去 Windows 语音设置里补装，而不是给一个
+   * 永远下不完的假进度条。sizeGB / vramGB 为 0 是事实，不是占位值。 */
+  {
+    id: 'tts-xiaoxiao', kind: 'tts', engine: 'system', name: '晓晓 · 中文女声', org: 'Microsoft',
+    params: 'Neural', sizeGB: 0, vramGB: 0, ramGB: 0, lang: 'zh-CN', voice: /xiaoxiao|晓晓/i,
+    sample: '你好，我是晓晓。需要我帮你朗读这段文字吗？',
+    tags: ['中文', '女声', '自然', '推荐'],
+    desc: '微软神经网络音色，语调自然、停顿接近真人，适合长文朗读与数字人对话。随系统语音包提供，无需下载权重。'
+  },
+  {
+    id: 'tts-yunxi', kind: 'tts', engine: 'system', name: '云希 · 中文男声', org: 'Microsoft',
+    params: 'Neural', sizeGB: 0, vramGB: 0, ramGB: 0, lang: 'zh-CN', voice: /yunxi|云希|yunye|云野/i,
+    sample: '你好，我是云希。接下来由我为你播报。',
+    tags: ['中文', '男声', '自然'],
+    desc: '偏年轻的男声，新闻播报与教程旁白都合适。与晓晓同属系统神经网络语音，切换即可试听。'
+  },
+  {
+    id: 'tts-huihui', kind: 'tts', engine: 'system', name: '慧慧 · 中文女声', org: 'Microsoft',
+    params: 'Desktop', sizeGB: 0, vramGB: 0, ramGB: 0, lang: 'zh-CN', voice: /huihui|慧慧/i,
+    sample: '你好，我是慧慧。很高兴为你朗读。',
+    tags: ['中文', '女声', '兼容'],
+    desc: 'Windows 经典中文语音，几乎每台中文系统都有。音质不如神经网络音色，但断网、离线场景最稳。'
+  },
+  {
+    id: 'tts-yaoyao', kind: 'tts', engine: 'system', name: '瑶瑶 · 中文女声', org: 'Microsoft',
+    params: 'Desktop', sizeGB: 0, vramGB: 0, ramGB: 0, lang: 'zh-CN', voice: /yaoyao|瑶瑶/i,
+    sample: '你好，我是瑶瑶。今天想听点什么？',
+    tags: ['中文', '女声', '经典'],
+    desc: '另一只经典中文女声，语速偏慢、吐字清楚，适合有声书与提示播报。'
+  },
+  {
+    id: 'tts-hsiaochen', kind: 'tts', engine: 'system', name: '曉臻 · 繁体女声', org: 'Microsoft',
+    params: 'Neural', sizeGB: 0, vramGB: 0, ramGB: 0, lang: 'zh-TW', voice: /hsiaochen|曉臻|晓臻/i,
+    sample: '你好，我是曉臻。很高興為你朗讀。',
+    tags: ['繁体', '女声', '台湾'],
+    desc: '台湾普通话女声，读繁体文本时用词与发音更自然。系统未安装时可在语言设置中添加。'
+  },
+  {
+    id: 'tts-aria', kind: 'tts', engine: 'system', name: 'Aria · English', org: 'Microsoft',
+    params: 'Neural', sizeGB: 0, vramGB: 0, ramGB: 0, lang: 'en-US', voice: /aria/i,
+    sample: 'Hi, I am Aria. I can read English text with a natural intonation.',
+    tags: ['英文', '女声', '自然'],
+    desc: '英文神经网络女声，适合英文文档朗读与双语对话。'
+  },
+  {
+    id: 'tts-jenny', kind: 'tts', engine: 'system', name: 'Jenny · English', org: 'Microsoft',
+    params: 'Neural', sizeGB: 0, vramGB: 0, ramGB: 0, lang: 'en-US', voice: /jenny|珍妮/i,
+    sample: 'Hello, I am Jenny. Let me read this passage for you.',
+    tags: ['英文', '女声', '对话'],
+    desc: '英文对话型女声，语气轻松，适合数字人日常闲聊。'
+  },
+
+  /* ---------------- 高级本地语音（Piper ONNX，需要下载） ----------------
+   * 和上面的系统语音不是一回事：这里是真的要下权重（.onnx + .onnx.json），
+   * 下完由本地引擎桥调用 piper.exe 在 CPU 上合成，断网可用、也不依赖系统语音包。
+   * 体积是 HF 上 Content-Length 的实测值（不是估算）；engine:'piper' 让商店层
+   * 走「下载 / 卸载」而不是「选系统音色」。 */
+  {
+    id: 'piper-zh-huayan-medium', kind: 'tts', engine: 'piper', name: '华言 · 中文女声（Piper）',
+    org: 'Piper / Rhasspy', params: 'ONNX · CPU', sizeGB: 0.06, vramGB: 0, ramGB: 4,
+    lang: 'zh-CN', voiceFile: 'zh_CN-huayan-medium.onnx', voiceJson: 'zh_CN-huayan-medium.onnx.json',
+    sample: '你好，我是华言。这是本地神经网络语音，断网也能朗读。',
+    tags: ['中文', '女声', '离线', '推荐'],
+    desc: 'Piper 中文神经网络音色，约 60 MB，纯 CPU 推理。断网、离线都能用，不受系统语音包限制；适合长文朗读与数字人。',
+    urls: [
+      'https://hf-mirror.com/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx',
+      'https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx'
+    ],
+    jsonUrls: [
+      'https://hf-mirror.com/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json',
+      'https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json'
+    ]
+  },
+  {
+    id: 'piper-zh-huayan-xlow', kind: 'tts', engine: 'piper', name: '华言轻量 · 中文女声（Piper）',
+    org: 'Piper / Rhasspy', params: 'ONNX · CPU', sizeGB: 0.02, vramGB: 0, ramGB: 2,
+    lang: 'zh-CN', voiceFile: 'zh_CN-huayan-x_low.onnx', voiceJson: 'zh_CN-huayan-x_low.onnx.json',
+    sample: '你好，我是华言的轻量版。体积小、速度更快，低配机器也能流畅朗读。',
+    tags: ['中文', '女声', '离线', '低配'],
+    desc: 'Piper 轻量中文音色，仅约 20 MB，合成速度最快。音质略逊于 medium，适合低配机器、提示播报与批量朗读。',
+    urls: [
+      'https://hf-mirror.com/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/x_low/zh_CN-huayan-x_low.onnx',
+      'https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/x_low/zh_CN-huayan-x_low.onnx'
+    ],
+    jsonUrls: [
+      'https://hf-mirror.com/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/x_low/zh_CN-huayan-x_low.onnx.json',
+      'https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/x_low/zh_CN-huayan-x_low.onnx.json'
+    ]
+  },
+  {
+    id: 'piper-en-lessac-high', kind: 'tts', engine: 'piper', name: 'Lessac · English（Piper High）',
+    org: 'Piper / Rhasspy', params: 'ONNX · CPU', sizeGB: 0.106, vramGB: 0, ramGB: 4,
+    lang: 'en-US', voiceFile: 'en_US-lessac-high.onnx', voiceJson: 'en_US-lessac-high.onnx.json',
+    sample: 'Hello, I am Lessac. This is a high quality local neural voice, running fully offline.',
+    tags: ['英文', '女声', '高质量', '离线'],
+    desc: 'Piper 英文高质量女声，约 109 MB。发音清晰、连读自然，适合英文文档朗读与双语播报；CPU 即可实时合成。',
+    urls: [
+      'https://hf-mirror.com/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx',
+      'https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx'
+    ],
+    jsonUrls: [
+      'https://hf-mirror.com/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx.json',
+      'https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx.json'
+    ]
+  },
+  {
+    id: 'piper-en-ryan-high', kind: 'tts', engine: 'piper', name: 'Ryan · English（Piper High）',
+    org: 'Piper / Rhasspy', params: 'ONNX · CPU', sizeGB: 0.112, vramGB: 0, ramGB: 4,
+    lang: 'en-US', voiceFile: 'en_US-ryan-high.onnx', voiceJson: 'en_US-ryan-high.onnx.json',
+    sample: 'Hi, I am Ryan. I can read English text with a natural local voice.',
+    tags: ['英文', '男声', '高质量', '离线'],
+    desc: 'Piper 英文高质量男声，约 115 MB。语气沉稳，适合旁白与教程；与 Lessac 搭配可覆盖英文男女声。',
+    urls: [
+      'https://hf-mirror.com/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high/en_US-ryan-high.onnx',
+      'https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high/en_US-ryan-high.onnx'
+    ],
+    jsonUrls: [
+      'https://hf-mirror.com/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high/en_US-ryan-high.onnx.json',
+      'https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high/en_US-ryan-high.onnx.json'
+    ]
+  },
+
+  /* ---------------- 超自然语音（Kokoro-82M int8，需要下载） ----------------
+   * 和 Piper 的区别：Kokoro 是同一份 126 MB 模型 + 一张声纹表（voices.bin），
+   * 不同音色只是 --sid 不同，所以「装一次，所有 Kokoro 音色都能用」。
+   * 引擎是 sherpa-onnx 的单文件 exe（26 MB），与模型分开下载、共享。
+   * sizeGB 写的是首次启用要下的大致总量（引擎 26 + 模型 126 ≈ 160 MB），
+   * 卡片上会额外标注「共享」，避免用户以为每只音色都要重下 160 MB。 */
+  {
+    id: 'kokoro-zh-xiaoxiao', kind: 'tts', engine: 'kokoro', sid: 47,
+    name: '晓晓 · 超自然中文女声（Kokoro）', org: 'Kokoro / sherpa-onnx',
+    params: '82M · int8', sizeGB: 0.16, vramGB: 0, ramGB: 4, lang: 'zh-CN', shared: 'kokoro',
+    sample: '你好，我是晓晓。这是接近真人的本地神经网络语音，断网也能朗读。',
+    tags: ['中文', '女声', '超自然', '推荐'],
+    desc: 'Kokoro-82M 是目前开源里最接近真人的一档：语调起伏、停顿和换气感明显强于 Piper。int8 量化后纯 CPU 推理，适合数字人对话与长文朗读；共享模型下载一次，所有 Kokoro 音色通用。'
+  },
+  {
+    id: 'kokoro-zh-xiaoyi', kind: 'tts', engine: 'kokoro', sid: 48,
+    name: '晓伊 · 超自然中文女声（Kokoro）', org: 'Kokoro / sherpa-onnx',
+    params: '82M · int8', sizeGB: 0.16, vramGB: 0, ramGB: 4, lang: 'zh-CN', shared: 'kokoro',
+    sample: '你好，我是晓伊。很高兴用这么自然的声音和你聊天。',
+    tags: ['中文', '女声', '超自然'],
+    desc: '与晓晓同一模型的不同声纹：音色更轻、更年轻，适合陪伴型数字人与轻松对话。'
+  },
+  {
+    id: 'kokoro-zh-yunxi', kind: 'tts', engine: 'kokoro', sid: 50,
+    name: '云希 · 超自然中文男声（Kokoro）', org: 'Kokoro / sherpa-onnx',
+    params: '82M · int8', sizeGB: 0.16, vramGB: 0, ramGB: 4, lang: 'zh-CN', shared: 'kokoro',
+    sample: '你好，我是云希。接下来由我为你播报。',
+    tags: ['中文', '男声', '超自然', '推荐'],
+    desc: '沉稳的男声，新闻播报与教程旁白的语气自然，长句不会出现机械的平均停顿。'
+  },
+  {
+    id: 'kokoro-zh-yunyang', kind: 'tts', engine: 'kokoro', sid: 52,
+    name: '云扬 · 超自然中文男声（Kokoro）', org: 'Kokoro / sherpa-onnx',
+    params: '82M · int8', sizeGB: 0.16, vramGB: 0, ramGB: 4, lang: 'zh-CN', shared: 'kokoro',
+    sample: '你好，我是云扬。需要我帮你把这段文字读出来吗？',
+    tags: ['中文', '男声', '超自然'],
+    desc: '偏明亮的男声，语气更接近日常对话，适合客服播报与数字人闲聊。'
+  },
+  {
+    id: 'kokoro-en-heart', kind: 'tts', engine: 'kokoro', sid: 3,
+    name: 'Heart · 超自然 English（Kokoro）', org: 'Kokoro / sherpa-onnx',
+    params: '82M · int8', sizeGB: 0.16, vramGB: 0, ramGB: 4, lang: 'en-US', shared: 'kokoro',
+    sample: 'Hi, I am Heart. This is a natural local neural voice that works fully offline.',
+    tags: ['英文', '女声', '超自然', '推荐'],
+    desc: 'Kokoro 最受欢迎的英文女声，连读、重音和句尾语调都很接近真人录音。'
+  },
+  {
+    id: 'kokoro-en-michael', kind: 'tts', engine: 'kokoro', sid: 16,
+    name: 'Michael · 超自然 English（Kokoro）', org: 'Kokoro / sherpa-onnx',
+    params: '82M · int8', sizeGB: 0.16, vramGB: 0, ramGB: 4, lang: 'en-US', shared: 'kokoro',
+    sample: 'Hello, I am Michael. Let me read this passage for you with a natural voice.',
+    tags: ['英文', '男声', '超自然'],
+    desc: '英文男声，音色厚实、语速平稳，适合英文文档朗读与双语音色搭配。'
+  },
+
   /* ---------------- 生图模型（ComfyUI checkpoints） ----------------
    * tune 是该模型的推荐采样参数：不给的话一律 20 步 / cfg 7，
    * SDXL-Turbo 那样必须 cfg=1、6 步的模型会直接糊掉，用户会以为「本地生图不能用」。 */
@@ -180,6 +361,13 @@ function comfyTuningFor(file){
  * 生图退回 CPU 是几十分钟一张，等于不能用——所以生图只看显存。 */
 function catalogFit(item, hw){
   if(!item) return { level: 'unknown', note: '' };
+  /* 语音合成：系统语音不占显存、不用下载；Piper ONNX 要下几十 MB，但同样纯 CPU 推理。
+   * 两者都判可用，真正的可用性由商店层判断（系统音色在不在 / 权重装没装）。 */
+  if(item.kind === 'tts'){
+    return item.engine === 'system'
+      ? { level: 'good', note: '系统语音，无需下载，不占显存' }
+      : { level: 'good', note: 'CPU 推理即可，不占显存' };
+  }
   const gpu = (hw && hw.gpu) || {};
   const vramGB = gpu.vramMB ? (gpu.vramMB / 1024) : 0;
   const ramGB = (hw && hw.memory && hw.memory.deviceMemoryGB) || 0;

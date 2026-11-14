@@ -7,52 +7,161 @@
  *   随手追加——也不要在 08-theme 之前的文件里写「最终样式」，那会被覆盖。
  * ============================================================ */
 
-  /* ---- 模型商店 ---- */
-  /* 商店是独立 app（工作台图标打开），比模型控制台宽一点，两列卡片不挤 */
-  .os-win.store { width: min(880px, 92vw); max-height: min(80vh, 720px); }
-  .mc-store { margin-bottom: 16px; }
-  .ms-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
-  .ms-title { font-size: 13.5px; font-weight: 600; color: #1f2328; }
-  .ms-sub { font-size: 11px; color: #8a9098; }
-  .ms-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
-  .ms-filters { display: flex; gap: 4px; }
-  .ms-chip {
-    font-size: 11.5px; height: 26px; padding: 0 12px; border-radius: 999px; cursor: pointer;
-    border: 1px solid #dfe2e7; background: #fff; color: #3a4048;
+  /* ---- 模型商店 ----
+   * 结构：左侧类目/引擎状态 + 右侧工具栏/精选/卡片流。
+   * 所有选择器都带 .ms- 前缀，避免注入后波及工作台其他窗口。 */
+  .os-win.store { width: min(1120px, 94vw); max-height: min(86vh, 860px); }
+  .mc-store {
+    width: 100%; height: 100%; min-height: 460px; display: flex; overflow: hidden;
+    background: #f7f9fc; border: 1px solid #e5e9ef; border-radius: 12px;
   }
-  .ms-chip:hover { background: #f7f8fa; }
-  .ms-chip.on { background: #fff4e5; border-color: #e88a00; color: #a35f00; font-weight: 600; }
-  .ms-toggle { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: #5a6068; cursor: pointer; }
-  .ms-hint {
-    display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; padding: 6px 10px;
-    font-size: 11px; color: #8a5a00; background: #fff8ec; border: 1px solid #f0dcb8; border-radius: 8px;
+  .ms-layout { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; }
+
+  /* 侧栏 */
+  .ms-side {
+    flex: 0 0 196px; display: flex; flex-direction: column; gap: 16px; min-height: 0;
+    padding: 16px 12px 12px; background: #fbfcfe; border-right: 1px solid #e8ecf2;
   }
-  .ms-sec { margin-bottom: 14px; }
-  .ms-tip {
-    margin-bottom: 8px; padding: 6px 10px; font-size: 11px; line-height: 1.55; color: #4a5058;
-    background: #f7f8fa; border: 1px solid #e6e9ee; border-radius: 8px;
+  .ms-brand { display: flex; align-items: center; gap: 9px; padding: 0 6px; }
+  .ms-brand-mark {
+    width: 30px; height: 30px; flex: none; display: grid; place-items: center;
+    border-radius: 9px; color: #fff; font-size: 13px; font-weight: 800;
+    background: linear-gradient(135deg, #6ea2e8, #3f74c9);
+    box-shadow: 0 6px 12px -8px rgba(63, 116, 201, .9);
   }
-  .ms-sec-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .ms-sec-head > span:first-child { font-size: 12.5px; font-weight: 600; color: #1f2328; }
-  .ms-sec-n {
-    font-size: 10.5px; color: #6a7488; background: #f0f1f4; border-radius: 999px; padding: 1px 8px; line-height: 1.6;
+  .ms-brand-name { font-size: 13.5px; font-weight: 700; color: #1f2937; }
+  .ms-brand-sub { margin-top: 2px; font-size: 10.5px; color: #8a94a3; }
+  .ms-nav { display: flex; flex-direction: column; gap: 2px; }
+  .ms-nav-btn {
+    display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px;
+    border: 0; border-radius: 8px; background: transparent; color: #4b5563;
+    font-size: 12.5px; text-align: left; cursor: pointer; transition: background .12s, color .12s;
   }
-  .ms-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(228px, 1fr)); gap: 8px; }
-  .ms-card {
-    display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
-    background: #fff; border: 1px solid #e3e6ea; border-radius: 10px;
-    /* 同一行等高：说明文字长短不一时，「安装」按钮会参差不齐地悬在半空，
-     * 看起来像是排版坏了（识图模型那批说明本来就比对话模型长） */
-    height: 100%;
+  .ms-nav-btn:hover { background: #eef2f8; color: #1f2937; }
+  .ms-nav-btn.on { background: #e8f0fc; color: #2a5ea8; font-weight: 600; }
+  .ms-nav-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: #cfd7e3; }
+  .ms-nav-btn.on .ms-nav-dot { background: var(--accent, #5b8fd9); }
+  .ms-nav-label { flex: 1 1 auto; min-width: 0; }
+  .ms-nav-n {
+    flex: none; min-width: 20px; padding: 1px 6px; border-radius: 999px;
+    background: #eef1f6; color: #8a94a3; font-size: 10.5px; text-align: center;
   }
-  .ms-card.on { border-color: #e8a13a; background: #fffdf8; }
-  .ms-top { display: flex; align-items: baseline; gap: 8px; }
-  .ms-name {
-    flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; color: #1f2328;
+  .ms-nav-btn.on .ms-nav-n { background: #d8e6fa; color: #2a5ea8; }
+  .ms-nav-sep { height: 1px; margin: 8px 6px; background: #e8ecf2; }
+  .ms-engines {
+    margin-top: auto; display: flex; flex-direction: column; gap: 7px;
+    padding: 10px 9px; background: #fff; border: 1px solid #e8ecf2; border-radius: 10px;
+  }
+  .ms-engines-title { font-size: 10px; letter-spacing: .12em; color: #9aa4b2; font-weight: 700; }
+  .ms-engine-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #4b5563; }
+  .ms-engine-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: #cfd7e3; }
+  .ms-engine-dot.ok { background: #1f9d55; }
+  .ms-engine-dot.bad { background: #d9a13a; }
+  .ms-engine-txt { margin-left: auto; color: #8a94a3; font-size: 10.5px; }
+
+  /* 主区 */
+  .ms-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; background: #fff; }
+  .ms-toolbar {
+    flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 12px 18px; border-bottom: 1px solid #edf0f4; background: #fff;
+  }
+  .ms-search { position: relative; flex: 0 1 380px; min-width: 150px; }
+  .ms-search input {
+    width: 100%; height: 32px; padding: 0 12px 0 30px; border: 1px solid #dfe4ea;
+    border-radius: 8px; background: #f8fafc; color: #1f2937; font-size: 12px; outline: none;
+    transition: border-color .12s, box-shadow .12s, background .12s;
+  }
+  .ms-search input::placeholder { color: #a3acb9; }
+  .ms-search input:focus {
+    background: #fff; border-color: #9dbdea; box-shadow: 0 0 0 3px rgba(91, 143, 217, .12);
+  }
+  .ms-search-ico {
+    position: absolute; left: 10px; top: 50%; width: 10px; height: 10px; margin-top: -6px;
+    border: 1.6px solid #9aa4b2; border-radius: 50%; pointer-events: none;
+  }
+  .ms-search-ico::after {
+    content: ''; position: absolute; left: 8px; top: 7px; width: 5px; height: 1.6px;
+    background: #9aa4b2; border-radius: 1px; transform: rotate(45deg);
+  }
+  .ms-toggle { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: #5a6472; cursor: pointer; white-space: nowrap; }
+  .ms-toolbar-count { margin-left: auto; font-size: 11px; color: #9aa4b2; white-space: nowrap; }
+  .ms-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 16px 18px 24px; background: #fbfcfe; }
+
+  /* 精选横幅 */
+  .ms-hero {
+    display: flex; align-items: center; gap: 16px; margin-bottom: 16px; padding: 16px 18px;
+    border: 1px solid #dbe7f8; border-radius: 12px;
+    background: linear-gradient(135deg, #eef5ff, #f8fbff 58%, #f2f7ff);
+  }
+  .ms-hero-tts { background: linear-gradient(135deg, #eefaf6, #f8fffc 58%, #f1faf6); border-color: #d5eee6; }
+  .ms-hero-main { flex: 1 1 auto; min-width: 0; }
+  .ms-hero-kicker { font-size: 10px; font-weight: 700; letter-spacing: .14em; color: #5b8fd9; }
+  .ms-hero-title {
+    margin-top: 4px; font-size: 16px; font-weight: 700; color: #1f2a37;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .ms-size { flex: 0 0 auto; font-size: 11px; color: #6a7488; }
-  .ms-meta { font-size: 11px; color: #7a828c; }
+  .ms-hero-sub { margin-top: 4px; font-size: 11.5px; line-height: 1.6; color: #627083; }
+  .ms-hero-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  .ms-hero-stat { font-size: 10.5px; color: #7a8698; white-space: nowrap; }
+  .ms-hero-fit {
+    font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+    background: #fff; border: 1px solid #dbe4f0; color: #627083; white-space: nowrap;
+  }
+  .ms-hero-fit.ok { color: #1f8a4c; border-color: #cfe7d9; background: #f4fbf7; }
+  .ms-hero-fit.warn { color: #8a5a00; border-color: #f0dcb8; background: #fffaf0; }
+  .ms-hero-fit.bad { color: #c9342a; border-color: #f2d2cf; background: #fff6f5; }
+
+  /* 分节与卡片 */
+  .ms-sec { margin-bottom: 20px; }
+  .ms-sec:last-child { margin-bottom: 0; }
+  .ms-sec-head { display: flex; align-items: flex-end; gap: 8px; margin-bottom: 10px; }
+  .ms-sec-titles { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .ms-sec-title { font-size: 13px; font-weight: 700; color: #1f2937; }
+  .ms-sec-hint { font-size: 11px; color: #8a94a3; }
+  .ms-sec-n {
+    flex: none; font-size: 10.5px; color: #6a7488; background: #eef1f6;
+    border-radius: 999px; padding: 1px 8px; line-height: 1.6;
+  }
+  .ms-tip {
+    margin-bottom: 10px; padding: 8px 10px; font-size: 11px; line-height: 1.6; color: #4a5058;
+    background: #fff; border: 1px solid #e6e9ee; border-radius: 8px;
+  }
+  .ms-hint {
+    display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; padding: 8px 10px;
+    font-size: 11px; color: #8a5a00; background: #fff8ec; border: 1px solid #f0dcb8; border-radius: 8px;
+  }
+  .ms-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr)); gap: 10px; }
+  .ms-card {
+    display: flex; flex-direction: column; gap: 7px; height: 100%; padding: 12px 13px;
+    background: #fff; border: 1px solid #e6eaf0; border-radius: 11px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .ms-card:hover { border-color: #cfdcee; box-shadow: 0 8px 20px -16px rgba(31, 50, 80, .55); }
+  .ms-card.on { border-color: #a9c6ea; background: #fbfdff; box-shadow: inset 0 0 0 1px rgba(91, 143, 217, .16); }
+  .ms-card-top { display: flex; align-items: center; gap: 10px; }
+  .ms-ico {
+    width: 34px; height: 34px; flex: none; display: grid; place-items: center;
+    border-radius: 9px; color: #fff; font-size: 9.5px; font-weight: 800; letter-spacing: .02em;
+  }
+  .ms-ico-llm { background: linear-gradient(135deg, #7aa7ec, #4a7cc9); }
+  .ms-ico-vision { background: linear-gradient(135deg, #8bb6e8, #3f6fb5); }
+  .ms-ico-image { background: linear-gradient(135deg, #b39ad8, #7a5bb5); }
+  .ms-ico-tts { background: linear-gradient(135deg, #6fc5b0, #2f8f77); }
+  .ms-card-id { flex: 1 1 auto; min-width: 0; }
+  .ms-name {
+    font-size: 12.5px; font-weight: 700; color: #1f2937;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ms-meta {
+    margin-top: 2px; font-size: 10.5px; color: #8a94a3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ms-size { flex: none; padding: 2px 7px; border-radius: 6px; background: #f1f4f8; font-size: 10.5px; color: #5b6472; }
+  .ms-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+  .ms-badge { font-size: 10px; line-height: 1.6; padding: 0 6px; border-radius: 4px; border: 1px solid transparent; }
+  .ms-badge.rec { color: #a35f00; background: #fff4e5; border-color: #f3ddba; }
+  .ms-badge.on { color: #1f7a45; background: #edf9f2; border-color: #cfe7d9; }
+  .ms-badge.ins { color: #2a5ea8; background: #edf4fd; border-color: #d3e2f6; }
   .ms-file {
     font-size: 10.5px; color: #8a9098; font-family: ui-monospace, Menlo, Consolas, monospace;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -65,11 +174,15 @@
   .ms-fit.warn { color: #8a5a00; }
   .ms-fit.bad { color: #c9342a; }
   .ms-fit.mute { color: #8a9098; }
+  .ms-tip-line {
+    font-size: 10.5px; line-height: 1.5; color: #8a5a00;
+    background: #fffaf0; border: 1px dashed #efdcb8; border-radius: 6px; padding: 5px 7px;
+  }
   .ms-prog { height: 5px; background: #eef1f5; border-radius: 999px; overflow: hidden; }
-  .ms-prog i { display: block; height: 100%; background: #2f81f7; transition: width .2s; }
+  .ms-prog i { display: block; height: 100%; background: var(--accent, #5b8fd9); transition: width .2s; }
   /* 进度未知（引擎还没报总大小）：斜纹来回跑，让「在动」这件事看得见 */
   .ms-prog.indet i {
-    width: 38%; background: linear-gradient(90deg, #cfe0f8, #2f81f7, #cfe0f8);
+    width: 38%; background: linear-gradient(90deg, #cfe0f8, #5b8fd9, #cfe0f8);
     animation: msIndet 1.15s ease-in-out infinite;
   }
   @keyframes msIndet {
@@ -80,7 +193,15 @@
   .ms-err { font-size: 11px; color: #c9342a; line-height: 1.5; }
   .ms-note { font-size: 11px; color: #8a5a00; line-height: 1.5; }
   .ms-foot { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: auto; padding-top: 2px; }
-  .ms-on { margin-right: auto; font-size: 11px; font-weight: 600; color: #1f8a4c; }
+  .ms-on { margin-right: auto; font-size: 11px; font-weight: 700; color: #1f8a4c; }
+  .ms-state-note { margin-right: auto; font-size: 11px; color: #9aa4b2; }
+  .ms-empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    padding: 56px 20px; color: #8a94a3; font-size: 12px; text-align: center;
+  }
+  .ms-empty b { font-size: 13px; color: #4b5563; }
+  .mc-store .btn.primary { background: var(--accent, #5b8fd9); border-color: var(--accent, #5b8fd9); color: #fff; }
+  .mc-store .btn.primary:hover { background: var(--accent2, #4a7cc9); border-color: var(--accent2, #4a7cc9); }
   .mc-sec { margin-bottom: 14px; }
   .mc-sec-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .mc-sec-name { font-size: 12.5px; font-weight: 600; color: #1f2328; }
@@ -196,4 +317,23 @@
   }
   .mc-tab:hover { border-color: #c9ced6; color: #1f2328; }
   .mc-tab.active { background: #fff5e0; border-color: #e8c98a; color: #8a5a00; font-weight: 600; }
+
+  /* 窄窗口（浮窗 / 分屏）：侧栏收窄、隐藏引擎状态，保证卡片仍有可用宽度。
+   * 放在文件末尾并带 .mc-store 前缀，避免被前面的基础规则覆盖。 */
+  @media (max-width: 820px) {
+    .mc-store { min-height: 380px; }
+    .mc-store .ms-side { flex-basis: 148px; padding: 12px 8px; }
+    .mc-store .ms-brand { padding: 0 2px; }
+    .mc-store .ms-brand-sub { display: none; }
+    .mc-store .ms-nav-btn { padding: 0 8px; font-size: 11.5px; }
+    .mc-store .ms-engines { display: none; }
+    .mc-store .ms-toolbar { flex-wrap: wrap; padding: 10px 12px; }
+    .mc-store .ms-search { flex: 1 1 100%; }
+    .mc-store .ms-toolbar-count { display: none; }
+    .mc-store .ms-body { padding: 12px 12px 18px; }
+    .mc-store .ms-grid { grid-template-columns: 1fr; }
+    .mc-store .ms-hero { flex-direction: column; align-items: flex-start; }
+    .mc-store .ms-hero-side { align-items: flex-start; }
+  }
+
 

@@ -557,6 +557,7 @@
       <div class="bw-status">
         <span class="bw-status-url">起始页</span>
         <span class="bw-status-msg" aria-live="polite"></span>
+        <span class="bw-guard" title="已拦截广告与追踪、弹窗、下载与权限申请">防护中</span>
         <span class="bw-zoom" aria-label="网页缩放">
           <button type="button" class="bw-zoom-btn" data-act="zoom-out" title="缩小">−</button>
           <button type="button" class="bw-zoom-val" data-act="zoom-reset" title="恢复 100%">100%</button>
@@ -578,8 +579,13 @@
     win: 'browserWin',
     css: ['apps/browser/app.css'],
     mount: function (body){
+      /* 其他 App 可以先把地址放进 __bwPendingUrl，再 openDeskApp('browser')：
+         这里在挂载/复用后统一导航，避免外部直接摸 webview 的内部状态。 */
+      const pending = window.__bwPendingUrl;
+      window.__bwPendingUrl = '';
       if (body.dataset.ready === '1' && S && S.body === body){
         sync(S);          // 已经画过：只同步按钮状态，不重建（否则当前网页被冲掉）
+        if (pending) navigate(S, pending);
         return;
       }
       body.innerHTML = HTML;
@@ -594,7 +600,8 @@
       wire(S);
       body.dataset.ready = '1';
       sync(S);
-      setTimeout(() => S.addr.focus(), 80);
+      if (pending) navigate(S, pending);
+      else setTimeout(() => S.addr.focus(), 80);
     }
   });
 })();

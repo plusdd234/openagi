@@ -1103,6 +1103,32 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 }
 .md-tp-sw.on { background: #3d8ee0; border-color: #2b7cd3; color: #fff; }
 .md-tp-sw:hover { border-color: #7db3e6; }
+
+/* 数值参数走滑条：左标签 / 中轨道 / 右读数。读数用等宽数字，拖动时不抖宽度 */
+.md-toolpanel .md-hbp-row.md-tp-slider { grid-template-columns: 92px 1fr 42px; gap: 8px; }
+.md-hbp-row input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  height: 16px; width: 100%; padding: 0; margin: 0;
+  background: transparent; border: 0; outline: none; cursor: pointer;
+}
+.md-hbp-row input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px;
+  background: #d9dde3;
+}
+.md-hbp-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 11px; height: 11px; margin-top: -3.5px;
+  border: 2px solid #2b7cd3; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(31, 35, 40, .18);
+}
+.md-hbp-row input[type="range"]:hover::-webkit-slider-thumb { border-color: #4a94e0; background: #f2f8ff; }
+.md-hbp-row input[type="range"]:focus-visible::-webkit-slider-thumb { border-color: #1d5fa5; }
+.md-hbp-row input[type="range"]:disabled { opacity: .45; cursor: default; }
+.md-tp-slider b {
+  text-align: right; font-weight: 600; font-size: 10.5px;
+  color: var(--md-txt, #1f2328);
+  font-variant-numeric: tabular-nums;
+}
 .md-hb-zone.off { opacity: .72; }
 .md-hb-zone button.off { color: #6a7488; cursor: not-allowed; }
 .md-hb-zone button.off i { color: #8a9098; }

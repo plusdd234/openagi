@@ -78,6 +78,14 @@ contextBridge.exposeInMainWorld('openagiDesktop', {
   storeImageList: () => ipcRenderer.invoke('store:image-list'),
   storeInstallImage: req => ipcRenderer.invoke('store:image-install', req || {}),
   storeRemoveImage: file => ipcRenderer.invoke('store:image-remove', file),
+  /* 本地语音（Piper）：权重与 piper.exe 都落在 userData/tts */
+  storeTtsList: () => ipcRenderer.invoke('store:tts-list'),
+  storeInstallTts: req => ipcRenderer.invoke('store:tts-install', req || {}),
+  storeRemoveTts: req => ipcRenderer.invoke('store:tts-remove', req || {}),
+  /* 超自然语音（Kokoro）：所有音色共用一份模型，主进程按固定 key 只下一次 */
+  storeKokoroStatus: () => ipcRenderer.invoke('store:kokoro-status'),
+  storeInstallKokoro: req => ipcRenderer.invoke('store:kokoro-install', req || {}),
+  storeRemoveKokoro: () => ipcRenderer.invoke('store:kokoro-remove'),
   storeCancel: id => ipcRenderer.invoke('store:cancel', id),
   onStoreProgress: cb => {
     if(typeof cb !== 'function') return;

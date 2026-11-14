@@ -44,6 +44,7 @@ const STAMP = (function () {
 })();
 
 const ALIASES = {
+  aisearch: 'tools/probe-aisearch.js',
   browser: 'tools/probe-browser.js',
   chat: 'tools/desk-chat.js',
   code: 'tools/test-code-run.js',
@@ -56,7 +57,7 @@ const ALIASES = {
   models: 'tools/model-store.js'
 };
 
-const ALL = ['browser', 'imglab', 'modeldesk', 'multiview', 'gallery'];
+const ALL = ['aisearch', 'browser', 'imglab', 'modeldesk', 'multiview', 'gallery'];
 const STATIC = [
   ['app-scan', 'tools/app-scan.js', '--check'],
   ['ns-guard', 'tools/ns-guard.js'],

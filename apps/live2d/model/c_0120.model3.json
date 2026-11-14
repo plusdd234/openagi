@@ -1,0 +1,275 @@
+{
+  "Version": 3,
+  "FileReferences": {
+    "Moc": "c_0120.moc3",
+    "Textures": [
+      "c_0120.2048/texture_00.png",
+      "c_0120.2048/texture_01.png"
+    ],
+    "Physics": "c_0120.physics3.json",
+    "DisplayInfo": "c_0120.cdi3.json",
+    "Motions": {
+      "idle": [
+        {
+          "File": "motions/idle.motion3.json",
+          "FadeInTime": 0.8,
+          "FadeOutTime": 0.8
+        }
+      ],
+      "special": [
+        {
+          "File": "motions/special.motion3.json",
+          "FadeInTime": 0.35,
+          "FadeOutTime": 0.5
+        }
+      ],
+      "bubble": [
+        {
+          "File": "motions/bubble.motion3.json",
+          "FadeInTime": 0.35,
+          "FadeOutTime": 0.5
+        }
+      ],
+      "splash": [
+        {
+          "File": "motions/splash.motion3.json",
+          "FadeInTime": 0.35,
+          "FadeOutTime": 0.5
+        }
+      ],
+      "open-lid": [
+        {
+          "File": "motions/open-lid.motion3.json",
+          "FadeInTime": 0.35,
+          "FadeOutTime": 0.5
+        }
+      ],
+      "ketchup": [
+        {
+          "File": "motions/ketchup.motion3.json",
+          "FadeInTime": 0.35,
+          "FadeOutTime": 0.5
+        }
+      ],
+      "selfie": [
+        {
+          "File": "motions/selfie.motion3.json",
+          "FadeInTime": 0.35,
+          "FadeOutTime": 0.5
+        }
+      ],
+      "selfie-quick": [
+        {
+          "File": "motions/selfie-quick.motion3.json",
+          "FadeInTime": 0.35,
+          "FadeOutTime": 0.5
+        }
+      ]
+    },
+    "Expressions": [
+      {
+        "Name": "love",
+        "File": "expressions/love.exp3.json"
+      },
+      {
+        "Name": "bunny-sticker",
+        "File": "expressions/bunny-sticker.exp3.json"
+      },
+      {
+        "Name": "ponytail",
+        "File": "expressions/ponytail.exp3.json"
+      },
+      {
+        "Name": "peace",
+        "File": "expressions/peace.exp3.json"
+      },
+      {
+        "Name": "tongue",
+        "File": "expressions/tongue.exp3.json"
+      },
+      {
+        "Name": "soul",
+        "File": "expressions/soul.exp3.json"
+      },
+      {
+        "Name": "blank",
+        "File": "expressions/blank.exp3.json"
+      },
+      {
+        "Name": "cry",
+        "File": "expressions/cry.exp3.json"
+      },
+      {
+        "Name": "cat-paw",
+        "File": "expressions/cat-paw.exp3.json"
+      },
+      {
+        "Name": "glasses-round",
+        "File": "expressions/glasses-round.exp3.json"
+      },
+      {
+        "Name": "sunglasses",
+        "File": "expressions/sunglasses.exp3.json"
+      },
+      {
+        "Name": "headband",
+        "File": "expressions/headband.exp3.json"
+      },
+      {
+        "Name": "parfait",
+        "File": "expressions/parfait.exp3.json"
+      },
+      {
+        "Name": "excited",
+        "File": "expressions/excited.exp3.json"
+      },
+      {
+        "Name": "heartbeat",
+        "File": "expressions/heartbeat.exp3.json"
+      },
+      {
+        "Name": "sad",
+        "File": "expressions/sad.exp3.json"
+      },
+      {
+        "Name": "flower",
+        "File": "expressions/flower.exp3.json"
+      },
+      {
+        "Name": "exclaim",
+        "File": "expressions/exclaim.exp3.json"
+      },
+      {
+        "Name": "phone-color",
+        "File": "expressions/phone-color.exp3.json"
+      },
+      {
+        "Name": "squeeze",
+        "File": "expressions/squeeze.exp3.json"
+      },
+      {
+        "Name": "retract",
+        "File": "expressions/retract.exp3.json"
+      },
+      {
+        "Name": "glasses-square",
+        "File": "expressions/glasses-square.exp3.json"
+      },
+      {
+        "Name": "star-eyes",
+        "File": "expressions/star-eyes.exp3.json"
+      },
+      {
+        "Name": "dizzy",
+        "File": "expressions/dizzy.exp3.json"
+      },
+      {
+        "Name": "glasses-oval",
+        "File": "expressions/glasses-oval.exp3.json"
+      },
+      {
+        "Name": "eraser",
+        "File": "expressions/eraser.exp3.json"
+      },
+      {
+        "Name": "sweat",
+        "File": "expressions/sweat.exp3.json"
+      },
+      {
+        "Name": "dark-cloth",
+        "File": "expressions/dark-cloth.exp3.json"
+      },
+      {
+        "Name": "menu-press",
+        "File": "expressions/menu-press.exp3.json"
+      },
+      {
+        "Name": "heart-eyes",
+        "File": "expressions/heart-eyes.exp3.json"
+      },
+      {
+        "Name": "cat-sticker",
+        "File": "expressions/cat-sticker.exp3.json"
+      },
+      {
+        "Name": "angry",
+        "File": "expressions/angry.exp3.json"
+      },
+      {
+        "Name": "brush",
+        "File": "expressions/brush.exp3.json"
+      },
+      {
+        "Name": "blush",
+        "File": "expressions/blush.exp3.json"
+      },
+      {
+        "Name": "omelet",
+        "File": "expressions/omelet.exp3.json"
+      },
+      {
+        "Name": "bow-sticker",
+        "File": "expressions/bow-sticker.exp3.json"
+      },
+      {
+        "Name": "playful",
+        "File": "expressions/playful.exp3.json"
+      },
+      {
+        "Name": "drool",
+        "File": "expressions/drool.exp3.json"
+      },
+      {
+        "Name": "question",
+        "File": "expressions/question.exp3.json"
+      },
+      {
+        "Name": "gloomy",
+        "File": "expressions/gloomy.exp3.json"
+      },
+      {
+        "Name": "claw",
+        "File": "expressions/claw.exp3.json"
+      },
+      {
+        "Name": "claw-color",
+        "File": "expressions/claw-color.exp3.json"
+      },
+      {
+        "Name": "whale",
+        "File": "expressions/whale.exp3.json"
+      },
+      {
+        "Name": "whale-desk",
+        "File": "expressions/whale-desk.exp3.json"
+      }
+    ]
+  },
+  "Groups": [
+    {
+      "Target": "Parameter",
+      "Name": "EyeBlink",
+      "Ids": [
+        "ParamEyeLOpen",
+        "ParamEyeROpen"
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Name": "LipSync",
+      "Ids": [
+        "ParamMouthOpenY"
+      ]
+    }
+  ],
+  "HitAreas": [
+    {
+      "Id": "Head",
+      "Name": "头"
+    },
+    {
+      "Id": "Body",
+      "Name": "身体"
+    }
+  ]
+}

@@ -48,6 +48,7 @@ const cfUi = {
   fail: '',          /* 界面加载失败原因 */
   wasRunning: false,
   retry: 0,
+  retries: 0,
   poll: 0
 };
 
@@ -132,10 +133,13 @@ function cfWireFrame(){
       cfSyncChrome();
     });
     f.addEventListener('did-start-loading', () => cfSyncChrome());
-    f.addEventListener('did-stop-loading', () => {
+    /* 只有「真正加载成功」才清错误：did-stop-loading 在失败之后也会来，
+       在那里清会把失败原因一闪而过地抹掉。 */
+    f.addEventListener('did-finish-load', () => {
       cfUi.fail = '';
       cfSyncChrome();
     });
+    f.addEventListener('did-stop-loading', () => cfSyncChrome());
     f.addEventListener('did-fail-load', e => {
       if(e && e.errorCode === -3) return;   /* -3 = 主动中止 / 切换地址 */
       cfFrameFailed('界面加载失败：' + ((e && e.errorDescription) || (e && e.errorCode) || '未知原因'));
@@ -170,6 +174,7 @@ function cfLoadFrame(force){
 function cfReloadFrame(){
   cfBuildFrame();
   if(!cfUi.frame) return;
+  cfUi.retries = 0;                  /* 手动刷新重新给两次自动补连机会 */
   if(!cfUi.ready){ cfUi.pending = CF_UI; return; }
   if(cfUi.web){
     try{ cfUi.frame.reload(); cfUi.fail = ''; cfSyncChrome(); return; }
@@ -197,7 +202,10 @@ function cfFrameFailed(msg){
   cfUi.loaded = false;
   cfUi.manage = true;
   cfPaint();
-  /* 引擎刚起来时 8188 会短暂拒绝连接：等两秒自动再接一次，不逼用户点按钮 */
+  /* 引擎刚起来时 8188 会短暂拒绝连接：等两秒自动再接一次，不逼用户点按钮。
+     但只补两次：一直失败就停在错误提示上，不能变成每 2 秒重载一次的死循环。 */
+  if(cfUi.retries >= 2) return;
+  cfUi.retries++;
   clearTimeout(cfUi.retry);
   cfUi.retry = setTimeout(() => {
     cfDetect(true).then(() => {
@@ -275,6 +283,7 @@ function cfSyncChrome(){
   if(panel) panel.classList.toggle('is-off', !showPanel);
   if(cfUi.frame) cfUi.frame.classList.toggle('is-off', showPanel);
 
+  if(!cfUi.wasRunning && running) cfUi.retries = 0;   /* 新的引擎会话，重新计次 */
   if(running && !showPanel) cfLoadFrame();
   if(cfUi.wasRunning && !running) cfUnloadFrame();
   cfUi.wasRunning = running;

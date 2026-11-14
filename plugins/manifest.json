@@ -39,15 +39,17 @@
       }
     },
     "runtime": {
-      "name": "本地引擎桥（Ollama / ComfyUI）",
-      "description": "把浏览器无法直连的本地模型引擎统一转发到允许 CORS 的端口。",
+      "name": "本地引擎桥（Ollama / ComfyUI / Piper / Kokoro）",
+      "description": "把浏览器无法直连的本地模型引擎统一转发到允许 CORS 的端口，并提供 Piper / Kokoro 本地语音合成。",
       "entry": "runtime.js",
       "port": 8794,
       "args": [],
       "env": {
         "HOST": "127.0.0.1"
       },
-      "userDataEnv": {}
+      "userDataEnv": {
+        "TTS_DIR": "tts"
+      }
     }
   }
 }

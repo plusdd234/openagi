@@ -50,8 +50,53 @@ const ALL = CAT.MODEL_CATALOG;
 ok(ALL.length >= 10, '目录至少 10 个条目', 'len=' + ALL.length);
 eq(new Set(ALL.map(m => m.id)).size, ALL.length, 'id 唯一');
 ok(ALL.every(m => m.name && m.kind && m.engine && m.desc), '每条都有名称/类型/引擎/说明');
-ok(ALL.every(m => Number(m.sizeGB) > 0), '每条都有实测体积');
-ok(ALL.every(m => Number(m.vramGB) > 0), '每条都有显存门槛');
+/* 语音合成的「模型」分两种：系统语音包没有权重文件（sizeGB / vramGB 为 0 是事实），
+ * Piper 音色要下几十 MB 的 ONNX 权重，但同样纯 CPU 推理（vramGB 为 0 也是事实）。
+ * 体积与显存门槛只对「需要显存」的条目成立。 */
+const WEIGHTED = ALL.filter(m => m.kind !== 'tts');
+ok(WEIGHTED.every(m => Number(m.sizeGB) > 0), '权重模型都有实测体积');
+ok(WEIGHTED.every(m => Number(m.vramGB) > 0), '权重模型都有显存门槛');
+
+/* TTS 类目：系统音色零下载；Piper 音色给出真实权重地址与体积 */
+const tts = CAT.catalogOf('tts');
+const ttsSys = tts.filter(m => m.engine === 'system');
+const ttsDl = tts.filter(m => m.engine !== 'system');
+ok(tts.length >= 5, '语音合成类目有可选音色', 'tts=' + tts.length);
+ok(ttsSys.every(m => m.voice instanceof RegExp && m.lang), '系统语音条目都带音色匹配规则与语种');
+ok(ttsSys.every(m => m.kind === 'tts' && m.sizeGB === 0 && m.vramGB === 0), '系统语音不占下载体积与显存');
+ok(tts.every(m => m.sample && m.sample.length > 0), '语音条目带试听文本');
+ok(ttsSys.some(m => /xiaoxiao|晓晓/i.test(m.voice.source)), '中文女声里有晓晓这一档');
+eq(CAT.catalogFit(ttsSys[0], { gpu: { vramMB: 0, discrete: false } }).level, 'good', '没独显也能用语音合成');
+
+/* 可下载的高级本地语音分两档：
+ *   piper  —— 每只音色一份 .onnx + .onnx.json，体积几十 MB；
+ *   kokoro —— 一份共享模型 + 多个 sid，条目本身不带宽高与下载地址。
+ * 两者的共同点是纯 CPU、不占显存。 */
+const ttsPiper = ttsDl.filter(m => m.engine === 'piper');
+const ttsKokoro = ttsDl.filter(m => m.engine === 'kokoro');
+ok(ttsPiper.length >= 3, '提供可下载的 Piper 音色', 'piper=' + ttsPiper.length);
+ok(ttsPiper.every(m => m.engine === 'piper' && m.kind === 'tts'), 'Piper 高级语音标记正确');
+ok(ttsPiper.every(m => /\.onnx$/i.test(m.voiceFile || '') && /\.onnx\.json$/i.test(m.voiceJson || '')),
+  '每条 Piper 都带 .onnx 权重与 .onnx.json 配置');
+ok(ttsPiper.every(m => Array.isArray(m.urls) && m.urls.length && m.urls.every(u => /^https:\/\//.test(u))),
+  'Piper 下载地址必须是 https（不允许明文/相对路径）');
+ok(ttsPiper.every(m => Array.isArray(m.jsonUrls) && m.jsonUrls.length === m.urls.length), '配置与权重的镜像数量一致');
+
+ok(ttsKokoro.length >= 4, '提供 Kokoro 超自然音色', 'kokoro=' + ttsKokoro.length);
+ok(ttsKokoro.every(m => m.kind === 'tts' && m.engine === 'kokoro'), 'Kokoro 条目标记正确');
+ok(ttsKokoro.every(m => Number.isInteger(m.sid) && m.sid >= 0 && m.sid < 200), '每个 Kokoro 音色都有合法 sid');
+ok(new Set(ttsKokoro.map(m => m.sid)).size === ttsKokoro.length, 'sid 不重复（否则两只音色听起来一样）');
+ok(ttsKokoro.every(m => m.shared === 'kokoro'), 'Kokoro 音色标记为共享模型');
+ok(ttsKokoro.every(m => !m.voice && !m.urls && !m.voiceFile), 'Kokoro 不冒充满系统语音，也不带独立下载地址');
+ok(ttsKokoro.some(m => m.lang === 'zh-CN') && ttsKokoro.some(m => /^en/i.test(m.lang)), 'Kokoro 中英文音色都有');
+
+ok(ttsDl.every(m => m.sizeGB > 0 && m.sizeGB <= 0.2 && m.vramGB === 0),
+  '本地音色体积在百 MB 量级，且不占显存', ttsDl.map(m => m.id + '=' + m.sizeGB + 'GB').join(' '));
+ok(ttsDl.every(m => !m.voice), '可下载音色不参与系统语音匹配（否则会认错人）');
+ok(ttsDl.some(m => m.lang === 'zh-CN') && ttsDl.some(m => /^en/i.test(m.lang)), '中英文高级音色都有');
+ok(ttsDl.every(m => /^[a-z0-9-]+$/.test(m.id)), '高级语音 id 可直接用于本地路径映射');
+eq(CAT.catalogFit(ttsPiper[0], { gpu: { vramMB: 0, discrete: false } }).level, 'good', '没独显也能跑 Piper（CPU 推理）');
+eq(CAT.catalogFit(ttsKokoro[0], { gpu: { vramMB: 0, discrete: false } }).level, 'good', '没独显也能跑 Kokoro（CPU 推理）');
 
 const llms = CAT.catalogOf('llm');
 const imgs = CAT.catalogOf('image');
@@ -274,7 +319,7 @@ function stateOf(env){ return vm.runInContext('msState', env); }
   env.FAKE_PROVIDERS = { 'ollama-llm': { async listModels(){ throw new Error('ECONNREFUSED'); } } };
   await env.renderModelStore(gpu4);
   eq(stateOf(env).installed.llm, null, '引擎没跑时已装清单是「未知」而不是空数组');
-  ok(/Ollama 未运行/.test(env.__els.mcStore.innerHTML), '顶部提示引擎未运行（点安装会自动装）');
+  ok(/Ollama[\s\S]*未运行/.test(env.__els.mcStore.innerHTML), '侧栏提示引擎未运行（点安装会自动装）');
 }
 
 /* 生图：装 → 放文件 → 自动启用 ckpt */
@@ -406,15 +451,27 @@ function stateOf(env){ return vm.runInContext('msState', env); }
   stateOf(env).filter = 'image';
   env.msPaintStore();
   const html = env.__els.mcStore.innerHTML;
-  ok(/生图模型/.test(html) && !/对话模型/.test(html), '切到「生图」只剩生图分类');
+  ok(/data-ms-kind="image"/.test(html) && !/data-ms-kind="llm"/.test(html), '切到「生图」只剩生图分类');
 
   stateOf(env).filter = 'vision';
   env.msPaintStore();
   const htmlV = env.__els.mcStore.innerHTML;
-  ok(/识图 \/ 多模态/.test(htmlV), '切到「看图」只剩识图分类');
+  ok(/data-ms-kind="vision"/.test(htmlV) && /识图 \/ 多模态/.test(htmlV), '切到「看图」只剩识图分类');
   ok(/Qwen3-VL 8B/.test(htmlV), '识图分类里列出 Qwen3-VL 8B');
-  ok(!/对话模型（Ollama/.test(htmlV) && !/生图模型/.test(htmlV), '「看图」筛选下不混入对话 / 生图');
+  ok(!/data-ms-kind="llm"/.test(htmlV) && !/data-ms-kind="image"/.test(htmlV), '「看图」筛选下不混入对话 / 生图');
   ok(!/>Qwen3 8B</.test(htmlV), '「看图」筛选下不出现纯文本的 Qwen3 8B');
+
+  /* 语音类目按系统语音动态生成：没有语音对象时整段不渲染，
+   * 所以这里先塞一只假音色，才能验证「切到语音只剩语音分类」。 */
+  env.window.speechSynthesis = {
+    getVoices(){ return [{ name: 'Microsoft Huihui Desktop - Chinese (Simplified)', lang: 'zh-CN' }]; },
+    addEventListener(){}, cancel(){}, speak(){}
+  };
+  stateOf(env).filter = 'tts';
+  env.msPaintStore();
+  const htmlT = env.__els.mcStore.innerHTML;
+  ok(/data-ms-kind="tts"/.test(htmlT) && /语音合成/.test(htmlT), '切到「语音」只剩语音合成分类');
+  ok(/无需下载/.test(htmlT), '语音条目不显示假的下载体积');
 
   stateOf(env).filter = 'all';
   stateOf(env).fitOnly = true;
@@ -422,6 +479,216 @@ function stateOf(env){ return vm.runInContext('msState', env); }
   const html2 = env.__els.mcStore.innerHTML;
   ok(!/sd_xl_base_1\.0\.safetensors/.test(html2), '「只看跑得动的」把 4 GB 跑不动的 SDXL 滤掉');
   ok(/v1-5-pruned-emaonly-fp16/.test(html2), '能跑的 SD1.5 还在');
+}
+
+/* 搜索与「已安装」视图：搜索按名称/厂商/标签命中，视图只列已安装 */
+{
+  const env = makeEnv();
+  env.FAKE_PROVIDERS = { 'ollama-llm': { async listModels(){ return [{ id: 'qwen3:8b' }]; } } };
+  await env.renderModelStore(gpu4);
+
+  stateOf(env).q = 'vl';
+  env.msPaintStore();
+  const html = env.__els.mcStore.innerHTML;
+  ok(/Qwen3-VL 8B/.test(html), '搜索 vl 命中识图模型');
+  ok(!/>Qwen3 8B</.test(html), '搜索结果里不出现无关的 Qwen3 8B');
+  ok(/个条目/.test(html), '搜索后仍显示条目计数');
+
+  stateOf(env).q = '';
+  stateOf(env).view = 'installed';
+  env.msPaintStore();
+  const inst = env.__els.mcStore.innerHTML;
+  ok(/data-ms-kind="installed"/.test(inst), '已安装视图只渲染已安装条目');
+  ok(/Qwen3 8B/.test(inst), '已安装的 Qwen3 8B 出现在视图里');
+  ok(!/v1-5-pruned-emaonly-fp16/.test(inst), '未安装的生图模型不出现');
+}
+
+/* 语音合成：以系统实际语音为准——「检测到几只 = 能用几只」；
+ * 设为默认写 hf_ttsVoice；试听真的调用 TTS。 */
+{
+  const env = makeEnv();
+  const voices = [
+    { name: 'Microsoft Huihui Desktop - Chinese (Simplified)', lang: 'zh-CN' },
+    { name: 'Microsoft Yaoyao Desktop - Chinese (Simplified)', lang: 'zh-CN' },
+    /* 目录里没有对应预设的系统语音：旧实现会把它藏起来，造成「检测到 4 个、只有 2 张卡」 */
+    { name: 'Acme Narrator One - English (United States)', lang: 'en-US' }
+  ];
+  const spoken = [];
+  env.window.speechSynthesis = {
+    getVoices(){ return voices; },
+    addEventListener(){},
+    cancel(){},
+    speak(u){ spoken.push(u); }
+  };
+  env.window.SpeechSynthesisUtterance = function(text){ this.text = text; };
+  await env.renderModelStore(gpu4);
+
+  const items = env.msTtsItems();
+  eq(items.length, voices.length, '检测到几只系统语音就生成几张卡');
+  eq(env.msKindCount('tts'), voices.length + env.msTtsLocal().length, '侧栏语音计数 = 系统语音 + 可下载音色');
+  eq((env.__els.mcStore.innerHTML.match(/data-ms-card=/g) || []).length,
+    env.msVisibleCount(), '侧栏 / 顶栏条目数等于实际渲染的卡片数');
+
+  const html = env.__els.mcStore.innerHTML;
+  ok(/慧慧/.test(html) && /瑶瑶/.test(html), '列出系统里能匹配到的中文音色');
+  ok(/Narrator/i.test(html), '认不出的系统语音也生成条目（不再藏起来）');
+  ok(!/系统未安装/.test(html), '不再出现「系统未安装」的卡片');
+  ok(!/tts-xiaoxiao/.test(html), '系统里没有的预设不再占据卡片位');
+
+  const huihui = env.msFindItem('tts-huihui');
+  ok(huihui && env.msIsInstalled(huihui), '系统里有的音色判为可用');
+  eq(env.msVoiceMatch(huihui).name, voices[0].name, '音色匹配到具体系统语音');
+
+  /* 动态条目也必须能点得动：msOnStoreClick 走 msFindItem，而不是只查静态目录 */
+  const dyn = items.filter(m => /Narrator/i.test(m.name))[0];
+  ok(!!dyn, '动态语音条目有 id');
+  eq(env.msFindItem(dyn.id).voiceName, voices[2].name, '按动态 id 能找回对应系统语音');
+  await env.msInstall(env.msFindItem(dyn.id));
+  eq(env.__ls.getItem('hf_ttsVoice'), voices[2].name, '动态语音也能设为默认（写入 hf_ttsVoice）');
+
+  await env.msInstall(huihui);
+  eq(env.__ls.getItem('hf_ttsVoice'), voices[0].name, '设为默认写入 hf_ttsVoice');
+  ok(env.msIsActive(huihui), '音色被标记为已启用');
+  ok(/已启用/.test(env.__els.mcStore.innerHTML), '卡片上显示「已启用」');
+  ok(/data-ms-act="preview"/.test(env.__els.mcStore.innerHTML), '可用音色给「试听」');
+
+  env.msPreview(huihui);
+  eq(spoken.length, 1, '试听会真正调用 speechSynthesis');
+  ok(/停止/.test(env.__els.mcStore.innerHTML), '试听中按钮切成「停止」');
+
+  await env.msRemove(huihui);
+  eq(env.__ls.getItem('hf_ttsVoice'), null, '停用后清掉默认音色');
+  ok(!env.msIsActive(huihui), '停用后不再 active');
+}
+
+/* 可下载的高级本地语音：真实走主进程下载、写默认音色、经本地引擎桥试听 */
+{
+  const env = makeEnv();
+  env.window.speechSynthesis = { getVoices(){ return []; }, addEventListener(){}, cancel(){}, speak(){} };
+  const calls = { install: [], remove: [] };
+  env.__installed = '';
+  env.window.openagiDesktop = {
+    async storeTtsList(){
+      return { ok: true, engine: true, voices: env.__installed ? [{ file: env.__installed }] : [] };
+    },
+    async storeInstallTts(req){
+      calls.install.push(req);
+      env.__installed = req.voiceFile;
+      return { ok: true, engine: true };
+    },
+    async storeRemoveTts(req){
+      calls.remove.push(req);
+      env.__installed = '';
+      return { ok: true };
+    },
+    async storeCancel(){ return { ok: true }; }
+  };
+  await env.renderModelStore(gpu4);
+  const piper = env.catalogGet('piper-zh-huayan-medium');
+  ok(!!piper && piper.engine === 'piper', '目录里有可下载的 Piper 音色');
+  ok(!env.msIsInstalled(piper), '没下载的 Piper 音色不算已安装');
+  const html0 = env.__els.mcStore.innerHTML;
+  ok(/下载并启用/.test(html0), '可下载音色给「下载并启用」');
+  ok(/60 MB/.test(html0), '卡片上写清真实体积', 'size=' + piper.sizeGB);
+
+  await env.msInstall(piper);
+  eq(calls.install.length, 1, '安装会调主进程下载');
+  eq(calls.install[0].voiceFile, piper.voiceFile, '按 voiceFile 落盘');
+  eq(calls.install[0].urls.length, piper.urls.length, '下载地址原样交给主进程（含镜像）');
+  ok(env.msIsInstalled(piper), '下完判为已安装');
+  eq(env.__ls.getItem('hf_ttsVoice'), 'piper:' + piper.id, '下完自动设为默认');
+  ok(env.msIsActive(piper), '并标记为已启用');
+
+  /* 浏览器模式没有本地桥：要给可读提示，而不是静默没反应 */
+  await env.msPreview(piper);
+  ok(/桌面端/.test(stateOf(env).error[piper.id] || ''), '无桌面端时试听给出可读提示');
+
+  const asked = [];
+  env.fetch = async (url, init) => {
+    asked.push({ url, body: JSON.parse(init.body) });
+    return { ok: true, blob: async () => ({ size: 1024 }) };
+  };
+  env.URL = { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} };
+  env.window.Audio = function (url) { this.__url = url; this.play = () => Promise.resolve(); this.pause = () => {}; };
+  delete stateOf(env).error[piper.id];
+  await env.msPreview(piper);
+  eq(asked.length, 1, '试听请求打到本地引擎桥');
+  ok(/\/tts\/speak$/.test(asked[0].url), '走 /tts/speak');
+  eq(asked[0].body.voice, piper.voiceFile, '请求里带权重文件名');
+  eq(stateOf(env).previewId, piper.id, '试听中按钮切成「停止」');
+
+  await env.msRemove(piper);
+  eq(calls.remove.length, 1, '卸载会调主进程删除');
+  eq(calls.remove[0].voiceFile, piper.voiceFile, '按 voiceFile 删除');
+  eq(env.__ls.getItem('hf_ttsVoice'), null, '卸载默认音色时清掉绑定');
+  ok(!env.msIsInstalled(piper), '卸载后回到未安装');
+}
+
+/* Kokoro 超自然音色：一份共享模型 + 多个 sid。
+ * 关键断言是「装一次，所有音色都算已安装」，以及试听请求带的是 sid 而不是文件名。 */
+{
+  const env = makeEnv();
+  env.window.speechSynthesis = { getVoices(){ return []; }, addEventListener(){}, cancel(){}, speak(){} };
+  const calls = { install: 0, remove: 0, cancel: [] };
+  env.__kokoro = false;
+  env.window.openagiDesktop = {
+    async storeKokoroStatus(){ return { ok: true, installed: env.__kokoro, engine: env.__kokoro, model: env.__kokoro }; },
+    async storeInstallKokoro(){ calls.install++; env.__kokoro = true; return { ok: true, installed: true }; },
+    async storeRemoveKokoro(){ calls.remove++; env.__kokoro = false; return { ok: true }; },
+    async storeTtsList(){ return { ok: true, voices: [] }; },
+    async storeCancel(id){ calls.cancel.push(id); return { ok: true }; }
+  };
+  await env.renderModelStore(gpu4);
+  const kokoro = env.catalogGet('kokoro-zh-xiaoxiao');
+  ok(!!kokoro && kokoro.engine === 'kokoro', '目录里有 Kokoro 超自然音色');
+  ok(!env.msIsInstalled(kokoro), '共享模型没下载时不算已安装');
+  const html0 = env.__els.mcStore.innerHTML;
+  ok(/共享/.test(html0), '卡片标出「共享」体积');
+  ok(/所有 Kokoro 音色共用同一份模型/.test(html0), '未下载时提示共享模型只下一次');
+
+  await env.msInstall(kokoro);
+  eq(calls.install, 1, '安装走 Kokoro 共享模型下载');
+  ok(env.msIsInstalled(kokoro), '共享模型就绪后判为已安装');
+  const other = env.catalogGet('kokoro-zh-yunxi');
+  ok(env.msIsInstalled(other), '同一共享模型下的其他音色也立即可用');
+  eq(env.__ls.getItem('hf_ttsVoice'), 'kokoro:' + kokoro.sid, '默认音色写成 kokoro:<sid>');
+  ok(env.msIsActive(kokoro), '并标记为已启用');
+
+  const asked = [];
+  env.fetch = async (url, init) => {
+    asked.push({ url, body: JSON.parse(init.body) });
+    return { ok: true, blob: async () => ({ size: 2048 }) };
+  };
+  env.URL = { createObjectURL: () => 'blob:k', revokeObjectURL: () => {} };
+  env.window.Audio = function () { this.play = () => Promise.resolve(); this.pause = () => {}; };
+  delete stateOf(env).error[kokoro.id];
+  await env.msPreview(kokoro);
+  eq(asked.length, 1, 'Kokoro 试听打到本地引擎桥');
+  eq(asked[0].body.engine, 'kokoro', '试听请求带 engine=kokoro');
+  eq(asked[0].body.sid, kokoro.sid, '试听请求带 sid（不是文件名）');
+  ok(!asked[0].body.voice, 'Kokoro 不传 voice 字段');
+  env.msStopPreview();
+
+  await env.msCancel(kokoro);
+  eq(calls.cancel[0], 'kokoro', '取消按共享任务 key 发给主进程');
+
+  await env.msRemove(kokoro);
+  eq(calls.remove, 1, '卸载会删除共享模型');
+  eq(env.__ls.getItem('hf_ttsVoice'), null, '卸载共享模型时清掉默认音色');
+  ok(!env.msIsInstalled(kokoro) && !env.msIsInstalled(other), '卸载后所有 Kokoro 音色回到未安装');
+}
+
+/* 一只系统语音都没有：仍要能看到可下载的高级音色，而不是一屏空 */
+{
+  const env = makeEnv();
+  env.window.speechSynthesis = { getVoices(){ return []; }, addEventListener(){}, cancel(){}, speak(){} };
+  await env.renderModelStore(gpu4);
+  stateOf(env).filter = 'tts';
+  env.msPaintStore();
+  const html = env.__els.mcStore.innerHTML;
+  ok(!/没有检测到可用的语音/.test(html), '有可下载音色时不显示整页空态');
+  ok(/下载并启用/.test(html), '没有系统语音也能下载 Piper 音色');
+  eq(env.msKindCount('tts'), env.msTtsLocal().length, '此时语音计数只算可下载音色');
 }
 
 /* ================= C. 主进程：下载到 checkpoints ================= */

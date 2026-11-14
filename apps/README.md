@@ -175,6 +175,7 @@ window.MV_BODY = `<div class="mv-wrap"> … </div>`;
 | `imglab` | `apps/imglab/` | |
 | `modeldesk` | `apps/modeldesk/` | |
 | `player` | `apps/player/` | |
+| `studio` | `apps/studio/` | 时间线剪辑；菜单栏 / 选择·剃刀工具 / 循环与逐帧 / 动态轨道 / 关键帧 / 四种精细剪辑 / 标记 / 片段右键菜单（含分离音频）/ `.hfstudio` 导入导出；素材只经 `window.playerApp` 读视频库 |
 | `models` | `apps/models/` | `open()` 里先 `deskMountApp` 再渲染控制台，顺序不能反 |
 | `multiview` | `apps/multiview/` | DOM 在 `body.js`，独立页共用 |
 | `code` | `apps/code/` | |

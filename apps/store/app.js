@@ -12,7 +12,7 @@
     id: 'store',
     name: '模型商店',
     title: '模型商店',
-    sub: '安装 / 删除本地模型',
+    sub: '本地模型 · 语音 · 一键安装',
     icon: '<img class="desk-app-img" src="vendor/ollama-llama.png" alt="" draggable="false">',
     order: 3,
     cls: 'store',

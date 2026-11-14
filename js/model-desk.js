@@ -3791,7 +3791,7 @@
         });
       },
       [
-        { key: 'dist', label: '厚度', value: 0.1, min: -2, max: 2, step: 0.01 },
+        { key: 'dist', label: '厚度', value: 0, min: -2, max: 2, step: 0.01 },
         { key: 'localZ', label: '局部平移 Z', value: 0, min: -2, max: 2, step: 0.01 },
         { key: 'offset', label: '偏移', value: 0, min: -2, max: 2, step: 0.01 },
         { key: 'divisions', label: '分段', value: 1, min: 1, max: 8, step: 1 },
@@ -4021,6 +4021,15 @@
     return true;
   }
 
+  /* 参数读数：按 step 决定小数位（0.01 → 两位，1 → 整数），滑条和读数共用一份格式 */
+  function paramText(v, step) {
+    var s = Math.abs(Number(step));
+    var dec = (!isFinite(s) || s <= 0) ? 2 : (s >= 1 ? 0 : Math.min(3, Math.ceil(-Math.log(s) / Math.LN10)));
+    var n = Number(v);
+    if (!isFinite(n)) n = 0;
+    return n.toFixed(dec);
+  }
+
   /* 工具参数面板（Maya 的 polyExtrudeFace 通道盒）：
    * 工具一启动就弹出来，改数字 / 切开关立刻重算预览；Enter 提交、Esc 取消时一起收起。
    * 参数表来自 SeedTools.listParams()，所以只给「有参数的算子」弹。 */
@@ -4039,10 +4048,16 @@
           '<button type="button" class="md-tp-sw' + (on ? ' on' : '') + '" data-tp="' + i +
           '">' + (on ? '启用' : '禁用') + '</button></div>';
       }
-      return '<label class="md-hbp-row"><span>' + esc(p.label) + '</span>' +
-        '<input type="number" data-tp="' + i + '" value="' + (Number(p.value) || 0) + '"' +
-        (p.min != null ? ' min="' + p.min + '"' : '') + (p.max != null ? ' max="' + p.max + '"' : '') +
-        ' step="' + (p.step != null ? p.step : 0.01) + '"></label>';
+      /* 数值参数一律用滑条：拖操纵器时读数实时跟着变，手不用离开视口 */
+      var v = Number(p.value) || 0;
+      var step = p.step != null ? p.step : 0.01;
+      var mn = p.min != null ? p.min : -1;
+      var mx = p.max != null ? p.max : 1;
+      if (!(mx > mn)) mx = mn + 1;
+      return '<label class="md-hbp-row md-tp-slider"><span>' + esc(p.label) + '</span>' +
+        '<input type="range" data-tp="' + i + '" value="' + v + '" min="' + mn + '" max="' + mx +
+        '" step="' + step + '">' +
+        '<b data-tp-out="' + i + '">' + paramText(v, step) + '</b></label>';
     }).join('');
     var box = document.createElement('div');
     box.className = 'md-hbp md-toolpanel';
@@ -4071,6 +4086,8 @@
       var p = list[+el.dataset.tp];
       var v = Number(el.value);
       if (!p || !isFinite(v)) return;
+      var out = box.querySelector('[data-tp-out="' + el.dataset.tp + '"]');
+      if (out) out.textContent = paramText(v, p.step);
       var patch = {};
       patch[p.key] = v;
       dragTool({ params: patch });
@@ -4187,7 +4204,9 @@
     var ids = selFaceIds();
     if (!ids.length) return null;
     var M = SeedModel.Mesh, pm = st.pivot.matrixWorld;
-    var c = [0, 0, 0], nrm = [0, 0, 1], tmpN = [0, 0, 0];
+    /* 法线必须从零向量开始累加：旧代码把初值写成 [0,0,1]，选中 +X 面时得到 [1,0,1]，
+     * 归一化后箭头变成 45° 斜向，和面法线对不上。 */
+    var c = [0, 0, 0], nrm = [0, 0, 0], tmpN = [0, 0, 0];
     var count = 0, rad = 0;
     for (var k = 0; k < ids.length; k++) {
       var fi = -1;
@@ -4217,7 +4236,8 @@
     }
     if (!count) return null;
     c[0] /= count; c[1] /= count; c[2] /= count;
-    var nl = Math.sqrt(nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]) || 1;
+    var nl = Math.sqrt(nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]);
+    if (!(nl > 1e-9)) { nrm[0] = 0; nrm[1] = 0; nrm[2] = 1; nl = 1; }
     var center = new THREE.Vector3(c[0], c[1], c[2]).applyMatrix4(pm);
     var normal = new THREE.Vector3(nrm[0] / nl, nrm[1] / nl, nrm[2] / nl).transformDirection(pm).normalize();
     var ps = new THREE.Vector3(), pq = new THREE.Quaternion(), sc = new THREE.Vector3();
@@ -4253,7 +4273,7 @@
     if (!fr || !st.camera || !st.canvas) { if (EXGZ.gizmo) EXGZ.gizmo.group.visible = false; return; }
     var g = ensureExtrudeGizmo();
     if (!g) return;
-    var dist = liveParamValue('dist', 0.1);
+    var dist = liveParamValue('dist', 0);
     /* 箭头根部 = 顶面中心：厚度改多少，箭头就跟着走多少 */
     var base = fr.center.clone().addScaledVector(fr.normal, dist);
     var camD = st.camera.position.distanceTo(base);
@@ -4294,7 +4314,7 @@
     var al = Math.sqrt(ax * ax + ay * ay) || 1;
     EXGZ.drag = {
       mode: mode, x0: e.clientX, y0: e.clientY,
-      dist0: liveParamValue('dist', 0.1),
+      dist0: liveParamValue('dist', 0),
       offset0: liveParamValue('offset', 0),
       axis: { x: ax / al, y: ay / al },
       wpp: g.wpp || 0.01, radius: g.radius || 0.5
@@ -4319,11 +4339,11 @@
     if (d.mode === 'arrow') {
       var along = dx * d.axis.x + dy * d.axis.y;
       var v = Math.max(-2, Math.min(2, d.dist0 + along * d.wpp));
-      patch = { dist: Math.round(v * 1000) / 1000 };
+      patch = { dist: Math.round(v * 100) / 100 };
       label = '厚度 ' + patch.dist.toFixed(2);
     } else {
       var v2 = Math.max(-2, Math.min(2, d.offset0 + dx * (d.radius / 180)));
-      patch = { offset: Math.round(v2 * 1000) / 1000 };
+      patch = { offset: Math.round(v2 * 100) / 100 };
       label = '顶面偏移 ' + patch.offset.toFixed(2);
     }
     if (global.SeedTools) global.SeedTools.drag({ params: patch });
@@ -4341,7 +4361,7 @@
     if (st.canvas) st.canvas.style.cursor = '';
   }
 
-  /* 拖动箭头时把面板里的数字同步过去（不然手柄改了、输入框还停在旧值） */
+  /* 拖动箭头时把面板里的滑条与读数同步过去（不然手柄改了、滑条还停在旧位置） */
   function syncToolPanelInputs() {
     var box = st.toolPanel, SeedTools = global.SeedTools;
     if (!box || !SeedTools || !SeedTools.isLive()) return;
@@ -4351,7 +4371,9 @@
       var p = list[+inputs[i].dataset.tp];
       if (!p || !isFinite(p.value) || document.activeElement === inputs[i]) continue;
       var v = Number(p.value);
-      inputs[i].value = (v === Math.round(v)) ? String(v) : String(Math.round(v * 1000) / 1000);
+      inputs[i].value = String(v);
+      var out = box.querySelector('[data-tp-out="' + inputs[i].dataset.tp + '"]');
+      if (out) out.textContent = paramText(v, p.step);
     }
   }
 
@@ -5762,7 +5784,7 @@
     },
     extrude: function () {
       return hbPanelSpec('挤出', [
-        { key: 'dist', label: '厚度', value: 0.1, min: -2, max: 2, step: 0.01 },
+        { key: 'dist', label: '厚度', value: 0, min: -2, max: 2, step: 0.01 },
         { key: 'localZ', label: '局部平移 Z', value: 0, min: -2, max: 2, step: 0.01 },
         { key: 'offset', label: '偏移', value: 0, min: -2, max: 2, step: 0.01 },
         { key: 'divisions', label: '分段', value: 1, min: 1, max: 8, step: 1 }

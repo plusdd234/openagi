@@ -1973,6 +1973,15 @@ Connections:  {
     const live0 = window.modelDesk.getState().toolLive;
     const preview0 = !!d.scene.getObjectByName('tool-preview-mesh');
     const toggle0 = sw ? { text: sw.textContent.trim(), on: sw.classList.contains('on') } : null;
+    /* 默认厚度必须是 0：一启动就沿法线顶出去 0.1 不是「开始挤出」，是「已经挤出过」 */
+    const defDist = +Number(((window.SeedTools.current() || {}).params || {}).dist).toFixed(3);
+    /* 数值参数全部用滑条：range 数量 = 四个数值参数，number 输入应为 0，右侧读数和参数一致 */
+    const slider = {
+      ranges: panel ? panel.querySelectorAll('input[type="range"]').length : 0,
+      numbers: panel ? panel.querySelectorAll('input[type="number"]').length : 0,
+      marks: panel ? Array.from(panel.querySelectorAll('[data-tp-out]')).map(b => b.textContent) : [],
+      defDist: defDist
+    };
 
     /* 面板上改厚度 → 预览立刻重算（不需要重新点工具） */
     const thick = panel ? panel.querySelector('input[data-tp="0"]') : null;
@@ -1983,6 +1992,8 @@ Connections:  {
     await new Promise(r => setTimeout(r, 80));
     const live1 = window.modelDesk.getState().toolLive;
     const preview1 = !!d.scene.getObjectByName('tool-preview-mesh');
+    /* 拖动滑条后，右侧读数必须同步成 0.25 */
+    const mark1 = panel ? (panel.querySelector('[data-tp-out="0"]') || {}).textContent : '';
 
     /* 关掉「保持面的连续性」→ 预览还在，参数为 0 */
     if (sw) sw.click();
@@ -2025,6 +2036,7 @@ Connections:  {
     return {
       pairing: pair, ids: ids,
       rows, toggle0, live0, preview0, live1, preview1, offState,
+      slider, mark1,
       afterCancel,
       base,
       on: { faces: on.faceIds.length - base.faces, verts: on.vertexIds.length - base.verts },
@@ -2038,6 +2050,10 @@ Connections:  {
     '挤出后弹出属性面板（五个参数齐全）', JSON.stringify(ext.rows));
   check(ext.toggle0 && ext.toggle0.text === '启用' && ext.toggle0.on && ext.live0 && ext.preview0,
     '面板绑在工具会话上（默认保持连接 + 实时预览）', JSON.stringify({ t: ext.toggle0, live: ext.live0, pv: ext.preview0 }));
+  check(ext.slider && ext.slider.defDist === 0 && ext.slider.marks[0] === '0.00',
+    '挤出默认厚度为 0（箭头停在面上，不是先顶出去）', JSON.stringify(ext.slider));
+  check(ext.slider && ext.slider.ranges === 4 && ext.slider.numbers === 0 && ext.mark1 === '0.25',
+    '数值参数全是滑条（4 个 range / 0 个 number），读数随拖动同步', JSON.stringify({ slider: ext.slider, mark1: ext.mark1 }));
   check(ext.live1 && ext.preview1 && ext.offState && ext.offState.keep === 0,
     '面板改厚度 / 切开关都实时重算预览', JSON.stringify({ live: ext.live1, pv: ext.preview1, keep: ext.offState && ext.offState.keep }));
   check(ext.afterCancel.live === false && ext.afterCancel.panel === false && ext.afterCancel.preview === false,
@@ -2669,7 +2685,7 @@ Connections:  {
       const cw = new T.Vector3(c.x, c.y, c.z).applyMatrix4(pm);
       const a = proj(cw), b = proj(cw.clone().addScaledVector(nv, 0.3));
       const len = Math.hypot(b.x - a.x, b.y - a.y);
-      if (!best || len > best.len) best = { f: f, id: m0.faceIds[f], len: len };
+      if (!best || len > best.len) best = { f: f, id: m0.faceIds[f], len: len, n: nv.toArray() };
     }
     if (!best) return { best: null };
     const doc = API.getDocument();
@@ -2687,6 +2703,14 @@ Connections:  {
     out.tipPx = g.tipPx && { x: Math.round(g.tipPx.x), y: Math.round(g.tipPx.y) };
     out.tipLen = Math.round(Math.hypot(g.tipPx.x - g.basePx.x, g.tipPx.y - g.basePx.y));
     out.transformHidden = !(d.gizmo.group && d.gizmo.group.visible);
+    /* 箭头方向 = 手柄局部 +Y 经四元数旋转；必须和所选面的世界法线同向（以前是 45° 斜的） */
+    const gdir = new T.Vector3(0, 1, 0).applyQuaternion(g.group.quaternion).normalize();
+    const fdir = new T.Vector3(best.n[0], best.n[1], best.n[2]).normalize();
+    out.align = {
+      dir: gdir.toArray().map(v => +v.toFixed(3)),
+      faceN: fdir.toArray().map(v => +v.toFixed(3)),
+      dot: +gdir.dot(fdir).toFixed(3)
+    };
 
     /* 悬停光标：根部 = ew-resize，杆身 = grab */
     const tip = { x: r.left + g.tipPx.x, y: r.top + g.tipPx.y };
@@ -2780,6 +2804,8 @@ Connections:  {
   check(extGiz.has && extGiz.visible && extGiz.parts === 3 && extGiz.tipLen > 40,
     '挤出会话里出现专用箭头（杆 + 锥头 + 根部轴心柄，屏幕长度够拖）',
     JSON.stringify({ visible: extGiz.visible, parts: extGiz.parts, tipLen: extGiz.tipLen }));
+  check(extGiz.align && extGiz.align.dot > 0.999,
+    '箭头沿所选面的真实法线（不再偏成 45°）', JSON.stringify(extGiz.align));
   check(extGiz.cursorTip === 'grab' && extGiz.cursorRoot === 'ew-resize',
     '箭头 / 轴心柄悬停光标（grab / ew-resize）', JSON.stringify({ tip: extGiz.cursorTip, root: extGiz.cursorRoot }));
   check(extGiz.dist && extGiz.dist.after > extGiz.dist.before + 0.05 && extGiz.panelSync === extGiz.dist.after,

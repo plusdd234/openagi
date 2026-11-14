@@ -64,8 +64,23 @@ tools/.*.js
 # vendor 下是第三方模型卡与二进制，不是本项目源码
 # 注意用 /* 而不是 /：目录级忽略连 !取反 一起失效，文件级的例外就永远不生效
 vendor/*
-# 例外：GLTFExporter 是本项目自维护的 UMD 包装（r149 无 UMD 版，生成方式见 tools/_mkgltfexporter.js）
+# 例外：运行时必需的 UMD 依赖必须先放行，否则 clone 下来缺文件，
+# 页面只会报「three.js 没加载上」，看起来像客户环境问题（2026-11-13 线上反馈）。
+# Model3D.ready() 要求 GLTFLoader + OBJLoader + FBXLoader 齐全，
+# FBXLoader 还依赖 fflate / NURBSUtils / NURBSCurve，一个都不能少。
+!vendor/README.md
+!vendor/three.min.js
+!vendor/GLTFLoader.js
+!vendor/OBJLoader.js
+!vendor/FBXLoader.js
+!vendor/OrbitControls.js
+!vendor/fflate.js
+!vendor/NURBSUtils.js
+!vendor/NURBSCurve.js
+# GLTFExporter 是本项目自维护的 UMD 包装（r149 无 UMD 版，生成方式见 tools/_mkgltfexporter.js）
 !vendor/GLTFExporter.js
+# 模型商店 / 对话头像用的图标，缺失会掉图标
+!vendor/ollama-llama.png
 
 # ===== 工作流存储备份（含用户数据，勿提交） =====
 plugins/relay/openagi-store.backup/

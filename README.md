@@ -38,6 +38,7 @@
 | **21 类节点** | 输入（文本 / 数值 / 布尔 / 图像 / 模型）、生成（生图 / 压缩 / 拆分 / 3D / 多视图）、逻辑（分支 / 智能分支 / 变量）、Tripo 网页接入、起止与结果 |
 | **多引擎生图** | 本地 ComfyUI / 在线 API / Tripo 网页版，统一走 `wfImage(prompt, image, opts)` 一个出口 |
 | **本地语言模型** | Ollama 接入，含**冷加载预热 + 驻留保活**（首条消息不用干等 4-5 秒，且不会弹出黑窗口） |
+| **语音合成** | 模型商店三级音色：系统语音（晓晓 / 云希 / 慧慧等）零下载直接可用，数字人未单独指定音色时自动使用；Piper 本地音色（中文华言、英文 Lessac / Ryan，20–115 MB），体积小、下载快；Kokoro 超自然音色（82M int8，中英 6 只声纹，共享模型约 160 MB），语调接近真人。三档都断网可用、纯 CPU、不占显存，装完自动设为默认 |
 | **3D 预览** | 基于 three.js 的 GLB / OBJ 查看器，轨道操控 |
 | **确定性网页 AI 接入** | 通过浏览器自动化调用没有开放 API 的第三方 AI 服务：可见文本正则 + 几何邻近锚点 + 原生 setter 写入 + 回读校验 |
 | **工作台桌面** | 类 OS 桌面，多 App 统一翻页动效（模型商店 / ComfyUI / 图库 / 模型库 / AI 对话） |
@@ -64,6 +65,16 @@ Windows 上也可以直接双击 `start.bat`（它会自动装依赖再启动）
 ```bash
 npm install
 node plugins/relay/relay.js   # 本地中转服务
+```
+
+中转会按域名记住上游下发的 Cookie（知乎 / 百度百科没有会话 Cookie 会回登录墙），
+访问这两类站时先自动预热一次站点首页。需要登录态时可用环境变量注入：
+
+```bash
+# 例：把浏览器里已登录的 Cookie 交给中转（JSON 或每行 host=cookie）
+set RELAY_COOKIES={"zhihu.com":"z_c0=...; _zap=..."}
+set RELAY_BLOCK_MS=600000    # 站点 403/429 后冷却多久（毫秒，默认 10 分钟）
+set RELAY_HOST_GAP=1200      # 同一域名两次抓网页的最小间隔（毫秒）
 ```
 
 然后打开 `index.html`。注意：**浏览器模式下 `file://` 页面直连本机引擎会被 CORS 拦**，
@@ -175,6 +186,7 @@ node tools/css-links.js          # 样式存在 / 无孤岛 / 编号顺序
 node tools/engine-autostart.js   # 引擎自动启动（纯 node）
 node tools/engine-keepalive.js   # 驻留保活器（纯 node）
 node tools/runtime-bridge.js     # 本地引擎桥
+node tools/tts-store.js          # 本地语音商店（Piper 清单 / Kokoro 共享模型 / 路径安全 / 删除，不联网）
 ```
 
 浏览器侧测试用 `playwright-core` 驱动 Edge（`channel:'msedge'`），

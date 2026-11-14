@@ -10,7 +10,7 @@
  *      它们是 listen-on-require，而且服务崩了不该带走整个窗口。
  *   3) 内容包（index.html / css / js / vendor）单独热更新，程序本体更新留给 P2 的安装包链路。
  */
-const { app, BrowserWindow, protocol, ipcMain, Menu, shell, dialog, utilityProcess, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, protocol, ipcMain, Menu, shell, dialog, utilityProcess, clipboard, nativeImage, session } = require('electron');
 const fs = require('fs');
 const fsp = fs.promises;
 const os = require('os');
@@ -21,6 +21,7 @@ const content = require('./content-updater');
 const ollamaDl = require('./ollama-download');
 const comfySetup = require('./comfy-setup');
 const modelStore = require('./model-store');
+const ttsStore = require('./tts-store');
 const mediaStoreMod = require('./media-store');
 const engineAuto = require('./engine-autostart');
 const engineKeepalive = require('./engine-keepalive');
@@ -754,6 +755,52 @@ async function serveWorkspacePreview(req){
   }
 }
 
+/* ---------- 外站防护 ----------
+ * 浏览器 App 的 <webview> 里跑的是任意第三方代码。这里给它单独一个 session 分区，
+ * 并在分区层面做四件事：拦广告/追踪、拒权限、拒下载、拒弹窗。
+ * 页面脚本仍然会跑（否则播放器全废），但拿不到摄像头、麦克风、通知、剪贴板，
+ * 打不开新窗口，也下载不了文件；Cookie 与工作台隔离，互不影响。 */
+const GUEST_PARTITION = 'persist:browser-guard';
+const AD_HOSTS = [
+  'doubleclick.net', 'googlesyndication.com', 'googleadservices.com', 'adservice.google.com',
+  'google-analytics.com', 'googletagmanager.com', 'googletagservices.com',
+  'cpro.baidu.com', 'pos.baidu.com', 'hm.baidu.com', 'cnzz.com', 'umeng.com',
+  'growingio.com', 'hotjar.com', 'quantserve.com', 'scorecardresearch.com',
+  'adsrvr.org', 'taboola.com', 'outbrain.com', 'criteo.com', 'zedo.com',
+  'popads.net', 'popcash.net', 'propellerads.com', 'onclickads.net'
+];
+
+function hostBlocked(host){
+  const h = String(host || '').toLowerCase().replace(/^www\./, '');
+  return AD_HOSTS.some(b => h === b || h.endsWith('.' + b));
+}
+
+function hardenGuestSession(){
+  const guard = session.fromPartition(GUEST_PARTITION);
+  /* 权限一律拒绝：外站不需要摄像头 / 麦克风 / 定位 / 通知 / 剪贴板读取 */
+  guard.setPermissionRequestHandler((_wc, _permission, cb) => cb(false));
+  guard.setPermissionCheckHandler(() => false);
+  /* 下载一律拦下：浏览器窗口只负责看，不往本地落文件 */
+  guard.on('will-download', (e) => e.preventDefault());
+  /* 广告与追踪域名直接取消请求；非 http(s) 协议也在这里挡掉 */
+  guard.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, cb) => {
+    try {
+      const u = new URL(details.url);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return cb({ cancel: true });
+      if (hostBlocked(u.hostname)) return cb({ cancel: true });
+      cb({});
+    } catch(e){ cb({}); }
+  });
+  /* 弹窗与协议跳转：guest 用独立 webContents 创建，主窗口那套 handler 管不到 */
+  app.on('web-contents-created', (_e, contents) => {
+    if (contents.getType() !== 'webview') return;
+    contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    const onlyHttp = (e, url) => { if (!/^https?:\/\//i.test(url)) e.preventDefault(); };
+    contents.on('will-navigate', onlyHttp);
+    contents.on('will-redirect', onlyHttp);
+  });
+}
+
 /* ---------- 窗口 ---------- */
 async function createWindow(){
   const win = new BrowserWindow({
@@ -783,6 +830,9 @@ async function createWindow(){
     delete webPreferences.preload;
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
+    /* 所有 guest 强制进防护分区；sandbox 让渲染进程也失去直接系统能力 */
+    webPreferences.partition = GUEST_PARTITION;
+    webPreferences.sandbox = true;
   });
 
   const qs = new URLSearchParams({
@@ -1048,6 +1098,7 @@ if(!gotLock){
     logLine('[port] ' + portLog + (portLog ? ' ' : '') + 'chat=' + chatPort);
     startServices();
     buildMenu();
+    hardenGuestSession();
     mainWin = await createWindow();
     logLine('[window] 已创建并加载 ' + CONTENT_ORIGIN);
 
@@ -1820,6 +1871,119 @@ if(!gotLock){
       const r = await modelStore.remove(comfyCfg(), file);
       logLine('[store] removed ' + r.file);
       return { ok: true, file: r.file };
+    }catch(e){
+      return { ok: false, message: String((e && e.message) || e) };
+    }
+  });
+
+  /* ---- 模型商店：本地语音（Piper ONNX） ----
+   * 权重下到 userData/tts/voices，引擎（piper.exe）只装一次；
+   * 合成由本地引擎桥的 /tts/speak 完成，这里只负责落盘。 */
+  ipcMain.handle('store:tts-list', async () => {
+    try{ return await ttsStore.list(app.getPath('userData')); }
+    catch(e){ return { ok: false, message: String((e && e.message) || e) }; }
+  });
+
+  ipcMain.handle('store:tts-install', async (event, req) => {
+    const r = req || {};
+    const id = String(r.id || r.voiceFile || '');
+    if(!id) return { ok: false, message: '缺少语音标识' };
+    if(storeJobs.has(id)) return { ok: false, message: '这个语音正在下载中' };
+    const job = { cancel: false };
+    storeJobs.set(id, job);
+    const send = info => {
+      try{ event.sender.send('store:progress', Object.assign({ id }, info || {})); }catch(e){}
+    };
+    try{
+      send({ stage: 'download', pct: 0, message: '正在准备下载…' });
+      const res = await ttsStore.install(app.getPath('userData'), r, {
+        httpGet: ollamaDl.makeElectronHttpGet(netmod_electron()),
+        isCancelled: () => job.cancel,
+        onLog: m => logLine('[store] ' + m),
+        onProgress: info => {
+          if(!info) return;
+          send({
+            stage: info.stage || 'download',
+            pct: (typeof info.pct === 'number') ? info.pct : -1,
+            message: info.msg || '下载中…',
+            speed: info.speed, etaMs: info.etaMs
+          });
+        }
+      });
+      if(res && res.cancelled) return { ok: false, cancelled: true, message: '已取消下载，进度已保留' };
+      logLine('[store] tts installed ' + r.voiceFile);
+      return Object.assign({ ok: true }, res || {});
+    }catch(e){
+      const msg = String((e && e.message) || e);
+      logLine('[store] tts error: ' + msg);
+      return { ok: false, resumable: !!(e && e.resumable), message: msg };
+    }finally{
+      storeJobs.delete(id);
+    }
+  });
+
+  ipcMain.handle('store:tts-remove', async (event, req) => {
+    try{
+      const r = await ttsStore.remove(app.getPath('userData'), req || {});
+      logLine('[store] tts removed ' + ((req && req.voiceFile) || ''));
+      return Object.assign({ ok: true }, r || {});
+    }catch(e){
+      return { ok: false, message: String((e && e.message) || e) };
+    }
+  });
+
+  /* ---- 模型商店：超自然语音（Kokoro 共享模型） ----
+   * 所有音色共用一份模型，所以任务 key 固定为 'kokoro'：
+   * 重复点击任意 Kokoro 音色都会被挡掉，而不是并发下三份 126 MB。 */
+  ipcMain.handle('store:kokoro-status', async () => {
+    try{ return ttsStore.kokoroStatus(app.getPath('userData')); }
+    catch(e){ return { ok: false, installed: false, message: String((e && e.message) || e) }; }
+  });
+
+  ipcMain.handle('store:kokoro-install', async (event, req) => {
+    /* 任务 key 固定 'kokoro'（共享模型只下一份），进度 id 用发起下载的卡片 id，
+     * 这样进度条才会画在用户点的那张卡上，而不是凭空出现在别处。 */
+    const id = 'kokoro';
+    const progressId = String((req && req.id) || id);
+    if(storeJobs.has(id)) return { ok: false, message: 'Kokoro 模型正在下载中' };
+    const job = { cancel: false };
+    storeJobs.set(id, job);
+    const send = info => {
+      try{ event.sender.send('store:progress', Object.assign({ id: progressId }, info || {})); }catch(e){}
+    };
+    try{
+      send({ stage: 'download', pct: 0, message: '正在准备 Kokoro 超自然语音…' });
+      const res = await ttsStore.installKokoro(app.getPath('userData'), req || {}, {
+        httpGet: ollamaDl.makeElectronHttpGet(netmod_electron()),
+        isCancelled: () => job.cancel,
+        onLog: m => logLine('[store] ' + m),
+        onProgress: info => {
+          if(!info) return;
+          send({
+            stage: info.stage === 'done' ? 'done' : 'download',
+            pct: (typeof info.pct === 'number') ? info.pct : -1,
+            message: info.msg || '下载中…',
+            speed: info.speed, etaMs: info.etaMs
+          });
+        }
+      });
+      if(res && res.cancelled) return { ok: false, cancelled: true, message: '已取消下载，进度已保留' };
+      logLine('[store] kokoro installed');
+      return Object.assign({ ok: true }, res || {});
+    }catch(e){
+      const msg = String((e && e.message) || e);
+      logLine('[store] kokoro error: ' + msg);
+      return { ok: false, resumable: !!(e && e.resumable), message: msg };
+    }finally{
+      storeJobs.delete(id);
+    }
+  });
+
+  ipcMain.handle('store:kokoro-remove', async () => {
+    try{
+      const r = await ttsStore.removeKokoro(app.getPath('userData'));
+      logLine('[store] kokoro removed');
+      return Object.assign({ ok: true }, r || {});
     }catch(e){
       return { ok: false, message: String((e && e.message) || e) };
     }

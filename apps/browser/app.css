@@ -359,6 +359,19 @@
   color: #b67a05;
 }
 
+/* 防护标识：广告/追踪、弹窗、下载、权限申请都由主进程的 guest 护栏拦下 */
+.bw-guard {
+  flex: 0 0 auto;
+  padding: 0 7px;
+  border: 1px solid #cfe7d8;
+  border-radius: 999px;
+  background: #f2fbf5;
+  color: #2f8a55;
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
 .bw-status-ext {
   flex: 0 0 auto;
   padding: 0;
