@@ -913,14 +913,48 @@
         <div class="tabpane hidden" data-pane="tts">
           <section class="set-sec">
             <div class="set-sec-head">
-              <div class="set-sec-t">默认音色</div>
-              <div class="set-sec-s">数字人朗读与模型商店试听都用这里选的音色。系统语音随系统语音包提供；Piper / Kokoro / MeloTTS / ZipVoice 是本地模型，先在模型商店里下载。</div>
+              <div class="set-sec-t">音色</div>
+              <div class="set-sec-s">分成两类：超拟人追求自然；机械音带金属颗粒，可选原样朗读，或交给 AI 按语义控制节奏。</div>
             </div>
-            <div class="tts-row">
-              <select id="ttsVoiceSel" aria-label="默认音色"><option value="">系统默认</option></select>
-              <button type="button" class="btn sm" id="ttsVoiceReload">刷新</button>
+            <div class="tts-tabs" role="tablist" aria-label="音色类型">
+              <button type="button" class="tts-tab on" data-tts-tab="human" role="tab" aria-selected="true">超拟人</button>
+              <button type="button" class="tts-tab" data-tts-tab="mecha" role="tab" aria-selected="false">机械音</button>
             </div>
-            <div class="note" id="ttsVoiceHint">读取中…</div>
+
+            <div class="tts-tabpane" data-tts-pane="human">
+              <div class="tts-row">
+                <select id="ttsVoiceSel" aria-label="超拟人音色"><option value="">系统默认</option></select>
+                <button type="button" class="btn sm" id="ttsVoiceReload">刷新</button>
+              </div>
+              <div class="note" id="ttsVoiceHint">读取中…</div>
+            </div>
+
+            <div class="tts-tabpane hidden" data-tts-pane="mecha">
+              <div class="tts-mecha">
+                <span class="tts-mecha-ico">M</span>
+                <div class="tts-mecha-main">
+                  <div class="tts-mecha-name">深海机娘 · 二次元机械音</div>
+                  <div class="tts-mecha-desc">复用「海星」声线，叠加环形调制与比特压限；不额外占磁盘。</div>
+                </div>
+                <span class="tts-badge" id="ttsMechaState">检测中</span>
+              </div>
+              <div class="tts-modes" role="radiogroup" aria-label="机械音朗读方式">
+                <button type="button" class="tts-mode on" data-mecha-mode="ai" role="radio" aria-checked="true">
+                  <b>AI 控制</b>
+                  <span>模型按语义插入停顿、变速、句尾拖音</span>
+                </button>
+                <button type="button" class="tts-mode" data-mecha-mode="direct" role="radio" aria-checked="false">
+                  <b>直接朗读</b>
+                  <span>原样读完整句，不加任何节奏</span>
+                </button>
+              </div>
+              <div class="inline tts-actions">
+                <button type="button" class="btn sm primary" id="ttsMechaUse">使用机械音</button>
+                <button type="button" class="btn sm" id="ttsMechaPlay">试听</button>
+                <span class="note" id="ttsMechaMsg"></span>
+              </div>
+            </div>
+
             <div class="set-kv">
               <span class="set-kv-k">引擎</span>
               <span class="set-kv-v" id="ttsStatus">检测中…</span>

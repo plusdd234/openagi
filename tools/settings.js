@@ -25,6 +25,7 @@ const MUST = {
   llm: ['llmKey', 'llmBaseUrl', 'llmModel', 'btnLoadModels', 'modelStatus', 'testLLM', 'llmPresetLinks'],
   image: ['genEngine', 'imgKey', 'imgBaseUrl', 'imgModel', 'btnLoadImgModels', 'imgEndpoint', 'imgSize', 'respPath', 'sendImage', 'testIMG'],
   tts: ['ttsVoiceSel', 'ttsVoiceReload', 'ttsVoiceHint', 'ttsStatus', 'ttsStore', 'ttsText', 'ttsRate', 'ttsRateVal', 'ttsPlay', 'ttsStop', 'ttsPlayMsg',
+    'ttsMechaState', 'ttsMechaUse', 'ttsMechaPlay', 'ttsMechaMsg',
     'ttsCloneText', 'ttsClonePick', 'ttsClonePlay', 'ttsCloneClear', 'ttsCloneStatus'],
   search: ['wsProvider', 'wsBase', 'wsKey', 'wsCount', 'btnTestSearch', 'wsStatus'],
   relay: ['relayUrl', 'relayOn', 'btnTestRelay', 'relayStatus'],
@@ -83,6 +84,40 @@ const MUST = {
     const missing = await page.evaluate(list => list.filter(id => !document.getElementById(id)), ids);
     check(missing.length === 0, pane + ' 分组', missing.length ? '缺 ' + missing.join(',') : ids.length + ' 个 id 全在');
   }
+
+  console.log('\n=== 2b. 音色分类与机械音朗读方式 ===');
+  const mecha = await page.evaluate(() => {
+    openSettings('tts');
+    const root = document.querySelector('.settings2');
+    if (!root) return null;
+    const tab = sel => root.querySelector('[data-tts-tab="' + sel + '"]');
+    const pane = sel => root.querySelector('[data-tts-pane="' + sel + '"]');
+    if (!tab('mecha') || !pane('mecha') || !tab('human') || !pane('human')) return null;
+    tab('mecha').click();
+    const toMecha = {
+      mecha: !pane('mecha').classList.contains('hidden'),
+      human: !pane('human').classList.contains('hidden')
+    };
+    const direct = root.querySelector('[data-mecha-mode="direct"]');
+    direct.click();
+    const afterDirect = {
+      on: direct.classList.contains('on'),
+      checked: direct.getAttribute('aria-checked'),
+      aiOn: root.querySelector('[data-mecha-mode="ai"]').classList.contains('on')
+    };
+    root.querySelector('[data-mecha-mode="ai"]').click();
+    tab('human').click();
+    const toHuman = {
+      human: !pane('human').classList.contains('hidden'),
+      mecha: !pane('mecha').classList.contains('hidden')
+    };
+    return { toMecha, afterDirect, toHuman };
+  });
+  check(!!mecha, '机械音页签与两个面板都在');
+  check(mecha && mecha.toMecha.mecha && !mecha.toMecha.human, '点「机械音」只显示机械音面板');
+  check(mecha && mecha.afterDirect.on && mecha.afterDirect.checked === 'true' && !mecha.afterDirect.aiOn,
+    '点「直接朗读」切到单选态', mecha ? JSON.stringify(mecha.afterDirect) : 'null');
+  check(mecha && mecha.toHuman.human && !mecha.toHuman.mecha, '点「超拟人」切回超拟人面板');
 
   console.log('\n=== 3. 总览卡片 ===');
   await page.evaluate(() => openSettings());

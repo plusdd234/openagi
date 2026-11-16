@@ -190,8 +190,13 @@ async function waitUp(url, timeoutMs){
       // 用一份拷贝来测：真文件不能动 mtime，否则会把正在跑的应用也标成 stale
       const fs = require('fs');
       const os = require('os');
-      const copy = path.join(os.tmpdir(), 'openagi-runtime-copy-' + process.pid + '.js');
-      fs.copyFileSync(path.join(__dirname, '..', 'plugins', 'runtime', 'runtime.js'), copy);
+      /* runtime.js 现在还会 require 同目录的效果器 / 韵律模块，拷贝时一起带上 */
+      const srcDir = path.join(__dirname, '..', 'plugins', 'runtime');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openagi-runtime-copy-'));
+      const copy = path.join(dir, 'runtime.js');
+      ['runtime.js', 'tts-mecha.js', 'tts-prosody.js'].forEach(n => {
+        fs.copyFileSync(path.join(srcDir, n), path.join(dir, n));
+      });
       const p2 = await freePort();
       const c2 = spawn(process.execPath, [copy], {
         env: Object.assign({}, process.env, {
@@ -216,7 +221,7 @@ async function waitUp(url, timeoutMs){
         ok(h2.build > h1.build, 'build 跟着 mtime 变', h1.build + ' → ' + h2.build);
       } finally {
         try{ c2.kill(); }catch(e){}
-        try{ fs.unlinkSync(copy); }catch(e){}
+        try{ fs.rmSync(dir, { recursive: true, force: true }); }catch(e){}
       }
     }
   } finally {

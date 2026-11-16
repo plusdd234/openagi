@@ -116,20 +116,31 @@ window.L2D_BODY = `
           <div class="l2d-field">
             <span class="l2d-lab">朗读声音</span>
             <div class="l2d-tts" id="l2dTts">
-              <div class="l2d-tts-top">
-                <select id="l2dVoiceSel" class="l2d-select" aria-label="音色"></select>
-                <button type="button" class="l2d-btn l2d-btn-ico" id="l2dVoiceRefresh" title="重新检测系统语音与本地模型">检测</button>
-              </div>
-              <div class="l2d-tts-state">
+              <div class="l2d-tts-head">
                 <span class="l2d-tag" id="l2dVoiceEngine">系统语音</span>
-                <span class="l2d-tts-status" id="l2dVoiceStatus">检测中…</span>
+                <div class="l2d-tts-tools">
+                  <button type="button" class="l2d-mini" id="l2dVoiceRefresh" title="重新检测系统语音与本地模型">检测</button>
+                  <button type="button" class="l2d-mini" id="l2dVoiceOpen" title="打开系统语音合成设置">设置</button>
+                </div>
               </div>
-              <label class="l2d-range" id="l2dRateRow"><span>语速</span><input type="range" id="l2dRate" min="0.7" max="1.4" step="0.02" value="1.04"><em id="l2dRateVal">1.04</em></label>
-              <label class="l2d-range" id="l2dPitchRow"><span>音调</span><input type="range" id="l2dPitch" min="0.7" max="1.5" step="0.02" value="1.12"><em id="l2dPitchVal">1.12</em></label>
-              <div class="l2d-tts-acts">
-                <button type="button" class="l2d-btn" id="l2dVoiceTest">试听一句</button>
-                <button type="button" class="l2d-btn" id="l2dVoiceOpen">语音设置</button>
+              <label class="l2d-tts-row">
+                <span class="l2d-tts-key">音色</span>
+                <select id="l2dVoiceSel" class="l2d-select" aria-label="音色"></select>
+              </label>
+              <!-- 只有选中机械音时才出现：决定朗读是交给 AI 控节奏，还是原样整句读 -->
+              <div class="l2d-tts-row l2d-mecha hidden" id="l2dMecha">
+                <span class="l2d-tts-key">方式</span>
+                <div class="l2d-mecha-modes" role="radiogroup" aria-label="机械音朗读方式">
+                  <button type="button" class="l2d-mecha-btn on" data-l2d-mecha="ai" role="radio" aria-checked="true">AI 控制</button>
+                  <button type="button" class="l2d-mecha-btn" data-l2d-mecha="direct" role="radio" aria-checked="false">直接朗读</button>
+                </div>
               </div>
+              <div class="l2d-stats" id="l2dVoiceStatus">检测中…</div>
+              <div class="l2d-tts-params">
+                <label class="l2d-range" id="l2dRateRow"><span>语速</span><input type="range" id="l2dRate" min="0.7" max="1.4" step="0.02" value="1.04"><em id="l2dRateVal">1.04</em></label>
+                <label class="l2d-range" id="l2dPitchRow"><span>音调</span><input type="range" id="l2dPitch" min="0.7" max="1.5" step="0.02" value="1.12"><em id="l2dPitchVal">1.12</em></label>
+              </div>
+              <button type="button" class="l2d-btn l2d-tts-test" id="l2dVoiceTest">试听一句</button>
               <p class="l2d-tts-hint" id="l2dVoiceHint"></p>
             </div>
           </div>

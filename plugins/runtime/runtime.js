@@ -163,16 +163,20 @@ function ttsStatus() {
   };
 }
 
+function sendWavBuffer(res, buf) {
+  res.writeHead(200, Object.assign({
+    'Content-Type': 'audio/wav',
+    'Content-Length': buf.length,
+    'Cache-Control': 'no-store'
+  }, CORS));
+  res.end(buf);
+}
+
 function sendWav(res, file) {
   fs.readFile(file, (err, buf) => {
     try { fs.unlink(file, () => {}); } catch (e) {}
     if (err) { sendJson(res, 500, { error: '读取合成结果失败：' + err.message }); return; }
-    res.writeHead(200, Object.assign({
-      'Content-Type': 'audio/wav',
-      'Content-Length': buf.length,
-      'Cache-Control': 'no-store'
-    }, CORS));
-    res.end(buf);
+    sendWavBuffer(res, buf);
   });
 }
 
@@ -189,6 +193,12 @@ function speakTts(req, res) {
     if (!text) { sendJson(res, 400, { error: '没有要朗读的文本' }); return; }
     /* engine 缺省按 piper：老版本前端只发 voice，不认这个字段 */
     const engine = String(body.engine || 'piper');
+    /* 韵律标记目前只在 VITS 角色音色上生效（数字人 / 机械音走这条）。
+     * 没带标记时仍然走原来的单次合成，不增加任何开销。 */
+    if (engine === 'vits') {
+      const plan = parseProsody(text, Number(body.rate) || 1);
+      if (plan.used && plan.segments.length) { speakVitsProsody(res, body, plan); return; }
+    }
     if (engine === 'kokoro') speakKokoro(res, body, text);
     else if (engine === 'melo') speakMelo(res, body, text);
     else if (engine === 'vits') speakVits(res, body, text);
@@ -300,14 +310,16 @@ function speakMelo(res, body, text) {
   runTts(res, SHERPA_EXE, args, '', path.dirname(SHERPA_EXE), out, 60000);
 }
 
+/* 二次元机械音效果器与朗读韵律都单独成模块，方便纯逻辑测试。 */
+const { mechaizeWav } = require('./tts-mecha');
+const { parseProsody, concatWavs } = require('./tts-prosody');
+
 /* VITS 角色音色（社区模型）：onnx 文件名随模型变化，按目录里的 *.onnx 取；
  * lexicon/tokens 必需，规则 fst（date/number/phone/heteronym）有则一起交给引擎。 */
-function speakVits(res, body, text) {
-  if (!TTS_DIR || !SHERPA_EXE || !VITS_DIR) {
-    sendJson(res, 404, { error: '角色音色未启用：请用桌面端启动' });
-    return;
-  }
-  if (!fs.existsSync(SHERPA_EXE)) { sendJson(res, 404, { error: '角色音色引擎未安装，请先在模型商店下载' }); return; }
+function vitsSetup() {
+  const fail = (status, msg) => { const e = new Error(msg); e.status = status; throw e; };
+  if (!TTS_DIR || !SHERPA_EXE || !VITS_DIR) fail(404, '角色音色未启用：请用桌面端启动');
+  if (!fs.existsSync(SHERPA_EXE)) fail(404, '角色音色引擎未安装，请先在模型商店下载');
   let model = '';
   try{
     const f = fs.readdirSync(VITS_DIR).filter(n => /\.onnx$/i.test(n))[0];
@@ -316,28 +328,72 @@ function speakVits(res, body, text) {
   const tokens = path.join(VITS_DIR, 'tokens.txt');
   const lexicon = path.join(VITS_DIR, 'lexicon.txt');
   if (!model || !fs.existsSync(tokens) || !fs.existsSync(lexicon)) {
-    sendJson(res, 404, { error: '角色音色模型不完整，请在模型商店重新下载' });
-    return;
+    fail(404, '角色音色模型不完整，请在模型商店重新下载');
   }
-  const rate = Math.max(0.5, Math.min(2, Number(body.rate) || 1));
-  const scale = Math.round((1 / rate) * 100) / 100;
-  const out = path.join(os.tmpdir(), 'openagi-vits-' + process.pid + '-' + Date.now() + '.wav');
   const threads = Math.max(1, Math.min(4, (os.cpus() || []).length || 2));
   let fsts = '';
   try{
     fsts = fs.readdirSync(VITS_DIR).filter(f => /\.fst$/i.test(f)).sort()
       .map(f => path.join(VITS_DIR, f)).join(',');
   }catch(e){ fsts = ''; }
-  const args = [
+  const baseArgs = [
     '--vits-model=' + model,
     '--vits-lexicon=' + lexicon,
     '--vits-tokens=' + tokens,
-    '--vits-length-scale=' + scale,
     '--num-threads=' + threads
   ];
-  if (fsts) args.push('--tts-rule-fsts=' + fsts);
-  args.push('--output-filename=' + out, text);
-  runTts(res, SHERPA_EXE, args, '', path.dirname(SHERPA_EXE), out, 60000);
+  if (fsts) baseArgs.push('--tts-rule-fsts=' + fsts);
+  return { exe: SHERPA_EXE, cwd: path.dirname(SHERPA_EXE), baseArgs: baseArgs, timeout: 60000 };
+}
+
+/* 语速与 length_scale 反向：rate=1.25 → 0.8（和 Piper / Kokoro 同一套语义） */
+function vitsRateScale(rate) {
+  return Math.round((1 / rate) * 100) / 100;
+}
+
+function speakVits(res, body, text) {
+  let s;
+  try { s = vitsSetup(); } catch (e) { sendJson(res, e.status || 500, { error: e.message }); return; }
+  const rate = Math.max(0.5, Math.min(2, Number(body.rate) || 1));
+  const out = path.join(os.tmpdir(), 'openagi-vits-' + process.pid + '-' + Date.now() + '.wav');
+  const args = s.baseArgs.concat([
+    '--vits-length-scale=' + vitsRateScale(rate),
+    '--output-filename=' + out,
+    text
+  ]);
+  /* effect=mecha：同一份模型，合成后加机械音效果；原声请求不带这个字段。 */
+  runTts(res, s.exe, args, '', s.cwd, out, s.timeout,
+    String(body.effect || '') === 'mecha' ? 'mecha' : '');
+}
+
+/* 带韵律标记的 VITS 合成：逐段合成，按段间静音拼成一个 WAV。
+ * 段数由解析器限制在 16 段以内，避免一句话触发几十次子进程。 */
+function speakVitsProsody(res, body, plan) {
+  let s;
+  try { s = vitsSetup(); } catch (e) { sendJson(res, e.status || 500, { error: e.message }); return; }
+  (async () => {
+    const items = [];
+    for (let i = 0; i < plan.segments.length; i++) {
+      const seg = plan.segments[i];
+      items.push({ buf: await runVitsSegment(s, seg.text, seg.rate), after: seg.after });
+    }
+    let wav = concatWavs(items, plan.lead);
+    if (String(body.effect || '') === 'mecha') {
+      try { wav = mechaizeWav(wav); } catch (e) { /* 效果器失败退回原声 */ }
+    }
+    sendWavBuffer(res, wav);
+  })().catch(e => sendJson(res, e.status || 500, { error: e.message || '语音合成失败' }));
+}
+
+function runVitsSegment(setup, text, rate) {
+  const out = path.join(os.tmpdir(), 'openagi-vits-' + process.pid + '-' + Date.now() +
+    '-' + Math.random().toString(36).slice(2, 7) + '.wav');
+  const args = setup.baseArgs.concat([
+    '--vits-length-scale=' + vitsRateScale(rate),
+    '--output-filename=' + out,
+    text
+  ]);
+  return runTtsBuffer(setup.exe, args, '', setup.cwd, out, setup.timeout);
 }
 
 /* ZipVoice 零样本克隆：参考音频与参考文本由设置页写入 zipvoice/ref.wav + ref.txt。
@@ -384,9 +440,52 @@ function speakZipVoice(res, body, text) {
   runTts(res, SHERPA_EXE, args, '', path.dirname(SHERPA_EXE), out, 90000);
 }
 
+/* 分段合成专用：跑一次引擎，成功返回 WAV Buffer，失败抛错（错误文案与 runTts 一致）。
+ * 临时文件在成功/失败/超时三条路径都会删掉，避免多段合成后堆一目录 wav。 */
+function runTtsBuffer(exe, args, stdinText, cwd, out, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let stderr = '';
+    let done = false;
+    const child = spawn(exe, args, { cwd, windowsHide: true });
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      try { child.kill(); } catch (e) {}
+      try { fs.unlink(out, () => {}); } catch (e) {}
+      reject(new Error('语音合成超时'));
+    }, timeoutMs);
+    child.stderr.on('data', d => {
+      stderr += d.toString();
+      if (stderr.length > 4000) stderr = stderr.slice(-4000);
+    });
+    child.on('error', e => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      reject(new Error('启动语音引擎失败：' + e.message));
+    });
+    child.on('close', code => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (code !== 0 || !fs.existsSync(out)) {
+        try { fs.unlink(out, () => {}); } catch (e) {}
+        reject(new Error('语音合成失败' + (stderr ? '：' + stderr.trim().slice(-300) : '')));
+        return;
+      }
+      fs.readFile(out, (err, buf) => {
+        try { fs.unlink(out, () => {}); } catch (e) {}
+        if (err) reject(new Error('读取合成结果失败：' + err.message));
+        else resolve(buf);
+      });
+    });
+    child.stdin.end(stdinText || '');
+  });
+}
+
 /* Piper / Kokoro 共用的子进程回收：超时、错误、非零退出都转成 JSON 错误，
  * 成功则把 WAV 整块回传并删临时文件。stdinText 为空表示不写 stdin（Kokoro 走命令行参数）。 */
-function runTts(res, exe, args, stdinText, cwd, out, timeoutMs) {
+function runTts(res, exe, args, stdinText, cwd, out, timeoutMs, effect) {
   let stderr = '';
   let done = false;
   const child = spawn(exe, args, { cwd, windowsHide: true });
@@ -414,6 +513,10 @@ function runTts(res, exe, args, stdinText, cwd, out, timeoutMs) {
       try { fs.unlink(out, () => {}); } catch (e) {}
       sendJson(res, 500, { error: '语音合成失败' + (stderr ? '：' + stderr.trim().slice(-300) : '') });
       return;
+    }
+    /* 效果器失败只退回原声：不能让一句「机械音」把整次朗读变成 500。 */
+    if (effect === 'mecha') {
+      try { fs.writeFileSync(out, mechaizeWav(fs.readFileSync(out))); } catch (e) {}
     }
     sendWav(res, out);
   });

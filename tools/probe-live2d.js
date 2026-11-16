@@ -205,6 +205,33 @@ const rig = (page) => page.evaluate(() => (window.__l2dRig ? window.__l2dRig() :
     localPitch.engine + ' / disabled ' + localPitch.disabled);
   check(/音调/.test(localPitch.hint), '本地音色提示音调不生效', localPitch.hint.slice(0, 32));
 
+  /* 机械音：选中后才出现「AI 控制 / 直接朗读」，且两者互斥 */
+  const mechaRow = await page.evaluate(() => {
+    const sel = document.getElementById('l2dVoiceSel');
+    const o = document.createElement('option');
+    o.value = 'vits:mecha';
+    o.textContent = '深海机娘 · probe';
+    sel.appendChild(o);
+    sel.value = 'vits:mecha';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    const row = document.getElementById('l2dMecha');
+    const ai = row && row.querySelector('[data-l2d-mecha="ai"]');
+    const direct = row && row.querySelector('[data-l2d-mecha="direct"]');
+    if (direct) direct.click();
+    const out = {
+      shown: !!row && !row.classList.contains('hidden'),
+      directOn: !!(direct && direct.classList.contains('on')),
+      checked: direct ? direct.getAttribute('aria-checked') : '',
+      aiOnAfter: !!(ai && ai.classList.contains('on'))
+    };
+    /* 复位成 AI 控制，别把测试偏好留给后续步骤 */
+    if (ai) ai.click();
+    return out;
+  });
+  check(mechaRow.shown, '选机械音后出现朗读方式切换');
+  check(mechaRow.directOn && mechaRow.checked === 'true' && !mechaRow.aiOnAfter,
+    '机械音可切到「直接朗读」', JSON.stringify(mechaRow));
+
   /* 切回系统语音：后面的试听要走 SpeechSynthesisUtterance 那条链路 */
   await page.evaluate(() => {
     const sel = document.getElementById('l2dVoiceSel');
