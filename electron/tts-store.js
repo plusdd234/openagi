@@ -56,6 +56,71 @@ const KOKORO = {
   }
 };
 
+/* MeloTTS zh_en（VITS）：单女声，中英混读与多音字比 Kokoro 稳。
+ * 和 Kokoro 共用同一套 sherpa 引擎，模型是独立的一份 VITS 权重。
+ * 体积同样取 GitHub Release 的实测 Content-Length。 */
+const MELO = {
+  dir: 'melo',
+  tar: 'vits-melo-tts-zh_en.tar.bz2',
+  unpack: 'vits-melo-tts-zh_en',
+  bytes: 167006755,
+  urls: [
+    { url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-zh_en.tar.bz2', name: 'GitHub' },
+    { url: 'https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-zh_en.tar.bz2', name: 'gh-proxy' },
+    { url: 'https://gh.monlor.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-zh_en.tar.bz2', name: 'gh.monlor' }
+  ]
+};
+
+/* ZipVoice distill int8 zh-en：零样本声音克隆，需要用户提供 5-15 秒参考音频。
+ * 模型包只有 encoder/decoder/tokens/lexicon，声码器（vocos）与英文词典单独下载，
+ * 都落在 tts/zipvoice 下，运行时的路径才是固定的。 */
+const ZIPVOICE = {
+  dir: 'zipvoice',
+  model: {
+    dir: 'zipvoice',
+    tar: 'sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2',
+    unpack: 'sherpa-onnx-zipvoice-distill-int8-zh-en-emilia',
+    bytes: 109162785,
+    urls: [
+      { url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2', name: 'GitHub' },
+      { url: 'https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2', name: 'gh-proxy' },
+      { url: 'https://gh.monlor.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2', name: 'gh.monlor' }
+    ]
+  },
+  vocoder: {
+    file: 'vocos_24khz.onnx',
+    bytes: 54157409,
+    urls: [
+      { url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos_24khz.onnx', name: 'GitHub' },
+      { url: 'https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos_24khz.onnx', name: 'gh-proxy' },
+      { url: 'https://gh.monlor.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos_24khz.onnx', name: 'gh.monlor' }
+    ]
+  },
+  lexicon: {
+    file: 'lexicon-en-us.txt',
+    bytes: 0,
+    urls: [
+      { url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/lexicon-en-us.txt', name: 'GitHub' },
+      { url: 'https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/lexicon-en-us.txt', name: 'gh-proxy' }
+    ]
+  }
+};
+
+/* VITS 角色音色（社区模型）：DeepSeek App 的「海星」等音色没有公开模型，
+ * 这里用同为俏皮少女音的德丽莎声线做近似。机制与 MeloTTS 相同：共用 sherpa 引擎，
+ * 模型包里除了 onnx 还有 lexicon/tokens 与规则 fst。 */
+const VITS = {
+  dir: 'vits-theresa',
+  tar: 'vits-zh-hf-theresa.tar.bz2',
+  unpack: 'vits-zh-hf-theresa',
+  bytes: 120596617,
+  urls: [
+    { url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-theresa.tar.bz2', name: 'GitHub' },
+    { url: 'https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-theresa.tar.bz2', name: 'gh-proxy' },
+    { url: 'https://gh.monlor.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-theresa.tar.bz2', name: 'gh.monlor' }
+  ]
+};
+
 function root(userData){
   return path.join(userData, 'tts');
 }
@@ -100,6 +165,103 @@ function kokoroStatus(userData){
     exe: kokoroExe(userData)
   };
 }
+/* ---- MeloTTS 路径与状态 ----
+ * 三个必需文件：model.onnx / tokens.txt / lexicon.txt。
+ * 规则 fst（date/number/phone）各版本命名不完全一致，运行时按 *.fst 收集，安装时不做硬校验。 */
+function meloDir(userData){
+  return path.join(root(userData), MELO.dir);
+}
+/* 官方包叫 model.onnx；不同量化版本可能带 int8 后缀，两种都认，避免升级包名后误判未安装。 */
+function meloModelFile(userData){
+  const d = meloDir(userData);
+  const names = ['model.onnx', 'model.int8.onnx'];
+  for(const n of names){
+    try{ if(fs.existsSync(path.join(d, n))) return path.join(d, n); }catch(e){}
+  }
+  return '';
+}
+function meloModelReady(userData){
+  try{
+    const d = meloDir(userData);
+    return !!meloModelFile(userData) &&
+      fs.existsSync(path.join(d, 'tokens.txt')) &&
+      fs.existsSync(path.join(d, 'lexicon.txt'));
+  }catch(e){ return false; }
+}
+function meloStatus(userData){
+  const engine = fs.existsSync(kokoroExe(userData));
+  const model = meloModelReady(userData);
+  return { ok: true, installed: engine && model, engine, model, dir: meloDir(userData) };
+}
+
+/* ---- VITS 角色音色 ----
+ * 包里的 onnx 名字跟着模型走（theresa.onnx），所以按 *.onnx 找，而不是写死。 */
+function vitsDir(userData){
+  return path.join(root(userData), VITS.dir);
+}
+function vitsModelFile(userData){
+  try{
+    const f = fs.readdirSync(vitsDir(userData)).filter(n => /\.onnx$/i.test(n))[0];
+    return f ? path.join(vitsDir(userData), f) : '';
+  }catch(e){ return ''; }
+}
+function vitsModelReady(userData){
+  try{
+    const d = vitsDir(userData);
+    return !!vitsModelFile(userData) &&
+      fs.existsSync(path.join(d, 'tokens.txt')) &&
+      fs.existsSync(path.join(d, 'lexicon.txt'));
+  }catch(e){ return false; }
+}
+function vitsStatus(userData){
+  const engine = fs.existsSync(kokoroExe(userData));
+  const model = vitsModelReady(userData);
+  return { ok: true, installed: engine && model, engine, model, dir: vitsDir(userData) };
+}
+
+/* ---- ZipVoice 路径与状态 ----
+ * 模型 + 声码器齐全才算装好；克隆可用还额外要求参考音频与参考文本都写入过。 */
+function zipvoiceDir(userData){
+  return path.join(root(userData), ZIPVOICE.dir);
+}
+function referenceAudio(userData){
+  return path.join(zipvoiceDir(userData), 'ref.wav');
+}
+function referenceTextFile(userData){
+  return path.join(zipvoiceDir(userData), 'ref.txt');
+}
+function zipvoiceModelReady(userData){
+  try{
+    const d = zipvoiceDir(userData);
+    return fs.existsSync(path.join(d, 'encoder.int8.onnx')) &&
+      fs.existsSync(path.join(d, 'decoder.int8.onnx')) &&
+      fs.existsSync(path.join(d, 'tokens.txt')) &&
+      fs.existsSync(path.join(d, 'lexicon.txt')) &&
+      fs.existsSync(path.join(d, ZIPVOICE.vocoder.file));
+  }catch(e){ return false; }
+}
+function cloneReady(userData){
+  if(!zipvoiceModelReady(userData)) return false;
+  try{
+    if(!fs.existsSync(referenceAudio(userData))) return false;
+    return !!fs.readFileSync(referenceTextFile(userData), 'utf8').trim();
+  }catch(e){ return false; }
+}
+function zipvoiceStatus(userData){
+  const engine = fs.existsSync(kokoroExe(userData));
+  const model = zipvoiceModelReady(userData);
+  const ref = !!fs.existsSync(referenceAudio(userData));
+  let refText = '';
+  try{ refText = fs.readFileSync(referenceTextFile(userData), 'utf8').trim(); }catch(e){ refText = ''; }
+  return {
+    ok: true,
+    installed: engine && model,
+    engine, model, reference: ref, clone: cloneReady(userData),
+    referenceText: refText.slice(0, 200),
+    dir: zipvoiceDir(userData)
+  };
+}
+
 /* 文件名只允许落在 voices/ 下：否则一个 ../ 就能删掉用户别的文件。 */
 function safeName(name){
   const base = path.basename(String(name || ''));
@@ -240,11 +402,12 @@ function untar(tarFile, dest){
 
 /* 下载并解压一个 tar.bz2 包，最后把解压出来的顶层目录改名为固定名字。
  * 目录名固定下来，运行时桥就不用去猜版本号（版本升级只改这里的 unpack 值）。 */
-async function ensurePackage(userData, spec, label, from, span, ready, report, isCancelled, httpGet){
+async function ensurePackage(userData, spec, label, from, span, ready, report, isCancelled, httpGet, stage){
   if(ready()) return true;
+  const tag = stage || 'kokoro';
   await fsp.mkdir(root(userData), { recursive: true });
   const tarPath = path.join(root(userData), spec.tar);
-  report({ stage: 'kokoro', pct: from, msg: '正在下载' + label + '…' });
+  report({ stage: tag, pct: from, msg: '正在下载' + label + '…' });
   const r = await dl.download({
     dest: tarPath,
     sources: spec.urls,
@@ -256,7 +419,7 @@ async function ensurePackage(userData, spec, label, from, span, ready, report, i
       if(!p) return;
       /* 下载占这一段的前 85%，留 15% 给解压——否则进度条会停在 100% 干等十几秒 */
       report({
-        stage: 'kokoro',
+        stage: tag,
         pct: p.pct >= 0 ? Math.round(from + p.pct * span * 0.85 / 100) : -1,
         msg: '正在下载' + label + '…',
         speed: p.speed, etaMs: p.etaMs
@@ -264,7 +427,7 @@ async function ensurePackage(userData, spec, label, from, span, ready, report, i
     }
   });
   if(r && r.cancelled) return false;
-  report({ stage: 'kokoro', pct: Math.round(from + span * 0.85), msg: '正在解压' + label + '…' });
+  report({ stage: tag, pct: Math.round(from + span * 0.85), msg: '正在解压' + label + '…' });
 
   const tmp = path.join(root(userData), '.unpack-' + spec.dir);
   await fsp.rm(tmp, { recursive: true, force: true });
@@ -283,7 +446,7 @@ async function ensurePackage(userData, spec, label, from, span, ready, report, i
   await fsp.rm(tmp, { recursive: true, force: true });
   try{ await fsp.rm(tarPath, { force: true }); }catch(e){}
   if(!ready()) throw new Error(label + '校验失败：缺少必要文件');
-  report({ stage: 'kokoro', pct: from + span, msg: label + '已就绪' });
+  report({ stage: tag, pct: from + span, msg: label + '已就绪' });
   return true;
 }
 
@@ -308,14 +471,171 @@ async function installKokoro(userData, req, opts){
   return Object.assign({ ok: true }, kokoroStatus(userData));
 }
 
-/* 卸载共享模型：引擎和模型一起删。Piper 在 tts/piper 与 tts/voices，互不影响。 */
+/* 卸载共享模型：只删自己的模型目录。sherpa 引擎是所有本地语音共用的，
+ * 只有确认没人再用时才删，否则卸载 Kokoro 会顺带把 MeloTTS / ZipVoice / 角色音色弄坏。 */
 async function removeKokoro(userData){
   await fsp.rm(kokoroDir(userData), { recursive: true, force: true });
-  await fsp.rm(sherpaDir(userData), { recursive: true, force: true });
+  if(!meloModelReady(userData) && !zipvoiceModelReady(userData) && !vitsModelReady(userData)){
+    await fsp.rm(sherpaDir(userData), { recursive: true, force: true });
+  }
   return { ok: true, installed: false };
 }
 
+/* ---------------- MeloTTS ---------------- */
+async function installMelo(userData, req, opts){
+  const o = opts || {};
+  if(process.platform !== 'win32') throw new Error('MeloTTS 目前仅支持 Windows');
+  const report = typeof o.onProgress === 'function' ? o.onProgress : () => {};
+  const isCancelled = typeof o.isCancelled === 'function' ? o.isCancelled : () => false;
+  report({ stage: 'melo', pct: 0, msg: '正在准备 MeloTTS（约 160 MB）…' });
+
+  /* 引擎与 Kokoro 共用一份 sherpa，所以已装过 Kokoro 的话这里会直接跳过 */
+  const engineOk = await ensurePackage(userData, KOKORO.engine, '本地语音引擎（26 MB）', 0, 12,
+    () => fs.existsSync(kokoroExe(userData)), report, isCancelled, o.httpGet, 'melo');
+  if(!engineOk) return { ok: false, cancelled: true, message: '已取消下载，进度已保留' };
+
+  const modelOk = await ensurePackage(userData, MELO, 'MeloTTS 中英混读模型（159 MB）', 12, 88,
+    () => meloModelReady(userData), report, isCancelled, o.httpGet, 'melo');
+  if(!modelOk) return { ok: false, cancelled: true, message: '已取消下载，进度已保留' };
+
+  report({ stage: 'done', pct: 100, msg: 'MeloTTS 已就绪' });
+  return Object.assign({ ok: true }, meloStatus(userData));
+}
+
+async function removeMelo(userData){
+  await fsp.rm(meloDir(userData), { recursive: true, force: true });
+  if(!kokoroModelReady(userData) && !zipvoiceModelReady(userData) && !vitsModelReady(userData)){
+    await fsp.rm(sherpaDir(userData), { recursive: true, force: true });
+  }
+  return { ok: true, installed: false };
+}
+
+/* ---------------- VITS 角色音色 ---------------- */
+async function installVits(userData, req, opts){
+  const o = opts || {};
+  if(process.platform !== 'win32') throw new Error('角色音色目前仅支持 Windows');
+  const report = typeof o.onProgress === 'function' ? o.onProgress : () => {};
+  const isCancelled = typeof o.isCancelled === 'function' ? o.isCancelled : () => false;
+  report({ stage: 'vits', pct: 0, msg: '正在准备角色音色（约 115 MB）…' });
+
+  const engineOk = await ensurePackage(userData, KOKORO.engine, '本地语音引擎（26 MB）', 0, 12,
+    () => fs.existsSync(kokoroExe(userData)), report, isCancelled, o.httpGet, 'vits');
+  if(!engineOk) return { ok: false, cancelled: true, message: '已取消下载，进度已保留' };
+
+  const modelOk = await ensurePackage(userData, VITS, '角色音色模型（115 MB）', 12, 88,
+    () => vitsModelReady(userData), report, isCancelled, o.httpGet, 'vits');
+  if(!modelOk) return { ok: false, cancelled: true, message: '已取消下载，进度已保留' };
+
+  report({ stage: 'done', pct: 100, msg: '角色音色已就绪' });
+  return Object.assign({ ok: true }, vitsStatus(userData));
+}
+
+async function removeVits(userData){
+  await fsp.rm(vitsDir(userData), { recursive: true, force: true });
+  if(!kokoroModelReady(userData) && !meloModelReady(userData) && !zipvoiceModelReady(userData)){
+    await fsp.rm(sherpaDir(userData), { recursive: true, force: true });
+  }
+  return { ok: true, installed: false };
+}
+
+/* ---------------- ZipVoice 声音克隆 ---------------- */
+/* 一个普通文件下载：声码器与英文词典都走这里，落到 zipvoice 目录下固定文件名。 */
+async function downloadInto(dest, spec, label, from, span, report, isCancelled, httpGet, stage){
+  if(fs.existsSync(dest)) return true;
+  report({ stage: stage, pct: from, msg: '正在下载' + label + '…' });
+  const r = await dl.download({
+    dest,
+    sources: spec.urls,
+    expectPE: false,
+    httpGet,
+    isCancelled,
+    onLog: () => {},
+    onProgress: p => {
+      if(!p) return;
+      report({
+        stage: stage,
+        pct: p.pct >= 0 ? Math.round(from + p.pct * span / 100) : -1,
+        msg: '正在下载' + label + '…',
+        speed: p.speed, etaMs: p.etaMs
+      });
+    }
+  });
+  return !(r && r.cancelled);
+}
+
+async function installZipvoice(userData, req, opts){
+  const o = opts || {};
+  if(process.platform !== 'win32') throw new Error('ZipVoice 声音克隆目前仅支持 Windows');
+  const report = typeof o.onProgress === 'function' ? o.onProgress : () => {};
+  const isCancelled = typeof o.isCancelled === 'function' ? o.isCancelled : () => false;
+  report({ stage: 'zipvoice', pct: 0, msg: '正在准备 ZipVoice 声音克隆（约 160 MB）…' });
+
+  const engineOk = await ensurePackage(userData, KOKORO.engine, '本地语音引擎（26 MB）', 0, 8,
+    () => fs.existsSync(kokoroExe(userData)), report, isCancelled, o.httpGet, 'zipvoice');
+  if(!engineOk) return { ok: false, cancelled: true, message: '已取消下载，进度已保留' };
+
+  const modelOk = await ensurePackage(userData, ZIPVOICE.model, 'ZipVoice 克隆模型（104 MB）', 8, 62,
+    () => fs.existsSync(path.join(zipvoiceDir(userData), 'encoder.int8.onnx')), report, isCancelled, o.httpGet, 'zipvoice');
+  if(!modelOk) return { ok: false, cancelled: true, message: '已取消下载，进度已保留' };
+
+  const dir = zipvoiceDir(userData);
+  await fsp.mkdir(dir, { recursive: true });
+  const vocOk = await downloadInto(path.join(dir, ZIPVOICE.vocoder.file), ZIPVOICE.vocoder,
+    '声码器（52 MB）', 70, 25, report, isCancelled, o.httpGet, 'zipvoice');
+  if(!vocOk) return { ok: false, cancelled: true, message: '已取消下载，进度已保留' };
+
+  const lexOk = await downloadInto(path.join(dir, ZIPVOICE.lexicon.file), ZIPVOICE.lexicon,
+    '英文词典', 95, 5, report, isCancelled, o.httpGet, 'zipvoice');
+  if(!lexOk) return { ok: false, cancelled: true, message: '已取消下载，进度已保留' };
+
+  if(!zipvoiceModelReady(userData)) throw new Error('ZipVoice 校验失败：缺少必要文件');
+  report({ stage: 'done', pct: 100, msg: 'ZipVoice 已就绪，接下来录制参考音频' });
+  return Object.assign({ ok: true }, zipvoiceStatus(userData));
+}
+
+async function removeZipvoice(userData){
+  /* 参考音频也在这个目录里，一起删除：卸载语义是「这套克隆不再可用」，
+   * 留着 ref.wav 只会在重新下载后拿旧录音冒充新声音。 */
+  await fsp.rm(zipvoiceDir(userData), { recursive: true, force: true });
+  if(!kokoroModelReady(userData) && !meloModelReady(userData) && !vitsModelReady(userData)){
+    await fsp.rm(sherpaDir(userData), { recursive: true, force: true });
+  }
+  return { ok: true, installed: false };
+}
+
+/* 保存参考音频：只接受 WAV（sherpa 的 --reference-audio 按 WAV 解码），
+ * 由主进程从用户选中的路径复制进来，渲染层永远不接触真实路径。 */
+async function setReference(userData, req){
+  const src = String((req && req.source) || '');
+  const text = String((req && req.text) || '').trim();
+  if(!src) throw new Error('缺少参考音频路径');
+  if(!/\.wav$/i.test(src)) throw new Error('参考音频必须是 WAV 文件');
+  if(!fs.existsSync(src)) throw new Error('参考音频文件不存在');
+  await fsp.mkdir(zipvoiceDir(userData), { recursive: true });
+  await fsp.copyFile(src, referenceAudio(userData));
+  if(text) await fsp.writeFile(referenceTextFile(userData), text.slice(0, 200), 'utf8');
+  return Object.assign({ ok: true }, zipvoiceStatus(userData));
+}
+
+async function setReferenceText(userData, text){
+  const t = String(text || '').trim();
+  if(!t) throw new Error('请填写参考音频里说的那句话');
+  await fsp.mkdir(zipvoiceDir(userData), { recursive: true });
+  await fsp.writeFile(referenceTextFile(userData), t.slice(0, 200), 'utf8');
+  return Object.assign({ ok: true }, zipvoiceStatus(userData));
+}
+
+async function removeReference(userData){
+  await fsp.rm(referenceAudio(userData), { force: true });
+  await fsp.rm(referenceTextFile(userData), { force: true });
+  return Object.assign({ ok: true }, zipvoiceStatus(userData));
+}
+
 module.exports = {
-  ENGINE, KOKORO, root, voicesDir, enginePath, engineReady, safeName, list, install, remove,
-  kokoroDir, sherpaDir, kokoroExe, kokoroModelReady, kokoroStatus, installKokoro, removeKokoro
+  ENGINE, KOKORO, MELO, VITS, ZIPVOICE, root, voicesDir, enginePath, engineReady, safeName, list, install, remove,
+  kokoroDir, sherpaDir, kokoroExe, kokoroModelReady, kokoroStatus, installKokoro, removeKokoro,
+  meloDir, meloModelReady, meloStatus, installMelo, removeMelo,
+  vitsDir, vitsModelFile, vitsModelReady, vitsStatus, installVits, removeVits,
+  zipvoiceDir, referenceAudio, referenceTextFile, zipvoiceModelReady, cloneReady, zipvoiceStatus,
+  installZipvoice, removeZipvoice, setReference, setReferenceText, removeReference
 };

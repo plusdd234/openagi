@@ -1,6 +1,6 @@
 /* ============================================================
  * 自动生成，别手改 —— node tools/app-scan.js
- * App 清单：aisearch , browser , card , chara , chat , code , comfy , gallery , hello , imglab , live2d , modeldesk , models , multiview , player , store , studio
+ * App 清单：aisearch , browser , card , chara , chat , code , comfy , gallery , hello , imglab , live2d , modeldesk , models , multiview , player , store , studio , visionlab , wardrobe
  *
  * 加一个 App = 建 apps/<id>/app.js（参考 apps/hello）+ 跑一次 app-scan。
  * index.html 与 desk-shell.js 都不用碰，所以多路 AI 并行时不会互相踩。
@@ -251,7 +251,7 @@ window.AIS_BODY = `
     'cpro.baidu.com', 'pos.baidu.com', 'union-click.jd.com', 's.click.taobao.com', 'uland.taobao.com',
     /* 文库 / 知道 / 文档搬运：正文读不到，只剩登录墙与广告 */
     'wenku.baidu.com', 'zhidao.baidu.com', 'docin.com', 'doc88.com', 'book118.com',
-    'renrendoc.com', 'taodocs.com', '360doc.com', 'mbalib.com',
+    'renrendoc.com', 'taodocs.com', '360doc.com', 'mbalib.com', 'wenku.so.com',
     /* 软件下载站：标题常带「破解版 / 绿色版 / 高速下载」，且整页是下载器广告 */
     'pc6.com', 'cr173.com', 'downxia.com', 'xiazaizhijia.com', 'onlinedown.net',
     'duote.com', 'ddooo.com', 'xiazai.zol.com.cn',
@@ -364,15 +364,22 @@ window.AIS_BODY = `
     [/俯视/, 'top-down'], [/引擎/, 'engine'], [/框架/, 'framework'],
     [/插件/, 'plugin'], [/工具/, 'tool'], [/示例/, 'example'], [/教程/, 'tutorial'],
     [/多人/, 'multiplayer'], [/地图/, 'map'], [/战斗/, 'combat'], [/贴图/, 'texture'],
-    [/材质/, 'material'], [/建模/, 'modeling'], [/动画/, 'animation'], [/服务端|服务器/, 'server']
+    [/材质/, 'material'], [/建模/, 'modeling'], [/动画/, 'animation'], [/服务端|服务器/, 'server'],
+    /* 以下三条由实测补：只查 ai / readability 时找不到爬虫与正文抽取项目。 */
+    [/爬虫/, 'crawler'], [/正文/, 'content'], [/抽取/, 'extract']
   ];
-  /* GitHub 检索是 AND 语义，词越多命中越少，所以准备一主一退化两条检索式：
-     先用完整组合，没结果再退到核心词（去掉 template / framework 这类修饰）。
-     注意 ai 不能被当过泛词删掉 —— 「AI 开发的游戏模板」里它是核心限定词。 */
+  /* GitHub 检索是 AND 语义，词越多命中越少，所以准备三档检索式：
+     ① 主档：完整组合；② 核心档：去掉 template / framework 这类修饰词；
+     ③ 宽松档：再去掉最短的实词（通常是 2d / ai 这种限定词）。
+     ③ 只在①②合计仍不足 GH_MIN 时才发 —— 每次请求都吃「未登录 60 次/小时」的额度。
+     注意 ai 不能被当过泛词直接删掉 —— 「AI 开发的游戏模板」里它是核心限定词。 */
   function githubQueries(q) {
     if (!GH_INTENT.test(q)) return [];
+    /* github / open source 这类词是「去哪找」而不是「找什么」：
+       把它们拼进检索式会让 AND 语义直接落空（实测只回 ★0 的边角仓库）。 */
+    var GH_NOISE = /^(github|gitee|open|source|site|http|https|www)$/i;
     var words = (String(q).match(/[a-z0-9][a-z0-9.+#-]*/gi) || [])
-      .filter(function (w) { return w.length > 1 && !/^(the|and|for|of|in|to)$/i.test(w); });
+      .filter(function (w) { return w.length > 1 && !/^(the|and|for|of|in|to)$/i.test(w) && !GH_NOISE.test(w); });
     GH_WORDS.forEach(function (p) { if (p[0].test(q)) words.push(p[1]); });
     var seen = Object.create(null);
     var list = words.filter(function (w) {
@@ -385,55 +392,139 @@ window.AIS_BODY = `
       return !/^(template|framework|tool|plugin|example|tutorial|library|engine)$/i.test(w);
     });
     if (core.length && core.length < list.length) out.push(core.join(' '));
+    if (core.length > 2) {
+      var drop = core.slice().sort(function (a, b) { return a.length - b.length; })[0];
+      var relax = core.filter(function (w) { return w !== drop; }).join(' ');
+      if (relax && out.indexOf(relax) < 0) out.push(relax);
+    }
     return out;
   }
 
-  /* 仓库检索的两条规矩：
-     ① 一次问完全部检索式再合并 —— 只取第一条有结果的，会把「131 个仓库」缩成 6 个；
-     ② 每条检索式多拿一些（per_page=20），否则「有没有更多」这个判断本身就不成立。
-     相关性按「除 template / engine 这类修饰词之外还命中了什么」来判：
-     只因为出现 template 就混进来的排版模板、脚手架仓库，不能占射击模板的位置。 */
+  /* 仓库检索的规矩：
+     ① 全部检索式都问完再合并 —— 只取第一条有结果的，会把「131 个仓库」缩成 6 个；
+     ② 每条检索式 per_page=20，否则「有没有更多」这个判断本身就不成立；
+     ③ 主档按 star 排拿「大而全」，核心档按最佳匹配拿「小而准」，合并后重排；
+     ④ 归档仓库不参与（archived:false + 客户端兜底过滤）；
+     ⑤ 同一检索式 10 分钟内复用 —— 未登录只有 60 次/小时，重复搜索不该再打一遍。 */
   var GH_MODIFIER = /^(template|framework|tool|plugin|example|tutorial|library|engine|boilerplate|starter|kit|demo)$/i;
+  var GH_MIN = 6;                 // 少于这个数就再放宽一档
+  var GH_CACHE_TTL = 10 * 60000;
+  var GH_CACHE = Object.create(null);
+  var GH_COOL_UNTIL = 0;
+
+  /* 仓库打分：先看「除修饰词之外命中了什么」，再看星数与最近更新。
+     只按 stars 排序会把 awesome-list、CMS 这类高星泛仓库顶到真正的模板前面；
+     星数用 log 缩放，避免 9 万星的清单页把一个几百星但精确命中的模板压死。 */
+  function repoScore(x, core) {
+    var name = String(x.full_name || '').toLowerCase();
+    var desc = String(x.description || '').toLowerCase();
+    var topics = (x.topics || []).map(function (t) { return String(t).toLowerCase(); });
+    var covered = 0, nameHit = 0, topicHit = 0;
+    core.forEach(function (t) {
+      var w = String(t || '').toLowerCase();
+      if (!w) return;
+      var inName = name.indexOf(w) >= 0;
+      var inDesc = desc.indexOf(w) >= 0;
+      var inTopic = topics.indexOf(w) >= 0;
+      if (!inName && !inDesc && !inTopic) return;
+      covered++;
+      if (inName) nameHit++;
+      if (inTopic) topicHit++;
+    });
+    var score = covered * 20 + nameHit * 4 + topicHit * 4;
+    score += Math.log10((Number(x.stargazers_count) || 0) + 1) * 2.5;
+    var pushed = Date.parse(x.pushed_at || '');
+    if (!isNaN(pushed)) {
+      var days = (Date.now() - pushed) / 86400000;
+      if (days <= 400) score += 6;
+      else if (days <= 1100) score += 3;
+      else if (days > 1800) score -= 2;
+    }
+    return { score: score, hits: covered };
+  }
+
+  function dedupeRepos(groups) {
+    var seen = Object.create(null);
+    var out = [];
+    (groups || []).forEach(function (list) {
+      (list || []).forEach(function (x) {
+        var u = x && x.html_url;
+        if (!u || seen[u] || x.archived) return;
+        seen[u] = 1;
+        out.push(x);
+      });
+    });
+    return out;
+  }
+
+  function toRepoResult(x) {
+    var desc = String(x.description || '').replace(/\s+/g, ' ').trim();
+    var meta = ['★' + (Number(x.stargazers_count) || 0)];
+    if (x.language) meta.push(String(x.language));
+    var pushed = String(x.pushed_at || '').slice(0, 7);
+    if (pushed) meta.push('更新 ' + pushed);
+    var topics = (x.topics || []).slice(0, 3);
+    if (topics.length) meta.push(topics.map(function (t) { return '#' + t; }).join(' '));
+    return {
+      title: clip(x.full_name + (desc ? ' · ' + desc : ''), 120),
+      url: x.html_url,
+      snippet: clip((desc || 'GitHub 仓库') + ' · ' + meta.join(' · '), 360),
+      repo: true
+    };
+  }
+
+  function ghSearch(qq, mode, signal) {
+    var key = qq + '|' + mode;
+    var hit = GH_CACHE[key];
+    var fresh = hit && Date.now() - hit.at < GH_CACHE_TTL;
+    if (fresh) return Promise.resolve(hit.items);
+    /* 已经撞过限流：这一轮不再打，有旧缓存就先用旧缓存。 */
+    if (GH_COOL_UNTIL > Date.now()) return Promise.resolve(hit ? hit.items : []);
+    var url = 'https://api.github.com/search/repositories?q='
+      + encodeURIComponent(qq + ' archived:false') + '&per_page=20'
+      + (mode === 'stars' ? '&sort=stars&order=desc' : '');
+    return fetchJson(url, signal).then(function (j) {
+      var items = (j && j.items) || [];
+      GH_CACHE[key] = { at: Date.now(), items: items };
+      return items;
+    }).catch(function (e) {
+      /* 403 / 429 基本都是「未登录 60 次/小时」用完了：记 10 分钟冷却，
+         同一检索式之前拿到的缓存还能继续用，不至于整轮空手。 */
+      if (/HTTP\s+(403|429)/.test(String(e && e.message || ''))) {
+        GH_COOL_UNTIL = Date.now() + GH_CACHE_TTL;
+        S.ghRateLimited = true;
+      }
+      return hit ? hit.items : [];
+    });
+  }
+
   function githubResults(q, signal) {
     var queries = githubQueries(q);
     if (!queries.length) return Promise.resolve([]);
     var core = relevantTokens(q).filter(function (t) { return !GH_MODIFIER.test(t); });
     /* 英文里 FPS / shooter 是同一类说法：只认 shooter 会漏掉 SimpleFPSTemplate 这种仓库。 */
     if (/(射击|枪战|shooter|fps)/i.test(q) && core.indexOf('fps') < 0) core.push('fps');
-    function one(qq) {
-      var url = 'https://api.github.com/search/repositories?q=' + encodeURIComponent(qq)
-        + '&sort=stars&order=desc&per_page=20';
-      return fetchJson(url, signal).then(function (j) {
-        return ((j && j.items) || []).map(function (x) {
-          var desc = String(x.description || '').replace(/\s+/g, ' ').trim();
-          return {
-            title: clip(x.full_name + (desc ? ' · ' + desc : ''), 120),
-            url: x.html_url,
-            snippet: clip((desc || 'GitHub 仓库') + ' · ★' + (x.stargazers_count || 0)
-              + (x.language ? ' · ' + x.language : ''), 360),
-            repo: true
-          };
-        });
-      }).catch(function () { return []; });
-    }
-    return Promise.all(queries.map(one)).then(function (groups) {
-      var seen = Object.create(null);
-      var all = [];
-      groups.forEach(function (list) {
-        list.forEach(function (r) {
-          if (!r.url || seen[r.url]) return;
-          seen[r.url] = 1;
-          all.push(r);
-        });
+    var plans = queries.slice(0, 2).map(function (qq, i) {
+      return ghSearch(qq, i === 0 ? 'stars' : 'match', signal);
+    });
+    return Promise.all(plans).then(function (groups) {
+      var all = dedupeRepos(groups);
+      if (all.length >= GH_MIN || queries.length <= 2 || S.ghRateLimited) return all;
+      return ghSearch(queries[2], 'match', signal).then(function (list) {
+        return dedupeRepos([all, list]);
       });
+    }).then(function (all) {
       if (!all.length) return [];
       S.ghQuery = queries[0];
-      var strong = core.length ? all.filter(function (r) {
-        var text = (r.title + ' ' + r.snippet).toLowerCase();
-        return core.some(function (t) { return t && text.indexOf(t) >= 0; });
-      }) : all;
-      /* 强相关太少时退回全集：宁可多给几条让用户自己挑，也不要因为筛得太狠又只剩个位数。 */
-      return (strong.length >= 6 ? strong : all).slice(0, 20);
+      var ranked = all.map(function (x) {
+        var s = repoScore(x, core);
+        return { x: x, score: s.score, hits: s.hits };
+      });
+      var strong = ranked.filter(function (r) { return r.hits > 0; });
+      /* 强相关太少时退回全集：宁可多给几条让用户自己挑，也不要筛得太狠只剩个位数。 */
+      if (strong.length >= GH_MIN) ranked = strong;
+      ranked.sort(function (a, b) { return b.score - a.score; });
+      return ranked.slice(0, 20).map(function (r) { return toRepoResult(r.x); });
     });
   }
 
@@ -746,6 +837,7 @@ window.AIS_BODY = `
     skim: { pages: 0, keywords: [], links: [] },
     liveNote: '',
     ghQuery: '',
+    ghRateLimited: false,
     pageCache: Object.create(null),
     answer: '',
     error: '',
@@ -798,6 +890,27 @@ window.AIS_BODY = `
     for (var i = 0; i < TRUSTED.length; i++) { if (TRUSTED[i].test(h)) return true; }
     return false;
   }
+  /* 站内功能页不是资料：搜索源会把 GitHub 的登录 / 提交记录 / 标签页当成正文页，
+     点开全是导航文字，还会挤掉真正的仓库。按「主机 + 路径」拦，不误伤仓库主页。 */
+  var CHROME_HOSTS = ['help.github.com', 'fanyi.so.com'];
+  /* 这些路径都来自实测混进结果的站内功能页；没观察到的路径不预先拦，避免误伤。 */
+  var GH_CHROME_PATH = new RegExp(
+    '^/(?:login|signup|events|features|team|customer-stories)(?:/|$)'
+    + '|^/[^/]+/[^/]+/(?:actions|tags|projects|commits|security|activity|forks|tree)(?:/|$)', 'i');
+  function chromeReason(url) {
+    var host = hostOf(url).toLowerCase();
+    for (var i = 0; i < CHROME_HOSTS.length; i++) {
+      var h = CHROME_HOSTS[i];
+      if (host === h || host.slice(-(h.length + 1)) === '.' + h) return '站内功能页 / 插件页';
+    }
+    if (/(^|\.)github\.com$/.test(host)) {
+      var p = '';
+      try { p = new URL(url).pathname; } catch (e) { p = ''; }
+      if (GH_CHROME_PATH.test(p)) return 'GitHub 站内功能页';
+    }
+    return '';
+  }
+
   function blockedReason(r) {
     var url = String(r && r.url || '');
     var host = hostOf(url).toLowerCase();
@@ -809,7 +922,7 @@ window.AIS_BODY = `
       if (host === b || host.slice(-(b.length + 1)) === '.' + b) return '广告 / 低质站点';
     }
     if (PIRATE_TITLE.test(String(r.title || ''))) return '下载站 / 盗版资源';
-    return '';
+    return chromeReason(url);
   }
 
   /* 与问题无关的结果要丢掉：搜索源（尤其百度式索引）很爱把「开源」这种词
@@ -871,6 +984,9 @@ window.AIS_BODY = `
         host: hostOf(url),
         seed: !!raw.seed,
         repo: !!raw.repo,
+        /* 备用源（360）的结果链接都指向 so.com 跳转：这个标记必须带下去，
+           否则排序时会被当成同一个站点，10 条只留下 2 条。 */
+        alt: !!raw.alt,
         trusted: trustedHost(hostOf(url))
       });
     });
@@ -1063,11 +1179,74 @@ window.AIS_BODY = `
   }
 
   /* ---------------- 正文抽取 ----------------
-   * 只做「去标签 + 去导航」这一层，不引入 Readability 那种大依赖：
-   * 目标是给模型一份能读的文字，不是还原网页排版。挑不到 article/main 就用整页，
-   * 靠「短行丢弃 + 相邻去重」把菜单、版权、分享按钮过滤掉。 */
+   * 目标是给模型一份能读的文字，不是还原网页排版；但「有 article 就用、没有就整页」
+   * 会把导航、相关阅读、评论区一起送进去（GitHub 仓库页就是典型）。这里按
+   * Readability / trafilatura 的思路做：先整块剥掉典型外壳（class / id 命中导航、
+   * 推荐、评论等），再在 article → main → 带正文语义的 div/section 里按 <p> 文字量
+   * 挑主块。 */
   function stripTags(html) {
     return decodeEnt(String(html || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+  }
+
+  function plainLen(html) {
+    return stripTags(html).length;
+  }
+
+  var BOILER_ATTR = /(^|[-_\s])(nav|navbar|menu|breadcrumb|sidebar|side-bar|related|recommend|comment|comments|footer|header|share|social|copyright|advert)([-_\s]|$)/i;
+  function stripBoiler(html) {
+    return String(html || '').replace(/<(div|section|ul|ol)\b([^>]*)>([\s\S]*?)<\/\1>/gi, function (m, tag, attrs) {
+      var a = /(?:id|class)\s*=\s*["']([^"']*)["']/i.exec(attrs);
+      return a && BOILER_ATTR.test(a[1]) ? ' ' : m;
+    });
+  }
+
+  /* 只数 <p> 里的文字：导航、文件列表、相关阅读多用 <li> / <a>，不进正文分。
+     这样 `<main>` 这种整页包裹层不会因为「含得多」而稳压内部真正的正文块。 */
+  function paraLen(html) {
+    var n = 0;
+    String(html || '').replace(/<p\b[^>]*>([\s\S]*?)<\/p>/gi, function (m, inner) {
+      n += plainLen(inner);
+      return m;
+    });
+    return n;
+  }
+
+  function blockScore(html) {
+    var p = paraLen(html);
+    if (p < 300 || plainLen(html) < 400) return 0;
+    return p;
+  }
+
+  function pickTag(src, tag) {
+    var re = new RegExp('<' + tag + '\\b[^>]*>[\\s\\S]*?<\\/' + tag + '>', 'gi');
+    var best = '', bestScore = 0, m;
+    while ((m = re.exec(src))) {
+      var s = blockScore(m[0]);
+      if (s > bestScore) { bestScore = s; best = m[0]; }
+    }
+    return best;
+  }
+
+  function pickMainBlock(src) {
+    /* article / main 是明确的正文语义，优先采用；
+       只有站点用 <div id="content"> 这类写法时，才退回按分数挑 div。 */
+    var art = pickTag(src, 'article');
+    if (art) return art;
+    var main = pickTag(src, 'main');
+    if (main) return main;
+    var best = '', bestScore = 0, bestLen = 0, m;
+    var re = /<(div|section)\b[^>]*(?:id|class)\s*=\s*["'][^"']*(?:article|content|post|entry|main|text|body)[^"']*["'][^>]*>[\s\S]*?<\/\1>/gi;
+    while ((m = re.exec(src))) {
+      var s = blockScore(m[0]);
+      if (s <= 0) continue;
+      var len = plainLen(m[0]);
+      if (s > bestScore || (s > bestScore * 0.85 && len < bestLen)) {
+        bestScore = Math.max(bestScore, s);
+        best = m[0];
+        bestLen = len;
+      }
+    }
+    return best;
   }
 
   function extractPage(html) {
@@ -1085,14 +1264,16 @@ window.AIS_BODY = `
       if (h1) title = clip(decodeEnt(h1[1].replace(/<[^>]+>/g, ' ')), 120);
     }
 
+    /* 外壳块 / 主内容块都必须在「闭合标签转换行」之前处理，否则拿不到完整的 <div>…</div>。 */
     var src = raw
       .replace(/<!--[\s\S]*?-->/g, ' ')
-      .replace(/<(script|style|noscript|svg|canvas|template|iframe|object|embed|nav|aside|footer|header|form|button|select|input|textarea)\b[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<(script|style|noscript|svg|canvas|template|iframe|object|embed|nav|aside|footer|header|form|button|select|input|textarea)\b[\s\S]*?<\/\1>/gi, ' ');
+    src = stripBoiler(src);
+    var block = pickMainBlock(src);
+    if (block) src = block;
+    src = src
       .replace(/<(br|hr)\s*\/?>/gi, '\n')
       .replace(/<\/(p|div|section|article|li|ul|ol|h[1-6]|tr|blockquote|pre|dd|dt|figure|table)>/gi, '\n');
-
-    var block = /<article\b[\s\S]*?<\/article>/i.exec(src) || /<main\b[\s\S]*?<\/main>/i.exec(src);
-    if (block && stripTags(block[0]).length > 400) src = block[0];
 
     var text = decodeEnt(src.replace(/<[^>]+>/g, ' '));
     var lines = [];
@@ -1104,7 +1285,8 @@ window.AIS_BODY = `
       if (lines.length && lines[lines.length - 1] === t) return;
       lines.push(t);
     });
-    return { title: title, text: lines.join('\n').slice(0, MAX_PAGE_TEXT) };
+    var body = lines.join('\n');
+    return { title: title, text: body.slice(0, MAX_PAGE_TEXT) };
   }
 
   /* 从正文页里抽出可追踪的线索链接（绝对地址），供第二轮「顺着线索再读两篇」使用。 */
@@ -1742,6 +1924,7 @@ window.AIS_BODY = `
     S.skim = { pages: 0, keywords: [], links: [], urls: [] };
     S.liveNote = '';
     S.ghQuery = '';
+    S.ghRateLimited = false;
     S.pageCache = Object.create(null);
     S.answer = '';
     S.error = '';
@@ -1965,7 +2148,9 @@ window.AIS_BODY = `
       }).then(function (gh) {
         if (ctrl.signal.aborted) return null;
         var repos = gh || [];
-        if (repos.length) {
+        if (S.ghRateLimited && !repos.length) {
+          trace({ kind: '仓库', text: 'GitHub 检索被限流（未登录 60 次/小时）', res: '本轮回退到网页结果', ok: false });
+        } else if (repos.length) {
           trace({ kind: '仓库', text: 'GitHub 搜「' + (S.ghQuery || '') + '」', res: repos.length + ' 个仓库', ok: true });
         }
         if (seeds.length) {
@@ -3881,17 +4066,17 @@ window.AIS_BODY = `
             <div class="cd-stats" id="cdStats"></div>
 
             <section class="cd-sec">
-              <h2 class="cd-h2">关于我</h2>
+              <h2 class="cd-h2">关于我<span class="cd-h2-en">Profile</span></h2>
               <div class="cd-about" id="cdAbout"></div>
             </section>
 
             <section class="cd-sec">
-              <h2 class="cd-h2">在做的四条线</h2>
+              <h2 class="cd-h2">在做的四条线<span class="cd-h2-en">Tracks</span></h2>
               <div class="cd-tracks" id="cdTracks"></div>
             </section>
 
             <section class="cd-sec">
-              <h2 class="cd-h2">合集与代表作<span class="cd-h2-note">右侧为该集播放量</span></h2>
+              <h2 class="cd-h2">合集与代表作<span class="cd-h2-en">Selected Works</span><span class="cd-h2-note">右侧为该集播放量</span></h2>
               <div class="cd-works" id="cdWorks"></div>
             </section>
           </div>
@@ -5061,11 +5246,22 @@ window.L2D_BODY = `
 
           <div class="l2d-field">
             <span class="l2d-lab">朗读声音</span>
-            <div class="l2d-tts">
-              <select id="l2dVoiceSel" class="l2d-select" aria-label="音色"></select>
-              <label class="l2d-range"><span>语速</span><input type="range" id="l2dRate" min="0.7" max="1.4" step="0.02" value="1.04"><em id="l2dRateVal">1.04</em></label>
-              <label class="l2d-range"><span>音调</span><input type="range" id="l2dPitch" min="0.7" max="1.5" step="0.02" value="1.12"><em id="l2dPitchVal">1.12</em></label>
-              <button type="button" class="l2d-btn" id="l2dVoiceTest">试听一句</button>
+            <div class="l2d-tts" id="l2dTts">
+              <div class="l2d-tts-top">
+                <select id="l2dVoiceSel" class="l2d-select" aria-label="音色"></select>
+                <button type="button" class="l2d-btn l2d-btn-ico" id="l2dVoiceRefresh" title="重新检测系统语音与本地模型">检测</button>
+              </div>
+              <div class="l2d-tts-state">
+                <span class="l2d-tag" id="l2dVoiceEngine">系统语音</span>
+                <span class="l2d-tts-status" id="l2dVoiceStatus">检测中…</span>
+              </div>
+              <label class="l2d-range" id="l2dRateRow"><span>语速</span><input type="range" id="l2dRate" min="0.7" max="1.4" step="0.02" value="1.04"><em id="l2dRateVal">1.04</em></label>
+              <label class="l2d-range" id="l2dPitchRow"><span>音调</span><input type="range" id="l2dPitch" min="0.7" max="1.5" step="0.02" value="1.12"><em id="l2dPitchVal">1.12</em></label>
+              <div class="l2d-tts-acts">
+                <button type="button" class="l2d-btn" id="l2dVoiceTest">试听一句</button>
+                <button type="button" class="l2d-btn" id="l2dVoiceOpen">语音设置</button>
+              </div>
+              <p class="l2d-tts-hint" id="l2dVoiceHint"></p>
             </div>
           </div>
 
@@ -5083,10 +5279,11 @@ window.L2D_BODY = `
 
           <div class="l2d-field">
             <span class="l2d-lab">皮套</span>
+            <select id="l2dModelSel" class="l2d-select" aria-label="皮套"></select>
             <div class="l2d-credit">
-              <b>鲸鱼娘 · c_0120</b>
-              <span>形象：上善无形 / ZipZipPipe　模型：氵六青</span>
-              <span>CC BY-NC-SA 4.0 · 仅非商业使用</span>
+              <b id="l2dCreditName">鲸鱼娘 · c_0120</b>
+              <span id="l2dCreditAuthor">形象：上善无形 / ZipZipPipe　模型：氵六青</span>
+              <span id="l2dCreditLicense">CC BY-NC-SA 4.0 · 仅非商业使用</span>
             </div>
           </div>
 
@@ -5134,9 +5331,9 @@ window.L2D_BODY = `
  *   · 视线：鼠标位置喂给 focusController，头和眼珠会跟着走；
  *   · 口型：模型流式输出时按字符切音节，逐字驱动 ParamMouthOpenY。
  *
- * ⚠ file:// 下 XHR 读不了本地文件，所以 moc3 与全部 json 由 model/pack.js
- *   预打包（moc3 转 base64、json 直接是对象），再用 Live2DLoader 中间件喂给
- *   运行时装加载器；纹理仍按相对路径走 Image，file:// 下正常。
+ * ⚠ file:// 下 XHR 读不了本地文件，所以每个皮套由 tools/pack-live2d.js
+ *   预打包成 model/<id>/pack.js（moc3 转 base64、json 直接是对象），
+ *   model/models.js 是皮套清单，运行时按需加载并可在角色面板里换装。
  *
  * 2.0 在皮套之上补了语音与记忆：朗读的音色/语速/音调可调，口型优先吃引擎的
  * 词边界事件；长期记忆摘要可以手动整理，也会在每 12 条消息后自动更新。
@@ -5164,13 +5361,13 @@ window.L2D_BODY = `
     tts: { voice: '', rate: 1.04, pitch: 1.12 }
   };
 
-  /* 皮套与运行时都在 App 目录下，全部相对本页解析 */
-  var RIG_DIR = 'apps/live2d/model/';
+  /* 皮套与运行时都在 App 目录下，全部相对本页解析；皮套按 model/<id>/ 一套一个目录 */
+  var MODEL_DIR = 'apps/live2d/model/';
+  var MODELS_SRC = MODEL_DIR + 'models.js';
   var RIG_SCRIPTS = [
     'apps/live2d/vendor/pixi.min.js',
     'apps/live2d/vendor/live2dcubismcore.min.js',
-    'apps/live2d/vendor/cubism4.min.js',
-    'apps/live2d/model/pack.js'
+    'apps/live2d/vendor/cubism4.min.js'
   ];
   /* 皮套在舞台上占的高度比例；1 刚好不裁切 */
   var RIG_FIT = 0.97;
@@ -5198,6 +5395,8 @@ window.L2D_BODY = `
 
   var STORE_KEY = 'hf_live2d_state';
   var STORE_VER = 2;
+  /* 衣柜里的「当前搭配」：启动时按它换皮套、隐藏部件 */
+  var WARDROBE_KEY = 'hf_wardrobe_state';
   var MAX_MSGS = 60;
   var MAX_HISTORY = 12;
   /* 每累计这么多条新消息，后台自动整理一次长期记忆 */
@@ -5230,7 +5429,8 @@ window.L2D_BODY = `
       persona: JSON.parse(JSON.stringify(DEFAULT_PERSONA)),
       msgs: [],
       mem: { summary: '', at: 0, count: 0 },
-      aff: 12
+      aff: 12,
+      modelId: ''
     };
     var raw = null;
     try { raw = localStorage.getItem(STORE_KEY); } catch (e) { raw = null; }
@@ -5259,6 +5459,7 @@ window.L2D_BODY = `
       }).slice(-MAX_MSGS);
     }
     out.aff = clamp(Number(d.aff) || 12, 0, 100);
+    out.modelId = typeof d.modelId === 'string' ? d.modelId : '';
     if (d.mem && typeof d.mem === 'object') {
       out.mem.summary = String(d.mem.summary || '').slice(0, MEM_MAX);
       out.mem.at = Number(d.mem.at) || 0;
@@ -5274,11 +5475,28 @@ window.L2D_BODY = `
       persona: S.persona,
       mem: { summary: S.mem.summary, at: S.mem.at, count: S.mem.count },
       aff: S.aff,
+      modelId: S.modelId || '',
       msgs: S.msgs.slice(-MAX_MSGS).map(function (m) {
         return { r: m.r, t: m.t, ts: m.ts, emo: m.emo || '' };
       })
     };
     try { localStorage.setItem(STORE_KEY, JSON.stringify(payload)); } catch (e) { /* 配额满就只留在内存里 */ }
+  }
+
+  /* 读衣柜存下的当前搭配；没配过衣柜就返回 null */
+  function readWardrobeWear() {
+    var raw = null;
+    try { raw = localStorage.getItem(WARDROBE_KEY); } catch (e) { return null; }
+    if (!raw) return null;
+    var d = null;
+    try { d = JSON.parse(raw); } catch (e) { return null; }
+    if (!d || d.v !== 1 || !d.draft || typeof d.draft !== 'object') return null;
+    return {
+      modelId: typeof d.draft.modelId === 'string' ? d.draft.modelId : '',
+      hidden: Array.isArray(d.draft.hidden) ? d.draft.hidden.filter(function (x) {
+        return typeof x === 'string' && x;
+      }).slice(0, 300) : []
+    };
   }
 
   function affLevel() {
@@ -5300,12 +5518,17 @@ window.L2D_BODY = `
       persona: loaded.persona,
       msgs: loaded.msgs,
       aff: loaded.aff,
+      models: [],
+      modelId: loaded.modelId,
+      /* 衣柜当前搭配里隐藏的部件（Cubism 部件 id）；换装时按它压透明度 */
+      hiddenParts: [],
       emo: 'neutral',
       busy: false,
       abort: null,
       streamEl: null,
       streamTxt: '',
       voiceOn: loaded.persona.voice,
+      voiceProbed: false,
       mem: loaded.mem,
       memBusy: false,
       tab: 'chat',
@@ -5315,7 +5538,7 @@ window.L2D_BODY = `
       sayUntil: 0,
       rig: {
         ready: false, loading: false, error: '',
-        app: null, model: null,
+        app: null, model: null, gen: 0,
         t: 0, last: 0,
         focusX: 0, focusY: 0, focusTX: 0, focusTY: 0, lastPointerAt: 0,
         anchorX: 0, anchorY: 0,
@@ -5329,6 +5552,14 @@ window.L2D_BODY = `
     };
 
     cacheRefs();
+
+    /* 衣柜里保存的搭配优先：换皮套 + 隐藏部件，进门就是上次穿好的样子 */
+    var wear = readWardrobeWear();
+    if (wear) {
+      if (wear.modelId) S.modelId = wear.modelId;
+      S.hiddenParts = wear.hidden;
+    }
+
     applyPersonaUI();
     bindEvents();
     renderLog();
@@ -5375,10 +5606,21 @@ window.L2D_BODY = `
       fPersona: b.querySelector('#l2dFPersona'),
       exprs: b.querySelector('#l2dExprs'),
       exprsExtra: b.querySelector('#l2dExprsExtra'),
+      modelSel: b.querySelector('#l2dModelSel'),
+      creditName: b.querySelector('#l2dCreditName'),
+      creditAuthor: b.querySelector('#l2dCreditAuthor'),
+      creditLicense: b.querySelector('#l2dCreditLicense'),
       voiceSel: b.querySelector('#l2dVoiceSel'),
+      voiceRefresh: b.querySelector('#l2dVoiceRefresh'),
+      voiceEngine: b.querySelector('#l2dVoiceEngine'),
+      voiceStatus: b.querySelector('#l2dVoiceStatus'),
+      voiceOpen: b.querySelector('#l2dVoiceOpen'),
+      voiceHint: b.querySelector('#l2dVoiceHint'),
       rate: b.querySelector('#l2dRate'),
+      rateRow: b.querySelector('#l2dRateRow'),
       rateVal: b.querySelector('#l2dRateVal'),
       pitch: b.querySelector('#l2dPitch'),
+      pitchRow: b.querySelector('#l2dPitchRow'),
       pitchVal: b.querySelector('#l2dPitchVal'),
       voiceTest: b.querySelector('#l2dVoiceTest'),
       memText: b.querySelector('#l2dMemText'),
@@ -5434,14 +5676,19 @@ window.L2D_BODY = `
     });
     if (r.voiceSel) r.voiceSel.addEventListener('change', applyTtsForm);
     if (r.voiceTest) r.voiceTest.addEventListener('click', testSpeak);
+    if (r.voiceRefresh) r.voiceRefresh.addEventListener('click', function () { refreshVoices(true); });
+    if (r.voiceOpen) r.voiceOpen.addEventListener('click', openVoiceSettings);
     if (r.memNow) r.memNow.addEventListener('click', function () { summarizeNow(true); });
     if (r.memClear) r.memClear.addEventListener('click', clearMemory);
     if (r.exportBtn) r.exportBtn.addEventListener('click', exportChat);
     if (window.speechSynthesis) {
-      try { window.speechSynthesis.addEventListener('voiceschanged', renderVoiceOptions); } catch (e) { /* 老引擎没有该事件 */ }
+      try {
+        window.speechSynthesis.addEventListener('voiceschanged', function () { renderVoiceOptions(); });
+      } catch (e) { /* 老引擎没有该事件 */ }
     }
-    /* 模型商店里「设为默认语音」后即时同步下拉框，不用重开 App */
-    window.addEventListener('hf-tts-changed', renderVoiceOptions);
+    /* 设置页 / 模型商店改过默认音色，或本地引擎刚探测完：即时同步下拉框 */
+    window.addEventListener('hf-tts-changed', function () { renderVoiceOptions(); });
+    window.addEventListener('hf-tts-status', function () { renderVoiceOptions(); });
 
     id('l2dClear').addEventListener('click', function () {
       S.msgs = [];
@@ -5488,6 +5735,10 @@ window.L2D_BODY = `
       S.refs.mood.textContent = b.textContent;
       toast('表情：' + b.textContent);
     });
+
+    if (r.modelSel) {
+      r.modelSel.addEventListener('change', function () { switchModel(r.modelSel.value); });
+    }
 
     S.body.querySelectorAll('.l2d-field input, .l2d-field textarea').forEach(function (el) {
       el.addEventListener('input', function () {
@@ -5538,6 +5789,8 @@ window.L2D_BODY = `
     if (S.tab === 'persona') {
       var inp = S.refs.fName;
       if (inp && !inp.value) fillPersonaForm();
+      /* 首次进角色页时探测一次本地引擎，之后就沿用缓存，避免每次切页都发请求 */
+      if (!S.voiceProbed) { S.voiceProbed = true; refreshVoices(true); }
     }
   }
 
@@ -5588,7 +5841,8 @@ window.L2D_BODY = `
     if (fromUser) toast('表情：' + EXPR[key].mood);
   }
 
-  /* 表情名对应 model3.json 里的 exp3 文件名；空串 = 回到默认表情 */
+  /* 表情名对应 model3.json 里的 exp3 文件名；空串 = 回到默认表情。
+     换皮套后旧表情名可能不存在，缺就静默跳过，不影响换模型。 */
   function setRigExpression(name) {
     var st = S.rig;
     if (!st.ready || !st.model) { st.expr = name || ''; return; }
@@ -5596,15 +5850,20 @@ window.L2D_BODY = `
     var im = st.model.internalModel;
     var em = im && im.motionManager && im.motionManager.expressionManager;
     if (!em) return;
-    if (!st.expr) { em.resetExpression(); return; }
-    em.setExpression(st.expr);
+    try {
+      if (!st.expr) { if (em.resetExpression) em.resetExpression(); return; }
+      em.setExpression(st.expr);
+    } catch (e) { /* 该皮套没有这张表情 */ }
   }
 
   function playMotion(group) {
     var st = S.rig;
     if (!st.ready || !st.model || !group) return;
     st.lastMotion = group;
-    try { st.model.motion(group); } catch (e) { /* 动作缺失就只换表情 */ }
+    try {
+      var p = st.model.motion(group);
+      if (p && p.catch) p.catch(function () { /* 动作组缺失就当没点 */ });
+    } catch (e) { /* 动作缺失就只换表情 */ }
   }
 
   /* 探针只读钩子：无头测试读模型参数用，不参与任何业务逻辑 */
@@ -5628,7 +5887,8 @@ window.L2D_BODY = `
         headTop: S.rig.headTop || 0,
         breath: s.breath || 0,
         eyeL: s.eyeL === undefined ? 1 : s.eyeL,
-        browL: s.browL || 0
+        browL: s.browL || 0,
+        hidden: (S.hiddenParts || []).slice()
       };
     };
 
@@ -5645,6 +5905,8 @@ window.L2D_BODY = `
       };
     };
     window.__l2dExportText = function () { return S ? buildExport() : ''; };
+    /* 衣柜「穿上」的入口：同一个页面时即时换装 */
+    window.__l2dApplyOutfit = function (outfit) { return applyOutfit(outfit); };
   }
 
   function doAction(act) {
@@ -5993,23 +6255,35 @@ window.L2D_BODY = `
   /* ---------- 语音 ---------- */
   var voiceCache = null;
 
+  /* 语音桥由 js/settings-tts.js 提供：音色清单、本地引擎状态、克隆入口都在那边探测。
+   * 拿不到时退回本文件里的系统语音实现，保证 App 单独跑也不哑。 */
+  function ttsApi() {
+    var b = window.ttsBridge;
+    return (b && typeof b.catalog === 'function') ? b : null;
+  }
+
   function voiceList() {
     if (!window.speechSynthesis) return [];
     try { return window.speechSynthesis.getVoices() || []; } catch (e) { return []; }
   }
 
-  /* 模型商店的「设为默认」写在 hf_ttsVoice；人设没显式选音色时用它，
+  /* 模型商店 / 设置页的「默认音色」写在 hf_ttsVoice；人设没显式选音色时用它，
    * 这样在商店里挑的音色才能真的影响朗读。 */
   function storeVoice() {
     try { return String(localStorage.getItem('hf_ttsVoice') || ''); } catch (e) { return ''; }
+  }
+
+  /* 实际会用的音色：人设优先，没选就跟随全局默认 */
+  function effectiveVoice() {
+    var own = (S && S.persona && S.persona.tts) ? S.persona.tts.voice : '';
+    return own || storeVoice();
   }
 
   /* 选中的音色优先；没选就挑中文女声，再退回第一个中文 */
   function pickVoice() {
     var list = voiceList();
     if (!list.length) return null;
-    var want = (S && S.persona.tts) ? S.persona.tts.voice : '';
-    if (!want) want = storeVoice();
+    var want = effectiveVoice();
     if (want) {
       var hit = list.filter(function (v) { return v.name === want || v.voiceURI === want; })[0];
       if (hit) return hit;
@@ -6024,14 +6298,28 @@ window.L2D_BODY = `
     return voiceCache;
   }
 
-  /* 商店里的本地音色有两种启用值：piper:<目录 id> 与 kokoro:<sid>。
-   * 返回给朗读链路的结构要能直接变成 /tts/speak 的请求体。 */
+  /* 商店里的本地音色有五种启用值：piper:<目录 id>、kokoro:<sid>、
+   * melo:zh_en、vits:theresa、zipvoice:clone。返回给朗读链路的结构要能直接变成 /tts/speak 的请求体。 */
   function localVoiceSpec() {
-    var want = (S && S.persona.tts && S.persona.tts.voice) ? S.persona.tts.voice : storeVoice();
+    var want = effectiveVoice();
     if (!want) return null;
+    var api = ttsApi();
+    if (api && typeof api.spec === 'function') {
+      var spy = api.spec(want);
+      if (!spy) return null;
+      spy.label = api.label ? api.label(want) : want;
+      return spy;
+    }
     var s = String(want);
-    var head = s.indexOf('piper:') === 0 ? 'piper' : (s.indexOf('kokoro:') === 0 ? 'kokoro' : '');
+    var head = s.indexOf('piper:') === 0 ? 'piper'
+      : (s.indexOf('kokoro:') === 0 ? 'kokoro'
+        : (s.indexOf('melo:') === 0 ? 'melo'
+          : (s.indexOf('vits:') === 0 ? 'vits' : (s.indexOf('zipvoice:') === 0 ? 'zipvoice' : ''))));
     if (!head) return null;
+    /* melo / vits / zipvoice 是单一份共享模型，启用值里没有可查的目录 id */
+    if (head === 'melo') return { engine: 'melo', label: 'MeloTTS · 中英混读女声' };
+    if (head === 'vits') return { engine: 'vits', label: 'VITS · 海星 · 俏皮甜美（近似）' };
+    if (head === 'zipvoice') return { engine: 'zipvoice', label: 'ZipVoice · 我的克隆声音' };
     var item = (typeof catalogGet === 'function') ? catalogGet(s.slice(head.length + 1)) : null;
     if (!item) return null;
     if (item.engine === 'kokoro' && typeof item.sid === 'number') return { engine: 'kokoro', sid: item.sid, label: item.name };
@@ -6039,39 +6327,162 @@ window.L2D_BODY = `
     return null;
   }
 
-  function renderVoiceOptions() {
+  /* 音色下拉：系统语音全量 + 本地模型（未就绪的带后缀），与设置页同一份清单 */
+  function renderVoiceOptions(snapshot) {
     var sel = S && S.refs.voiceSel;
     if (!sel) return;
-    var list = voiceList().filter(function (v) {
-      return /zh|chinese|中文|普通话/i.test((v.lang || '') + ' ' + (v.name || ''));
-    });
-    var saved = S.persona.tts.voice || '';
-    var cur = saved || storeVoice();
+    var api = ttsApi();
+    var snap = snapshot || (api ? api.catalog() : null);
+    var cur = effectiveVoice();
+    var system = [];
+    var local = [];
+    if (snap) {
+      system = snap.system || [];
+      local = snap.local || [];
+    } else {
+      system = voiceList().map(function (v) {
+        return { value: v.name, name: v.name, lang: v.lang || '' };
+      });
+    }
+
     sel.innerHTML = '';
     var def = document.createElement('option');
     def.value = '';
-    def.textContent = list.length ? '系统默认' : '系统默认（未检测到中文语音）';
+    def.textContent = system.length ? '系统默认（自动挑中文音色）' : '系统默认（未检测到系统语音）';
     sel.appendChild(def);
-    list.forEach(function (v) {
-      var o = document.createElement('option');
-      o.value = v.name;
-      o.textContent = v.name + (v.lang ? ' · ' + v.lang : '');
-      sel.appendChild(o);
-    });
-    /* 商店里选的本地音色（Piper / Kokoro）不在系统语音列表里，
-     * 单独补一项，否则下拉会显示成「系统默认」。 */
-    var local = String(cur).indexOf('piper:') === 0 || String(cur).indexOf('kokoro:') === 0;
-    if (local) {
-      var po = document.createElement('option');
-      po.value = cur;
-      var spec = localVoiceSpec();
-      po.textContent = spec ? ('本地语音 · ' + spec.label) : '本地语音（模型商店）';
-      sel.appendChild(po);
+
+    if (system.length) {
+      var g1 = document.createElement('optgroup');
+      g1.label = '系统语音';
+      system.forEach(function (v) {
+        var o = document.createElement('option');
+        o.value = v.value;
+        o.textContent = v.name + (v.lang ? ' · ' + v.lang : '');
+        g1.appendChild(o);
+      });
+      sel.appendChild(g1);
     }
+
+    if (local.length) {
+      var g2 = document.createElement('optgroup');
+      g2.label = '本地模型';
+      local.forEach(function (v) {
+        var o = document.createElement('option');
+        o.value = v.value;
+        o.textContent = v.name + (v.ready ? '' : (v.needRef ? '（缺参考录音）' : '（未就绪）'));
+        g2.appendChild(o);
+      });
+      sel.appendChild(g2);
+    }
+
+    /* 已存音色不在清单里（模型刚卸载 / 引擎还没探测到）也补一项，别让下拉悄悄退回系统默认 */
+    var listed = system.some(function (v) { return v.value === cur; }) ||
+      local.some(function (v) { return v.value === cur; });
+    if (cur && !listed) {
+      var keep = document.createElement('option');
+      keep.value = cur;
+      keep.textContent = (api ? api.label(cur) : cur) + '（未就绪）';
+      sel.appendChild(keep);
+    }
+
     sel.value = cur;
-    /* 商店里选的可能是英文音色，下拉只列中文音色时选中会落空，退回人设值 */
-    if (sel.value !== cur) sel.value = saved;
-    sel.disabled = !list.length && !local;
+    if (sel.value !== cur) sel.value = '';
+    sel.disabled = !system.length && !local.length;
+    paintVoiceMeta(snap);
+  }
+
+  /* 引擎标签、音调可用性与状态行 */
+  function paintVoiceMeta(snapshot) {
+    var r = S && S.refs;
+    if (!r) return;
+    var api = ttsApi();
+    var isLocal = !!(api ? api.spec(effectiveVoice()) : localVoiceSpec());
+    if (r.voiceEngine) {
+      r.voiceEngine.textContent = isLocal ? '本地模型' : '系统语音';
+      r.voiceEngine.classList.toggle('is-local', isLocal);
+    }
+    if (r.pitch) r.pitch.disabled = isLocal;
+    if (r.pitchRow) {
+      r.pitchRow.classList.toggle('is-off', isLocal);
+      var lab = r.pitchRow.querySelector('span');
+      if (lab) lab.textContent = isLocal ? '音调 · 仅系统语音' : '音调';
+    }
+    paintVoiceStatus(snapshot);
+    paintVoiceHint(snapshot);
+  }
+
+  function paintVoiceStatus(snapshot) {
+    var el = S && S.refs && S.refs.voiceStatus;
+    if (!el) return;
+    var api = ttsApi();
+    var snap = snapshot || (api ? api.catalog() : null);
+    var sys = snap ? (snap.system || []).length : voiceList().length;
+    var st = snap ? snap.status : null;
+    var parts = ['系统语音 ' + sys + ' 个'];
+    if (st) {
+      parts.push('Piper ' + (st.piper ? '就绪' : '未装'));
+      parts.push('Kokoro ' + (st.kokoro ? '就绪' : '未装'));
+      parts.push('MeloTTS ' + (st.melo ? '就绪' : '未装'));
+      parts.push('角色音色 ' + (st.vits ? '就绪' : '未装'));
+      parts.push('ZipVoice ' + (st.zipvoice ? (st.clone ? '就绪' : '缺参考录音') : '未装'));
+    } else {
+      parts.push('本地模型需桌面端');
+    }
+    el.textContent = parts.join(' · ');
+    el.classList.toggle('is-err', !!(st && !st.probed));
+  }
+
+  function paintVoiceHint(snapshot) {
+    var el = S && S.refs && S.refs.voiceHint;
+    if (!el) return;
+    var api = ttsApi();
+    var own = (S && S.persona && S.persona.tts) ? S.persona.tts.voice : '';
+    var cur = effectiveVoice();
+    var spec = api ? api.spec(cur) : localVoiceSpec();
+    var snap = snapshot || (api ? api.catalog() : null);
+    var st = snap ? snap.status : null;
+    var text;
+    if (spec) {
+      if (spec.engine === 'zipvoice' && st && !st.clone) {
+        text = 'ZipVoice 还缺参考录音：到「语音设置 → 声音克隆」录一段 5-15 秒清晰人声，在此之前会退回系统语音；本地模型音调不生效。';
+      } else if (st && !st.probed) {
+        text = '本地引擎状态未知：确认桌面端与运行时已启动，再点「检测」；本地模型音调不生效。';
+      } else {
+        text = '本地模型按自身音色朗读，只有语速生效，音调已停用。';
+      }
+    } else if (!own && cur) {
+      text = '未单独选择，跟随默认音色：' + (api ? api.label(cur) : cur) + '。';
+    } else if (!snap || !(snap.system || []).length) {
+      text = '没有检测到系统语音：可在「语音设置 / 模型商店」下载本地模型，或安装系统语音包。';
+    } else {
+      text = '系统语音可调语速与音调；本地模型下载后会自动出现在这里。';
+    }
+    el.textContent = text;
+  }
+
+  /* force=true 时重新探测本地引擎（按钮 / 首次进角色页）；否则只按现有状态重画 */
+  function refreshVoices(force) {
+    var api = ttsApi();
+    var r = S && S.refs;
+    if (!api || !force) {
+      renderVoiceOptions();
+      return Promise.resolve();
+    }
+    if (r && r.voiceRefresh) r.voiceRefresh.disabled = true;
+    if (r && r.voiceStatus) r.voiceStatus.textContent = '正在检测本地引擎…';
+    return api.catalog({ refresh: true }).then(function (snap) {
+      if (r && r.voiceRefresh) r.voiceRefresh.disabled = false;
+      if (S) renderVoiceOptions(snap);
+    }, function () {
+      if (r && r.voiceRefresh) r.voiceRefresh.disabled = false;
+      if (S) renderVoiceOptions();
+    });
+  }
+
+  function openVoiceSettings() {
+    var api = ttsApi();
+    if (api && typeof api.openSettings === 'function') { api.openSettings(); return; }
+    if (typeof window.openSettings === 'function') window.openSettings('tts');
   }
 
   function syncTtsLabels() {
@@ -6097,6 +6508,7 @@ window.L2D_BODY = `
     S.persona.tts.pitch = clamp(Number(r.pitch.value) || 1.12, 0.7, 1.5);
     S.persona.tts.voice = r.voiceSel ? r.voiceSel.value : '';
     syncTtsLabels();
+    paintVoiceMeta();
     saveState();
   }
 
@@ -6150,7 +6562,7 @@ window.L2D_BODY = `
     } catch (e) { S.rig.speaking = false; }
   }
 
-  /* 商店里下载的本地音色（Piper / Kokoro）不在系统语音列表里：交给本地引擎桥合成 WAV 再播。
+  /* 商店里下载的本地音色（Piper / Kokoro / MeloTTS / 角色音色 / ZipVoice）不在系统语音列表里：交给本地引擎桥合成 WAV 再播。
    * 引擎没起来（浏览器模式 / 被卸载）时退回系统语音，不让数字人整段静音。 */
   function speakLocal(clean, spec) {
     if (!spec || typeof fetch !== 'function' || typeof rtBase !== 'function' || typeof Audio !== 'function') return false;
@@ -6160,7 +6572,7 @@ window.L2D_BODY = `
     var rate = clamp(Number(tts.rate) || 1.04, 0.7, 1.4);
     var payload = { text: clean, engine: spec.engine, rate: rate };
     if (spec.engine === 'kokoro') payload.sid = spec.sid;
-    else payload.voice = spec.voice;
+    else if (spec.engine === 'piper') payload.voice = spec.voice;
     S.rig.speaking = true;
     S.rig.ttsUntil = S.rig.t + Math.min(30, Math.max(1.4, clean.length / (5.4 * rate)));
     fetch(base + '/tts/speak', {
@@ -6368,6 +6780,13 @@ window.L2D_BODY = `
     syncAff();
     renderLog();
     setEmotion('neutral');
+    /* 皮套也回到清单里的第一个 */
+    if (S.models.length && S.modelId !== S.models[0].id) {
+      S.modelId = S.models[0].id;
+      syncModelUI();
+      disposeRig();
+      loadRig();
+    }
     saveState();
     toast('已恢复默认角色');
   }
@@ -6401,14 +6820,18 @@ window.L2D_BODY = `
   }
 
   /* ---------- 皮套加载 ---------- */
+  /* 脚本只注入一次；缓存挂在 window 上，衣柜 App 复用同一套 pixi / Cubism 运行时 */
+  var scriptCache = window.__L2D_SCRIPT_CACHE || (window.__L2D_SCRIPT_CACHE = {});
   function injectScript(src) {
-    return new Promise(function (resolve, reject) {
+    if (scriptCache[src]) return scriptCache[src];
+    scriptCache[src] = new Promise(function (resolve, reject) {
       var el = document.createElement('script');
       el.src = src;
       el.onload = function () { resolve(); };
       el.onerror = function () { reject(new Error('脚本加载失败：' + src)); };
       document.head.appendChild(el);
     });
+    return scriptCache[src];
   }
 
   function b64ToBuffer(b64) {
@@ -6419,27 +6842,32 @@ window.L2D_BODY = `
     return buf.buffer;
   }
 
-  /* 模型加载器中间件：pack.js 里已有的文件不再走 XHR（file:// 下 XHR 读不到本地文件）。
-     moc3 是 base64 → ArrayBuffer，其余 json 已经是对象。 */
-  function serveFromPack(pack) {
-    var mocUrl = pack.settings.FileReferences.Moc;
-    var mocBuf = null;
-    return function (ctx, next) {
+  /* 模型加载器中间件：只回答「settings 上挂了 __l2dPack」的请求。
+     衣柜 App 也装了自己的中间件，两边按 settings 归属分流 ——
+     不再用全局「当前包」，两个 App 同时开着换皮套也不会串包。 */
+  function ensurePackHook() {
+    var loader = window.PIXI.live2d.Live2DLoader;
+    if (!loader || loader.__l2dPackHook) return;
+    loader.__l2dPackHook = true;
+    loader.middlewares.unshift(function (ctx, next) {
+      var p = ctx.settings && ctx.settings.__l2dPack;
+      if (!p) return next();
+      var mocUrl = p.settings.FileReferences.Moc;
       if (ctx.type === 'arraybuffer' && ctx.url === mocUrl) {
-        if (!mocBuf) mocBuf = b64ToBuffer(pack.moc);
-        ctx.result = mocBuf;
+        ctx.result = b64ToBuffer(p.moc);
         return;
       }
-      var data = pack.json[ctx.url];
+      var data = p.json[ctx.url];
       if (data) { ctx.result = data; return; }
       return next();
-    };
+    });
   }
 
   function loadRig() {
     var st = S.rig;
     if (st.loading || st.ready) return;
     st.loading = true;
+    var gen = ++st.gen;
     if (S.refs.rigErr) S.refs.rigErr.hidden = true;
 
     var chain = Promise.resolve();
@@ -6448,76 +6876,27 @@ window.L2D_BODY = `
     });
 
     chain.then(function () {
-      var pack = window.L2D_PACK;
-      if (!pack || !window.PIXI || !window.PIXI.live2d) throw new Error('运行时未就绪');
-      if (window.PIXI.live2d.Live2DLoader) {
-        window.PIXI.live2d.Live2DLoader.middlewares.unshift(serveFromPack(pack));
-      }
-      /* 构造时就要求 url 是字符串；纹理换成 data: URL，避免 file:// 下 CORS 拦图 */
-      var refs = Object.assign({}, pack.settings.FileReferences, { Textures: pack.textures });
-      var json = Object.assign({}, pack.settings, {
-        FileReferences: refs,
-        url: new URL(RIG_DIR, location.href).href
+      if (window.L2D_MODELS) return null;
+      return injectScript(MODELS_SRC);
+    }).then(function () {
+      if (!window.PIXI || !window.PIXI.live2d) throw new Error('运行时未就绪');
+      var models = (window.L2D_MODELS || []).filter(function (m) { return m && m.id && m.pack; });
+      if (!models.length) throw new Error('没有可用的皮套：model/models.js 为空');
+      S.models = models;
+
+      var def = null;
+      models.forEach(function (m) { if (m.id === S.modelId) def = m; });
+      if (!def) { def = models[0]; S.modelId = def.id; }
+      renderModels();
+
+      return injectScript(def.pack).then(function () {
+        if (st.gen !== gen) return;
+        var pack = window.L2D_PACKS && window.L2D_PACKS[def.id];
+        if (!pack) throw new Error('皮套数据包缺失：' + def.pack);
+        return mountModel(def, pack, gen);
       });
-      var settings = new window.PIXI.live2d.Cubism4ModelSettings(json);
-
-      var host = S.refs.canvas;
-      var app = new window.PIXI.Application({
-        transparent: true,
-        antialias: true,
-        autoStart: true,
-        resolution: Math.min(2, window.devicePixelRatio || 1),
-        autoDensity: true,
-        backgroundAlpha: 0
-      });
-      app.view.className = 'l2d-cvs';
-      host.appendChild(app.view);
-
-      return window.PIXI.live2d.Live2DModel.from(settings, { autoUpdate: false, autoInteract: false })
-        .then(function (model) {
-          app.stage.addChild(model);
-          st.app = app;
-          st.model = model;
-
-          /* 口型与嘴形在模型参数更新前写进去，表情/物理算完之后才不会被覆盖；
-             顺手留一份参数快照，探针要读「本帧真实参与绘制的值」 */
-          model.internalModel.on('beforeModelUpdate', function () {
-            var cm = model.internalModel.coreModel;
-            cm.setParameterValueById('ParamMouthOpenY', clamp(st.mouth, 0, 1));
-            cm.setParameterValueById('ParamMouthForm', clamp(st.mouthForm, -1, 1));
-            /* 说话时轻轻点头：叠加在模型自己算出的头部角度上 */
-            if (Math.abs(st.nod) > 0.01) {
-              var z = cm.getParameterValueById('ParamAngleZ') || 0;
-              cm.setParameterValueById('ParamAngleZ', z + st.nod);
-            }
-            st.snap = {
-              mouth: cm.getParameterValueById('ParamMouthOpenY'),
-              mouthForm: cm.getParameterValueById('ParamMouthForm'),
-              angleX: cm.getParameterValueById('ParamAngleX'),
-              angleY: cm.getParameterValueById('ParamAngleY'),
-              angleZ: cm.getParameterValueById('ParamAngleZ'),
-              breath: cm.getParameterValueById('ParamBreath'),
-              eyeL: cm.getParameterValueById('ParamEyeLOpen'),
-              browL: cm.getParameterValueById('ParamBrowLForm')
-            };
-          });
-
-          /* 模型自带的 idle 组名是 Idle，这里换成本项目注册的 idle */
-          if (model.internalModel.motionManager) {
-            model.internalModel.motionManager.groups.idle = 'idle';
-          }
-
-          st.ready = true;
-          st.loading = false;
-          if (S.refs.rigLoading) S.refs.rigLoading.hidden = true;
-          fitRig();
-          if (window.ResizeObserver) {
-            st.ro = new ResizeObserver(function () { fitRig(); });
-            st.ro.observe(host);
-          }
-          if (st.expr) setRigExpression(st.expr);
-        });
     }).catch(function (err) {
+      if (st.gen !== gen) return;
       st.loading = false;
       st.error = (err && err.message) || String(err);
       if (S.refs.rigLoading) S.refs.rigLoading.hidden = true;
@@ -6527,6 +6906,172 @@ window.L2D_BODY = `
         if (span) span.textContent = st.error;
       }
     });
+  }
+
+  /* 把一份 pack 挂到舞台上；换皮套时先 disposeRig() 再调这里 */
+  function mountModel(def, pack, gen) {
+    var st = S.rig;
+    ensurePackHook();
+
+    /* 构造时就要求 url 是字符串；纹理换成 data: URL，避免 file:// 下 CORS 拦图 */
+    var refs = Object.assign({}, pack.settings.FileReferences, { Textures: pack.textures });
+    var json = Object.assign({}, pack.settings, {
+      FileReferences: refs,
+      url: new URL(def.dir, location.href).href
+    });
+    var settings = new window.PIXI.live2d.Cubism4ModelSettings(json);
+    /* 中间件靠这个标记认领本模型的 moc / json */
+    settings.__l2dPack = pack;
+
+    var host = S.refs.canvas;
+    var app = new window.PIXI.Application({
+      transparent: true,
+      antialias: true,
+      autoStart: true,
+      resolution: Math.min(2, window.devicePixelRatio || 1),
+      autoDensity: true,
+      backgroundAlpha: 0
+    });
+    app.view.className = 'l2d-cvs';
+    host.appendChild(app.view);
+
+    return window.PIXI.live2d.Live2DModel.from(settings, { autoUpdate: false, autoInteract: false })
+      .then(function (model) {
+        /* 加载途中被换皮套 / 重置顶掉：丢掉这次结果，别往舞台上叠第二个模型 */
+        if (st.gen !== gen) {
+          try { app.destroy(true); } catch (e) { /* 已销毁 */ }
+          return;
+        }
+        app.stage.addChild(model);
+        st.app = app;
+        st.model = model;
+
+        /* 口型与嘴形在模型参数更新前写进去，表情/物理算完之后才不会被覆盖；
+           顺手留一份参数快照，探针要读「本帧真实参与绘制的值」 */
+        model.internalModel.on('beforeModelUpdate', function () {
+          var cm = model.internalModel.coreModel;
+          cm.setParameterValueById('ParamMouthOpenY', clamp(st.mouth, 0, 1));
+          cm.setParameterValueById('ParamMouthForm', clamp(st.mouthForm, -1, 1));
+          /* 衣柜里隐藏的部件：每帧压回 0，动作 / pose 把它拉起来也盖得住 */
+          if (S.hiddenParts && S.hiddenParts.length) {
+            for (var hi = 0; hi < S.hiddenParts.length; hi++) {
+              cm.setPartOpacityById(S.hiddenParts[hi], 0);
+            }
+          }
+          /* 说话时轻轻点头：叠加在模型自己算出的头部角度上 */
+          if (Math.abs(st.nod) > 0.01) {
+            var z = cm.getParameterValueById('ParamAngleZ') || 0;
+            cm.setParameterValueById('ParamAngleZ', z + st.nod);
+          }
+          st.snap = {
+            mouth: cm.getParameterValueById('ParamMouthOpenY'),
+            mouthForm: cm.getParameterValueById('ParamMouthForm'),
+            angleX: cm.getParameterValueById('ParamAngleX'),
+            angleY: cm.getParameterValueById('ParamAngleY'),
+            angleZ: cm.getParameterValueById('ParamAngleZ'),
+            breath: cm.getParameterValueById('ParamBreath'),
+            eyeL: cm.getParameterValueById('ParamEyeLOpen'),
+            browL: cm.getParameterValueById('ParamBrowLForm')
+          };
+        });
+
+        /* idle 组一般叫 Idle；本项目皮套注册成 idle，有就优先用 */
+        var mm = model.internalModel.motionManager;
+        if (mm && mm.definitions && mm.definitions.idle) mm.groups.idle = 'idle';
+
+        st.ready = true;
+        st.loading = false;
+        if (S.refs.rigLoading) S.refs.rigLoading.hidden = true;
+        fitRig();
+        if (window.ResizeObserver) {
+          st.ro = new ResizeObserver(function () { fitRig(); });
+          st.ro.observe(host);
+        }
+        if (st.expr) setRigExpression(st.expr);
+      });
+  }
+
+  /* 卸载当前皮套：销毁 PIXI 应用、断开尺寸监听，保留表情/口型等瞬时状态 */
+  function disposeRig() {
+    var st = S.rig;
+    st.gen++;
+    if (st.ro) { st.ro.disconnect(); st.ro = null; }
+    if (st.app) {
+      try { st.app.destroy(true, { children: true, texture: false }); }
+      catch (e) { try { st.app.destroy(true); } catch (e2) { /* 已销毁 */ } }
+    }
+    if (S.refs.canvas) S.refs.canvas.innerHTML = '';
+    st.app = null;
+    st.model = null;
+    st.snap = null;
+    st.ready = false;
+    st.loading = false;
+    st.error = '';
+    st.anchorX = 0;
+    st.anchorY = 0;
+    st.headTop = 0;
+    if (S.refs.rigLoading) S.refs.rigLoading.hidden = false;
+    if (S.refs.rigErr) S.refs.rigErr.hidden = true;
+  }
+
+  function renderModels() {
+    var sel = S.refs.modelSel;
+    if (!sel) return;
+    sel.innerHTML = '';
+    S.models.forEach(function (m) {
+      var o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = m.name || m.id;
+      sel.appendChild(o);
+    });
+    syncModelUI();
+  }
+
+  /* 皮套名字与版权跟着当前模型走 */
+  function syncModelUI() {
+    var sel = S.refs.modelSel;
+    var def = null;
+    S.models.forEach(function (m) { if (m.id === S.modelId) def = m; });
+    if (sel && def && sel.value !== def.id) sel.value = def.id;
+    if (!def) return;
+    if (S.refs.creditName) S.refs.creditName.textContent = def.name + ' · ' + def.id;
+    if (S.refs.creditAuthor) S.refs.creditAuthor.textContent = def.author || '';
+    if (S.refs.creditLicense) S.refs.creditLicense.textContent = def.license || '';
+  }
+
+  function switchModel(id) {
+    if (!id || id === S.modelId) return;
+    var hit = null;
+    S.models.forEach(function (m) { if (m.id === id) hit = m; });
+    if (!hit || !S.rig.ready) { syncModelUI(); return; }
+    S.modelId = id;
+    /* 手动换皮套：上一条搭配的部件 id 不再适用 */
+    S.hiddenParts = [];
+    saveState();
+    syncModelUI();
+    hideSay();
+    disposeRig();
+    loadRig();
+    toast('已换上皮套：' + (hit.name || hit.id));
+  }
+
+  /* 衣柜点「穿上」时调用：换皮套 + 隐藏部件，数字人开着就即时生效 */
+  function applyOutfit(outfit) {
+    if (!S || !outfit) return false;
+    S.hiddenParts = Array.isArray(outfit.hidden) ? outfit.hidden.filter(function (x) {
+      return typeof x === 'string' && x;
+    }).slice(0, 300) : [];
+    var mid = typeof outfit.modelId === 'string' && outfit.modelId ? outfit.modelId : S.modelId;
+    if (mid !== S.modelId) {
+      S.modelId = mid;
+      saveState();
+      syncModelUI();
+      hideSay();
+      disposeRig();
+      loadRig();
+    }
+    toast('已穿上：' + (outfit.name || '新套装'));
+    return true;
   }
 
   function fitRig() {
@@ -7355,6 +7900,12 @@ window.STUDIO_BODY = `
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5.2" width="7.4" height="13.6" rx="1.6"/><rect x="13.6" y="5.2" width="7.4" height="13.6" rx="1.6"/><path d="M6.7 8.8v2.2M17.3 8.8v2.2"/></svg>
             </button>
           </div>
+          <div class="st-fchips" id="stMediaFilter" role="group" aria-label="素材类型筛选">
+            <button type="button" class="st-fchip on" data-fk="all" aria-pressed="true">全部</button>
+            <button type="button" class="st-fchip" data-fk="video" aria-pressed="false">视频</button>
+            <button type="button" class="st-fchip" data-fk="image" aria-pressed="false">图片</button>
+            <button type="button" class="st-fchip" data-fk="audio" aria-pressed="false">音频</button>
+          </div>
           <button type="button" class="st-ghost st-wide" id="stImport">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v10"/><path d="m8 9 4-4 4 4"/><path d="M4.6 15.4v2.6a2 2 0 0 0 2 2h10.8a2 2 0 0 0 2-2v-2.6"/></svg>
             导入文件
@@ -7505,17 +8056,36 @@ window.STUDIO_BODY = `
     </div>
   </div>
 
+  <footer class="st-status" id="stStatus" aria-label="状态栏">
+    <span class="st-st-dot" aria-hidden="true"></span>
+    <span id="stStClips">0 片段</span>
+    <span class="st-st-sep" aria-hidden="true"></span>
+    <span id="stStSel">未选中</span>
+    <span class="st-st-sep" aria-hidden="true"></span>
+    <span id="stStTracks">4 轨道</span>
+    <span class="st-st-grow"></span>
+    <span id="stStTool">选择工具</span>
+    <span class="st-st-sep" aria-hidden="true"></span>
+    <span id="stStZoom">80 px/s</span>
+    <span class="st-st-sep" aria-hidden="true"></span>
+    <span id="stStDur2">00:00</span>
+  </footer>
+
   <input type="file" id="stProjFile" accept=".hfstudio,.json,application/json" aria-label="导入项目文件" hidden>
 
   <div class="st-modal hidden" id="stLibModal">
     <div class="st-modal-card wide" role="dialog" aria-modal="true" aria-label="从视频库添加">
       <div class="st-modal-h">
-        <b>从视频库添加</b>
+        <b>添加素材</b>
         <button type="button" class="st-modal-x" data-close="stLibModal" aria-label="关闭">×</button>
+      </div>
+      <div class="st-libtabs" role="tablist" aria-label="素材来源">
+        <button type="button" class="st-libtab on" data-libtab="media" role="tab" aria-selected="true">视频库</button>
+        <button type="button" class="st-libtab" data-libtab="asset" role="tab" aria-selected="false">图库</button>
       </div>
       <div class="st-modal-body">
         <div class="st-libsearch">
-          <input type="search" id="stLibSearch" placeholder="搜索视频库…" aria-label="搜索视频库">
+          <input type="search" id="stLibSearch" placeholder="搜索素材…" aria-label="搜索素材">
           <span class="st-mut" id="stLibCount"></span>
         </div>
         <div class="st-liblist" id="stLibList"></div>
@@ -7684,7 +8254,8 @@ window.STUDIO_BODY = `
     kfX: '<path d="M4 12h16"/><path d="m7.4 8.4-3.4 3.6 3.4 3.6M16.6 8.4l3.4 3.6-3.4 3.6"/>',
     kfY: '<path d="M12 4v16"/><path d="m8.4 7.4 3.6-3.4 3.6 3.4M8.4 16.6l3.6 3.4 3.6-3.4"/>',
     kfRot: '<path d="M19 12a7 7 0 1 1-2.6-5.4"/><path d="M19.4 4.6v4.6h-4.6"/>',
-    kfVolume: '<path d="M4 9.4h3.2L11 6.2v11.6L7.2 14.6H4z"/><path d="M14.6 9.4a4 4 0 0 1 0 5.2M17.2 7.2a7.4 7.4 0 0 1 0 9.6"/>'
+    kfVolume: '<path d="M4 9.4h3.2L11 6.2v11.6L7.2 14.6H4z"/><path d="M14.6 9.4a4 4 0 0 1 0 5.2M17.2 7.2a7.4 7.4 0 0 1 0 9.6"/>',
+    mic: '<rect x="9.2" y="3.4" width="5.6" height="10.4" rx="2.8"/><path d="M5.6 11.6a6.4 6.4 0 0 0 12.8 0"/><path d="M12 18v2.6M9 20.6h6"/>'
   };
   const ico = (name) => svgWrap(ICON[name] || '');
 
@@ -7887,8 +8458,14 @@ window.STUDIO_BODY = `
         kind: m.kind,
         url: String(m.url || ''),
         dur: Math.max(0, Number(m.dur) || 0),
-        source: m.source === 'library' ? 'library' : 'file',
-        libId: m.libId ? String(m.libId) : ''
+        source: m.source === 'library' || m.source === 'asset' || m.source === 'tts' ? m.source : 'file',
+        libId: m.libId ? String(m.libId) : '',
+        assetId: m.assetId ? String(m.assetId) : '',
+        tts: m.tts && m.tts.text ? {
+          text: String(m.tts.text),
+          voice: String(m.tts.voice || ''),
+          rate: Number(m.tts.rate) || 1
+        } : null
       };
     });
     const ids = new Set(p.media.map(function (m) { return m.id; }));
@@ -7959,6 +8536,8 @@ window.STUDIO_BODY = `
     snap: true,
     tool: 'select',
     loop: false,
+    mediaKind: 'all',
+    inspTab: 'basic',
     panel: 'media',
     hist: [],
     future: [],
@@ -7974,6 +8553,9 @@ window.STUDIO_BODY = `
     saveTimer: 0,
     libFiles: [],
     libPick: new Set(),
+    libTab: 'media',
+    libAssets: [],
+    assetThumbs: {},
     libTimer: 0,
     frameW: 0,
     frameH: 0,
@@ -8033,11 +8615,54 @@ window.STUDIO_BODY = `
   /* ---------------- 本地存档 / 快照 ---------------- */
   function cleanForStore(p) {
     const copy = JSON.parse(JSON.stringify(p));
-    /* 只存视频库素材：文件素材的 objectURL 在下次启动必定失效 */
-    copy.media = copy.media.filter(function (m) { return m.source === 'library'; });
+    /* 只存视频库 / 图库素材：文件素材的 objectURL 在下次启动必定失效。
+       图库素材只留 assetId，dataURL 启动时从资产库重新水合，避免撑爆 localStorage。 */
+    copy.media = copy.media.filter(function (m) {
+      return m.source === 'library' || m.source === 'asset' || m.source === 'tts';
+    }).map(function (m) {
+      return (m.source === 'asset' || m.source === 'tts') ? Object.assign({}, m, { url: '' }) : m;
+    });
     const keep = new Set(copy.media.map(function (m) { return m.id; }));
     copy.clips = copy.clips.filter(function (c) { return c.kind === 'text' || keep.has(c.mediaId); });
     return copy;
+  }
+
+  /* 图库素材的 dataURL 不进存档：启动 / 恢复快照 / 导入项目后按 assetId 重新读回。 */
+  async function hydrateAssetMedia() {
+    const bridge = window.assetBridge;
+    if (!bridge || typeof bridge.read !== 'function') return;
+    const need = S.project.media.filter(function (m) { return m.assetId && !m.url; });
+    if (!need.length) return;
+    let changed = false;
+    for (const m of need) {
+      let url = '';
+      try { url = await bridge.read(m.assetId); } catch (e) { url = ''; }
+      if (url) { m.url = url; changed = true; }
+    }
+    if (changed) { renderAll(); applyTime(); }
+  }
+
+  /* 配音素材同理：只存文本 + 音色，启动后按需重新合成。 */
+  async function hydrateTtsMedia() {
+    const bridge = window.ttsBridge;
+    if (!bridge || typeof bridge.speak !== 'function') return;
+    const need = S.project.media.filter(function (m) {
+      return m.source === 'tts' && m.tts && !m.url;
+    });
+    if (!need.length) return;
+    let changed = false;
+    for (const m of need) {
+      try {
+        const r = await bridge.speak(m.tts.text, { voice: m.tts.voice, rate: m.tts.rate });
+        if (r && r.url) { m.url = r.url; changed = true; }
+      } catch (e) { /* 引擎没装好就先留空，下一次启动再试 */ }
+    }
+    if (changed) { renderAll(); applyTime(); }
+  }
+
+  async function hydrateMedia() {
+    await hydrateAssetMedia();
+    await hydrateTtsMedia();
   }
 
   function readSnaps() {
@@ -8049,8 +8674,13 @@ window.STUDIO_BODY = `
 
   function snapshotProject() {
     /* 快照保留完整项目（含本会话的 blob/objectURL），用于崩溃后当场恢复；
-       跨会话读取时 loadSaved 仍会剔除失效的文件素材。 */
-    return { at: Date.now(), time: S.time, name: S.project.name, project: JSON.parse(JSON.stringify(S.project)) };
+       跨会话读取时 loadSaved 仍会剔除失效的文件素材。
+       图库素材剥掉 dataURL，避免五份快照把配额吃满。 */
+    const p = JSON.parse(JSON.stringify(S.project));
+    p.media.forEach(function (m) {
+      if (m.source === 'asset' || m.source === 'tts') m.url = '';
+    });
+    return { at: Date.now(), time: S.time, name: S.project.name, project: p };
   }
 
   function saveSnapshot() {
@@ -8077,6 +8707,7 @@ window.STUDIO_BODY = `
     S.hist = [];
     S.future = [];
     afterRestore();
+    hydrateMedia();
     toast('已恢复快照：' + (s.name || '未命名项目'));
     return true;
   }
@@ -8231,6 +8862,7 @@ window.STUDIO_BODY = `
     applyTime();
     paintUndo();
     saveNow();
+    hydrateMedia();
 
     /* 首次打开时，如果本地存档被过滤空了素材，给一句说明 */
     if (saved && !saved.project.media.length && saved.project.clips.length === 0) {
@@ -9327,11 +9959,59 @@ window.STUDIO_BODY = `
     return a;
   }
 
+  /* 文字转语音：把文字片段念成音频，落到音频轨，作为普通片段参与播放与导出。 */
+  async function generateVoice(id) {
+    const c = clipOf(id);
+    if (!c || c.kind !== 'text') return null;
+    const text = String((c.text && c.text.content) || '').trim();
+    if (!text) { toast('文字片段是空的'); return null; }
+    const bridge = window.ttsBridge;
+    if (!bridge || typeof bridge.speak !== 'function') { toast('当前环境没有语音合成模块'); return null; }
+    if (!bridge.isLocal()) {
+      toast('当前音色是系统语音，去模型商店下载本地音色后才能生成配音');
+      return null;
+    }
+    toast('正在合成配音…');
+    let r = null;
+    try {
+      r = await bridge.speak(text, { rate: bridge.defaultRate ? bridge.defaultRate() : 1 });
+    } catch (e) {
+      toast('配音失败：' + ((e && e.message) || e));
+      return null;
+    }
+    if (!r || !r.url) { toast('配音失败：没有返回音频'); return null; }
+    const dur = Math.max(MIN_CLIP, (await probeDuration(r.url, 'audio')) || 5);
+    pushHistory();
+    const media = {
+      id: 'tts:' + uid('m'),
+      name: '配音 · ' + (c.name || '文字'),
+      kind: 'audio',
+      url: r.url,
+      dur: round2(dur),
+      source: 'tts',
+      libId: '',
+      assetId: '',
+      tts: { text: text, voice: String(r.voice || ''), rate: Number(r.rate) || 1 }
+    };
+    S.project.media.push(media);
+    const trackId = ensureTrackOfKind('audio');
+    const clip = makeClip({
+      track: trackId, kind: 'audio', mediaId: media.id, name: media.name,
+      start: c.start, dur: round2(dur), in: 0, volume: 1, kf: {}
+    });
+    S.project.clips.push(clip);
+    S.sel = clip.id;
+    S.multi.clear();
+    rebuildTracks();
+    toast('已生成 ' + fmtDur(dur) + ' 配音到「' + trackOf(trackId).name + '」');
+    return clip;
+  }
+
   function clipMenuItems(c) {
     const lock = trackLocked(c.track);
     const inClip = S.time > c.start + 0.04 && S.time < c.start + c.dur - 0.04;
     const detached = audioDetachedFor(c);
-    return [
+    const items = [
       {
         id: 'split', label: '在播放头处分割', hint: 'S', disabled: !inClip || lock,
         run: function () { splitAt(S.time); }
@@ -9350,6 +10030,14 @@ window.STUDIO_BODY = `
       { id: 'del', label: '删除', hint: 'Del', run: function () { deleteSelected(false); } },
       { id: 'rdel', label: '波纹删除', hint: 'Shift+Del', run: function () { deleteSelected(true); } }
     ];
+    if (c.kind === 'text') {
+      items.splice(2, 0, {
+        id: 'voice', label: '生成配音（文字转语音）',
+        disabled: lock || !String((c.text && c.text.content) || '').trim(),
+        run: function () { generateVoice(c.id); }
+      });
+    }
+    return items;
   }
 
   function closeClipMenu() {
@@ -9726,7 +10414,7 @@ window.STUDIO_BODY = `
       '<button type="button" class="st-madd" data-add="' + m.id + '" title="加入时间线">＋</button></div>' +
       '<div class="st-mname">' + escHtml(m.name) + '</div>' +
       '<div class="st-mmeta">' + (m.kind === 'image' ? '图片 · 默认 5 秒' : fmtDur(m.dur)) +
-      (m.source === 'library' ? ' · 视频库' : '') + '</div></div>';
+      (m.source === 'library' ? ' · 视频库' : m.source === 'asset' ? ' · 图库' : '') + '</div></div>';
   }
 
   function renderMedia() {
@@ -9734,11 +10422,19 @@ window.STUDIO_BODY = `
     const empty = $('stMediaEmpty');
     if (!grid) return;
     const q = ($('stMediaSearch') && $('stMediaSearch').value || '').trim().toLowerCase();
+    const kind = S.mediaKind || 'all';
     const list = S.project.media.filter(function (m) {
-      return !q || m.name.toLowerCase().indexOf(q) >= 0;
+      return (kind === 'all' || m.kind === kind) && (!q || m.name.toLowerCase().indexOf(q) >= 0);
     });
     grid.innerHTML = list.map(mediaCard).join('');
-    if (empty) empty.classList.toggle('hidden', list.length > 0);
+    if (empty) {
+      empty.classList.toggle('hidden', list.length > 0);
+      const b = empty.querySelector('b');
+      const s = empty.querySelector('span');
+      const has = S.project.media.length > 0;
+      if (b) b.textContent = has ? '没有匹配的素材' : '还没有素材';
+      if (s) s.textContent = has ? '换个关键词或素材类型试试' : '导入本机视频 / 音频，或从「视频库」挑一条';
+    }
     grid.querySelectorAll('video').forEach(function (v) {
       v.addEventListener('loadedmetadata', function () {
         try { v.currentTime = Math.min(0.8, Math.max(0.1, v.duration * 0.15)); } catch (e) {}
@@ -9813,14 +10509,39 @@ window.STUDIO_BODY = `
     return out;
   }
 
-  /* ---------------- 视频库 ---------------- */
+  /* ---------------- 素材弹层：视频库 / 图库 ---------------- */
   async function openLibrary() {
     const modal = $('stLibModal');
-    const list = $('stLibList');
-    if (!modal || !list) return;
-    S.libPick = new Set();
+    if (!modal) return;
     modal.classList.remove('hidden');
-    list.innerHTML = '<div class="st-modal-empty">正在读取视频库…</div>';
+    await setLibTab(S.libTab || 'media');
+  }
+
+  async function setLibTab(tab) {
+    S.libTab = tab === 'asset' ? 'asset' : 'media';
+    document.querySelectorAll('#stLibModal [data-libtab]').forEach(function (b) {
+      const on = b.dataset.libtab === S.libTab;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    const s = $('stLibSearch');
+    if (s) {
+      s.value = '';
+      s.placeholder = S.libTab === 'asset' ? '搜索图库…' : '搜索视频库…';
+    }
+    S.libPick = new Set();
+    updateLibAdd();
+    const list = $('stLibList');
+    if (list) {
+      list.innerHTML = '<div class="st-modal-empty">正在读取' + (S.libTab === 'asset' ? '图库' : '视频库') + '…</div>';
+    }
+    if (S.libTab === 'asset') await loadAssetTab();
+    else await loadMediaTab();
+  }
+
+  async function loadMediaTab() {
+    const list = $('stLibList');
+    if (!list) return;
     const pa = window.playerApp;
     let files = [];
     if (!pa) {
@@ -9841,6 +10562,26 @@ window.STUDIO_BODY = `
     renderLibList('');
   }
 
+  /* 图库走 js/library.js 暴露的 window.assetBridge：
+     App 不直接摸 window.openagiDesktop（AGENTS.md 2 节硬规则）。 */
+  async function loadAssetTab() {
+    const list = $('stLibList');
+    if (!list) return;
+    const bridge = window.assetBridge;
+    if (!bridge || typeof bridge.available !== 'function' || !bridge.available()) {
+      S.libAssets = [];
+      list.innerHTML = '<div class="st-modal-empty">图库需要桌面版。<br>浏览器环境读不到资产库，请直接「导入文件」。</div>';
+      updateLibAdd();
+      return;
+    }
+    let assets = [];
+    try { assets = await bridge.list('image'); } catch (e) { assets = []; }
+    S.libAssets = (assets || []).filter(function (a) {
+      return a && a.id && (a.kind || 'image') === 'image' && !a.missing;
+    });
+    renderLibList('');
+  }
+
   function libUrl(f) {
     const pa = window.playerApp;
     if (pa && typeof pa._urlOf === 'function') return pa._urlOf(f);
@@ -9851,6 +10592,7 @@ window.STUDIO_BODY = `
     const list = $('stLibList');
     if (!list) return;
     const query = String(q || '').trim().toLowerCase();
+    if (S.libTab === 'asset') { renderAssetList(list, query); return; }
     const files = S.libFiles.filter(function (f) {
       return !query || String(f.name || '').toLowerCase().indexOf(query) >= 0;
     });
@@ -9867,9 +10609,47 @@ window.STUDIO_BODY = `
       return '<div class="st-librow' + (on ? ' on' : '') + (added ? ' added' : '') + '" data-lib="' + escHtml(String(f.id)) + '">' +
         '<span class="st-libico">' + (f.kind === 'video' ? 'VID' : f.kind === 'audio' ? 'AUD' : 'IMG') + '</span>' +
         '<span class="st-libname">' + escHtml(f.name || '素材') + '</span>' +
-        '<span class="st-libmeta">' + (added ? '已在素材库' : '点击选择') + '</span></div>';
+        '<span class="st-libmeta">' + (added ? '已在素材库' : (f.kind === 'image' ? '图片' : fmtDur(f.dur || 0))) + '</span></div>';
     }).join('');
     updateLibAdd();
+  }
+
+  function renderAssetList(list, query) {
+    const assets = S.libAssets.filter(function (a) {
+      return !query || String(a.name || '').toLowerCase().indexOf(query) >= 0;
+    });
+    const cnt = $('stLibCount');
+    if (cnt) cnt.textContent = '共 ' + assets.length + ' 张';
+    if (!assets.length) {
+      list.innerHTML = '<div class="st-modal-empty">图库里还没有图片。<br>先在生成流程里出图，或用图库的「导入」收图。</div>';
+      updateLibAdd();
+      return;
+    }
+    list.innerHTML = assets.map(function (a) {
+      const id = String(a.id);
+      const added = S.project.media.some(function (m) { return m.assetId === id; });
+      const on = S.libPick.has(id);
+      return '<div class="st-librow' + (on ? ' on' : '') + (added ? ' added' : '') + '" data-asset="' + escHtml(id) + '">' +
+        '<span class="st-libico" data-thumb="' + escHtml(id) + '">IMG</span>' +
+        '<span class="st-libname">' + escHtml(a.name || '图库素材') + '</span>' +
+        '<span class="st-libmeta">' + (added ? '已在素材库' : fmtBytes(a.size)) + '</span></div>';
+    }).join('');
+    updateLibAdd();
+    const bridge = window.assetBridge;
+    if (!bridge || typeof bridge.thumb !== 'function') return;
+    list.querySelectorAll('[data-thumb]').forEach(function (el) {
+      const id = el.dataset.thumb;
+      const paint = function (url) {
+        if (!url) return;
+        el.innerHTML = '<img class="st-libthumb" src="' + url + '" alt="">';
+      };
+      if (S.assetThumbs[id]) { paint(S.assetThumbs[id]); return; }
+      bridge.thumb(id).then(function (url) {
+        if (!url) return;
+        S.assetThumbs[id] = url;
+        paint(url);
+      }).catch(function () {});
+    });
   }
 
   function updateLibAdd() {
@@ -9882,6 +10662,7 @@ window.STUDIO_BODY = `
 
   async function addFromLibrary() {
     if (!S.libPick.size) return;
+    if (S.libTab === 'asset') { await addAssetsFromLibrary(); return; }
     const pa = window.playerApp;
     const picks = S.libFiles.filter(function (f) { return S.libPick.has(String(f.id)); });
     toast('正在加入 ' + picks.length + ' 个素材…');
@@ -9900,7 +10681,8 @@ window.STUDIO_BODY = `
         url: url,
         dur: round2(dur),
         source: 'library',
-        libId: libId
+        libId: libId,
+        assetId: ''
       });
     }
     if (newMedia.length) {
@@ -9911,6 +10693,39 @@ window.STUDIO_BODY = `
     $('stLibModal').classList.add('hidden');
     toast(newMedia.length ? ('已加入 ' + newMedia.length + ' 个视频库素材') : '这些素材已经在素材库里了');
     void pa;
+  }
+
+  /* 图库素材：只把 assetId 写进项目，dataURL 在内存里用，启动时重新水合。 */
+  async function addAssetsFromLibrary() {
+    const bridge = window.assetBridge;
+    const picks = S.libAssets.filter(function (a) { return S.libPick.has(String(a.id)); });
+    if (!bridge || typeof bridge.read !== 'function' || !picks.length) return;
+    toast('正在加入 ' + picks.length + ' 张图库素材…');
+    const out = [];
+    for (const a of picks) {
+      const assetId = String(a.id);
+      if (S.project.media.some(function (m) { return m.assetId === assetId; })) continue;
+      let url = '';
+      try { url = await bridge.read(assetId); } catch (e) { url = ''; }
+      if (!url) continue;
+      out.push({
+        id: 'ast:' + assetId,
+        name: String(a.name || '图库素材'),
+        kind: 'image',
+        url: url,
+        dur: 5,
+        source: 'asset',
+        libId: '',
+        assetId: assetId
+      });
+    }
+    if (out.length) {
+      S.project.media = S.project.media.concat(out);
+      renderAll();
+      scheduleSave();
+    }
+    $('stLibModal').classList.add('hidden');
+    toast(out.length ? ('已加入 ' + out.length + ' 张图库素材') : '这些图已经在素材库里了');
   }
 
   /* ---------------- 检查器 ---------------- */
@@ -9991,7 +10806,7 @@ window.STUDIO_BODY = `
     const props = KF_PROPS.filter(function (p) { return c.kind !== 'text' || p !== 'volume'; });
     const sum = props.filter(function (p) { return c.kf && c.kf[p] && c.kf[p].length; })
       .map(function (p) { return labels[p] + ' ' + c.kf[p].length; }).join(' · ');
-    return '<div class="st-insp-sec"><h4>关键帧</h4>' +
+    return '<div class="st-insp-sec" data-g="kf"><h4>关键帧</h4>' +
       '<div class="st-kfrow">' + props.map(function (p) {
         const icon = { opacity: 'kfOpacity', scale: 'kfScale', x: 'kfX', y: 'kfY', rot: 'kfRot', volume: 'kfVolume' }[p];
         return '<button type="button" class="st-kfbtn" data-kf="' + p +
@@ -10005,12 +10820,22 @@ window.STUDIO_BODY = `
     const box = $('stInspector');
     if (!box) return;
     const c = selected();
-    if (!c) { box.innerHTML = projectPanel(); return; }
+    if (!c) { box.innerHTML = projectPanel(); paintStatus(); return; }
     const isText = c.kind === 'text';
     const isVisual = c.kind === 'video' || c.kind === 'image';
     const m = c.mediaId ? mediaOf(c.mediaId) : null;
     const multiN = S.multi.size;
-    let html = '<div class="st-insp-sec"><h4>片段<em>' + kindLabel(c.kind) + (m ? ' · ' + escHtml(m.name) : '') +
+    const tabs = [['basic', '基础'], ['visual', '画面']];
+    if (!isText) tabs.push(['audio', '声音']);
+    tabs.push(['motion', '动画'], ['kf', '关键帧']);
+    const active = tabs.some(function (t) { return t[0] === S.inspTab; }) ? S.inspTab : 'basic';
+    S.inspTab = active;
+    box.dataset.itab = active;
+    let html = '<div class="st-insp-tabs" role="tablist">' + tabs.map(function (t) {
+      return '<button type="button" class="st-insp-tab' + (t[0] === active ? ' on' : '') +
+        '" data-itab="' + t[0] + '" role="tab" aria-selected="' + (t[0] === active ? 'true' : 'false') + '">' + t[1] + '</button>';
+    }).join('') + '</div>';
+    html += '<div class="st-insp-sec" data-g="basic"><h4>片段<em>' + kindLabel(c.kind) + (m ? ' · ' + escHtml(m.name) : '') +
       (multiN > 1 ? ' · 已选 ' + multiN + ' 个' : '') + '</em></h4>' +
       '<label class="st-field wide"><span>名称</span><input type="text" data-prop="name" value="' + escHtml(c.name) + '"></label>' +
       num('起点', 'start', c.start.toFixed(2), 0, 3600, 0.1, 's') +
@@ -10019,7 +10844,7 @@ window.STUDIO_BODY = `
     html += '</div>';
 
     if (isText) {
-      html += '<div class="st-insp-sec"><h4>文字</h4>' +
+      html += '<div class="st-insp-sec" data-g="basic"><h4>文字</h4>' +
         '<textarea data-prop="textContent" placeholder="输入文字…">' + escHtml(c.text.content) + '</textarea>' +
         '<label class="st-field"><span>字号</span><input type="range" data-prop="textSize" min="10" max="220" step="1" value="' + c.text.size + '"><i class="st-fval" data-fval="textSize">' + c.text.size + 'px</i></label>' +
         '<div class="st-colorfield"><input type="color" data-prop="textColor" value="' + (/^#[0-9a-f]{6}$/i.test(c.text.color) ? c.text.color : '#ffffff') + '"><input type="text" data-prop="textColor" value="' + escHtml(c.text.color) + '"></div>' +
@@ -10033,11 +10858,12 @@ window.STUDIO_BODY = `
           return '<option value="' + a[0] + '"' + (a[0] === c.text.align ? ' selected' : '') + '>' + a[1] + '</option>';
         }).join('') + '</select></label>' +
         '<label class="st-checkrow"><input type="checkbox" data-prop="textBold"' + (c.text.bold ? ' checked' : '') + '> 加粗</label>' +
+        '<button type="button" class="st-ghost st-wide st-voice-btn" data-act="voice">' + ico('mic') + ' 生成配音</button>' +
         '</div>';
     }
 
     if (isVisual || isText) {
-      html += '<div class="st-insp-sec"><h4>画面</h4>' +
+      html += '<div class="st-insp-sec" data-g="visual"><h4>画面</h4>' +
         rng('缩放', 'scalePct', Math.round(c.scale * 100), 20, 300, 1, Math.round(c.scale * 100) + '%') +
         rng('水平', 'x', Math.round(c.x), -50, 50, 1, Math.round(c.x) + '%') +
         rng('垂直', 'y', Math.round(c.y), -50, 50, 1, Math.round(c.y) + '%') +
@@ -10053,14 +10879,14 @@ window.STUDIO_BODY = `
     }
 
     if (!isText) {
-      html += '<div class="st-insp-sec"><h4>声音与速度</h4>' +
+      html += '<div class="st-insp-sec" data-g="audio"><h4>声音与速度</h4>' +
         rng('音量', 'volumePct', Math.round(c.volume * 100), 0, 100, 1, Math.round(c.volume * 100) + '%') +
         '<label class="st-checkrow"><input type="checkbox" data-prop="muted"' + (c.muted ? ' checked' : '') + '> 静音本片段</label>' +
         rng('速度', 'speed', c.speed, 0.25, 4, 0.05, c.speed.toFixed(2) + 'x') +
         '</div>';
     }
 
-    html += '<div class="st-insp-sec"><h4>动画</h4>' +
+    html += '<div class="st-insp-sec" data-g="motion"><h4>动画</h4>' +
       rng('淡入', 'fadeIn', c.fadeIn, 0, 5, 0.1, c.fadeIn.toFixed(1) + 's') +
       rng('淡出', 'fadeOut', c.fadeOut, 0, 5, 0.1, c.fadeOut.toFixed(1) + 's') +
       '</div>';
@@ -10072,6 +10898,7 @@ window.STUDIO_BODY = `
       '<button type="button" class="st-ghost st-icobtn" data-act="rdel" title="波纹删除" aria-label="波纹删除">' + ico('rippleDel') + '</button></div>';
     box.innerHTML = html;
     paintFxSel();
+    paintStatus();
   }
 
   function paintFxSel() {
@@ -10197,6 +11024,7 @@ window.STUDIO_BODY = `
     renderInspector();
     paintUndo();
     paintTc();
+    paintStatus();
     updateEmpty();
   }
 
@@ -10212,6 +11040,7 @@ window.STUDIO_BODY = `
     renderTimeline();
     if (sc) sc.scrollLeft = Math.max(0, center * S.pps - sc.clientWidth / 2);
     applyTime();
+    paintStatus();
   }
 
   /* 适配时间线：把整条片子的时长铺满时间线可视宽度。 */
@@ -10231,6 +11060,7 @@ window.STUDIO_BODY = `
     if (b) b.classList.toggle('on', S.tool === 'blade');
     const rows = $('stRows');
     if (rows) rows.classList.toggle('blade', S.tool === 'blade');
+    paintStatus();
   }
 
   function selectAllClips() {
@@ -10255,6 +11085,47 @@ window.STUDIO_BODY = `
       b.setAttribute('aria-pressed', S.loop ? 'true' : 'false');
     }
     toast(S.loop ? '循环播放已开启' : '循环播放已关闭');
+  }
+
+  function setMediaKind(kind) {
+    S.mediaKind = ['all', 'video', 'image', 'audio'].indexOf(kind) >= 0 ? kind : 'all';
+    document.querySelectorAll('#stMediaFilter .st-fchip').forEach(function (b) {
+      const on = b.dataset.fk === S.mediaKind;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    renderMedia();
+  }
+
+  function setInspTab(name) {
+    S.inspTab = name || 'basic';
+    const box = $('stInspector');
+    if (!box) return;
+    box.dataset.itab = S.inspTab;
+    box.querySelectorAll('[data-itab]').forEach(function (b) {
+      const on = b.dataset.itab === S.inspTab;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+  }
+
+  /* 底部状态栏：片段 / 选中 / 轨道 / 工具 / 缩放 / 总时长 */
+  function paintStatus() {
+    const n = S.project.clips.length;
+    const sc = $('stStClips');
+    if (!sc) return;
+    sc.textContent = n + ' 片段';
+    const selN = S.multi.size || (S.sel ? 1 : 0);
+    const sel = $('stStSel');
+    if (sel) sel.textContent = selN ? '已选 ' + selN + ' 个' : '未选中';
+    const tr = $('stStTracks');
+    if (tr) tr.textContent = tracks().length + ' 轨道';
+    const tool = $('stStTool');
+    if (tool) tool.textContent = S.tool === 'blade' ? '剃刀工具' : '选择工具';
+    const z = $('stStZoom');
+    if (z) z.textContent = Math.round(S.pps) + ' px/s';
+    const d = $('stStDur2');
+    if (d) d.textContent = fmtMmss(projectDuration(S.project));
   }
 
   function setTab(name) {
@@ -10573,6 +11444,16 @@ window.STUDIO_BODY = `
       if (b) setTab(b.dataset.panel);
     });
 
+    $('stMediaFilter').addEventListener('click', function (e) {
+      const b = e.target.closest('[data-fk]');
+      if (b) setMediaKind(b.dataset.fk);
+    });
+
+    $('stInspector').addEventListener('click', function (e) {
+      const b = e.target.closest('[data-itab]');
+      if (b) setInspTab(b.dataset.itab);
+    });
+
     const search = $('stMediaSearch');
     if (search) search.addEventListener('input', renderMedia);
 
@@ -10715,6 +11596,7 @@ window.STUDIO_BODY = `
       else if (b.dataset.act === 'del') deleteSelected(false);
       else if (b.dataset.act === 'rdel') deleteSelected(true);
       else if (b.dataset.act === 'kfclear' && S.sel) clearKeyframes(S.sel);
+      else if (b.dataset.act === 'voice' && S.sel) generateVoice(S.sel);
     });
 
     document.querySelectorAll('[data-close]').forEach(function (b) {
@@ -10728,11 +11610,16 @@ window.STUDIO_BODY = `
     });
 
     $('stLibOpen').addEventListener('click', openLibrary);
+    $('stLibModal').addEventListener('click', function (e) {
+      const b = e.target.closest('[data-libtab]');
+      if (b) setLibTab(b.dataset.libtab);
+    });
     $('stLibSearch').addEventListener('input', function (e) { renderLibList(e.target.value); });
     $('stLibList').addEventListener('click', function (e) {
       const row = e.target.closest('.st-librow');
       if (!row || row.classList.contains('added')) return;
-      const id = row.dataset.lib;
+      const id = row.dataset.asset || row.dataset.lib;
+      if (!id) return;
       if (S.libPick.has(id)) S.libPick.delete(id);
       else S.libPick.add(id);
       row.classList.toggle('on', S.libPick.has(id));
@@ -10800,8 +11687,10 @@ window.STUDIO_BODY = `
     try { raw = JSON.parse(String(text || '')); }
     catch (e) { toast('项目文件不是合法 JSON'); return false; }
     const p = normalizeProject(raw);
-    /* 文件素材的 blob: 地址跨会话必失效，导入时只保留视频库素材与文字 */
-    p.media = p.media.filter(function (m) { return m.source === 'library'; });
+    /* 文件素材的 blob: 地址跨会话必失效，导入时只保留视频库 / 图库 / 配音素材与文字 */
+    p.media = p.media.filter(function (m) {
+      return m.source === 'library' || m.source === 'asset' || m.source === 'tts';
+    });
     const keep = new Set(p.media.map(function (m) { return m.id; }));
     p.clips = p.clips.filter(function (c) { return c.kind === 'text' || keep.has(c.mediaId); });
     if (fileName && (!raw.name || p.name === '未命名项目')) p.name = String(fileName).replace(/\.(hfstudio|json)$/i, '');
@@ -10816,6 +11705,7 @@ window.STUDIO_BODY = `
     renderAll();
     applyTime();
     saveNow();
+    hydrateMedia();
     toast('已导入项目：' + p.name);
     return true;
   }
@@ -11224,6 +12114,7 @@ window.STUDIO_BODY = `
         };
       },
       project: function () { return JSON.parse(JSON.stringify(S.project)); },
+      clean: function (p) { return cleanForStore(p || S.project); },
       tracks: function () { return JSON.parse(JSON.stringify(S.project.tracks)); },
       addMedia: function (m) {
         const item = {
@@ -11404,4 +12295,4792 @@ window.STUDIO_BODY = `
       }
     }
   };
+})();
+
+/* ---- apps/visionlab/body.js ---- */
+/* visionlab 的窗口 DOM。app-scan 会自动排在 app.js 之前内联。 */
+window.VL_BODY = '' +
+'<div class="vl-wrap">' +
+  '<div class="vl-bar">' +
+    '<div class="vl-group">' +
+      '<button type="button" class="vl-btn vl-primary" data-act="open">打开图片</button>' +
+      '<input type="file" accept="image/*" data-ref="file" hidden>' +
+      '<button type="button" class="vl-btn" data-act="extract">提取线稿</button>' +
+      '<button type="button" class="vl-btn" data-act="only">只看重绘</button>' +
+      '<button type="button" class="vl-btn" data-act="ckpt">控制点</button>' +
+      '<button type="button" class="vl-btn" data-act="reset">重置</button>' +
+    '</div>' +
+    '<div class="vl-group">' +
+      '<button type="button" class="vl-btn vl-ai" data-act="run">监督重绘</button>' +
+      '<button type="button" class="vl-btn vl-danger" data-act="stop" disabled>停止</button>' +
+    '</div>' +
+    '<span class="vl-spacer"></span>' +
+    '<span class="vl-status"><i class="vl-dot" data-ref="dot"></i><span class="vl-stat" data-ref="stat">未载入图像</span></span>' +
+    '<button type="button" class="vl-btn vl-ghost" data-act="export">导出记录</button>' +
+  '</div>' +
+  '<div class="vl-main">' +
+    '<div class="vl-stage" data-ref="stage">' +
+      '<canvas class="vl-canvas" data-ref="canvas"></canvas>' +
+      '<div class="vl-empty" data-ref="empty">' +
+        '<div class="vl-empty-t">拖入图片 / 粘贴截图 / 点「打开图片」</div>' +
+        '<div class="vl-empty-s">载入后拖出一个框选区，再点「提取线稿」。不框选就按整图处理。</div>' +
+      '</div>' +
+      '<div class="vl-hud">拖拽框选 · 不选则整图</div>' +
+      '<div class="vl-legend" data-ref="legend"></div>' +
+      '<div class="vl-param">' +
+        '<span class="vl-param-t">提取</span>' +
+        '<label>形态 ' +
+          '<select data-ref="shape">' +
+            '<option value="auto">自动</option>' +
+            '<option value="contour">轮廓</option>' +
+            '<option value="center">中线</option>' +
+          '</select>' +
+        '</label>' +
+        '<label>取线 ' +
+          '<select data-ref="src">' +
+            '<option value="auto">自动</option>' +
+            '<option value="edge">边缘</option>' +
+            '<option value="dark">暗线</option>' +
+            '<option value="color">色块</option>' +
+          '</select>' +
+        '</label>' +
+        '<label>阈值 <input type="range" min="5" max="60" step="1" value="20" data-ref="threshold"><b data-ref="thresholdV">20</b></label>' +
+        '<label>简化 <input type="range" min="0" max="3" step="0.1" value="0.5" data-ref="simplify"><b data-ref="simplifyV">0.5</b></label>' +
+        '<label>最短段 <input type="range" min="0" max="60" step="1" value="8" data-ref="minLen"><b data-ref="minLenV">8</b></label>' +
+        '<label class="vl-fill">填色 <input type="checkbox" data-ref="fill" checked></label>' +
+      '</div>' +
+    '</div>' +
+    '<div class="vl-side">' +
+      '<div class="vl-tabs">' +
+        '<button type="button" class="vl-tab is-on" data-tab="parts">线稿<b data-ref="partsN">0</b></button>' +
+        '<button type="button" class="vl-tab" data-tab="sup">监督</button>' +
+        '<button type="button" class="vl-tab" data-tab="lab">实验</button>' +
+      '</div>' +
+      '<div class="vl-pane" data-pane="parts">' +
+        '<div class="vl-layers" data-ref="layers" hidden></div>' +
+        '<div class="vl-parts" data-ref="partsList"><div class="vl-none">还没有线段。先载入图片并提取线稿。</div></div>' +
+      '</div>' +
+      '<div class="vl-pane" data-pane="sup" hidden>' +
+        '<div class="vl-sup-head">' +
+          '<span class="vl-phase" data-ref="phase">待命</span>' +
+          '<span class="vl-round" data-ref="round"></span>' +
+        '</div>' +
+        '<div class="vl-metrics" data-ref="metrics" hidden></div>' +
+        '<div class="vl-sup" data-ref="sup"></div>' +
+      '</div>' +
+      '<div class="vl-pane" data-pane="lab" hidden>' +
+        '<div class="vl-lab-h">改良方案</div>' +
+        '<div class="vl-variants" data-ref="variants"></div>' +
+        '<div class="vl-lab-h">运行记录</div>' +
+        '<div class="vl-runs" data-ref="runs"><div class="vl-none">还没有记录。</div></div>' +
+      '</div>' +
+    '</div>' +
+  '</div>' +
+'</div>';
+
+/* ---- apps/visionlab/app.js ---- */
+/* 线稿重绘台（visionlab）
+ *
+ * 做的事：位图 → 中线折线 + 线宽（矢量化线稿） → DeepSeek 用工具重新描绘 → 回读指标验证。
+ *
+ * 只做线稿层，不做填充层。原因：
+ *   位图里没有「线」，只有覆盖率。填充件是零宽区域边界，线稿是「中线 + 厚度」，
+ *   两者几何对象不同，指标也不同，混在一个 IoU 里必然误判。
+ *
+ * 依赖既有共享模块：Tracer / Segmenter / toolLoopRun / llmStreamRequest / llmConn。
+ * 模型只传 key 与样式，几何一律由程序从提取结果直接复制；创作入口除外，且限 16 个控制点。
+ */
+(function () {
+  'use strict';
+
+  var MAX_EXTRACT = 2048;    // 提取时最长边上限（轮廓模式直接按像素边界取，缩图就是丢精度）
+  var MAX_CHECK = 1600;      // 回读栅格化上限
+  var STORE_KEY = 'vl.lineRun.v1';
+
+  var S = {
+    img: null, imgName: '', w: 0, h: 0,
+    region: null,
+    strokes: [],          // {key,path,width,color,length,bbox,cx,cy,name,...}
+    lexicon: {},
+    ops: new Map(),
+    view: { s: 1, ox: 0, oy: 0 }, zoomed: false,
+    onlyDraw: false,
+    ckpt: false,
+    drag: null,
+    opt: { shape: 'auto', src: 'auto', threshold: 20, simplify: 0.5, minLen: 8, background: 238, tolerance: 26, fill: true },
+    lastMode: '', autoStats: null, srcStats: null,
+    groups: [], drop: {},
+    layers: [], hidden: {},
+    activeKey: '',
+    busy: false, ctrl: null, stub: false, stubMsgs: null, stubFirst: null,
+    metrics: null, best: null, calls: [], runs: [], round: 0,
+    customSeq: 0, variant: '', form: 'auto', ready: false, lastReview: ''
+  };
+
+  var R = {};
+  var CV = null, CTX = null;
+  var savedLLM = null;
+
+  /* ---------------- 基础工具 ---------------- */
+
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function round2(v) { return Math.round(v * 100) / 100; }
+  function round3(v) { return Math.round(v * 1000) / 1000; }
+  function fmtK(n) {
+    n = Number(n) || 0;
+    if (n < 1000) return String(Math.round(n));
+    return (n / 1000).toFixed(n < 10000 ? 1 : 0) + 'k';
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function hexOf(rgb) {
+    return '#' + rgb.map(function (v) {
+      var h = clamp(Math.round(v), 0, 255).toString(16);
+      return ('0' + h).slice(-2);
+    }).join('');
+  }
+  function rgbOf(hex) {
+    var m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ''));
+    return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [40, 40, 40];
+  }
+  /* 线稿颜色：把浅色区域的平均色直接画在白底上等于没画（浅蓝发丝、白纱都是这样）。
+   * 亮度高于 150 就按比例压暗，保留色相；深色原样返回。 */
+  function inkColor(hex) {
+    var c = rgbOf(hex);
+    var l = lum(c[0], c[1], c[2]);
+    if (l > 150) {
+      var k = 110 / l;
+      c = c.map(function (v) { return Math.round(v * k); });
+    }
+    return hexOf(c);
+  }
+  function hueBucket(hex) {
+    var c = rgbOf(hex), r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    if (d < 0.08) return 0;
+    var h;
+    if (mx === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    else if (mx === g) h = ((b - r) / d + 2) / 6;
+    else h = ((r - g) / d + 4) / 6;
+    return Math.floor(h * 12);
+  }
+  function lum(r, g, b) { return (r * 299 + g * 587 + b * 114) / 1000; }
+  function median(arr) {
+    if (!arr.length) return 0;
+    var a = arr.slice().sort(function (x, y) { return x - y; });
+    return a[a.length >> 1];
+  }
+  function percentile(arr, p) {
+    if (!arr.length) return 0;
+    var a = arr.slice().sort(function (x, y) { return x - y; });
+    return a[clamp(Math.round((a.length - 1) * p), 0, a.length - 1)];
+  }
+  function bboxOfPath(path) {
+    var mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
+    path.forEach(function (p) {
+      if (p[0] < mnx) mnx = p[0]; if (p[0] > mxx) mxx = p[0];
+      if (p[1] < mny) mny = p[1]; if (p[1] > mxy) mxy = p[1];
+    });
+    return [mnx, mny, mxx, mxy];
+  }
+  function pathLength(path) {
+    var L = 0;
+    for (var i = 1; i < path.length; i++) L += Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]);
+    return L;
+  }
+  function distToSeg(p, a, b) {
+    var vx = b[0] - a[0], vy = b[1] - a[1];
+    var wx = p[0] - a[0], wy = p[1] - a[1];
+    var L2 = vx * vx + vy * vy;
+    var t = L2 ? clamp((wx * vx + wy * vy) / L2, 0, 1) : 0;
+    return Math.hypot(p[0] - (a[0] + vx * t), p[1] - (a[1] + vy * t));
+  }
+
+  /* ---------------- 画布 ---------------- */
+
+  function resizeCanvas() {
+    if (!CV || !R.stage) return;
+    var dpr = window.devicePixelRatio || 1;
+    var w = Math.max(1, R.stage.clientWidth), h = Math.max(1, R.stage.clientHeight);
+    CV.width = Math.round(w * dpr); CV.height = Math.round(h * dpr);
+    CV.style.width = w + 'px'; CV.style.height = h + 'px';
+    CTX.setTransform(dpr, 0, 0, dpr, 0, 0);
+    S.cw = w; S.ch = h;
+  }
+
+  function fitView() {
+    if (!S.img) return;
+    var pad = 26;
+    var s = clamp(Math.min((S.cw - pad * 2) / S.w, (S.ch - pad * 2) / S.h), 0.05, 8);
+    S.view.s = s;
+    S.view.ox = (S.cw - S.w * s) / 2;
+    S.view.oy = (S.ch - S.h * s) / 2;
+    S.zoomed = false;
+  }
+
+  /* 窗口是可拖拽缩放的浮动面板，缩放时画布尺寸变了但视图没变，
+   * 图会按旧比例被裁掉。重排后重新适配；用户自己滚轮缩放过就不打断他。 */
+  function syncStage() {
+    if (!R.stage || R.wrap.offsetParent === null) return;
+    var w = R.stage.clientWidth, h = R.stage.clientHeight;
+    if (w === S.cw && h === S.ch) return;
+    resizeCanvas();
+    if (!S.zoomed) fitView();
+    drawScene();
+  }
+
+  function canvasPt(ev) {
+    var r = CV.getBoundingClientRect();
+    return [ev.clientX - r.left, ev.clientY - r.top];
+  }
+  function toImg(cx, cy) { return [(cx - S.view.ox) / S.view.s, (cy - S.view.oy) / S.view.s]; }
+  function toCanvas(ix, iy) { return [ix * S.view.s + S.view.ox, iy * S.view.s + S.view.oy]; }
+
+  function opOf(key) { return S.ops.get(key) || null; }
+
+  /* 线宽上限跟着区域尺寸走：37px 图标上给 4px 线，等于把画面涂掉。
+   * 下限 1.2px 保证小图仍能看见，上限 16px 给大图留空间。 */
+  function widthCap() {
+    var r = S.region || { w: S.w, h: S.h };
+    return clamp(Math.min(r.w || 1, r.h || 1) / 24, 1.2, 16);
+  }
+  function safeWidth(v, fallback) {
+    var n = Number(v);
+    if (!isFinite(n) || n <= 0) n = fallback;
+    return clamp(n, 0.35, widthCap());
+  }
+
+  function sortedOps() {
+    var list = [];
+    S.strokes.forEach(function (p) {
+      var op = opOf(p.key);
+      /* drop = 明确判定为无意义碎块，不参与绘制，也不计入已描绘 */
+      if (!op || S.drop[p.key]) return;
+      list.push({ part: p, op: op });
+    });
+    list.sort(function (a, b) {
+      var oa = a.op.order != null ? a.op.order : a.part.area;
+      var ob = b.op.order != null ? b.op.order : b.part.area;
+      return oa - ob;
+    });
+    return list;
+  }
+
+  /* 在指定变换下描一条线：几何用区域坐标，厚度用区域像素 */
+  function strokeOne(g, p, op) {
+    var bb = p.bbox;
+    var cx = (bb[0] + bb[2]) / 2, cy = (bb[1] + bb[3]) / 2;
+    g.save();
+    g.translate(cx + (op.dx || 0), cy + (op.dy || 0));
+    if (op.rot) g.rotate(op.rot);
+    if (op.sc && op.sc !== 1) g.scale(op.sc, op.sc);
+    g.translate(-cx, -cy);
+    g.beginPath();
+    var path = p.path;
+    if (p.region) {
+      if (!bezPath(g, p.bez)) curvePath(g, p.path, true);
+      (p.holes || []).forEach(function (hp, i) {
+        if (!bezPath(g, (p.holeBez || [])[i])) curvePath(g, hp, true);
+      });
+    } else {
+      for (var i = 0; i < path.length; i++) {
+        if (i === 0) g.moveTo(path[i][0], path[i][1]); else g.lineTo(path[i][0], path[i][1]);
+      }
+      if (p.closed) g.closePath();
+    }
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    g.lineWidth = Math.max(0.35, (op.width != null ? op.width : p.width));
+    g.strokeStyle = inkColor(op.color || p.color);
+    g.stroke();
+    g.restore();
+  }
+
+  /* 闭合轮廓默认填色：字是实心块，只描边等于画了个空心框。
+   * 孔洞（A 的三角孔）按包含关系挂到外轮廓上，用 evenodd 挖掉。 */
+  function pointInPoly(x, y, path) {
+    var inside = false;
+    for (var i = 0, j = path.length - 1; i < path.length; j = i++) {
+      var xi = path[i][0], yi = path[i][1], xj = path[j][0], yj = path[j][1];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
+  function addPath(g, path) {
+    for (var i = 0; i < path.length; i++) {
+      if (i === 0) g.moveTo(path[i][0], path[i][1]); else g.lineTo(path[i][0], path[i][1]);
+    }
+    g.closePath();
+  }
+
+  /* 向心 Catmull-Rom（alpha=0.5）。均匀参数化在锚点疏密不均时会打结、鼓包——
+   * 抽稀出来的锚点正好疏密不均（直段一个点、弯处连着一串），所以必须用向心参数化，
+   * 否则曲线会「甩出去」再绕回来，看起来就是扭曲。 */
+  function crPoint(a, b, k) { return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k]; }
+
+  function catmullRomCentripetal(points, closed, steps) {
+    var pts = [];
+    for (var i = 0; i < points.length; i++) {
+      var q = points[i], last = pts[pts.length - 1];
+      if (!last || Math.hypot(q[0] - last[0], q[1] - last[1]) > 1e-6) pts.push(q);
+    }
+    if (pts.length < 3) return pts;
+    var seq = closed === false
+      ? [pts[0]].concat(pts, [pts[pts.length - 1]])
+      : [pts[pts.length - 1]].concat(pts, [pts[0], pts[1]]);
+    var out = [];
+    for (var j = 0; j < seq.length - 3; j++) {
+      var p0 = seq[j], p1 = seq[j + 1], p2 = seq[j + 2], p3 = seq[j + 3];
+      var t0 = 0;
+      var t1 = t0 + Math.max(1e-4, Math.sqrt(Math.hypot(p1[0] - p0[0], p1[1] - p0[1])));
+      var t2 = t1 + Math.max(1e-4, Math.sqrt(Math.hypot(p2[0] - p1[0], p2[1] - p1[1])));
+      var t3 = t2 + Math.max(1e-4, Math.sqrt(Math.hypot(p3[0] - p2[0], p3[1] - p2[1])));
+      for (var s = 0; s < steps; s++) {
+        var t = t1 + (t2 - t1) * (s / steps);
+        var A1 = crPoint(p0, p1, (t - t0) / (t1 - t0));
+        var A2 = crPoint(p1, p2, (t - t1) / (t2 - t1));
+        var A3 = crPoint(p2, p3, (t - t2) / (t3 - t2));
+        var B1 = crPoint(A1, A2, (t - t0) / (t2 - t0));
+        var B2 = crPoint(A2, A3, (t - t1) / (t3 - t1));
+        out.push(crPoint(B1, B2, (t - t1) / (t2 - t1)));
+      }
+    }
+    return out;
+  }
+
+  /* 闭合区域的落笔口径：锚点是控制点，用 Catmull-Rom 采样成曲线再描。
+   * 直接 lineTo 会把 1px 台阶放大成一圈折线，再填色就是「像素图」的观感；
+   * 采样后控制点仍只有十几个，可单独拖动，形状是曲线而不是多边形。 */
+  function curvePath(g, path, closed) {
+    if (!path || path.length < 3) { if (path && path.length) addPath(g, path); return; }
+    var pts = catmullRomCentripetal(path, closed !== false, 8);
+    for (var i = 0; i < pts.length; i++) {
+      if (i === 0) g.moveTo(pts[i][0], pts[i][1]); else g.lineTo(pts[i][0], pts[i][1]);
+    }
+    if (closed !== false) g.closePath();
+  }
+
+  function fillGroups(list) {
+    var items = list.map(function (it) {
+      var bb = it.part.bbox;
+      return { it: it, bb: bb, area: Math.max(1, (bb[2] - bb[0]) * (bb[3] - bb[1])), parent: null };
+    });
+    items.forEach(function (a) {
+      var best = null;
+      items.forEach(function (b) {
+        if (a === b || b.area <= a.area) return;
+        if (a.bb[0] < b.bb[0] || a.bb[1] < b.bb[1] || a.bb[2] > b.bb[2] || a.bb[3] > b.bb[3]) return;
+        var p0 = a.it.part.path[0];
+        if (!p0 || !pointInPoly(p0[0], p0[1], b.it.part.path)) return;
+        if (!best || b.area < best.area) best = b;
+      });
+      a.parent = best;
+    });
+    var roots = items.filter(function (a) { return !a.parent; }).map(function (a) {
+      return { outer: a.it, holes: [] };
+    });
+    items.forEach(function (a) {
+      if (!a.parent) return;
+      var root = a.parent, guard = 0;
+      while (root.parent && guard++ < 8) root = root.parent;
+      var g = roots.filter(function (r) { return r.outer === root.it; })[0];
+      if (g) g.holes.push(a.it);
+    });
+    return roots;
+  }
+
+  function fillOne(g, grp) {
+    var p = grp.outer.part, op = grp.outer.op;
+    var bb = p.bbox, cx = (bb[0] + bb[2]) / 2, cy = (bb[1] + bb[3]) / 2;
+    g.save();
+    g.translate(cx + (op.dx || 0), cy + (op.dy || 0));
+    if (op.rot) g.rotate(op.rot);
+    if (op.sc && op.sc !== 1) g.scale(op.sc, op.sc);
+    g.translate(-cx, -cy);
+    g.beginPath();
+    addPath(g, p.path);
+    grp.holes.forEach(function (h) { addPath(g, h.part.path); });
+    g.fillStyle = inkColor(op.color || p.color);
+    g.fill('evenodd');
+    g.restore();
+  }
+
+  /* 色块：外轮廓 + 孔洞一次 evenodd 填完，颜色用区域原色（不压暗）。
+   * 边界走曲线：色块锚点本来就少，用折线填出来是一圈多边形，看着像像素图。
+   * 多色图靠「面积从大到小逐块盖上去」还原层次：大块打底，小块（嘴、脚、眼）后盖。 */
+  function fillRegion(g, p, op) {
+    var bb = p.bbox, cx = (bb[0] + bb[2]) / 2, cy = (bb[1] + bb[3]) / 2;
+    g.save();
+    g.translate(cx + (op.dx || 0), cy + (op.dy || 0));
+    if (op.rot) g.rotate(op.rot);
+    if (op.sc && op.sc !== 1) g.scale(op.sc, op.sc);
+    g.translate(-cx, -cy);
+    g.beginPath();
+    if (!bezPath(g, p.bez)) curvePath(g, p.path, true);
+    (p.holes || []).forEach(function (hp, i) {
+      if (!bezPath(g, (p.holeBez || [])[i])) curvePath(g, hp, true);
+    });
+    g.fillStyle = op.color || p.color;
+    g.fill('evenodd');
+    g.restore();
+  }
+
+  /* 语义分组：同一部位的碎块（围巾本体 + 阴影、眼白 + 瞳孔）并成一组。
+   * 关键约束：只有「套在别的块里面」的成员才当孔洞挖掉，同级并列的成员各自填。
+   * 之前把所有非最大成员都当孔洞，两只脚并成一组时右脚会整块消失——
+   * 那不是「并部位」，是「吞掉部位」。 */
+  function groupedParts(list) {
+    var byKey = {}, used = {}, out = [];
+    list.forEach(function (it) { if (it.part.region) byKey[it.part.key] = it; });
+
+    S.groups.forEach(function (grp) {
+      var members = (grp.keys || []).map(function (k) { return byKey[k]; }).filter(Boolean);
+      if (!members.length) return;
+      members.forEach(function (m) { used[m.part.key] = 1; });
+      members.sort(function (a, b) { return (b.part.area || 0) - (a.part.area || 0); });
+
+      /* 谁是孔：first point 落在另一个更大的成员环内 */
+      var parent = {};
+      members.forEach(function (m) {
+        var p0 = m.part.path[0], best = null;
+        if (!p0) return;
+        members.forEach(function (o) {
+          if (o === m || (o.part.area || 0) <= (m.part.area || 0)) return;
+          if (!pointInPoly(p0[0], p0[1], o.part.path)) return;
+          if (!best || (o.part.area || 0) < (best.part.area || 0)) best = o;
+        });
+        parent[m.part.key] = best;
+      });
+
+      members.forEach(function (m) {
+        if (parent[m.part.key]) return;
+        var holes = (m.part.holes || []).slice();
+        var holeBez = (m.part.holeBez || []).slice();
+        members.forEach(function (c) {
+          if (parent[c.part.key] === m) { holes.push(c.part.path); holeBez.push(c.part.bez); }
+        });
+        out.push({
+          area: m.part.area || 0,
+          part: {
+            path: m.part.path, holes: holes, bbox: m.part.bbox,
+            bez: m.part.bez, holeBez: holeBez, tol: m.part.tol,
+            color: grp.color || m.part.color
+          },
+          op: grp.color ? Object.assign({}, m.op, { color: grp.color }) : m.op
+        });
+      });
+    });
+    list.forEach(function (it) {
+      if (!it.part.region || used[it.part.key]) return;
+      out.push({ area: it.part.area || 0, part: it.part, op: it.op });
+    });
+    return out;
+  }
+
+  /* 色块 → 先按语义组填，再补未分组块，最后按面积降序；线仍走原分支 */
+  function paintOps(g, list) {
+    var hid = {};
+    S.layers.forEach(function (l) {
+      if (!S.hidden[l.id]) return;
+      l.keys.forEach(function (k) { hid[k] = 1; });
+    });
+    var live = list.filter(function (it) { return !S.drop[it.part.key] && !hid[it.part.key]; });
+    var regs = [], strokes = [], fills = [];
+    live.forEach(function (it) {
+      if (it.part.region) regs.push(it);
+      else if (S.opt.fill && it.part.closed && it.part.path.length > 2) fills.push(it);
+      else strokes.push(it);
+    });
+    if (regs.length) {
+      groupedParts(live).sort(function (a, b) { return b.area - a.area; })
+        .forEach(function (x) { fillRegion(g, x.part, x.op); });
+    }
+    if (fills.length) fillGroups(fills).forEach(function (grp) { fillOne(g, grp); });
+    strokes.forEach(function (it) { strokeOne(g, it.part, it.op); });
+  }
+
+  function drawScene() {
+    if (!CTX) return;
+    CTX.clearRect(0, 0, S.cw, S.ch);
+    if (!S.img) return;
+    if (S.onlyDraw) {
+      /* 只看重绘：遮掉原图，用来判断「单独看还认不认得出」。
+       * 色块模式里有白色部件（白肚、白底板），纯白底会把它们吃掉，改用浅灰。 */
+      CTX.fillStyle = S.lastMode === 'color' ? '#eef1f5' : '#ffffff';
+      CTX.fillRect(0, 0, S.cw, S.ch);
+    } else {
+      CTX.save();
+      CTX.translate(S.view.ox, S.view.oy);
+      CTX.scale(S.view.s, S.view.s);
+      CTX.imageSmoothingQuality = 'high';
+      CTX.drawImage(S.img, 0, 0, S.w, S.h);
+      CTX.restore();
+    }
+
+    if (S.region && !S.onlyDraw) {
+      var a = toCanvas(S.region.x, S.region.y);
+      var b = toCanvas(S.region.x + S.region.w, S.region.y + S.region.h);
+      CTX.save();
+      CTX.setLineDash([5, 4]);
+      CTX.lineWidth = 1.4;
+      CTX.strokeStyle = '#5b8fd9';
+      CTX.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
+      CTX.restore();
+    }
+
+    /* 参考层：还没被描绘的线，淡虚线。
+     * 它只是对照——画布上的实线只能来自模型调用 vl_draw_parts，
+     * 提取完就自动全量画上去等于「程序画的」，看不出模型到底画了什么。 */
+    if (S.strokes.length) {
+      CTX.save();
+      CTX.translate(S.view.ox, S.view.oy);
+      CTX.scale(S.view.s, S.view.s);
+      var unit = 1 / S.view.s;
+      CTX.setLineDash([3 * unit, 3 * unit]);
+      CTX.lineWidth = unit;
+      CTX.lineCap = 'round';
+      CTX.strokeStyle = 'rgba(120,138,162,.5)';
+      S.strokes.forEach(function (p) {
+        if (S.ops.has(p.key)) return;
+        var path = p.path;
+        CTX.beginPath();
+        if (p.region) { curvePath(CTX, path, true); }
+        else {
+          for (var i = 0; i < path.length; i++) {
+            if (i === 0) CTX.moveTo(path[i][0], path[i][1]); else CTX.lineTo(path[i][0], path[i][1]);
+          }
+          if (p.closed) CTX.closePath();
+        }
+        CTX.stroke();
+      });
+      CTX.restore();
+    }
+
+    CTX.save();
+    CTX.translate(S.view.ox, S.view.oy);
+    CTX.scale(S.view.s, S.view.s);
+    paintOps(CTX, sortedOps());
+    CTX.restore();
+
+    if (!S.onlyDraw) drawLabels();
+    if (S.ckpt) drawAnchors();
+
+    if (S.drag && S.drag.rect) {
+      var d = S.drag.rect;
+      var p1 = toCanvas(d.x, d.y), p2 = toCanvas(d.x + d.w, d.y + d.h);
+      CTX.save();
+      CTX.fillStyle = 'rgba(91,143,217,.12)';
+      CTX.fillRect(p1[0], p1[1], p2[0] - p1[0], p2[1] - p1[1]);
+      CTX.setLineDash([4, 3]);
+      CTX.strokeStyle = '#5b8fd9';
+      CTX.lineWidth = 1.2;
+      CTX.strokeRect(p1[0], p1[1], p2[0] - p1[0], p2[1] - p1[1]);
+      CTX.restore();
+    }
+  }
+
+  function drawLabels() {
+    if (S.view.s < 0.35) return;
+    CTX.save();
+    CTX.font = '11px ui-sans-serif,system-ui,"Microsoft YaHei",sans-serif';
+    CTX.textBaseline = 'middle';
+    S.strokes.forEach(function (p) {
+      if (!opOf(p.key)) return;
+      var bb = p.bbox;
+      var c = toCanvas((bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2);
+      var name = partName(p);
+      var tw = CTX.measureText(name).width + 8;
+      CTX.globalAlpha = 0.9;
+      CTX.fillStyle = p.key === S.activeKey ? '#5b8fd9' : 'rgba(255,255,255,.88)';
+      CTX.fillRect(c[0] - tw / 2, c[1] - 8, tw, 16);
+      CTX.strokeStyle = 'rgba(91,143,217,.35)';
+      CTX.lineWidth = 1;
+      CTX.strokeRect(c[0] - tw / 2, c[1] - 8, tw, 16);
+      CTX.fillStyle = p.key === S.activeKey ? '#fff' : '#3a4653';
+      CTX.fillText(name, c[0] - tw / 2 + 4, c[1] + 0.5);
+    });
+    CTX.restore();
+  }
+
+  /* 控制点模式：把每个部位的锚点画出来，选中的部位实心、其余半透明。
+   * 锚点就是曲线要穿过的点，拖动即改形状；控制点数量由提取时的抽稀口径决定。 */
+  function drawAnchors() {
+    if (S.view.s < 0.2) return;
+    CTX.save();
+    S.strokes.forEach(function (p) {
+      var hot = !S.activeKey || p.key === S.activeKey;
+      CTX.fillStyle = hot ? 'rgba(91,143,217,.95)' : 'rgba(91,143,217,.35)';
+      CTX.strokeStyle = '#fff';
+      CTX.lineWidth = 1;
+      p.path.forEach(function (q) {
+        var c = toCanvas(q[0], q[1]);
+        CTX.beginPath();
+        CTX.arc(c[0], c[1], hot ? 3.2 : 2.2, 0, Math.PI * 2);
+        CTX.fill();
+        if (hot) CTX.stroke();
+      });
+    });
+    CTX.restore();
+  }
+
+  /* 抓最近的控制点（屏幕 10px 以内），选中的部位优先 */
+  function nearestAnchor(ip) {
+    var best = null, bestD = Math.pow(10 / Math.max(0.01, S.view.s), 2);
+    S.strokes.forEach(function (p) {
+      var bonus = (!S.activeKey || p.key === S.activeKey) ? 1 : 0.6;
+      p.path.forEach(function (q, i) {
+        var d = (Math.pow(q[0] - ip[0], 2) + Math.pow(q[1] - ip[1], 2)) * bonus;
+        if (d <= bestD) { bestD = d; best = { key: p.key, idx: i }; }
+      });
+    });
+    return best;
+  }
+
+  /* ---------------- 图像 ---------------- */
+
+  function setImage(img, name) {
+    S.img = img; S.imgName = name || 'image';
+    S.w = img.naturalWidth || img.width;
+    S.h = img.naturalHeight || img.height;
+    S.region = null; S.strokes = []; S.ops = new Map(); S.metrics = null; S.best = null;
+    /* 语义分组属于上一张图，换图必须清掉，否则旧 key 会串到新图 */
+    S.groups = []; S.drop = {};
+    S.activeKey = ''; S.lexicon = {};
+    if (R.empty) R.empty.hidden = true;
+    resizeCanvas(); fitView(); drawScene();
+    renderParts(); updateStat();
+  }
+
+  function loadFile(file) {
+    if (!file || !/^image\//.test(file.type || '')) return Promise.reject(new Error('不是图片文件'));
+    return new Promise(function (res, rej) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () { URL.revokeObjectURL(url); setImage(img, file.name); res(img); };
+      img.onerror = function () { URL.revokeObjectURL(url); rej(new Error('图片解码失败')); };
+      img.src = url;
+    });
+  }
+
+  /* 演示图：粗体文字 + 一条细线。文字用来验证「轮廓模式能不能一笔认出字」，
+   * 细线用来验证「中线模式」还活着。 */
+  function loadDemo() {
+    return new Promise(function (res) {
+      var c = document.createElement('canvas');
+      c.width = 480; c.height = 360;
+      var g = c.getContext('2d');
+      g.fillStyle = '#ffffff'; g.fillRect(0, 0, 480, 360);
+      g.fillStyle = '#1f2630';
+      g.font = 'bold 150px "Microsoft YaHei","PingFang SC",sans-serif';
+      g.textBaseline = 'alphabetic';
+      g.fillText('字 A', 30, 220);
+      g.strokeStyle = '#cb2129'; g.lineWidth = 4; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(40, 300); g.lineTo(430, 300); g.stroke();
+      var img = new Image();
+      img.onload = function () { setImage(img, 'demo'); res(true); };
+      img.src = c.toDataURL('image/png');
+    });
+  }
+
+  function cropData(rect, maxSide) {
+    var m = Math.max(1, Math.max(rect.w, rect.h));
+    var scale = Math.min(1, maxSide / m);
+    var w = Math.max(2, Math.round(rect.w * scale));
+    var h = Math.max(2, Math.round(rect.h * scale));
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    var g = c.getContext('2d', { willReadFrequently: true });
+    /* 必须先铺白底：透明像素的 RGB 是 0,0,0，直接读会被当成墨，
+     * 图标外围的透明区域就变成一整圈「黑边」，里面反而成了孔。 */
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+    g.drawImage(S.img, rect.x, rect.y, rect.w, rect.h, 0, 0, w, h);
+    return { data: g.getImageData(0, 0, w, h), scale: scale, w: w, h: h };
+  }
+
+  /* 把框选区域缩成一张小图给模型看。
+   * 矢量只说明「哪里有墨水」，认不出「这是企鹅」；语义必须回到位图。
+   * 尺寸压到 768 以内，JPEG 0.82，避免把几 MB 的截图塞进上下文。 */
+  function regionImageURL(maxSide) {
+    if (!S.img) return '';
+    var r = S.region || { x: 0, y: 0, w: S.w, h: S.h };
+    var m = Math.max(1, Math.max(r.w, r.h));
+    var scale = Math.min((maxSide || 768) / m, Math.max(1, 512 / m));
+    var w = Math.max(2, Math.round(r.w * scale));
+    var h = Math.max(2, Math.round(r.h * scale));
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    var g = c.getContext('2d');
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(S.img, r.x, r.y, r.w, r.h, 0, 0, w, h);
+    try { return c.toDataURL('image/jpeg', 0.82); } catch (e) { return ''; }
+  }
+
+  /* ---------------- 取线：暗线 / 边缘 / 自动 ---------------- */
+
+  function darkThreshold(v) {
+    /* 滑杆 5..60 在暗线模式映射成 40..200 的亮度阈值 */
+    return clamp(Math.round(60 + (v - 20) * 2), 40, 200);
+  }
+
+  function buildLineMask(data, w, h, src, threshold) {
+    var seg = Segmenter.segment(data, {
+      mode: 'light', background: S.opt.background, tolerance: S.opt.tolerance,
+      barrier: 'edge', lineThreshold: 0
+    });
+    var fg = seg.fg.mask;
+    var wall = seg.wall;
+
+    function darkMask(th) {
+      var m = new Uint8Array(w * h), d = data.data;
+      for (var i = 0; i < w * h; i++) {
+        if (!fg[i]) continue;
+        if (lum(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]) < th) m[i] = 1;
+      }
+      return m;
+    }
+    function edgeMask() {
+      var m = new Uint8Array(w * h);
+      for (var i = 0; i < w * h; i++) if (fg[i] && wall[i]) m[i] = 1;
+      return m;
+    }
+
+    var mode = src;
+    if (mode === 'auto') {
+      /* 判据：暗像素面积 vs 边界像素面积。
+       * 线稿 / 黑块：暗面本身就是主体，暗像素 ≥ 边界；柔边彩图：暗像素只剩零星深色
+       * （眼睛、发丝），真正的结构全在色块边界上。用厚度判据会把人像判成 dark，
+       * 实测只提出 31 条碎线，画出来是空白；改成面积比后判 edge，提出 109 条完整轮廓。 */
+      var dm = darkMask(darkThreshold(threshold));
+      var em = edgeMask();
+      var dn = 0, en = 0;
+      for (var i = 0; i < w * h; i++) { if (dm[i]) dn++; if (em[i]) en++; }
+      mode = (dn > 0 && dn >= en * 0.5) ? 'dark' : 'edge';
+      S.srcStats = { dark: dn, edge: en, ratio: en ? round2(dn / en) : 0, mode: mode };
+    }
+    var mask = mode === 'dark' ? darkMask(darkThreshold(threshold)) : edgeMask();
+    return { mask: mask, mode: mode, seg: seg };
+  }
+
+  function distTransform(mask, w, h) {
+    var INF = 1e9;
+    var d = new Float32Array(w * h);
+    for (var i = 0; i < w * h; i++) d[i] = mask[i] ? INF : 0;
+    var D1 = 1, D2 = Math.SQRT2;
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var k = y * w + x;
+        if (d[k] === 0) continue;
+        var best = d[k];
+        if (x > 0) best = Math.min(best, d[k - 1] + D1);
+        if (y > 0) {
+          best = Math.min(best, d[k - w] + D1);
+          if (x > 0) best = Math.min(best, d[k - w - 1] + D2);
+          if (x < w - 1) best = Math.min(best, d[k - w + 1] + D2);
+        }
+        d[k] = best;
+      }
+    }
+    for (var y2 = h - 1; y2 >= 0; y2--) {
+      for (var x2 = w - 1; x2 >= 0; x2--) {
+        var k2 = y2 * w + x2;
+        if (d[k2] === 0) continue;
+        var b2 = d[k2];
+        if (x2 < w - 1) b2 = Math.min(b2, d[k2 + 1] + D1);
+        if (y2 < h - 1) {
+          b2 = Math.min(b2, d[k2 + w] + D1);
+          if (x2 < w - 1) b2 = Math.min(b2, d[k2 + w + 1] + D2);
+          if (x2 > 0) b2 = Math.min(b2, d[k2 + w - 1] + D2);
+        }
+        d[k2] = b2;
+      }
+    }
+    return d;
+  }
+
+  /* Zhang-Suen 细化：把「线带」压成 1px 中线 */
+  function thin(src, w, h) {
+    var img = src.slice();
+    var changed = true, guard = 0;
+    function nb(x, y) {
+      var i = y * w + x;
+      return [
+        img[i - w], img[i - w + 1], img[i + 1], img[i + w + 1],
+        img[i + w], img[i + w - 1], img[i - 1], img[i - w - 1]
+      ];
+    }
+    while (changed && guard++ < 80) {
+      changed = false;
+      for (var step = 0; step < 2; step++) {
+        var del = [];
+        for (var y = 1; y < h - 1; y++) {
+          for (var x = 1; x < w - 1; x++) {
+            var i = y * w + x;
+            if (!img[i]) continue;
+            var p = nb(x, y);
+            var B = p[0] + p[1] + p[2] + p[3] + p[4] + p[5] + p[6] + p[7];
+            if (B < 2 || B > 6) continue;
+            var A = 0;
+            for (var t = 0; t < 8; t++) if (!p[t] && p[(t + 1) % 8]) A++;
+            if (A !== 1) continue;
+            if (step === 0) {
+              if (p[0] * p[2] * p[4] !== 0) continue;
+              if (p[2] * p[4] * p[6] !== 0) continue;
+            } else {
+              if (p[0] * p[2] * p[6] !== 0) continue;
+              if (p[0] * p[4] * p[6] !== 0) continue;
+            }
+            del.push(i);
+          }
+        }
+        if (del.length) { changed = true; del.forEach(function (i) { img[i] = 0; }); }
+      }
+    }
+    return img;
+  }
+
+  function neighborsOf(i, w, h, arr) {
+    var x = i % w, y = (i / w) | 0, out = [];
+    for (var dy = -1; dy <= 1; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        var xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        var j = yy * w + xx;
+        if (arr[j]) out.push(j);
+      }
+    }
+    return out;
+  }
+
+  function traceSkeleton(skel, w, h) {
+    var used = new Uint8Array(w * h);
+    var lines = [];
+
+    function degOf(i) { return neighborsOf(i, w, h, skel).length; }
+
+    function walk(start) {
+      var pts = [[start % w, (start / w) | 0]];
+      used[start] = 1;
+      var cur = start, prev = -1;
+      for (var guard = 0; guard < w * h; guard++) {
+        var cands = neighborsOf(cur, w, h, skel).filter(function (j) { return !used[j]; });
+        if (!cands.length) break;
+        var pick = cands[0];
+        if (cands.length > 1 && prev >= 0) {
+          var px = prev % w, py = (prev / w) | 0;
+          var cx = cur % w, cy = (cur / w) | 0;
+          var vx = cx - px, vy = cy - py;
+          var bestDot = -1e9;
+          cands.forEach(function (j) {
+            var jx = j % w, jy = (j / w) | 0;
+            var wx = jx - cx, wy = jy - cy;
+            var dot = vx * wx + vy * wy;
+            if (dot > bestDot) { bestDot = dot; pick = j; }
+          });
+        }
+        used[pick] = 1;
+        pts.push([pick % w, (pick / w) | 0]);
+        prev = cur; cur = pick;
+        if (degOf(cur) >= 3 && pts.length > 2) break;
+      }
+      return pts;
+    }
+
+    var i;
+    for (i = 0; i < w * h; i++) if (skel[i] && degOf(i) === 1) lines.push(walk(i));
+    for (i = 0; i < w * h; i++) if (skel[i] && !used[i]) lines.push(walk(i));
+    return lines;
+  }
+
+  function rdp(points, eps) {
+    if (points.length < 3) return points;
+    var first = points[0], last = points[points.length - 1];
+    var maxD = -1, idx = -1;
+    for (var i = 1; i < points.length - 1; i++) {
+      var d = distToSeg(points[i], first, last);
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD > eps) {
+      var left = rdp(points.slice(0, idx + 1), eps);
+      var right = rdp(points.slice(idx), eps);
+      return left.slice(0, -1).concat(right);
+    }
+    return [first, last];
+  }
+
+  /* ---------------- 轮廓：闭合环 ---------------- */
+
+  /* 沿前景掩膜的像素边界（crack boundary）追闭合环：每个字形一圈，天生完整。
+   * 中线（骨架）在交叉处必须断开，文字会碎成一堆短段；轮廓没有这个问题。
+   * 边按「前景在右手边」定向；一个点上出现多条边（对角相接）时优先右转，
+   * 这样两个只在对角碰到的字形不会被缝成一个。 */
+  function traceContours(mask, w, h) {
+    var edges = [];
+    var starts = new Map();
+    function at(x, y) { return (x >= 0 && y >= 0 && x < w && y < h) ? mask[y * w + x] : 0; }
+    function addEdge(x1, y1, x2, y2) {
+      var i = edges.length;
+      edges.push({ a: [x1, y1], b: [x2, y2], used: false });
+      var k = x1 + ',' + y1;
+      var list = starts.get(k);
+      if (!list) { list = []; starts.set(k, list); }
+      list.push(i);
+    }
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        if (!mask[y * w + x]) continue;
+        if (!at(x, y - 1)) addEdge(x, y, x + 1, y);
+        if (!at(x + 1, y)) addEdge(x + 1, y, x + 1, y + 1);
+        if (!at(x, y + 1)) addEdge(x + 1, y + 1, x, y + 1);
+        if (!at(x - 1, y)) addEdge(x, y + 1, x, y);
+      }
+    }
+
+    var loops = [];
+    for (var i = 0; i < edges.length; i++) {
+      if (edges[i].used) continue;
+      var loop = [];
+      var e = edges[i];
+      for (var guard = 0; e && !e.used && guard <= edges.length; guard++) {
+        e.used = true;
+        loop.push(e.a);
+        var dx = e.b[0] - e.a[0], dy = e.b[1] - e.a[1];
+        var nextList = starts.get(e.b[0] + ',' + e.b[1]) || [];
+        var pick = -1;
+        if (nextList.length === 1) {
+          if (!edges[nextList[0]].used) pick = nextList[0];
+        } else {
+          var best = -1e9;
+          nextList.forEach(function (j) {
+            if (edges[j].used) return;
+            var ex = edges[j].b[0] - edges[j].a[0], ey = edges[j].b[1] - edges[j].a[1];
+            /* 屏幕坐标 y 向下：cross > 0 是顺时针（右转） */
+            var score = (dx * ey - dy * ex) * 2 + (dx * ex + dy * ey);
+            if (score > best) { best = score; pick = j; }
+          });
+        }
+        e = pick >= 0 ? edges[pick] : null;
+      }
+      if (loop.length >= 4) loops.push(loop);
+    }
+    return loops;
+  }
+
+  /* Chaikin 角切：每轮把每条边切成 1/4、3/4 两点，闭环不做端点补齐。
+   * 用来消掉小图轮廓上的 1px 像素台阶。 */
+  function chaikin(pts, iters) {
+    var list = pts.slice();
+    for (var k = 0; k < iters; k++) {
+      var n = list.length;
+      if (n < 3) return list;
+      var out = [];
+      for (var i = 0; i < n; i++) {
+        var a = list[i], b = list[(i + 1) % n];
+        out.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
+        out.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+      }
+      list = out;
+    }
+    return list;
+  }
+
+  function rdpClosed(loop, eps) {
+    if (loop.length < 3) return loop.slice();
+    /* 闭环不能从同一个点起收：先找离起点最远的点，从它切成两段各自抽稀，
+       否则起点附近的转角不会被判定为「偏离」。 */
+    var far = 0, best = -1;
+    for (var i = 1; i < loop.length; i++) {
+      var d = Math.pow(loop[i][0] - loop[0][0], 2) + Math.pow(loop[i][1] - loop[0][1], 2);
+      if (d > best) { best = d; far = i; }
+    }
+    var a = rdp(loop.slice(0, far + 1), eps);
+    var b = rdp(loop.slice(far).concat([loop[0]]), eps);
+    return a.concat(b.slice(1, b.length - 1));
+  }
+
+  /* ---- 三次贝塞尔拟合（不是插值） ----
+   * 像素边界直接上 Catmull-Rom，控制点全落在台阶拐角上，画出来是一圈波浪。
+   * 这里用最小二乘拟合：每段在容差内贴合点集，台阶会被平均成直线 / 弧，
+   * 只有误差超限才二分。输出是真正的三次贝塞尔段（c1 / c2），落笔用 bezierCurveTo。 */
+  function bezAt(p0, c1, c2, p3, t) {
+    var mt = 1 - t, a = mt * mt * mt, b = 3 * mt * mt * t, c = 3 * mt * t * t, d = t * t * t;
+    return [a * p0[0] + b * c1[0] + c * c2[0] + d * p3[0],
+      a * p0[1] + b * c1[1] + c * c2[1] + d * p3[1]];
+  }
+
+  function lineSeg(p0, p3) {
+    return [p0, [p0[0] + (p3[0] - p0[0]) / 3, p0[1] + (p3[1] - p0[1]) / 3],
+      [p0[0] + (p3[0] - p0[0]) * 2 / 3, p0[1] + (p3[1] - p0[1]) * 2 / 3], p3];
+  }
+
+  function fitRun(pts, tol, out, depth) {
+    var n = pts.length;
+    if (n < 2) return;
+    var p0 = pts[0], p3 = pts[n - 1];
+    var chord = Math.hypot(p3[0] - p0[0], p3[1] - p0[1]);
+    /* 闭环首尾是同一点，弦长为 0。直接出直线会得到一条退化曲线（整块消失），
+     * 必须在中点切成两段再各自拟合。 */
+    if (chord < 1e-6) {
+      if (n > 3) {
+        var mid = Math.floor((n - 1) / 2);
+        fitRun(pts.slice(0, mid + 1), tol, out, depth + 1);
+        fitRun(pts.slice(mid), tol, out, depth + 1);
+      }
+      return;
+    }
+    if (n === 2) { out.push(lineSeg(p0, p3)); return; }
+
+    var u = new Array(n), i;
+    u[0] = 0;
+    for (i = 1; i < n; i++) u[i] = u[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    var total = u[n - 1] || 1;
+    for (i = 0; i < n; i++) u[i] /= total;
+
+    var t1 = [pts[1][0] - p0[0], pts[1][1] - p0[1]];
+    var t2 = [pts[n - 2][0] - p3[0], pts[n - 2][1] - p3[1]];
+    var l1 = Math.hypot(t1[0], t1[1]), l2 = Math.hypot(t2[0], t2[1]);
+    if (!l1 || !l2) { out.push(lineSeg(p0, p3)); return; }
+    t1 = [t1[0] / l1, t1[1] / l1];
+    t2 = [t2[0] / l2, t2[1] / l2];
+
+    var c00 = 0, c01 = 0, c11 = 0, x0 = 0, x1 = 0;
+    var dot12 = t1[0] * t2[0] + t1[1] * t2[1];
+    for (i = 0; i < n; i++) {
+      var t = u[i], mt = 1 - t;
+      var b0 = mt * mt * mt, b1 = 3 * mt * mt * t, b2 = 3 * mt * t * t, b3 = t * t * t;
+      c00 += b1 * b1; c01 += b1 * b2 * dot12; c11 += b2 * b2;
+      var bx = p0[0] * (b0 + b1) + p3[0] * (b2 + b3);
+      var by = p0[1] * (b0 + b1) + p3[1] * (b2 + b3);
+      var dx = pts[i][0] - bx, dy = pts[i][1] - by;
+      x0 += b1 * (t1[0] * dx + t1[1] * dy);
+      x1 += b2 * (t2[0] * dx + t2[1] * dy);
+    }
+    var det = c00 * c11 - c01 * c01;
+    var a1 = det ? (x0 * c11 - x1 * c01) / det : chord / 3;
+    var a2 = det ? (c00 * x1 - c01 * x0) / det : chord / 3;
+    /* 解出负手柄 = 这段本来就不该是一条单弧（尖角 / S 弯），退回直线再靠二分 */
+    if (!isFinite(a1) || !isFinite(a2) || a1 < 0 || a2 < 0) { a1 = chord / 3; a2 = chord / 3; }
+    var c1 = [p0[0] + t1[0] * a1, p0[1] + t1[1] * a1];
+    var c2 = [p3[0] + t2[0] * a2, p3[1] + t2[1] * a2];
+
+    var worst = 0, at = -1;
+    for (i = 0; i < n; i++) {
+      var q = bezAt(p0, c1, c2, p3, u[i]);
+      var dd = (q[0] - pts[i][0]) * (q[0] - pts[i][0]) + (q[1] - pts[i][1]) * (q[1] - pts[i][1]);
+      if (dd > worst) { worst = dd; at = i; }
+    }
+    if (worst <= tol * tol || depth >= 14 || at <= 0 || at >= n - 1) {
+      out.push([p0, c1, c2, p3]);
+      return;
+    }
+    fitRun(pts.slice(0, at + 1), tol, out, depth + 1);
+    fitRun(pts.slice(at), tol, out, depth + 1);
+  }
+
+  /* 闭环 → 贝塞尔段：把首点再补一次当作收尾，接缝处按同一方向拟合，不会多一个折角。 */
+  function bezTurn(a, b, c) {
+    var v1x = a[0] - b[0], v1y = a[1] - b[1], v2x = c[0] - b[0], v2y = c[1] - b[1];
+    var l1 = Math.hypot(v1x, v1y), l2 = Math.hypot(v2x, v2y);
+    if (!l1 || !l2) return 0;
+    return Math.acos(clamp((v1x * v2x + v1y * v2y) / (l1 * l2), -1, 1)) * 180 / Math.PI;
+  }
+
+  function fitBezLoop(points, tol) {
+    var pts = [];
+    for (var i = 0; i < points.length; i++) {
+      var q = points[i], last = pts[pts.length - 1];
+      if (!last || Math.hypot(q[0] - last[0], q[1] - last[1]) > 1e-6) pts.push(q);
+    }
+    if (pts.length < 3) return [];
+    /* 闭环必然在某处接缝。把起点挪到拐角最大的点，接缝落在角上，
+     * 就不会在平滑段中间多出一个折痕。 */
+    var n = pts.length, bi = 0, ba = -1;
+    for (i = 0; i < n; i++) {
+      var ang = bezTurn(pts[(i + n - 1) % n], pts[i], pts[(i + 1) % n]);
+      if (ang > ba) { ba = ang; bi = i; }
+    }
+    if (bi > 0) pts = pts.slice(bi).concat(pts.slice(0, bi));
+    var out = [];
+    fitRun(pts.concat([[pts[0][0], pts[0][1]]]), Math.max(0.3, tol), out, 0);
+    return out;
+  }
+
+  function bezPath(g, segs) {
+    if (!segs || !segs.length) return false;
+    g.moveTo(segs[0][0][0], segs[0][0][1]);
+    for (var i = 0; i < segs.length; i++) {
+      var s = segs[i];
+      g.bezierCurveTo(s[1][0], s[1][1], s[2][0], s[2][1], s[3][0], s[3][1]);
+    }
+    g.closePath();
+    return true;
+  }
+
+  /* 前景掩膜的边界像素（至少一个 4 邻域在掩膜外）。轮廓模式的回读参照系。 */
+  function boundaryMask(mask, w, h) {
+    var b = new Uint8Array(w * h);
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var k = y * w + x;
+        if (!mask[k]) continue;
+        if (x === 0 || y === 0 || x === w - 1 || y === h - 1 ||
+            !mask[k - 1] || !mask[k + 1] || !mask[k - w] || !mask[k + w]) b[k] = 1;
+      }
+    }
+    return b;
+  }
+
+  /* 一圈轮廓的颜色 = 这圈包围盒里掩膜像素的均色（内孔环落在笔画环上，取到的仍是笔画色） */
+  function loopColor(loop, mask, data, w, h) {
+    var mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
+    loop.forEach(function (p) {
+      if (p[0] < mnx) mnx = p[0]; if (p[0] > mxx) mxx = p[0];
+      if (p[1] < mny) mny = p[1]; if (p[1] > mxy) mxy = p[1];
+    });
+    var r = 0, g = 0, b = 0, n = 0;
+    for (var y = Math.max(0, mny); y < Math.min(h, mxy); y++) {
+      for (var x = Math.max(0, mnx); x < Math.min(w, mxx); x++) {
+        var k = y * w + x;
+        if (!mask[k]) continue;
+        r += data[k * 4]; g += data[k * 4 + 1]; b += data[k * 4 + 2]; n++;
+      }
+    }
+    if (!n) return '#2b3440';
+    return hexOf([r / n, g / n, b / n]);
+  }
+
+  function contourStrokes(mask, w, h, inv, data, o) {
+    var loops = traceContours(mask, w, h);
+    var out = [];
+    loops.forEach(function (loop) {
+      if (loop.length < 4) return;
+      /* 小图的原生边界是 1px 台阶，直接画在放大视图里就是一根根方角黑条。
+       * Chaikin 两轮把台阶磨成连续曲线，再抽稀，形状偏差 <0.5px。 */
+      var pts = rdpClosed(chaikin(loop, 2), o.simplify);
+      if (pts.length < 3) return;
+      var len = 0;
+      for (var i = 0; i < pts.length; i++) {
+        var a = pts[i], b = pts[(i + 1) % pts.length];
+        len += Math.hypot(b[0] - a[0], b[1] - a[1]);
+      }
+      if (len * inv < o.minLen) return;
+      var path = pts.map(function (p) { return [p[0] * inv, p[1] * inv]; });
+      out.push({
+        path: path,
+        width: Math.max(0.8, inv),
+        color: loopColor(loop, mask, data, w, h),
+        length: len * inv,
+        anchors: path.length,
+        closed: true,
+        bbox: bboxOfPath(path)
+      });
+    });
+    out.sort(function (a, b) { return b.length - a.length; });
+    return out;
+  }
+
+  /* ---------------- 色块：多色区域逐块取轮廓 ---------------- */
+
+  /* 多色图不能按「暗不暗」取线：深色底会把整块画布判成前景，红色 / 黄色这类亮部件
+   * 又不在暗掩膜里，最后只剩黑白反相。这里直接用平面分件的结果，
+   * 每个色块取自己的闭合环，填色用区域原色。 */
+
+  /* 背景 = 贴着画布边、面积够大、颜色与主背景接近的块。背景不填充，
+   * 否则四周一圈会被涂成实心，图看起来像被框住。 */
+  function bgLabels(seg, st, w, h) {
+    var edge = new Set();
+    function push(x, y) { var L = seg.labels[y * w + x]; if (L) edge.add(L); }
+    for (var x = 0; x < w; x++) { push(x, 0); push(x, h - 1); }
+    for (var y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
+
+    var bg = new Set(), best = 0;
+    edge.forEach(function (L) { if (st.area[L] > best) best = st.area[L]; });
+    if (best < w * h * 0.12) return bg;   /* 边缘没有占主导的色块：整幅都算图形 */
+    var ref = null;
+    edge.forEach(function (L) { if (st.area[L] === best) ref = L; });
+    var rc = [st.sr[ref] / best, st.sg[ref] / best, st.sb[ref] / best];
+    edge.forEach(function (L) {
+      var a = st.area[L];
+      if (!a) return;
+      var c = [st.sr[L] / a, st.sg[L] / a, st.sb[L] / a];
+      var dd = Math.pow(c[0] - rc[0], 2) + Math.pow(c[1] - rc[1], 2) + Math.pow(c[2] - rc[2], 2);
+      if (dd <= 1600) bg.add(L);   /* 与主背景色差 40 级以内算同一片背景 */
+    });
+    return bg;
+  }
+
+  function lumOfLabel(st, L) {
+    var n = Math.max(1, st.area[L]);
+    return (st.sr[L] + st.sg[L] + st.sb[L]) / 3 / n;
+  }
+
+  function meanOfLabel(st, L) {
+    var n = Math.max(1, st.area[L]);
+    return [st.sr[L] / n, st.sg[L] / n, st.sb[L] / n];
+  }
+
+  function dist2(a, b) {
+    var dr = a[0] - b[0], dg = a[1] - b[1], db = a[2] - b[2];
+    return dr * dr + dg * dg + db * db;
+  }
+
+  /* 小块是不是「真实细节」：瞳孔、眼睛高光都只有几十像素，67px 图标上就是 1~2 个像素。
+   * 判据三条：不贴画布边、不与背景相邻（被包住）、亮度是局部极值（比所有邻居都暗或都亮）。
+   * 抗锯齿产生的过渡色亮度夹在两个邻居之间，第三条会把它挡掉——这是细节与噪点的分界。 */
+  function isDetail(seg, st, bg, L, w, h) {
+    if (st.area[L] < 16) return false;
+    var x0 = st.minX[L], y0 = st.minY[L], x1 = st.maxX[L], y1 = st.maxY[L];
+    if (x0 <= 0 || y0 <= 0 || x1 >= w - 1 || y1 >= h - 1) return false;
+    var mine = lumOfLabel(st, L);
+    var lo = Infinity, hi = -1;
+    for (var y = y0; y <= y1; y++) {
+      for (var x = x0; x <= x1; x++) {
+        if (seg.labels[y * w + x] !== L) continue;
+        var nb = [seg.labels[y * w + x - 1], seg.labels[y * w + x + 1],
+          seg.labels[(y - 1) * w + x], seg.labels[(y + 1) * w + x]];
+        for (var i = 0; i < 4; i++) {
+          var N = nb[i];
+          if (!N || N === L) continue;
+          if (bg.has(N)) return false;
+          var v = lumOfLabel(st, N);
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+        }
+      }
+    }
+    if (lo === Infinity) return false;
+    return mine <= lo - 25 || mine >= hi + 25;
+  }
+
+  /* 抗锯齿碎块归并：小于「块」下限的色块分两种处理。
+   *   · 过渡色 → 并进颜色最近的邻居（否则放大后的图标会被切成上百个 6×6 灰块，
+   *     眼白、围巾这些部位全被切碎，画出来是碎片）；
+   *   · 局部极值 → 原样保留（瞳孔被并进眼白就没有瞳孔了）。
+   * Segmenter.cleanupSmall 不做这个区分，一刀切 260 会把瞳孔一起并掉。 */
+  function mergeNoise(seg, w, h) {
+    var minArea = Math.max(24, Math.round(w * h * 0.001));
+    for (var round = 0; round < 6; round++) {
+      var st = Segmenter.labelStats(seg);
+      var bg = bgLabels(seg, st, w, h);
+      var labels = seg.labels;
+      var small = [];
+      for (var L = 1; L <= st.maxL; L++) {
+        if (!st.area[L] || st.area[L] >= minArea || bg.has(L)) continue;
+        if (isDetail(seg, st, bg, L, w, h)) continue;
+        small.push(L);
+      }
+      if (!small.length) break;
+
+      var want = new Set(small);
+      var adj = new Map();
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          var a = labels[y * w + x];
+          if (!a || !want.has(a)) continue;
+          var nb = [];
+          if (x > 0) nb.push(labels[y * w + x - 1]);
+          if (x < w - 1) nb.push(labels[y * w + x + 1]);
+          if (y > 0) nb.push(labels[(y - 1) * w + x]);
+          if (y < h - 1) nb.push(labels[(y + 1) * w + x]);
+          for (var j = 0; j < nb.length; j++) {
+            var b = nb[j];
+            if (!b || b === a) continue;
+            var m = adj.get(a);
+            if (!m) { m = new Map(); adj.set(a, m); }
+            m.set(b, (m.get(b) || 0) + 1);
+          }
+        }
+      }
+
+      var changed = 0;
+      small.forEach(function (s) {
+        var m = adj.get(s);
+        if (!m || !m.size) return;
+        var own = meanOfLabel(st, s), pick = 0, bestD = Infinity;
+        m.forEach(function (cnt, c) {
+          var dd = dist2(own, meanOfLabel(st, c));
+          if (dd < bestD) { bestD = dd; pick = c; }
+        });
+        if (!pick) return;
+        for (var i = 0; i < labels.length; i++) if (labels[i] === s) labels[i] = pick;
+        changed++;
+      });
+      if (!changed) break;
+    }
+    return seg;
+  }
+
+  /* 同色孤岛归并：像素图里被黑线隔开的同色小岛其实是同一部位（围巾在下巴处露出的
+   * 一小块红、被喙挡住的巾角）。只按面积/亮度判噪点会把它们留成独立部位，
+   * 模型只能硬起名字——「舌尖红点」就是这么来的。
+   * 条件：面积小、与某个至少大 4 倍的块颜色接近、两块包围盒相距 ≤4px；背景不参与。 */
+  function mergeIslands(seg, w, h) {
+    var st = Segmenter.labelStats(seg);
+    var bg = bgLabels(seg, st, w, h);
+    var minArea = Math.max(24, Math.round(w * h * 0.001));
+    var lim = minArea * 2.5;
+    var list = [];
+    for (var L = 1; L <= st.maxL; L++) if (st.area[L] && !bg.has(L)) list.push(L);
+    var labels = seg.labels, changed = 0;
+
+    list.forEach(function (s) {
+      if (st.area[s] >= lim) return;
+      var own = meanOfLabel(st, s);
+      var sx0 = st.minX[s], sy0 = st.minY[s], sx1 = st.maxX[s], sy1 = st.maxY[s];
+      var pick = 0, bestA = 0;
+      list.forEach(function (t) {
+        if (t === s || st.area[t] < st.area[s] * 4) return;
+        if (dist2(own, meanOfLabel(st, t)) > 900) return;
+        var gx = Math.max(0, Math.max(sx0 - st.maxX[t], st.minX[t] - sx1));
+        var gy = Math.max(0, Math.max(sy0 - st.maxY[t], st.minY[t] - sy1));
+        if (Math.hypot(gx, gy) > 4) return;
+        if (st.area[t] > bestA) { bestA = st.area[t]; pick = t; }
+      });
+      if (!pick) return;
+      for (var i = 0; i < labels.length; i++) if (labels[i] === s) labels[i] = pick;
+      changed++;
+    });
+    return changed;
+  }
+
+  function colorSeg(data, w, h, o) {
+    var seg = Segmenter.segment(data, {
+      mode: 'light', background: o.background, tolerance: o.tolerance,
+      barrier: 'edge', lineThreshold: 0
+    });
+    Segmenter.mergeAdjacent(seg, { mergeTol: o.mergeTol != null ? o.mergeTol : 22 });
+    mergeNoise(seg, w, h);
+    mergeIslands(seg, w, h);
+    /* 墙像素（描边 / 抗锯齿）分给邻居，否则块与块之间留 1~3px 空缝，填出来是碎边 */
+    Segmenter.absorbWalls(seg);
+    Segmenter.compact(seg);
+    var st = Segmenter.labelStats(seg);
+    return { seg: seg, st: st, bg: bgLabels(seg, st, w, h) };
+  }
+
+  function shoelace(path) {
+    var a = 0;
+    for (var i = 0, j = path.length - 1; i < path.length; j = i++) {
+      a += path[j][0] * path[i][1] - path[i][0] * path[j][1];
+    }
+    return a / 2;
+  }
+
+  /* 单个色块的闭合环：按块包围盒裁出来再描，整图逐块扫会慢一个量级。
+   * 面积最大的环是外轮廓，其余是孔（眼睛、白肚这类被别的块盖住的洞）。
+   * 抽稀容差按「块」给：按整图尺寸一刀切会把 20px 的眼睛也砍掉 3px，小部位直接被抹成斑；
+   * 上限仍由整图尺寸兜底，防止大块把台阶点全留下。 */
+  function regionLoops(seg, st, L, simplify) {
+    var w = seg.w, h = seg.h, labels = seg.labels;
+    var x0 = st.minX[L], y0 = st.minY[L], x1 = st.maxX[L], y1 = st.maxY[L];
+    var bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    /* 容差跟着「块」的大小走：台阶宽度是固定的（这张图放大 6 倍 = 6px），
+     * 大块必须给到 5px 以上才消得掉，小块给大了就抹成一块斑。 */
+    var eps = clamp(Math.max(Number(simplify) || 0, Math.min(bw, bh) * 0.06), 0.4, 16);
+    var mask = new Uint8Array(bw * bh);
+    var n = 0;
+    for (var y = y0; y <= y1; y++) {
+      for (var x = x0; x <= x1; x++) {
+        if (labels[y * w + x] !== L) continue;
+        mask[(y - y0) * bw + (x - x0)] = 1; n++;
+      }
+    }
+    if (!n) return [];
+    var loops = traceContours(mask, bw, bh);
+    return loops.map(function (lp) {
+      var full = lp.map(function (q) { return [q[0] + x0, q[1] + y0]; });
+      return rdpClosed(chaikin(full, 2), eps);
+    }).filter(function (lp) { return lp.length >= 3; });
+  }
+
+  function colorExtract(cd, o) {
+    var w = cd.w, h = cd.h, inv = 1 / cd.scale;
+    var got = colorSeg(cd.data, w, h, o);
+    var st = got.st, bg = got.bg;
+    /* 小碎块（抗锯齿边、压缩噪点）不进入参考线：26 块里有一半是这种，
+     * 逐块让模型重绘只会把预算花在看不见的地方。局部极值的小块是例外（瞳孔、眼睛高光）。 */
+    var minArea = Math.max(24, Math.round(w * h * 0.001));
+    var out = [];
+
+    for (var L = 1; L <= st.maxL; L++) {
+      if (!st.area[L] || bg.has(L)) continue;
+      if (st.area[L] < minArea && !isDetail(got.seg, st, bg, L, w, h)) continue;
+      var loops = regionLoops(got.seg, st, L, o.simplify);
+      if (!loops.length) continue;
+      /* 一个色块可能被拆成多个不连通的片，最大的那圈当外轮廓 */
+      var oi = 0, oa = 0;
+      loops.forEach(function (lp, i) {
+        var a = Math.abs(shoelace(lp));
+        if (a > oa) { oa = a; oi = i; }
+      });
+      var outer = loops[oi].map(function (q) { return [q[0] * inv, q[1] * inv]; });
+      var holes = loops.filter(function (_, i) { return i !== oi; })
+        .map(function (lp) { return lp.map(function (q) { return [q[0] * inv, q[1] * inv]; }); });
+      var a2 = Math.max(1, st.area[L]);
+      /* 拟合容差跟着块走：大块的台阶高，容差要盖过台阶才能被平均成直线；
+       * 小块（眼睛、脚掌）容差压在 1~2px，否则形状被抹圆。 */
+      var tol = clamp(Math.min(st.maxX[L] - st.minX[L], st.maxY[L] - st.minY[L]) * 0.05, 0.5, 10) * inv;
+      out.push({
+        path: outer,
+        holes: holes,
+        bez: fitBezLoop(outer, tol),
+        holeBez: holes.map(function (hp) { return fitBezLoop(hp, tol); }),
+        tol: tol,
+        closed: true,
+        region: true,
+        area: a2 * inv * inv,
+        color: hexOf([st.sr[L] / a2, st.sg[L] / a2, st.sb[L] / a2]),
+        width: Math.max(0.8, inv),
+        length: pathLength(outer),
+        anchors: outer.length,
+        bbox: bboxOfPath(outer)
+      });
+    }
+    out.sort(function (a, b) { return b.area - a.area; });
+    return { strokes: out, mode: 'color', auto: null, cw: w, ch: h, inv: inv };
+  }
+
+  /* 色块模式的回读参照：所有「非背景」像素的并集。
+   * 与填色轮廓同口径——问的是「这块画面有没有被覆盖」，不是「边界描得准不准」。 */
+  function colorRefMask(data, w, h, o) {
+    var got = colorSeg(data, w, h, o);
+    var m = new Uint8Array(w * h);
+    for (var i = 0; i < m.length; i++) {
+      var L = got.seg.labels[i];
+      if (L && !got.bg.has(L)) m[i] = 1;
+    }
+    return m;
+  }
+
+  /* ---------------- 提取 ---------------- */
+
+  /* 判断前景是「笔画网络」还是「实心区域」，给「自动」形态用。
+   * 笔画网络：骨架几乎铺满外接框（字、线条画）；实心区域：骨架缩成一根脊，线宽接近短边。 */
+  function skelStats(mask, w, h, dt, lines) {
+    var x0 = w, y0 = h, x1 = -1, y1 = -1, area = 0;
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        if (!mask[y * w + x]) continue;
+        area++;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+    var bw = Math.max(1, x1 - x0 + 1), bh = Math.max(1, y1 - y0 + 1);
+    var perim = 2 * (bw + bh);
+    var skelLen = 0, ws = [];
+    lines.forEach(function (line) {
+      for (var i = 1; i < line.length; i++) {
+        skelLen += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]);
+      }
+      line.forEach(function (p) { ws.push(dt[p[1] * w + p[0]] * 2); });
+    });
+    var mw = median(ws) || 0;
+    var short = Math.min(bw, bh);
+    var ratio = perim ? skelLen / perim : 0;
+    /* 细线（≤2.5px）才是线稿：中线 + 线宽能还原；再粗就是实心块，
+     * 骨架只是它的中轴，描出来是一根圆头面条，必须走闭合轮廓（填色）。 */
+    var pick = (ratio >= 0.45 && mw <= 2.5) ? 'center' : 'contour';
+    return {
+      ratio: round2(ratio), w: round2(mw), short: short,
+      skel: Math.round(skelLen), perim: perim, area: area, pick: pick
+    };
+  }
+
+  function extractRect(rect, over) {
+    var o = {};
+    Object.keys(S.opt).forEach(function (k) { o[k] = S.opt[k]; });
+    Object.keys(over || {}).forEach(function (k) { o[k] = over[k]; });
+
+    var cd = cropData(rect, MAX_EXTRACT);
+    /* 色块模式不经过「暗线 / 边缘」掩膜：多色图按颜色分块才有意义 */
+    if (o.src === 'color') return colorExtract(cd, o);
+
+    var w = cd.w, h = cd.h, inv = 1 / cd.scale;
+    var built = buildLineMask(cd.data, w, h, o.src, o.threshold);
+    var mask = built.mask;
+    var shape = o.shape;
+    var dt = null, lines = null, auto = null;
+
+    /* 「自动」= 判断这块区域是「笔画网络」还是「实心区域」。
+     * 实心字（粗体文字）用轮廓只能描出一圈外沿，笔画全糊成一条带子；
+     * 中线才能把每一笔拆开。反过来，实心图标用中线会被抽成一根脊。
+     * 判据：骨架总长 / 外接框周长（笔画网络接近 1）与 中位线宽 / 短边（实心区域很大）。 */
+    if (shape !== 'contour') {
+      dt = distTransform(mask, w, h);
+      var skel = thin(mask, w, h);
+      lines = traceSkeleton(skel, w, h);
+      auto = skelStats(mask, w, h, dt, lines);
+      if (shape === 'auto') shape = auto.pick;
+    }
+
+    if (shape === 'contour') {
+      return { strokes: contourStrokes(mask, w, h, inv, cd.data.data, o), mode: 'contour', auto: auto, cw: w, ch: h, inv: inv };
+    }
+
+    var out = [];
+    var src = cd.data.data;
+    lines.forEach(function (line) {
+      if (line.length < 2) return;
+      var pts = rdp(line, o.simplify);
+      if (pts.length < 2) return;
+      var len = 0;
+      for (var i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      if (len * inv < o.minLen) return;
+
+      var ws = [], rgb = [0, 0, 0], n = 0;
+      line.forEach(function (p) {
+        ws.push(dt[p[1] * w + p[0]] * 2);
+        var q = (p[1] * w + p[0]) * 4;
+        rgb[0] += src[q]; rgb[1] += src[q + 1]; rgb[2] += src[q + 2]; n++;
+      });
+      var width = clamp(median(ws) || 1, 0.8, 16);
+      var color = hexOf(rgb.map(function (v) { return v / Math.max(1, n); }));
+
+      var path = pts.map(function (p) { return [p[0] * inv, p[1] * inv]; });
+      out.push({
+        path: path,
+        width: width * inv,
+        color: color,
+        length: len * inv,
+        anchors: path.length,
+        bbox: bboxOfPath(path)
+      });
+    });
+    out.sort(function (a, b) { return b.length - a.length; });
+    return { strokes: out, mode: 'center', auto: auto, cw: w, ch: h, inv: inv };
+  }
+
+  function stableKey(p, used) {
+    var bb = p.bbox;
+    var base = 'l' + Math.round(p.length) + '-' + Math.round((bb[0] + bb[2]) / 2) + '-' +
+      Math.round((bb[1] + bb[3]) / 2) + '-' + hueBucket(p.color);
+    var key = base, i = 2;
+    while (used[key]) { key = base + '-' + (i++); }
+    used[key] = 1;
+    return key;
+  }
+
+  /* 提取层的默认名。真正的语义（围巾 / 眼睛 / 白肚）只有模型能给——
+   * 走 vl_group_parts / vl_name_parts 才会写进 lexicon。这里只把测出来的东西翻成
+   * 人能读的字：颜色 + 位置（+ 内孔数），来源标记仍是 heuristic，不冒充语义。 */
+  function defaultName(p, n) {
+    if (!p.region) return '线段' + n;
+    var bb = p.bbox;
+    var r = S.region || { x: 0, y: 0, w: S.w || 1, h: S.h || 1 };
+    var t = colorTone(p.color) + '·' + placeText(
+      (((bb[0] + bb[2]) / 2) - r.x) / Math.max(1, r.w),
+      (((bb[1] + bb[3]) / 2) - r.y) / Math.max(1, r.h));
+    var hn = (p.holes || []).length;
+    if (hn) t += '·' + hn + '孔';
+    return t;
+  }
+
+  function finalizeStrokes(raw, rect) {
+    var used = {};
+    return raw.map(function (p) {
+      var item = Object.assign({}, p);
+      item.key = stableKey(item, used);
+      var lex = S.lexicon[item.key];
+      item.name = (lex && lex.name) || defaultName(item, Object.keys(used).length);
+      item.en = (lex && lex.en) || '';
+      item.conf = (lex && lex.conf) || 0.3;
+      item.source = (lex && lex.source) || 'heuristic';
+      /* 色块自带像素面积（决定填充顺序），不要被长度覆盖 */
+      item.area = item.area || item.length;
+      item.cx = ((item.bbox[0] + item.bbox[2]) / 2) / rect.w;
+      item.cy = ((item.bbox[1] + item.bbox[3]) / 2) / rect.h;
+      return item;
+    });
+  }
+
+  function extractStrokes() {
+    if (!S.img) return 0;
+    if (!S.region) S.region = { x: 0, y: 0, w: S.w, h: S.h };
+
+    var got = extractRect(S.region, null);
+    S.lastMode = got.mode;
+    S.autoStats = got.auto || null;
+    S.strokes = finalizeStrokes(got.strokes, S.region);
+    /* 提取只产生「参考线」，不落笔。实线必须由模型调 vl_draw_parts 才有，
+       否则画布上是程序自己画满的成品，监督就失去意义。 */
+    S.ops = new Map();
+    /* 分组/忽略是上一张图的语义，图变了就作废 */
+    S.groups = []; S.drop = {}; S.layers = []; S.hidden = {};
+    S.metrics = null;   /* 几何变了，上一轮的指标作废；但「最好一轮」的回滚点要保留 */
+    renderParts(); drawScene(); updateStat();
+    if (!S.strokes.length) {
+      note('没提到线段：把「阈值」调低（边缘模式）或调高（暗线模式），或者换个大一点的框选区域。', true);
+    } else {
+      note('提到 ' + S.strokes.length + ' 条参考线（淡虚线）。点「监督重绘」，让模型自己决定画哪些。');
+    }
+    return S.strokes.length;
+  }
+
+  /* ---------------- 命名 ---------------- */
+
+  function partName(p) { return (p && p.name) || (p && p.key) || ''; }
+
+  function setLex(key, name, en, source, conf) {
+    var p = S.strokes.filter(function (x) { return x.key === key; })[0];
+    if (p) { p.name = name; p.en = en || ''; p.source = source; p.conf = conf == null ? 1 : conf; }
+    S.lexicon[key] = { name: name, en: en || '', source: source, conf: conf == null ? 1 : conf };
+  }
+
+  async function nameUnknown(keys) {
+    var list = (keys && keys.length) ? keys.slice() : S.strokes.map(function (p) { return p.key; });
+    list = list.filter(function (k) {
+      var lex = S.lexicon[k];
+      return !lex || lex.source !== 'user';
+    });
+    if (!list.length) return { named: 0, source: 'none' };
+
+    function fallback(k) {
+      var p = S.strokes.filter(function (x) { return x.key === k; })[0];
+      return p ? ('线段') : '线段';
+    }
+    if (S.stub) {
+      list.forEach(function (k) { setLex(k, fallback(k), '', 'heuristic', 0.3); });
+      return { named: list.length, source: 'heuristic' };
+    }
+
+    var conn = null;
+    try { conn = (typeof llmConn === 'function') ? llmConn() : null; } catch (e) { conn = null; }
+    if (!conn || !conn.base) {
+      list.forEach(function (k) { if (!S.lexicon[k]) setLex(k, fallback(k), '', 'heuristic', 0.3); });
+      return { named: list.length, source: 'heuristic', reason: '模型未配置' };
+    }
+
+    var payload = list.map(function (k) {
+      var p = S.strokes.filter(function (x) { return x.key === k; })[0];
+      if (!p) return null;
+      return {
+        key: p.key, length: Math.round(p.length), width: round2(p.width), color: p.color,
+        bbox: p.bbox.map(function (v) { return Math.round(v); }),
+        cx: round2(p.cx), cy: round2(p.cy)
+      };
+    }).filter(Boolean);
+
+    var sys = [
+      '你是线稿分段命名器。输入是一组线段的中线几何摘要（JSON 数组），外加框选区域的位图。',
+      '先看图确认画面主体（例如「企鹅」「字 A」「线稿人像」），再按几何位置判断每条线是主体的哪个部位。',
+      '只输出一个 JSON 对象：{"<key>":"中文名称"}，不要解释、不要代码块。',
+      '名称必须带主体：例如「企鹅·身体外轮廓」「企鹅·左翅」「企鹅·嘴」。',
+      '不要用「左侧小环」「主体外轮廓（内层闭环）」这类纯几何叫法——那样的名字说明没认出画的是什么。'
+    ].join('\n');
+    var content = [{ type: 'text', text: JSON.stringify(payload) }];
+    var shot = regionImageURL(640);
+    if (shot) content.push({ type: 'image_url', image_url: { url: shot } });
+    var text = await llmStreamRequest(sys, [{ role: 'user', content: content }], null, { conn: conn, app: 'visionlab' });
+    var map = {};
+    try {
+      var m = /{[\s\S]*}/.exec(String(text || ''));
+      map = m ? JSON.parse(m[0]) : {};
+    } catch (e) { map = {}; }
+    var named = 0;
+    list.forEach(function (k) {
+      var name = map[k];
+      if (typeof name === 'string' && name.trim()) { setLex(k, name.trim(), '', 'llm', 0.8); named++; }
+      else if (!S.lexicon[k]) setLex(k, fallback(k), '', 'heuristic', 0.3);
+    });
+    renderParts(); drawScene();
+    return { named: named, total: list.length, source: 'llm' };
+  }
+
+  /* ---------------- 回读：Chamfer + 覆盖率 ---------------- */
+
+  function rasterizeDrawn(w, h, k) {
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    var g = c.getContext('2d', { willReadFrequently: true });
+    g.scale(k, k);
+    paintOps(g, sortedOps());
+    return { canvas: c, data: g.getImageData(0, 0, w, h).data };
+  }
+
+  function renderCheck() {
+    if (!S.img || !S.region) return { error: '没有可校验的区域' };
+    if (!S.strokes.length) return { error: '还没有提取线段' };
+
+    var rect = S.region;
+    var cd = cropData(rect, MAX_CHECK);
+    var W = cd.w, H = cd.h;
+    var k = W / rect.w;
+
+    /* 色块模式的参照是「非背景像素的并集」，不是暗掩膜 */
+    var isColor = S.lastMode === 'color';
+    var built = isColor ? null : buildLineMask(cd.data, W, H, S.opt.src, S.opt.threshold);
+    var srcMask = isColor ? colorRefMask(cd.data, W, H, S.opt) : built.mask;
+    /* auto 解析后的实际形态才是口径：S.opt.shape 可能还是 auto */
+    var isContour = S.lastMode === 'contour';
+    /* 填色轮廓画的是整块区域，参照用前景掩膜；只有空心描边才用掩膜边界 */
+    var filled = isColor || (isContour && S.opt.fill);
+    if (isContour && !filled) srcMask = boundaryMask(srcMask, W, H);
+
+    var drawn = rasterizeDrawn(W, H, k);
+    var dd = drawn.data;
+    var dMask = new Uint8Array(W * H);
+    for (var i = 0; i < W * H; i++) dMask[i] = dd[i * 4 + 3] > 12 ? 1 : 0;
+
+    /* 距离变换算的是「到最近的 0 像素」。要问的是「离最近的线有多远」，
+       所以两边都要先取反，否则漏画/多画的方向会反。 */
+    var invSrc = new Uint8Array(W * H), invDraw = new Uint8Array(W * H);
+    for (var j = 0; j < W * H; j++) {
+      invSrc[j] = srcMask[j] ? 0 : 1;
+      invDraw[j] = dMask[j] ? 0 : 1;
+    }
+    var dtD = distTransform(invDraw, W, H);  // 原图像素 → 最近的绘制像素：漏画距离
+    var dtS = distTransform(invSrc, W, H);   // 绘制像素 → 最近的原图像素：多画距离
+
+    var near = [], far = [];
+    var srcPix = 0, hit = 0;
+    for (var p = 0; p < W * H; p++) {
+      if (srcMask[p]) {
+        srcPix++;
+        var d1 = dtD[p];
+        near.push(d1);
+        if (d1 <= 1.5) hit++;
+      }
+      if (dMask[p]) far.push(dtS[p]);
+    }
+    var chamfer = near.length ? near.reduce(function (a, b) { return a + b; }, 0) / near.length : 0;
+    var recall = srcPix ? hit / srcPix : 0;
+    var precSum = 0;
+    for (var q = 0; q < far.length; q++) if (far[q] <= 1.5) precSum++;
+    var precision = far.length ? precSum / far.length : 0;
+    var f = (precision + recall) ? (2 * precision * recall / (precision + recall)) : 0;
+
+    /* 逐条归因：模型自己提过「只有全局 Chamfer，看不出 4 段里哪段拖后腿，只能盲改」。
+     * miss = 这条线自己的点到参照掩膜的平均距离；off = 离参照线超过容差的点占比。 */
+    var per = [];
+    S.strokes.forEach(function (sp) {
+      if (!S.ops.has(sp.key)) return;
+      var sum = 0, mx = 0, off = 0, cnt = 0;
+      var step = Math.max(1, Math.floor(sp.path.length / 40));
+      for (var t = 0; t < sp.path.length; t += step) {
+        var xc = Math.round((sp.path[t][0] - rect.x) * k);
+        var yc = Math.round((sp.path[t][1] - rect.y) * k);
+        if (xc < 0 || yc < 0 || xc >= W || yc >= H) continue;
+        var dv = dtD[yc * W + xc];
+        sum += dv; if (dv > mx) mx = dv; if (dv > 1.5) off++;
+        cnt++;
+      }
+      if (!cnt) return;
+      per.push({
+        key: sp.key, name: partName(sp), miss: +(sum / cnt).toFixed(2),
+        max: +mx.toFixed(1), off: +(off / cnt).toFixed(2), len: Math.round(sp.len)
+      });
+    });
+    per.sort(function (a, b) { return b.miss - a.miss; });
+    var worst = per.filter(function (r) { return r.miss > 1.2 || r.off > 0.25; }).slice(0, 6);
+    var undrawn = S.strokes.filter(function (sp) { return !S.ops.has(sp.key); })
+      .sort(function (a, b) { return b.len - a.len; })
+      .slice(0, 6)
+      .map(function (sp) { return { key: sp.key, name: partName(sp), len: Math.round(sp.len) }; });
+
+    var m = {
+      chamfer: +chamfer.toFixed(3),
+      chamferP95: +percentile(near, 0.95).toFixed(2),
+      recall: +recall.toFixed(4),
+      precision: +precision.toFixed(4),
+      f: +f.toFixed(4),
+      segments: S.strokes.length,
+      drawn: sortedOps().length,
+      total: S.strokes.length,
+      medianWidth: +median(S.strokes.map(function (s) { return s.width; })).toFixed(2),
+      mode: isColor ? 'color' : (isContour ? 'contour' : built.mode),
+      shape: isColor ? 'color' : (isContour ? 'contour' : 'center'),
+      filled: !!filled,
+      px: W + '×' + H,
+      worst: worst,
+      undrawn: undrawn,
+      at: new Date().toISOString()
+    };
+    /* 最好的一轮：模型上一轮把 5.108 改到 7.306 才收口，中间没有回滚点 */
+    if (m.drawn > 0 && (!S.best || m.chamfer < S.best.m.chamfer)) {
+      S.best = { round: S.round, m: m, snap: snapRun() };
+    }
+    m.bestRound = S.best ? S.best.round : null;
+    m.bestChamfer = S.best ? S.best.m.chamfer : null;
+    /* 这一刻比最好那轮更差、且不是同一轮：模型据此收口或回滚（它自己在复盘里要过这个信号） */
+    m.noProgress = !!(S.best && S.round > S.best.round && m.chamfer > S.best.m.chamfer + 0.01);
+    S.metrics = m;
+    showMetrics(m);
+    return m;
+  }
+
+  /* 回滚点：操作项 + 整份线段几何。只存操作项不够：
+   * 模型一旦 force 重提取，key 全换了，只还原 ops 会一条都画不出来。 */
+  function snapRun() {
+    var ops = [];
+    S.ops.forEach(function (op, key) { ops.push([key, JSON.parse(JSON.stringify(op))]); });
+    return { ops: ops, strokes: JSON.parse(JSON.stringify(S.strokes)) };
+  }
+
+  function restoreBest() {
+    if (!S.best) return { error: '还没有可回滚的一轮（需要先校验过一次）' };
+    var snap = S.best.snap;
+    if (snap.strokes) S.strokes = JSON.parse(JSON.stringify(snap.strokes));
+    S.ops = new Map();
+    snap.ops.forEach(function (e) { S.ops.set(e[0], e[1]); });
+    drawScene(); renderParts(); updateStat();
+    var m = renderCheck();
+    return { restored: true, round: S.best.round, chamfer: m.chamfer, recall: m.recall, precision: m.precision };
+  }
+
+  /* ---------------- 工具 ---------------- */
+
+  function regionInfo() {
+    var r = S.region || { x: 0, y: 0, w: S.w, h: S.h };
+    return [r.x, r.y, r.w, r.h].map(function (v) { return Math.round(v); });
+  }
+
+  /* 色块的颜色与位置必须能被模型直接读懂：只给十六进制和 bbox 数字，
+   * 模型会把肚子里两条浅色竖条命名成「眼睛」，再把真的白眼涂成瞳孔色。
+   * tone / where / holes 都是测量值，不替模型下结论。 */
+  function colorTone(hex) {
+    var c = rgbOf(hex), l = lum(c[0], c[1], c[2]);
+    var mx = Math.max(c[0], c[1], c[2]), mn = Math.min(c[0], c[1], c[2]);
+    if (mx - mn < 26) return l > 225 ? '白' : (l > 170 ? '浅灰' : (l > 90 ? '灰' : (l > 40 ? '深灰' : '黑')));
+    return hueBucket(hex) < 1 ? '红' : (hueBucket(hex) < 2 ? '橙' : (hueBucket(hex) < 3 ? '黄' :
+      (hueBucket(hex) < 5 ? '绿' : (hueBucket(hex) < 7 ? '青' : (hueBucket(hex) < 9 ? '蓝' :
+        (hueBucket(hex) < 10 ? '紫' : '粉'))))));
+  }
+  function placeText(nx, ny) {
+    var v = ny < 0.34 ? '上' : (ny < 0.67 ? '中' : '下');
+    var h = nx < 0.34 ? '左' : (nx < 0.67 ? '中' : '右');
+    return v + h;
+  }
+
+  function strokeBrief(p) {
+    var r = S.region || { x: 0, y: 0, w: S.w, h: S.h };
+    var bb = p.bbox;
+    var b = {
+      key: p.key, name: partName(p),
+      len: Math.round(p.length),
+      w: round2(p.width),
+      color: p.color,
+      bbox: bb.map(function (v) { return Math.round(v); }),
+      anchors: p.anchors,
+      closed: !!p.closed,
+      region: !!p.region,
+      conf: round2(p.conf || 0),
+      src: p.source
+    };
+    if (p.region) {
+      b.tone = colorTone(p.color);
+      b.where = placeText(((bb[0] + bb[2]) / 2 - r.x) / Math.max(1, r.w),
+        ((bb[1] + bb[3]) / 2 - r.y) / Math.max(1, r.h));
+      b.holes = (p.holes || []).length;
+      /* 像素面积：判断「这是独立部位还是描边残条」用面积 + 长宽比，比只看周长可靠 */
+      b.area = Math.round(p.area || 0);
+    }
+    return b;
+  }
+
+  /* 沿折线按弧长均匀取 n 个点。给模型看形状用——只有长度和包围盒看不出曲线怎么弯。 */
+  function samplePath(path, closed, n) {
+    if (!path || path.length < 2) return (path || []).slice();
+    var pts = closed ? path.concat([path[0]]) : path.slice();
+    var seg = [], total = 0;
+    for (var i = 1; i < pts.length; i++) {
+      var d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      seg.push(d); total += d;
+    }
+    if (!total) return [pts[0]];
+    var out = [], k = 0, acc = 0, steps = closed ? n : n - 1;
+    for (var j = 0; j < n; j++) {
+      var target = total * j / Math.max(1, steps);
+      while (k < seg.length - 1 && acc + seg[k] < target) { acc += seg[k]; k++; }
+      var t = seg[k] ? (target - acc) / seg[k] : 0;
+      var a = pts[k], b = pts[k + 1] || pts[k];
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    }
+    return out;
+  }
+
+  /* 采样点数按周长自适应。轮廓的 RDP 顶点常在 200 以上，上限必须够大：
+   * 企鹅图实测 32 点（周长 5028）P95 偏差 37px、Chamfer 6.0，画出来是带尖刺的三角形。
+   * 上限 128 仍能一次传回，10 条约 12KB。 */
+  function sampleCount(p) {
+    /* 1 点 / 12px，下限 12、上限 128。
+     * 实测把预算从周长/24 提到周长/4（演示图暗面环 23 → 25 点）Chamfer 只从 1.09 降到 1.04，
+     * 说明 RDP 顶点数量此时不是瓶颈（114 顶点里保形点本来只有 25 个）；
+     * 真正的残差是「少量点 + 均匀 Catmull-Rom」在尖角处的过冲，见 §4.4。 */
+    return clamp(Math.round((p.length || 100) / 12), 12, 128);
+  }
+
+  /* 给模型的控制点候选 = 按预算抽稀的 RDP 顶点。
+   * 均匀采样会漏尖角（把角切圆），拐点吸附又会在密集顶点里制造来回跳的尖刺；
+   * RDP 的 ε 保证「抽稀后的折线离原线不超过 ε」，保形性最好。 */
+  function controlSamples(path, closed, maxN) {
+    if (!path || path.length < 3) return (path || []).slice();
+    var out;
+    if (path.length <= maxN) {
+      out = path.slice();
+    } else {
+      var lo = 0, hi = 1e6, best = null;
+      for (var it = 0; it < 18; it++) {
+        var mid = (lo + hi) / 2;
+        var pts = rdp(path, mid);
+        if (pts.length <= maxN) { best = pts; hi = mid; }
+        else { lo = mid; }
+      }
+      out = (best && best.length >= 3) ? best : samplePath(path, closed, maxN);
+    }
+    return densify(out, closed, Math.min(maxN, 12));
+  }
+
+  /* 顶点太少时在最长边上补中点：保留尖角，又给样条足够约束，
+   * 否则 4 个顶点会被 Catmull-Rom 拉成椭圆。 */
+  function densify(pts, closed, minN) {
+    var list = (pts || []).slice();
+    var guard = 0;
+    while (list.length < minN && guard++ < 256) {
+      var segs = closed ? list.length : list.length - 1;
+      var bi = 0, bl = -1;
+      for (var i = 0; i < segs; i++) {
+        var a = list[i], b = list[(i + 1) % list.length];
+        var l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (l > bl) { bl = l; bi = i; }
+      }
+      var p = list[bi], q = list[(bi + 1) % list.length];
+      list.splice(bi + 1, 0, [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]);
+    }
+    return list;
+  }
+
+  function viewRegion(args) {
+    var r = S.region || { x: 0, y: 0, w: S.w, h: S.h };
+    var palette = [];
+    S.strokes.forEach(function (p) { if (palette.indexOf(p.color) < 0) palette.push(p.color); });
+    var from = clamp(Number((args && args.from) || 0) | 0, 0, S.strokes.length);
+    var limit = clamp(Number((args && args.limit) || 32) | 0, 1, 64);
+    var slice = S.strokes.slice(from, from + limit);
+    return {
+      image: { w: S.w, h: S.h, name: S.imgName },
+      region: [r.x, r.y, r.w, r.h].map(function (v) { return Math.round(v); }),
+      count: S.strokes.length,
+      from: from,
+      returned: slice.length,
+      mode: S.lastMode,
+      palette: palette.slice(0, 8),
+      /* 坐标一律归一化到 0–1000（相对区域），模型回传也用这个口径 */
+      coord: '各点坐标是相对区域归一化的 0–1000；重绘时把坐标按同一口径传回 vl_redraw_parts',
+      strokes: slice.map(function (p) {
+        var b = strokeBrief(p);
+        b.samples = controlSamples(p.path, p.closed, sampleCount(p)).map(function (q) {
+          return [Math.round((q[0] - r.x) / Math.max(1, r.w) * 1000), Math.round((q[1] - r.y) / Math.max(1, r.h) * 1000)];
+        });
+        /* 贝塞尔切段建议：长线给分段点，模型只补「往哪转」的手柄（B 组） */
+        var bk = bezierBreaks(p.path, p.closed, 16);
+        if (bk) b.breaks = bk.breaks.map(normPx);
+        return b;
+      })
+    };
+  }
+
+  function drawStrokes(args) {
+    var ops = Array.isArray(args && args.ops) ? args.ops : [];
+    var applied = 0;
+    ops.forEach(function (o, i) {
+      if (!o) return;
+      var targets = (!o.key || o.key === '*' || o.key === 'all') ? S.strokes.slice()
+        : S.strokes.filter(function (x) { return x.key === o.key; });
+      targets.forEach(function (p) {
+        var cur = opOf(p.key) || {};
+        S.ops.set(p.key, {
+          color: o.color || cur.color || p.color,
+          width: safeWidth(o.width != null ? o.width : (cur.width != null ? cur.width : p.width), p.width),
+          order: o.order != null ? Number(o.order) : i,
+          dx: 0, dy: 0, sc: 1, rot: 0
+        });
+        applied++;
+      });
+    });
+    renderParts(); drawScene(); updateStat();
+    return { applied: applied, drawn: sortedOps().length };
+  }
+
+  /* 语义分组：模型把碎块归到「部位」并命名、给统一颜色；
+   * 无意义碎块（抗锯齿暗带、压缩噪点）用 drop 丢掉。
+   * 这是色块模式从「像素拼贴」变成「围巾像围巾、眼睛像眼睛」的关键一步。
+   *
+   * 颜色是测量值，语义不能改写它：模型给的组色离实测平均色太远时直接拒收，
+   * 保留各块原色。真实运行里模型把白眼块命名成瞳孔并给 #111111，眼睛就黑了。 */
+  var GROUP_COLOR_MAX_DIST = 60;
+
+  function groupMeasuredColor(keys, valid) {
+    var r = 0, g = 0, b = 0, w = 0;
+    keys.forEach(function (k) {
+      var p = valid[k];
+      if (!p) return;
+      var c = rgbOf(p.color), kk = Math.max(1, p.area || p.length || 1);
+      r += c[0] * kk; g += c[1] * kk; b += c[2] * kk; w += kk;
+    });
+    return w ? hexOf([r / w, g / w, b / w]) : '';
+  }
+  function colorDist(a, b) {
+    var x = rgbOf(a), y = rgbOf(b);
+    return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+  }
+
+  function groupParts(args) {
+    if (S.lastMode !== 'color') return { error: '分组只用于色块模式（取线源=色块）' };
+    var raw = Array.isArray(args && args.groups) ? args.groups : [];
+    var valid = {};
+    S.strokes.forEach(function (p) { if (p.region) valid[p.key] = p; });
+    var seen = {}, groups = [], dropped = 0, fixed = [];
+
+    /* 顶层 drop：真实运行里模型就把 drop 写在主参数上（{"drop":[…],"groups":[…]}），
+     * 只支持组内 drop 会静默吞掉这条指令，于是「未分组 2」一直清不掉，模型反复重分组直到轮次耗尽。 */
+    if (Array.isArray(args && args.drop)) {
+      args.drop.forEach(function (k) {
+        if (valid[k] && !seen[k] && !S.drop[k]) { S.drop[k] = 1; dropped++; }
+      });
+    }
+
+    raw.forEach(function (g, i) {
+      if (!g) return;
+      var keys = (Array.isArray(g.keys) ? g.keys : []).filter(function (k) {
+        return valid[k] && !seen[k];
+      });
+      keys.forEach(function (k) { seen[k] = 1; });
+      if (Array.isArray(g.drop)) {
+        g.drop.forEach(function (k) {
+          if (valid[k] && !seen[k] && !S.drop[k]) { S.drop[k] = 1; dropped++; }
+        });
+      }
+      if (!keys.length) return;
+      var given = g.color || '';
+      var used = given;
+      if (given) {
+        var measured = groupMeasuredColor(keys, valid);
+        if (measured && colorDist(given, measured) > GROUP_COLOR_MAX_DIST) {
+          used = '';
+          fixed.push({
+            name: String(g.name || '未命名部位'),
+            given: given, measured: measured,
+            why: '组色与实测色差 ' + Math.round(colorDist(given, measured)) + '，超过 ' + GROUP_COLOR_MAX_DIST + '，按实测保留'
+          });
+        }
+      }
+      groups.push({
+        id: 'g' + (i + 1), name: String(g.name || '未命名部位'),
+        keys: keys, color: used, given: given
+      });
+    });
+
+    S.groups = groups;
+    /* 分图层：每个语义组就是一层，按组的顺序落笔（先大后小）。图层可以单独隐藏，
+     * 用来检查「这个部位画对没有」，而不是所有色块糊在一张画布上没法分辨。 */
+    S.layers = groups.map(function (g, i) {
+      var m = S.strokes.filter(function (p) { return (g.keys || []).indexOf(p.key) >= 0; })[0];
+      return {
+        id: 'L' + i, name: g.name || ('部位' + (i + 1)),
+        color: g.color || (m ? m.color : '#c8d4e2'),
+        keys: (g.keys || []).slice()
+      };
+    });
+    /* 组名就是部位语义：写进每条线，参考线列表和锚点标签才显示「企鹅·白色肚子」而不是「白·中中」。
+     * 用户手改过的名字（source='user'）不覆盖；其余用模型给的组名，source='model'。 */
+    groups.forEach(function (g) {
+      if (!g.name || g.name === '未命名部位') return;
+      g.keys.forEach(function (k) {
+        var lex = S.lexicon[k];
+        if (lex && lex.source === 'user') return;
+        setLex(k, g.name, '', 'model', 0.8);
+      });
+    });
+    /* 分组即落笔：几何是精确的区域边界，复制不需要模型再花一轮。
+     * 之前模型分完组又反复 view_region，轮次耗尽时 0 条描绘，画面全空。 */
+    var drawn = 0;
+    if (!args || args.draw !== false) {
+      var ops = [];
+      groups.forEach(function (g) {
+        g.keys.forEach(function (k) {
+          /* 组色被拒时显式回落到该块原色，免得沿用上一轮的旧组色 */
+          ops.push({ key: k, color: g.color || (valid[k] && valid[k].color) || '', order: ops.length });
+        });
+      });
+      if (ops.length) drawn = drawStrokes({ ops: ops }).applied;
+    }
+    renderParts(); drawScene(); updateStat();
+    var m = renderCheck();
+    return {
+      groups: groups.length,
+      grouped: Object.keys(seen).length,
+      drawn: drawn,
+      dropped: dropped,
+      colorFixed: fixed,
+      ungrouped: S.strokes.filter(function (p) { return p.region && !seen[p.key] && !S.drop[p.key]; }).length,
+      chamfer: m.chamfer, recall: m.recall, precision: m.precision
+    };
+  }
+
+  /* 语义合理性自检：每块是否都有归属、有没有重复归组、有没有漏掉的噪声碎块。
+   * 指标只说明「画到了」，这一步回答「画对了没有」。 */
+  function semanticCheck() {
+    var used = {}, dup = [], total = 0;
+    S.strokes.forEach(function (p) { total += (p.area || 0); });
+    S.groups.forEach(function (g) {
+      (g.keys || []).forEach(function (k) {
+        if (used[k]) dup.push(k);
+        used[k] = 1;
+      });
+    });
+
+    var ungrouped = [], noise = [];
+    S.strokes.forEach(function (p) {
+      if (!p.region || used[p.key] || S.drop[p.key]) return;
+      var brief = { key: p.key, color: p.color, area: Math.round(p.area || 0), bbox: p.bbox.map(function (v) { return Math.round(v); }) };
+      ungrouped.push(brief);
+      if ((p.area || 0) < total * 0.004) noise.push(brief);
+    });
+
+    /* 同一组里颜色跨度太大 = 很可能把两个部位并成一组（白眼睛 + 黑瞳孔）。
+     * 这类错并会让「一組只填一次」盖掉内部细节，必须在收口前拆开。 */
+    var byKey = {};
+    S.strokes.forEach(function (p) { if (p.region) byKey[p.key] = p; });
+    var clash = [];
+    S.groups.forEach(function (g) {
+      var cols = (g.keys || []).map(function (k) { return byKey[k] && byKey[k].color; }).filter(Boolean);
+      var spread = 0;
+      for (var i = 0; i < cols.length; i++) {
+        for (var j = i + 1; j < cols.length; j++) spread = Math.max(spread, colorDist(cols[i], cols[j]));
+      }
+      if (spread > 90) clash.push({ name: g.name, spread: Math.round(spread), colors: cols });
+    });
+
+    var m = renderCheck();
+    var hint = ungrouped.length
+      ? '还有色块没归组：直接在 vl_group_parts 里补一组（或并进现有组）；确认是无意义碎块（抗锯齿暗带/噪点）再用 drop。不要再 view_region。'
+      : (clash.length
+        ? '有组内颜色跨度太大：同一组只填一次，会把里面的小件盖掉（白眼 + 瞳孔、围巾 + 牙齿都会被压平）。拆成两个部位重新 group。'
+        : '全部色块都有归属，组内颜色一致。');
+    return {
+      mode: S.lastMode,
+      groups: S.groups.map(function (g) {
+        return { name: g.name, blocks: g.keys.length, color: g.color || '', given: g.given || '' };
+      }),
+      unnamed: S.groups.filter(function (g) { return !g.name || g.name === '未命名部位'; }).length,
+      duplicates: dup,
+      dropped: Object.keys(S.drop).length,
+      ungrouped: ungrouped,
+      noise: noise,
+      clash: clash,
+      colorFixed: S.groups.filter(function (g) { return g.given && !g.color; }).map(function (g) {
+        return { name: g.name, given: g.given };
+      }),
+      hint: hint,
+      chamfer: m.chamfer, recall: m.recall, precision: m.precision, drawn: m.drawn
+    };
+  }
+
+  /* 精确重绘：模型给控制点，程序只做 Catmull-Rom 拟合与落笔。
+   * 与 vl_draw_parts 的区别：那个是「按参考几何复制」，这个是「模型自己给曲线」。 */
+  function distToPolyline(p, path, closed) {
+    var best = 1e9;
+    for (var i = 1; i < path.length; i++) best = Math.min(best, distToSeg(p, path[i - 1], path[i]));
+    if (closed && path.length > 2) best = Math.min(best, distToSeg(p, path[path.length - 1], path[0]));
+    return best;
+  }
+
+  function projOnSeg(p, a, b) {
+    var vx = b[0] - a[0], vy = b[1] - a[1];
+    var L2 = vx * vx + vy * vy;
+    var t = L2 ? clamp(((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2, 0, 1) : 0;
+    var q = [a[0] + vx * t, a[1] + vy * t];
+    return { t: t, d: Math.hypot(p[0] - q[0], p[1] - q[1]) };
+  }
+
+  /* 模型给的点通常落在参考线上，但顺序可能被它按角度/坐标重排过。
+   * 对一条已知的参考折线来说，正确顺序就是弧长顺序：按投影弧长排序可复原。
+   * 返回是否真的改过顺序，供监督页显示。 */
+  function orderAlongPolyline(pts, path, closed) {
+    var segs = [], acc = 0;
+    function push(a, b) {
+      var l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      segs.push({ a: a, b: b, l0: acc, l: l });
+      acc += l;
+    }
+    for (var i = 1; i < path.length; i++) push(path[i - 1], path[i]);
+    if (closed && path.length > 2) push(path[path.length - 1], path[0]);
+    if (!segs.length) return { pts: pts, changed: false };
+    var tagged = pts.map(function (q, idx) {
+      var best = { d: 1e9, s: 0 };
+      segs.forEach(function (sg) {
+        var pr = projOnSeg(q, sg.a, sg.b);
+        if (pr.d < best.d) best = { d: pr.d, s: sg.l0 + pr.t * sg.l };
+      });
+      return { p: q, s: best.s, i: idx };
+    });
+    tagged.sort(function (x, y) { return x.s - y.s; });
+    var changed = false;
+    tagged.forEach(function (x, k) { if (x.i !== k) changed = true; });
+    return { pts: tagged.map(function (x) { return x.p; }), changed: changed };
+  }
+
+  function redrawParts(args) {
+    var ops = Array.isArray(args && args.ops) ? args.ops : [];
+    var r = S.region || { x: 0, y: 0, w: S.w, h: S.h };
+    var keys = [], missing = [], devs = [], reordered = 0;
+    var bez = { n: 0, segs: 0, clamped: 0, fitted: 0, gap: 0 };
+    ops.forEach(function (o, i) {
+      if (!o || !o.key) return;
+      var targets = (o.key === '*' || o.key === 'all') ? S.strokes.slice()
+        : S.strokes.filter(function (x) { return x.key === o.key; });
+      if (!targets.length) { missing.push(o.key); return; }
+      targets.forEach(function (p) {
+        /* 参考线固定为提取结果，不随上一轮重绘漂移，诊断才有基准 */
+        if (!p.ref) p.ref = p.path.slice();
+        var closed = (o.closed != null) ? !!o.closed : !!p.closed;
+        var useBez = (o.form === 'bezier') || (Array.isArray(o.segs) && o.segs.length > 0);
+        if (useBez) {
+          /* B / C 组：模型给端点 + 手柄。缺手柄时由 fitHandles 从参考线上最小二乘解出来（C 组）。
+           * 手柄长度上限 0.85×弦长，超过就夹紧——否则三次贝塞尔会在段内自交出环。 */
+          var start = normPt(o.start) || (Array.isArray(o.points) && normPt(o.points[0]));
+          var segsIn = Array.isArray(o.segs) ? o.segs : [];
+          var segs = [], cur = start, perClamp = 0, perFit = 0;
+          /* 参考线在「弧长空间」里逐段前进：RDP 之后顶点间距可达 12px，
+           * 按最近顶点取子路径会把端点前后错开一格，切向直接反号；
+           * 轮廓又会在窄颈处自相近，全局最近点会跳到环的另一侧（实测 chord 51px 配了 320px 弧长）。 */
+          var tb = p.refTB || (p.refTB = arcTable(p.ref, p.closed));
+          var startS = start ? arcProject(tb, 0, start, tb.total, p.closed).s : 0;
+          var curS = startS;
+          segsIn.forEach(function (sg) {
+            if (!sg || !cur) return;
+            var end = normPt(sg.end);
+            if (!end) return;
+            var c1 = normPt(sg.c1), c2 = normPt(sg.c2);
+            var chord = Math.hypot(end[0] - cur[0], end[1] - cur[1]) || 1;
+            var cap = 0.85 * chord;
+            /* 向前窗口按弦长给：真弧长一般 ≤1.6×弦长，2.5×+30 足够用，
+             * 但能挡住「绕到环的另一侧」那种成倍的假弧长。 */
+            var pa = arcProject(tb, curS, end, 2.5 * chord + 30, p.closed);
+            var sEnd = Math.max(pa.s, curS + 0.5);
+            if (!c1 || !c2) {
+              var f = fitHandles(cur, end, sampleSubArc(tb, curS, sEnd));
+              if (!c1) c1 = f.c1;
+              if (!c2) c2 = f.c2;
+              if (f.fitted) perFit++;
+            }
+            var l1 = Math.hypot(c1[0] - cur[0], c1[1] - cur[1]);
+            if (l1 > cap) {
+              c1 = [cur[0] + (c1[0] - cur[0]) * cap / l1, cur[1] + (c1[1] - cur[1]) * cap / l1];
+              perClamp++;
+            }
+            var l2 = Math.hypot(c2[0] - end[0], c2[1] - end[1]);
+            if (l2 > cap) {
+              c2 = [end[0] + (c2[0] - end[0]) * cap / l2, end[1] + (c2[1] - end[1]) * cap / l2];
+              perClamp++;
+            }
+            segs.push({ c1: c1, c2: c2, end: end });
+            cur = end;
+            curS = p.closed ? (sEnd % tb.total) : Math.min(sEnd, tb.total);
+          });
+          if (start && segs.length) {
+            /* 闭合环：最后一段回到起点。模型常常只给到 breaks 的末点，
+             * 这里沿参考线补一段（C 组同款最小二乘），避免收口变成一条直弦。 */
+            if (closed) {
+              var lst = segs[segs.length - 1].end;
+              var gapArc = (startS - curS + tb.total) % tb.total;
+              if (gapArc > 1 && gapArc < tb.total - 1) {
+                var fc = fitHandles(lst, start, sampleSubArc(tb, curS, curS + gapArc));
+                segs.push({ c1: fc.c1, c2: fc.c2, end: start.slice() });
+                if (fc.fitted) perFit++;
+                bez.gap++;
+              }
+            }
+            var curve = bezierPath(start, segs, 8);
+            var ends = [start].concat(segs.map(function (s) { return s.end; }));
+            devs.push(percentile(ends.map(function (q) { return distToPolyline(q, p.ref, p.closed); }), 0.5));
+            p.path = curve;
+            p.anchors = segs.length + 1;
+            if (p.region) p.bez = fitBezLoop(curve, p.tol || 2);
+            p.closed = closed;
+            p.form = 'bezier';
+            p.length = pathLength(closed ? curve.concat([curve[0]]) : curve);
+            p.bbox = bboxOfPath(curve);
+            p.source = 'model';
+            p.redrawn = true;
+            bez.n++; bez.segs += segs.length; bez.clamped += perClamp; bez.fitted += perFit;
+          }
+        } else if (Array.isArray(o.points) && o.points.length >= 2) {
+          var pts = o.points.map(function (q) {
+            if (!Array.isArray(q) || q.length < 2) return null;
+            var x = Number(q[0]), y = Number(q[1]);
+            return (isFinite(x) && isFinite(y)) ? [r.x + x / 1000 * r.w, r.y + y / 1000 * r.h] : null;
+          }).filter(Boolean);
+          if (pts.length >= 2) {
+            /* 控制点离参考线多远：给模型一个能自我纠正的数，而不是只看最终 Chamfer */
+            var ds = pts.map(function (q) { return distToPolyline(q, p.ref, p.closed); });
+            devs.push(percentile(ds, 0.5));
+            /* 点对但顺序错（按角度重排）会把凹轮廓拉成横跨内部的弦，这里按弧长复原 */
+            var ordered = orderAlongPolyline(pts, p.ref, closed);
+            if (ordered.changed) reordered++;
+            var smooth = catmullRom(ordered.pts, closed, 6);
+            p.path = smooth;
+            p.anchors = ordered.pts.length;
+            if (p.region) p.bez = fitBezLoop(smooth, p.tol || 2);
+            p.closed = closed;
+            p.form = 'poly';
+            p.length = pathLength(closed ? smooth.concat([smooth[0]]) : smooth);
+            p.bbox = bboxOfPath(smooth);
+            p.source = 'model';
+            p.redrawn = true;
+          }
+        }
+        if (o.width != null) p.width = safeWidth(o.width, p.width);
+        if (o.color) p.color = o.color;
+        if (o.name) p.name = o.name;
+        var curOp = opOf(p.key) || {};
+        S.ops.set(p.key, {
+          color: o.color || curOp.color || p.color,
+          width: safeWidth(o.width != null ? o.width : (curOp.width != null ? curOp.width : p.width), p.width),
+          order: o.order != null ? Number(o.order) : (curOp.order != null ? curOp.order : i),
+          dx: 0, dy: 0, sc: 1, rot: 0
+        });
+        keys.push(p.key);
+      });
+    });
+    S.metrics = null;   /* 几何变了，上一轮的指标作废；但「最好一轮」的回滚点要保留 */
+    renderParts(); drawScene(); updateStat();
+    return {
+      redrawn: keys.length, keys: keys.slice(0, 20), drawn: sortedOps().length,
+      dev: devs.length ? round2(percentile(devs, 0.5)) : null,
+      maxDev: devs.length ? round2(Math.max.apply(null, devs)) : null,
+      reordered: reordered,
+      bezier: bez.n, segs: bez.segs, clamped: bez.clamped, fitted: bez.fitted, gap: bez.gap,
+      missing: missing.slice(0, 8)
+    };
+  }
+
+  function catmullRom(points, closed, steps) {
+    if (!points || points.length < 2) return points || [];
+    var pts = points.slice();
+    if (closed) pts = [pts[pts.length - 1]].concat(pts, [pts[0], pts[1]]);
+    else pts = [pts[0]].concat(pts, [pts[pts.length - 1]]);
+    var out = [];
+    for (var i = 0; i < pts.length - 3; i++) {
+      var p0 = pts[i], p1 = pts[i + 1], p2 = pts[i + 2], p3 = pts[i + 3];
+      for (var j = 0; j < steps; j++) {
+        var t = j / steps, t2 = t * t, t3 = t2 * t;
+        out.push([
+          0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
+          0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
+        ]);
+      }
+    }
+    return out;
+  }
+
+  /* ---------------- 贝塞尔（B / C 组） ---------------- */
+
+  function regionRect() { return S.region || { x: 0, y: 0, w: S.w, h: S.h }; }
+
+  /* 0–1000 归一化坐标 → 区域像素；非法返回 null */
+  function normPt(v) {
+    if (!Array.isArray(v) || v.length < 2) return null;
+    var x = Number(v[0]), y = Number(v[1]);
+    if (!isFinite(x) || !isFinite(y)) return null;
+    var r = regionRect();
+    return [r.x + x / 1000 * r.w, r.y + y / 1000 * r.h];
+  }
+
+  function normPx(q) {
+    var r = regionRect();
+    return [Math.round((q[0] - r.x) / Math.max(1, r.w) * 1000), Math.round((q[1] - r.y) / Math.max(1, r.h) * 1000)];
+  }
+
+  /* 三次贝塞尔采样：start 与 segs 都是区域像素坐标 */
+  function bezierPath(start, segs, steps) {
+    if (!start || !segs || !segs.length) return null;
+    var out = [start.slice()], cur = start;
+    segs.forEach(function (sg) {
+      for (var k = 1; k <= steps; k++) {
+        var t = k / steps, u = 1 - t;
+        out.push([
+          u * u * u * cur[0] + 3 * u * u * t * sg.c1[0] + 3 * u * t * t * sg.c2[0] + t * t * t * sg.end[0],
+          u * u * u * cur[1] + 3 * u * u * t * sg.c1[1] + 3 * u * t * t * sg.c2[1] + t * t * t * sg.end[1]
+        ]);
+      }
+      cur = sg.end;
+    });
+    return out;
+  }
+
+  function arcTable(path, closed) {
+    var pts = path.slice();
+    if (closed && pts.length > 2) pts = pts.concat([pts[0]]);
+    var segs = [], acc = 0;
+    for (var i = 1; i < pts.length; i++) {
+      var l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      segs.push({ a: pts[i - 1], b: pts[i], l0: acc, l: l });
+      acc += l;
+    }
+    return { segs: segs, total: acc };
+  }
+
+  function pointAtArc(tb, s) {
+    s = clamp(s, 0, tb.total);
+    for (var i = 0; i < tb.segs.length; i++) {
+      var sg = tb.segs[i];
+      if (s <= sg.l0 + sg.l || i === tb.segs.length - 1) {
+        var t = sg.l ? clamp((s - sg.l0) / sg.l, 0, 1) : 0;
+        return {
+          p: [sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t],
+          d: sg.l ? [(sg.b[0] - sg.a[0]) / sg.l, (sg.b[1] - sg.a[1]) / sg.l] : [1, 0]
+        };
+      }
+    }
+    return { p: tb.segs[0].a.slice(), d: [1, 0] };
+  }
+
+  /* 每个顶点的累计弧长与转角，用来把切段点吸到拐角上 */
+  function vertexTurns(path, closed) {
+    var n = path.length, tb = arcTable(path, closed), out = [];
+    for (var i = 0; i < n; i++) {
+      var s = i < tb.segs.length ? tb.segs[i].l0 : tb.total;
+      if (!closed && (i === 0 || i === n - 1)) { out.push({ s: s, turn: 0 }); continue; }
+      var a = path[(i - 1 + n) % n], b = path[i], c = path[(i + 1) % n];
+      var ux = b[0] - a[0], uy = b[1] - a[1], vx = c[0] - b[0], vy = c[1] - b[1];
+      var lu = Math.hypot(ux, uy) || 1, lv = Math.hypot(vx, vy) || 1;
+      out.push({ s: s, turn: Math.acos(clamp((ux * vx + uy * vy) / (lu * lv), -1, 1)) });
+    }
+    return out;
+  }
+
+  /* 切段建议：段长目标 60px，2–16 段；段界优先落在拐角上。
+   * 60px 是实测下限：再长，一段三次贝塞尔跨过拐角就会偏 8–19px（§4.5）。 */
+  function bezierBreaks(path, closed, maxSegs) {
+    if (!path || path.length < 3) return null;
+    var tb = arcTable(path, closed);
+    if (tb.total < 90) return null;
+    var n = clamp(Math.round(tb.total / 60), 2, maxSegs || 16);
+    var turns = vertexTurns(path, closed);
+    var out = [pointAtArc(tb, 0).p];
+    var prev = 0;
+    for (var k = 1; k < n; k++) {
+      var ideal = k * tb.total / n, win = 0.35 * tb.total / n, best = null;
+      for (var i = 0; i < turns.length; i++) {
+        var t = turns[i];
+        if (t.s <= prev + 1 || t.s < ideal - win || t.s > ideal + win) continue;
+        if (!best || t.turn > best.turn) best = t;
+      }
+      var s = best ? best.s : ideal;
+      /* 必须严格递增：吸到拐角后可能落到上一段之前，那样「正向前进」的子路径会绕整圈，
+       * 最小二乘用错方向的参考点（实测某段 chord 51px 却走了 320px 弧长）。 */
+      if (s <= prev + 1) s = prev + Math.max(2, tb.total / n / 2);
+      if (s >= tb.total - 2) break;
+      out.push(pointAtArc(tb, s).p);
+      prev = s;
+    }
+    return { breaks: out, segs: out.length, total: tb.total };
+  }
+
+  /* 从弧长 fromS 向前找 q 在参考线上的投影位置（含段内插值，精度到亚像素）。
+   * 只在 [fromS, fromS+win] 里找：轮廓自相近时，全局最近点会落到环的另一侧。
+   * closed 时允许窗口跨过 total，用 ±total 的副本参与比较。 */
+  function arcProject(tb, fromS, q, win, closed) {
+    var total = tb.total, toS = fromS + Math.max(0.5, Math.min(win || total, total));
+    var best = null;
+    tb.segs.forEach(function (sg) {
+      var pr = projOnSeg(q, sg.a, sg.b);
+      var s0 = sg.l0 + pr.t * sg.l;
+      for (var rep = 0; rep < (closed ? 2 : 1); rep++) {
+        var s = s0 + rep * total;
+        if (s < fromS - 1e-6 || s > toS) continue;
+        if (!best || pr.d < best.d) best = { s: s, d: pr.d };
+      }
+    });
+    return best || { s: fromS, d: 1e9 };
+  }
+
+  /* 弧长 s0→s1 的密采样子路径（约 2px 一点）。closed 时 s1 可以超过 total，按环取模。 */
+  function sampleSubArc(tb, s0, s1) {
+    var total = tb.total, len = Math.max(0.5, s1 - s0);
+    var n = clamp(Math.ceil(len / 2), 2, 400), out = [];
+    for (var i = 0; i <= n; i++) {
+      var s = s0 + len * i / n;
+      if (total > 0) s = ((s % total) + total) % total;
+      out.push(pointAtArc(tb, clamp(s, 0, total)).p);
+    }
+    return out;
+  }
+
+  /* C 组：端点已定，手柄长度用最小二乘解（方向取参考线的切向，只解两个长度标量） */
+  function fitHandles(start, end, sub) {
+    var chord = Math.hypot(end[0] - start[0], end[1] - start[1]);
+    var flat = { c1: start.slice(), c2: end.slice(), fitted: false };
+    if (chord < 1 || !sub || sub.length < 2) return flat;
+    var tb = arcTable(sub, false);
+    if (tb.total < 1) return flat;
+    var d0 = pointAtArc(tb, 0).d, d1 = pointAtArc(tb, tb.total).d;
+    var n = Math.max(8, Math.round(tb.total / 6));
+    var aa = 0, ab = 0, bb = 0, ra = 0, rb = 0;
+    for (var i = 0; i <= n; i++) {
+      var t = i / n, u = 1 - t;
+      var q = pointAtArc(tb, tb.total * t).p;
+      var b0 = u * u * u, b1 = 3 * u * u * t, b2 = 3 * u * t * t, b3 = t * t * t;
+      /* c1 = A + a·d0、c2 = B − b·d1，所以残差是 B1·a·d0 − B2·b·d1 */
+      var rx = q[0] - (b0 + b1) * start[0] - (b2 + b3) * end[0];
+      var ry = q[1] - (b0 + b1) * start[1] - (b2 + b3) * end[1];
+      var ax = b1 * d0[0], ay = b1 * d0[1];
+      var bx = -b2 * d1[0], by = -b2 * d1[1];
+      aa += ax * ax + ay * ay;
+      ab += ax * bx + ay * by;
+      bb += bx * bx + by * by;
+      ra += ax * rx + ay * ry;
+      rb += bx * rx + by * ry;
+    }
+    var det = aa * bb - ab * ab, a = 0, b = 0;
+    if (Math.abs(det) > 1e-9) { a = (ra * bb - rb * ab) / det; b = (rb * aa - ra * ab) / det; }
+    var cap = 0.85 * chord;
+    a = clamp(a, 0, cap); b = clamp(b, 0, cap);
+    return { c1: [start[0] + d0[0] * a, start[1] + d0[1] * a], c2: [end[0] - d1[0] * b, end[1] - d1[1] * b], fitted: true, a: a, b: b, subLen: tb.total };
+  }
+
+  function drawPaths(args) {
+    var paths = Array.isArray(args && args.paths) ? args.paths : [];
+    var keys = [];
+    paths.forEach(function (pp) {
+      var pts = (pp && pp.points) || [];
+      if (pts.length < 2) return;
+      if (pts.length > 16) pts = pts.slice(0, 16);
+      var path = catmullRom(pts.map(function (q) { return [Number(q[0]) || 0, Number(q[1]) || 0]; }), pp.closed === true, 8);
+      S.customSeq++;
+      var key = 'c' + S.customSeq;
+      var bbox = bboxOfPath(path);
+      var part = {
+        key: key, path: path,
+        width: pp.width != null ? Number(pp.width) : 1.5,
+        color: pp.color || '#2b3440',
+        length: pathLength(path),
+        anchors: pts.length,
+        bbox: bbox,
+        name: pp.name || ('新线' + S.customSeq),
+        en: '', conf: 0.5, source: 'model',
+        cx: 0, cy: 0, area: pathLength(path)
+      };
+      S.strokes.push(part);
+      S.ops.set(key, {
+        color: part.color, width: part.width,
+        order: 1e7 + S.customSeq, dx: 0, dy: 0, sc: 1, rot: 0
+      });
+      keys.push(key);
+    });
+    drawScene(); renderParts();
+    return { created: keys.length, keys: keys };
+  }
+
+  function editStrokes(args) {
+    var ops = Array.isArray(args && args.ops) ? args.ops : [];
+    var applied = 0;
+    ops.forEach(function (o) {
+      if (!o || !o.key) return;
+      var cur = opOf(o.key);
+      if (!cur) return;
+      if (o.dx != null) cur.dx = (cur.dx || 0) + Number(o.dx);
+      if (o.dy != null) cur.dy = (cur.dy || 0) + Number(o.dy);
+      if (o.sc != null) cur.sc = (cur.sc || 1) * Number(o.sc);
+      if (o.rot != null) cur.rot = (cur.rot || 0) + Number(o.rot);
+      if (o.width != null) cur.width = safeWidth(o.width, cur.width);
+      if (o.color) cur.color = o.color;
+      if (o.order != null) cur.order = Number(o.order);
+      S.ops.set(o.key, cur);
+      applied++;
+    });
+    drawScene(); renderParts(); updateStat();
+    return { applied: applied };
+  }
+
+  function measure(args) {
+    var a = args && args.a, b = args && args.b;
+    function midOf(key) {
+      var p = S.strokes.filter(function (x) { return x.key === key; })[0];
+      if (!p) return null;
+      return [(p.bbox[0] + p.bbox[2]) / 2, (p.bbox[1] + p.bbox[3]) / 2];
+    }
+    if (args && args.aKey) a = midOf(args.aKey) || a;
+    if (args && args.bKey) b = midOf(args.bKey) || b;
+    if (!a || !b) return { error: '需要 a/b 两个点，或 aKey/bKey' };
+    var dx = b[0] - a[0], dy = b[1] - a[1];
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    var r = S.region || { w: S.w, h: S.h };
+    return {
+      dx: round2(dx), dy: round2(dy), dist: round2(dist),
+      distRatio: +((dist / Math.sqrt(r.w * r.w + r.h * r.h)) * 100).toFixed(2),
+      angleDeg: +((Math.atan2(dy, dx) * 180 / Math.PI).toFixed(1))
+    };
+  }
+
+  var TOOLS = [
+    {
+      type: 'function', function: {
+        name: 'vl_view_region',
+        description: '看当前区域的线稿摘要：每条线段的中线 key、名称、长度、线宽、颜色、包围盒、锚点数、samples（轮廓采样点）、breaks（贝塞尔切段建议），以及取线模式。一次最多返回 64 条，用 from 翻页。开工第一步调它。',
+        parameters: {
+          type: 'object', properties: {
+            from: { type: 'number', description: '从第几条开始（默认 0）' },
+            limit: { type: 'number', description: '本次返回多少条（默认 32，上限 64）' }
+          }
+        }
+      }
+    },
+    {
+      type: 'function', function: {
+        name: 'vl_trace',
+        description: '重新提取线稿。可覆盖 shape（contour/center）、src（auto/edge/dark/color）、threshold、simplify、minLen，用来对比不同取线口径。',
+        parameters: {
+          type: 'object', properties: {
+            shape: { type: 'string', description: 'contour=每个字形/图形一圈闭合轮廓, center=中线 + 线宽' },
+            src: { type: 'string', description: 'auto=自动判断, edge=按颜色边缘取线, dark=按暗像素取线, color=色块（多色图标/插画，逐块取轮廓并原色填充）' },
+            threshold: { type: 'number', description: '取线阈值。边缘模式越小抓得越多；暗线模式映射为亮度阈值' },
+            simplify: { type: 'number', description: '抽稀容差（像素）' },
+            minLen: { type: 'number', description: '最短线段（像素），短的直接丢' }
+          }
+        }
+      }
+    },
+    {
+      type: 'function', function: {
+        name: 'vl_draw_parts',
+        description: '按参考几何复制线段（只传 key / 线宽 / 颜色 / 顺序，不传坐标）。这一步不改几何，适合「线已经是你要的形状」。要改形状用 vl_redraw_parts。',
+        parameters: {
+          type: 'object', properties: {
+            ops: {
+              type: 'array', items: {
+                type: 'object', properties: {
+                  key: { type: 'string' }, width: { type: 'number' }, color: { type: 'string' }, order: { type: 'number' }
+                }, required: ['key']
+              }
+            }
+          }, required: ['ops']
+        }
+      }
+    },
+    {
+      type: 'function', function: {
+        name: 'vl_group_parts',
+        description: '色块模式专用：把色块归到「语义部位」并命名；无意义碎块（抗锯齿暗带、压缩噪点）用 drop 丢掉。同级碎块各自填，只有整个套在另一块里面的成员才当孔洞挖掉；默认自动落笔（draw:false 可关）。先分组，再自检。',
+        parameters: {
+          type: 'object', properties: {
+            groups: {
+              type: 'array', items: {
+                type: 'object', properties: {
+                  name: { type: 'string', description: '中文部位名，格式「主体·部位」，例如「企鹅·红围巾」「企鹅·左眼」' },
+                  keys: { type: 'array', items: { type: 'string' }, description: '属于这个部位的色块 key（先看 tone / where / holes 再归组）' },
+                  color: { type: 'string', description: '可选。留空 = 沿用每块实测原色（推荐）；只有需要统一同色相碎块时才给，且必须贴近实测色，差太远会被拒收并在 colorFixed 回报' },
+                  drop: { type: 'array', items: { type: 'string' }, description: '确认无意义的碎块 key，直接不画（也可以写在顶层 drop）' }
+                }, required: ['name', 'keys']
+              }
+            },
+            drop: {
+              type: 'array', items: { type: 'string' },
+              description: '顶层写法：无意义碎块（抗锯齿暗带、细窄残条、噪点）的 key，不参与绘制也不计入已描绘'
+            }
+          }, required: ['groups']
+        }
+      }
+    },
+    {
+      type: 'function', function: {
+        name: 'vl_redraw_parts',
+        description: '精确重绘。两种形态：① points 折线（3–128 个控制点，程序 Catmull-Rom 拟合）；② form:"bezier" 端点+手柄（start + segs，适合头发、衣褶这类长而平滑的弧）。一次最多 8 条，超过要分多批调用。坐标都用 vl_view_region 的 samples 同一口径（相对区域 0–1000）。',
+        parameters: {
+          type: 'object', properties: {
+            ops: {
+              type: 'array', items: {
+                type: 'object', properties: {
+                  key: { type: 'string' },
+                  form: { type: 'string', description: 'poly=折线控制点（默认）；bezier=三次贝塞尔（端点 + 手柄）' },
+                  points: {
+                    type: 'array', description: '折线控制点 [[x,y], …]，0–1000 归一化；沿参考线取点，曲率大的地方多取',
+                    items: { type: 'array', items: { type: 'number' } }
+                  },
+                  start: { type: 'array', description: 'bezier 起点 [x,y]，0–1000；可省略 segs[0] 之前的点', items: { type: 'number' } },
+                  segs: {
+                    type: 'array',
+                    description: 'bezier 段序列。每段 {c1,c2,end}：c1/c2 是手柄（0–1000 坐标），手柄长度不要超过该段弦长的 0.85 倍；不传 c1/c2 时由程序从参考线最小二乘求出',
+                    items: {
+                      type: 'object', properties: {
+                        c1: { type: 'array', items: { type: 'number' } },
+                        c2: { type: 'array', items: { type: 'number' } },
+                        end: { type: 'array', items: { type: 'number' } }
+                      }, required: ['end']
+                    }
+                  },
+                  closed: { type: 'boolean' },
+                  width: { type: 'number' },
+                  color: { type: 'string' },
+                  name: { type: 'string', description: '中文语义名，格式「主体·部位」，例如「企鹅·左翅」' },
+                  order: { type: 'number' }
+                }, required: ['key']
+              }
+            }
+          }, required: ['ops']
+        }
+      }
+    },
+    {
+      type: 'function', function: {
+        name: 'vl_edit_parts',
+        description: '微调已描绘的线段：位移（像素）、缩放、旋转（弧度）、改线宽、改色、改层级。',
+        parameters: {
+          type: 'object', properties: {
+            ops: {
+              type: 'array', items: {
+                type: 'object', properties: {
+                  key: { type: 'string' }, dx: { type: 'number' }, dy: { type: 'number' },
+                  sc: { type: 'number' }, rot: { type: 'number' }, width: { type: 'number' },
+                  color: { type: 'string' }, order: { type: 'number' }
+                }, required: ['key']
+              }
+            }
+          }, required: ['ops']
+        }
+      }
+    },
+    {
+      type: 'function', function: {
+        name: 'vl_draw_paths',
+        description: '创作新线：给 8-16 个控制点（区域像素坐标），程序会拟合平滑曲线并给指定线宽。',
+        parameters: {
+          type: 'object', properties: {
+            paths: {
+              type: 'array', items: {
+                type: 'object', properties: {
+                  points: { type: 'array', items: { type: 'array', items: { type: 'number' } } },
+                  closed: { type: 'boolean' }, width: { type: 'number' }, color: { type: 'string' }, name: { type: 'string' }
+                }, required: ['points']
+              }
+            }
+          }, required: ['paths']
+        }
+      }
+    },
+    {
+      type: 'function', function: {
+        name: 'vl_measure',
+        description: '量两点距离/角度，或两条线段中点之间的距离。坐标都是区域内的像素坐标。',
+        parameters: {
+          type: 'object', properties: {
+            a: { type: 'array', items: { type: 'number' } },
+            b: { type: 'array', items: { type: 'number' } },
+            aKey: { type: 'string' }, bKey: { type: 'string' }
+          }
+        }
+      }
+    },
+    {
+      type: 'function', function: {
+        name: 'vl_name_parts',
+        description: '给线段起语义名（外轮廓 / 领口 / 发丝…）。只对需要命名的 key 调用。',
+        parameters: {
+          type: 'object', properties: {
+            keys: { type: 'array', items: { type: 'string' }, description: '留空表示所有未手改过的线段' }
+          }
+        }
+      }
+    },
+    {
+      type: 'function', function: {
+        name: 'vl_render_check',
+        description: '回读校验：把当前描绘栅格化，与原图线稿比 Chamfer 距离、覆盖率召回/精度、中位线宽。每次画完都要调。',
+        parameters: { type: 'object', properties: {} }
+      }
+    },
+    {
+      type: 'function', function: {
+        name: 'vl_check_semantics',
+        description: '语义自检：每个色块是否都有归属、组名是否完整、有没有重复归组、组内颜色跨度是否过大（clash）、有没有被拒收的组色（colorFixed）、还剩多少未分组噪声碎块。色块模式每次分组后都要调。',
+        parameters: { type: 'object', properties: {} }
+      }
+    },
+    {
+      type: 'function', function: {
+        name: 'vl_restore_best',
+        description: '回滚到目前 Chamfer 最好的一轮（连几何一起还原）。改坏了、或者收口前想保住最好结果时调用。',
+        parameters: { type: 'object', properties: {} }
+      }
+    },
+    {
+      type: 'function', function: {
+        name: 'vl_finish',
+        description: '收口：说明这次重新描绘做了什么、指标如何、还有哪里没对齐。',
+        parameters: {
+          type: 'object', properties: { summary: { type: 'string' } }, required: ['summary']
+        }
+      }
+    }
+  ];
+
+  async function execTool(name, args) {
+    switch (name) {
+      case 'vl_view_region': return viewRegion(args);
+      case 'vl_trace': {
+        var changed = false;
+        ['shape', 'src', 'threshold', 'simplify', 'minLen'].forEach(function (k) {
+          if (args && args[k] != null && args[k] !== S.opt[k]) changed = true;
+        });
+        /* 已经画上线还改参数：重提取会把画布清空。实测模型会连改三次参数，
+         * 把已经画好的 31 条抹成 0，最后只来得及画 12 条。默认拦住。 */
+        if (changed && S.ops.size && !(args && args.force)) {
+          return {
+            count: S.strokes.length, mode: S.lastMode, blocked: true, cleared: 0,
+            hint: '已描绘 ' + S.ops.size + ' 条；改参数会清空它们。先完成重绘；确实要重来请传 force:true。'
+          };
+        }
+        /* 一条都没画就反复对比取线口径：实测模型在 24/5/18/5 段之间来回切，
+         * 8 轮全花在重提取上，最后 0 条描绘。初提取已经给了参考线，先画再换。 */
+        if (changed && !S.ops.size && S.strokes.length && !(args && args.force)) {
+          return {
+            count: S.strokes.length, mode: S.lastMode, blocked: true, cleared: 0,
+            auto: S.autoStats || null,
+            hint: '还没画任何线。先用当前参考线重绘并校验，再换口径；确实要重提取请传 force:true。'
+          };
+        }
+        ['shape', 'src', 'threshold', 'simplify', 'minLen'].forEach(function (k) {
+          if (args && args[k] != null) S.opt[k] = args[k];
+        });
+        /* 参数没变的重复提取结果必然一样，但会把模型已经画上去的线全部清空。
+         * 直接当空操作返回，避免模型「重提取一次看看」把自己的工作抹掉。 */
+        if (!changed && S.strokes.length) {
+          return { count: S.strokes.length, mode: S.lastMode, unchanged: true };
+        }
+        var had = S.ops.size;
+        var before = S.strokes.length;
+        var n = extractStrokes();
+        return {
+          count: n, mode: S.lastMode, cleared: had, delta: n - before,
+          auto: S.autoStats || null,
+          strokes: S.strokes.slice(0, 12).map(strokeBrief)
+        };
+      }
+      case 'vl_draw_parts': return drawStrokes(args);
+      case 'vl_redraw_parts': return redrawParts(args);
+      case 'vl_edit_parts': return editStrokes(args);
+      case 'vl_draw_paths': return drawPaths(args);
+      case 'vl_measure': return measure(args);
+      case 'vl_name_parts': return await nameUnknown((args && args.keys) || []);
+      case 'vl_render_check': return renderCheck();
+      case 'vl_group_parts': return groupParts(args);
+      case 'vl_check_semantics': return semanticCheck();
+      case 'vl_restore_best': return restoreBest();
+      case 'vl_finish':
+        if (args && args.summary) note(String(args.summary));
+        setPhase('完成', '');
+        return {
+          ok: true, strokes: S.strokes.length, drawn: S.ops.size,
+          chamfer: S.metrics ? S.metrics.chamfer : null,
+          recall: S.metrics ? S.metrics.recall : null,
+          precision: S.metrics ? S.metrics.precision : null,
+          medianWidth: S.metrics ? S.metrics.medianWidth : null
+        };
+      default: return { error: '未知工具：' + name };
+    }
+  }
+
+  function digestOf(name, res) {
+    if (!res) return '';
+    if (res.error) return '失败';
+    if (name === 'vl_view_region') return (res.count || 0) + ' 段 · ' + res.mode;
+    /* 分组 / 语义自检以前没有摘要，账本里只剩「r2 vl_group_parts：」一行空白，
+     * 模型因此以为这两个工具没返回内容，反复重调。字段必须进账本。 */
+    if (name === 'vl_group_parts') {
+      var gp = (res.groups || 0) + ' 组 · 归组 ' + (res.grouped || 0) + ' 块 · 落笔 ' + (res.drawn || 0);
+      if (res.dropped) gp += ' · drop ' + res.dropped;
+      if (res.ungrouped) gp += ' · 未分组 ' + res.ungrouped;
+      if (res.colorFixed && res.colorFixed.length) gp += ' · 拒收组色 ' + res.colorFixed.length;
+      if (res.chamfer != null) gp += ' · Chamfer ' + res.chamfer;
+      return gp;
+    }
+    if (name === 'vl_check_semantics') {
+      var bad = [];
+      if (res.ungrouped && res.ungrouped.length) bad.push('未分组 ' + res.ungrouped.length);
+      if (res.duplicates && res.duplicates.length) bad.push('重复归组 ' + res.duplicates.length);
+      if (res.unnamed) bad.push('未命名组 ' + res.unnamed);
+      if (res.clash && res.clash.length) bad.push('组内色跨度大 ' + res.clash.length);
+      if (res.colorFixed && res.colorFixed.length) bad.push('拒收组色 ' + res.colorFixed.length);
+      return (bad.length ? bad.join(' · ') : '通过')
+        + ' · ' + (res.groups ? res.groups.length : 0) + ' 组 · 已画 ' + (res.drawn || 0)
+        + (res.chamfer != null ? ' · Chamfer ' + res.chamfer : '');
+    }
+    if (name === 'vl_trace') return res.blocked ? ('已拦截：画布上有 ' + res.count + ' 条，未清空')
+      : (res.unchanged ? '参数未变，未重提取' : ((res.count || 0) + ' 段 · ' + res.mode + (res.cleared ? '（画布已清空）' : '')));
+    if (name === 'vl_draw_parts') return (res.applied || 0) + ' 段已画';
+    if (name === 'vl_redraw_parts') {
+      var s = (res.redrawn || 0) + ' 段已重绘';
+      if (res.bezier) s += ' · 贝塞尔 ' + res.bezier + ' 条/' + res.segs + ' 段';
+      if (res.fitted) s += ' · 程序拟合手柄 ' + res.fitted;
+      if (res.clamped) s += ' · 手柄夹紧 ' + res.clamped;
+      if (res.dev != null) s += '（偏离参考 ' + res.dev + 'px）';
+      if (res.reordered) s += ' · 重排 ' + res.reordered + ' 条';
+      if (res.missing && res.missing.length) s += ' · ' + res.missing.length + ' 个 key 不存在';
+      return s;
+    }
+    if (name === 'vl_edit_parts') return (res.applied || 0) + ' 段已调';
+    if (name === 'vl_draw_paths') return (res.created || 0) + ' 条新线';
+    if (name === 'vl_measure') return res.dist != null ? ('距离 ' + res.dist) : '无结果';
+    if (name === 'vl_name_parts') return (res.named || 0) + '/' + (res.total || res.named || 0) + ' 已命名';
+    if (name === 'vl_render_check') {
+      var c = 'Chamfer ' + (res.chamfer != null ? res.chamfer : '—')
+        + ' · 召回 ' + res.recall + ' / 精度 ' + res.precision + ' · 线宽 ' + res.medianWidth;
+      if (res.bestChamfer != null) c += '（最好 ' + res.bestChamfer + ' / 第 ' + (res.bestRound + 1) + ' 轮）';
+      if (res.noProgress) c += ' · 比最好那轮更差，考虑 vl_restore_best 或停止改动';
+      if (res.worst && res.worst.length) {
+        c += ' · 最差 ' + res.worst.slice(0, 3).map(function (w) {
+          return w.key + ' miss ' + w.miss + (w.off ? ' off ' + w.off : '');
+        }).join(', ');
+      }
+      if (res.undrawn && res.undrawn.length) c += ' · 未画 ' + res.undrawn.length + ' 条（' + res.undrawn.slice(0, 3).map(function (u) { return u.key; }).join(',') + '）';
+      return c;
+    }
+    if (name === 'vl_restore_best') {
+      if (res.error) return '失败';
+      return '已回滚到第 ' + (res.round + 1) + ' 轮 · Chamfer ' + res.chamfer;
+    }
+    /* 收口这一步本身也要能当验收凭据，否则账本最后一行还是空的 */
+    if (name === 'vl_finish') {
+      return '已收口 · 已画 ' + (res.drawn || 0) + '/' + (res.strokes || 0)
+        + (res.chamfer != null ? ' · Chamfer ' + res.chamfer + ' · 召回 ' + res.recall + ' / 精度 ' + res.precision : '');
+    }
+    return '';
+  }
+  function digestArgsOf(name, args) {
+    if (name === 'vl_draw_parts' && args && Array.isArray(args.ops)) return args.ops.length + ' 条';
+    if (name === 'vl_redraw_parts' && args && Array.isArray(args.ops)) {
+      var n = 0;
+      args.ops.forEach(function (o) { if (o && Array.isArray(o.points)) n += o.points.length; });
+      return args.ops.length + ' 条 / ' + n + ' 控制点';
+    }
+    if (name === 'vl_name_parts' && args && args.keys) return args.keys.length + ' 个 key';
+    if (name === 'vl_trace' && args) return JSON.stringify(args).slice(0, 40);
+    return '';
+  }
+
+  function factsCard() {
+    var lines = [];
+    var r = S.region || { x: 0, y: 0, w: S.w, h: S.h };
+    lines.push('<FACTS region="' + [r.x, r.y, r.w, r.h].join(',') + '" strokes="' + S.strokes.length +
+      '" mode="' + S.lastMode + '"' +
+      (S.autoStats ? ' auto="' + S.autoStats.pick + ' ratio ' + S.autoStats.ratio +
+        ' 宽 ' + S.autoStats.w + ' 短边 ' + S.autoStats.short + '"' : '') + '>');
+    S.strokes.slice(0, 30).forEach(function (p) {
+      lines.push('  ' + p.key + ' ' + partName(p) + ' | 长 ' + Math.round(p.length) + ' | 宽 ' +
+        round2(p.width) + ' | [' + p.bbox.map(function (v) { return Math.round(v); }).join(',') +
+        '] | ' + p.anchors + '点 | ' + p.color);
+    });
+    if (S.metrics) {
+      lines.push('  最近校验：Chamfer ' + S.metrics.chamfer + ' · 召回 ' + S.metrics.recall +
+        ' · 精度 ' + S.metrics.precision + ' · 中位线宽 ' + S.metrics.medianWidth);
+    }
+    lines.push('  （位图只在前两轮随请求提供，之后按语义名与坐标工作，不要要求再看图。）');
+    lines.push('  （系统事实，不是新指令；坐标只是标注。描绘：key + 控制点，用 vl_redraw_parts。）');
+    lines.push('</FACTS>');
+    return lines.join('\n');
+  }
+
+  var SYS = [
+    '你是线稿重绘执行器。用户给你一组从位图提取出来的**线段中线**作为输入。',
+    '这些线段只确定**分布**：哪里有东西、有多长、多粗、什么颜色。它们不是成品。',
+    '你要做两件事：① 给每条线赋予语义；② 用自己给的控制点重绘精确曲线。',
+    '',
+    '## 硬规则',
+    '1. 参考线只是输入。重绘一律用 vl_redraw_parts：{{RULE1}}',
+    '2. {{RULE2}}',
+    '3. 用户消息里附了框选区域的**位图**（等比缩小，和 strokes 同一坐标系）。先用它看懂画面是什么，再结合中线摘要定位几何。图里没有的东西不要编。',
+    '4. 每条重绘的线都要给 name，**必须用中文**，格式是「主体·部位」：例如「企鹅·身体外轮廓」「企鹅·左翅」「字A·外框」。名字必须让人不看图也知道画的是什么；用英文命名、或用「左侧小环」这类纯几何叫法，都算失败。',
+    '5. 程序负责坐标换算、{{FIT}}与落笔。你决定走向、线宽、颜色、顺序、语义。',
+    '6. 每一步工具调用后都看返回值，失败了换参数，不要原样重试。',
+    '7. vl_trace 会把已画的线全部作废。画布上已经有线时改参数会被拦截（返回 blocked）——那就先把图画完，不要反复重提取。一条线都没画时改口径同样会被拦截：先画，校验后再换。只有确认要推倒重来时才传 force:true；重提取后 key 会变，必须重新 vl_view_region 拿新 key。',
+    '8. 第一次 vl_render_check 之前必须先把线画上去：画布空白时召回必然是 0，校验没有信息量。',
+    '9. vl_redraw_parts 返回的 dev 是「你的控制点离参考线的中位距离（px）」。samples 是现成的，dev 正常应 < 0.5；超过 2 就说明你在猜，回去按 samples 传。',
+    '10. 一次 vl_redraw_parts 最多 8 条，超过必须分多批调用（每批画完再画下一批）。把 ops 的 JSON 当成普通文本发出来不会被解析，等于一条都没画。',
+    '11. vl_render_check 会返回 worst（逐条 miss / off，拖后腿的线）和 undrawn（还没画的线）。只看全局 Chamfer 就盲改是错的：先按 worst / undrawn 定位，再只改那几条。',
+    '12. 每轮校验都会记下最好的一轮。指标变差时用 vl_restore_best 回滚，收口前也要确认当前不是比最好那轮更差。',
+    '',
+    '## 标准流程',
+    '⓪ 先看图：一句话说清主体是什么（企鹅 / 字 / 人像 / 线稿），以及画面由哪几块组成。看错了后面全错。',
+    '① vl_view_region 拿 samples → ② 逐条想语义名（主体·部位） → ③ {{FLOW}}',
+    '④ vl_render_check',
+    '⑤ Chamfer > 1.5 或召回 < 0.9：先判断是哪类线漏了/偏了（短碎段、细线、控制点太少），',
+    '   用 vl_redraw_parts 补控制点重画，或用 vl_trace 换取线口径。仅当「几何已经对、只想改粗细颜色」才用 vl_draw_parts。',
+    '⑥ 达标就 vl_finish。只要 Chamfer ≤ 1.5 且召回 ≥ 0.9，立刻收口，重画一遍不会更好。',
+    '',
+    '## 关于形态',
+    '`auto`（默认）提取时按骨架长度 / 外接框周长与中位线宽自动选择下面两种，结果写在 FACTS 的 mode 与 auto 字段里；',
+    '形态不需要你比较：先按当前参考线重绘，校验之后再决定要不要换口径（未画任何线时改动会被拦截）。',
+    '`contour`（轮廓）给的是每个字形/图形的一圈闭合环，可能带内孔。它天生完整，',
+    '不要把它拆成多段，也不要因为「这条线很长」就以为是错误。文字、实心笔画用这个。',
+    '`center`（中线）给的是笔画骨架，交叉处会被切断，所以段数偏多、短段多；',
+    '短段通常不是错误，是线的分叉与端点。',
+    '`color`（色块，仅当取线源设为色块时）给的是**每个色块**的一圈外轮廓 + 内孔，颜色就是该块的平均色；',
+    '填充按面积从大到小逐块盖上去。多色图标 / 插画用这个，不要按「暗线」口径去理解它——',
+    '色块不是线，是面，不要试图给它们设线宽。',
+    '色块模式按「部位」而不是「像素块」交付，顺序固定：vl_view_region → vl_group_parts（自动落笔）→ vl_redraw_parts（逐部位重画平滑曲线，每批 ≤8）→ vl_check_semantics → vl_finish。',
+    '· 分组即落笔：几何已经是精确的区域边界，系统会自动复制，不需要再调 vl_draw_parts（draw:false 才需要手动画）。',
+    '· 认部位看四项测量值：`tone`（白/黑/红/橙…）、`where`（上左/中中/下右）、`holes`（内孔数）、`area`（像素面积）。',
+    '  眼白是「浅色 + 在头部 + 通常带 1 个孔（瞳孔）」；肚子里两侧的细长浅色条是描边残条，面积小又细长，不是眼睛。',
+    '  面积只占几个百分点、形状是一条细带的块，先并进相邻部位或 drop，不要给它编一个独立部位名。',
+    '· 分组：同一部位的碎块并成一组（围巾本体 + 阴影），给中文名「主体·部位」；',
+    '  同级碎块各自填，只有整个套在另一块里面的成员才当孔洞挖掉（所以眼白 + 瞳孔要分成两组，不要并成一组）。',
+    '· 组色默认**留空**：留空 = 沿用每块的实测原色，这是色彩还原的正确做法。',
+    '  只有组内确实需要统一（同一色相被抗锯齿拆成几块）才给 color，且必须贴近实测色；',
+    '  与实测差太远的组色会被程序拒收并在 colorFixed 里回报——不要靠改色去「修正」命名。',
+    '· 丢弃：抗锯齿暗带、细窄残条、压缩噪点这类画出来只会是「混乱像素」的碎块，写进**顶层** `drop:[key,…]`（与 groups 平级）；',
+    '  但眼睛、瞳孔、嘴、脚这类小件必须单独成组，不要当噪声丢掉，也不要并进身体。',
+    '· 遮挡：先大后小（底板 → 身体 → 围巾/嘴/脚 → 眼睛 → 瞳孔），同一部位不要拆成多组。',
+    '· 收口前必须调 vl_check_semantics：未分组块 0，duplicates 空，unnamed 0，colorFixed 空。',
+    '  clash 只是提示：两块都大（占比 ≥1%）才需要拆开；细窄残条并进相邻部位看不出来，不必为它反复重分组。',
+    '· 分组一次成型：除非 vl_check_semantics 报了 ungrouped / clash / colorFixed，否则不要再调 vl_group_parts 改名字。',
+    '  名字错了但颜色和几何都对时，画面不会变；反复改名只烧轮次。',
+    '分组落笔的是「区域边界」本身，像素台阶会原样保留，看起来就是歪歪扭扭的折线。',
+    '所以分组之后必须用 vl_redraw_parts 按部位重画一遍：每个部位给 8~20 个控制点，',
+    '按部位的整体形状画成平滑闭合曲线（身体是一圈、围巾是一条带），samples 只用来定位，不要逐像素照抄；',
+    '一批最多 8 条，分多批画完。重画后旧指标作废，最后再 vl_render_check。',
+  ].join('\n');
+
+  /* 曲线形态的实验分组。auto=模型自选，bezier=B 组（模型给手柄），
+   * poly=A 组对照（强制折线），fit=C 组（只给端点，手柄由程序最小二乘求）。 */
+  var FORM_NOTES = {
+    auto: [
+      '## 两种重绘形态（自选）',
+      '· 折线 `points`：折角多、短、细节线。',
+      '· 贝塞尔 `form:"bezier"`：长而平滑的弧（头发外沿、衣褶、轮廓弧）。用 vl_view_region 给的 `breaks` 当段端点，',
+      '  你只补每段的 `c1` / `c2` 手柄：手柄方向 = 该端点处的切线，长度不超过本段弦长的 0.85 倍（超过会被夹紧）。',
+      '· 判断依据：看不出明显折角 → 贝塞尔；有明显尖角（字形、图标、直角）→ 折线。',
+    ].join('\n'),
+    bezier: [
+      '## 本组固定：贝塞尔（B 组）',
+      '所有线都用 `form:"bezier"`：`start` + `segs`（每段 `end` + `c1` / `c2`）。',
+      '`breaks` 已经是切段建议，直接用；你只负责手柄的方向与长度（≤ 段弦长 0.85 倍）。不要用 `points`。',
+    ].join('\n'),
+    poly: [
+      '## 本组固定：折线（A 组）',
+      '所有线都用 `points` 折线（samples 原样回传），不要用 `form:"bezier"`。',
+    ].join('\n'),
+    fit: [
+      '## 本组固定：程序拟合手柄（C 组）',
+      '所有线都用 `form:"bezier"`，但你只给 `start` 与每段的 `end`（按 `breaks` 切段），**不要给 `c1` / `c2`**。',
+      '手柄由程序用参考线做最小二乘求解；你只决定在哪切段、每条线是什么。',
+    ].join('\n')
+  };
+
+  /* 分组时把「给几何」的口径整段换掉。真实运行暴露过：末尾的分组说明压不过开头的硬规则，
+   * 模型 5 次重绘全部照旧传 points，一次 bezier 都没有。 */
+  var GEOM = {
+    auto: {
+      rule1: 'key 指向参考线，points 是你给的控制点（3–128 个，相对区域 0–1000，与 samples 同口径）；长而平滑的弧也可以改用 form:"bezier" 给端点与手柄。',
+      rule2: 'samples 是按形状抽稀好的轮廓顶点（最多 128 个），保形性已经验证过：直接把 samples 原样传回 points，不要删点、不要按角度重排、不要自己重算坐标。只有确实要改形状时才微调个别点。',
+      fit: 'Catmull-Rom 拟合',
+      flow: 'vl_redraw_parts（key + points + name + width + color + order）'
+    },
+    bezier: {
+      rule1: '**必须**写 form:"bezier"，给 key + start + segs（每段 end 与 c1 / c2，坐标同样是 0–1000）；本组不要用 points。',
+      rule2: 'breaks 是程序按目标段长（约 60px）切好的段端点，直接用，不要自己另选切点；你只决定每段手柄的方向与长度（长度 ≤ 本段弦长的 0.85 倍，超出会被夹紧）。',
+      fit: '三次贝塞尔落笔',
+      flow: 'vl_redraw_parts（key + form:"bezier" + start + segs + name + width + color + order）'
+    },
+    poly: {
+      rule1: 'key + points（samples 原样回传）；本组不要用 form:"bezier"。',
+      rule2: 'samples 是抽稀好的轮廓顶点，直接原样传回 points，不要删点、不要重排、不要重算坐标。',
+      fit: 'Catmull-Rom 拟合',
+      flow: 'vl_redraw_parts（key + points + name + width + color + order）'
+    },
+    fit: {
+      rule1: '**必须**写 form:"bezier"，给 key + start + 每段 end（照 breaks 切段）；**不要给 c1 / c2**，也不要给 points。',
+      rule2: 'breaks 是程序切好的段端点，直接用；手柄由程序按参考线做最小二乘求解，你只决定在哪切段、每条线是什么。',
+      fit: '三次贝塞尔落笔（手柄由程序求）',
+      flow: 'vl_redraw_parts（key + form:"bezier" + start + segs[只给 end] + name + width + color + order）'
+    }
+  };
+
+  /* 工具描述也要跟着分组走：模型先读 description，口径不一致时它会按老的写 */
+  var FORM_TOOL = {
+    bezier: '精确重绘（本组固定贝塞尔）。必须写 form:"bezier"，给 start 与 segs[{end,c1,c2}]，坐标是相对区域 0–1000；不要传 points。手柄长度不超过本段弦长的 0.85 倍。',
+    fit: '精确重绘（本组固定贝塞尔 + 程序拟合手柄）。必须写 form:"bezier"，给 start 与 segs[{end}]，不要给 c1 / c2、不要传 points；手柄由程序求解。',
+    poly: '精确重绘（本组固定折线）。给 key + points（0–1000 控制点）+ name，不要用 form:"bezier"。'
+  };
+
+  function sysText() {
+    var g = GEOM[S.form] || GEOM.auto;
+    var base = SYS.replace('{{RULE1}}', g.rule1)
+      .replace('{{RULE2}}', g.rule2)
+      .replace('{{FIT}}', g.fit)
+      .replace('{{FLOW}}', g.flow);
+    return base + '\n\n' + (FORM_NOTES[S.form] || FORM_NOTES.auto);
+  }
+
+  function toolsFor(form) {
+    if (!form || form === 'auto' || !FORM_TOOL[form]) return TOOLS;
+    return TOOLS.map(function (t) {
+      if (!t.function || t.function.name !== 'vl_redraw_parts') return t;
+      var d = JSON.parse(JSON.stringify(t));
+      d.function.description = FORM_TOOL[form];
+      return d;
+    });
+  }
+
+  /* ---------------- 界面 ---------------- */
+
+  function note(text, warn) {
+    var d = document.createElement('div');
+    d.className = 'vl-say';
+    if (warn) d.style.color = '#b4453a';
+    d.textContent = text;
+    R.sup.appendChild(d);
+    R.sup.scrollTop = R.sup.scrollHeight;
+    return d;
+  }
+
+  function setPhase(text, cls) {
+    R.phase.textContent = text || '';
+    R.phase.className = 'vl-phase' + (cls ? ' ' + cls : '');
+  }
+
+  function clearSup() {
+    R.sup.innerHTML = '';
+    R.metrics.hidden = true;
+    R.round.textContent = '';
+    S.calls = [];
+  }
+
+  function addToolCard(name, args) {
+    var el = document.createElement('div');
+    el.className = 'vl-tool';
+    el.dataset.tool = name;
+    el.innerHTML =
+      '<div class="vl-tool-h"><span class="vl-tool-name">' + esc(name) + '</span>' +
+      '<span class="vl-chip">执行中</span><span class="vl-tool-ms"></span></div>' +
+      '<div class="vl-tool-a">' + esc(JSON.stringify(args || {}).slice(0, 220)) + '</div>' +
+      '<div class="vl-tool-r" hidden></div>';
+    R.sup.appendChild(el);
+    R.sup.scrollTop = R.sup.scrollHeight;
+    S.openCard = el;
+    return el;
+  }
+
+  function fillToolCard(el, rec) {
+    if (!el) return;
+    var chip = el.querySelector('.vl-chip');
+    var ms = el.querySelector('.vl-tool-ms');
+    var box = el.querySelector('.vl-tool-r');
+    if (ms) ms.textContent = (rec.ms || 0) + 'ms';
+    if (chip) {
+      chip.textContent = rec.error ? '失败' : 'ok';
+      chip.className = 'vl-chip ' + (rec.error ? 'err' : 'ok');
+    }
+    if (box) {
+      box.hidden = false;
+      box.textContent = (rec.error ? ('错误：' + rec.error) : JSON.stringify(rec.result)).slice(0, 320);
+    }
+    R.sup.scrollTop = R.sup.scrollHeight;
+  }
+
+  function showMetrics(m) {
+    if (!m) return;
+    function cls(v, good, bad, reverse) {
+      if (v == null) return '';
+      if (reverse) return v <= good ? 'is-good' : (v >= bad ? 'is-bad' : 'is-warn');
+      return v >= good ? 'is-good' : (v <= bad ? 'is-bad' : 'is-warn');
+    }
+    R.metrics.hidden = false;
+    var note = [];
+    if (m.bestChamfer != null && m.bestRound != null) {
+      note.push('<span class="vl-tag is-good">最好 ' + m.bestChamfer + ' · 第 ' + (m.bestRound + 1) + ' 轮</span>');
+    }
+    if (m.noProgress) note.push('<span class="vl-tag is-bad">比最好那轮差 · 可回滚</span>');
+    if (m.chamferP95 != null) note.push('<span class="vl-tag">P95 ' + m.chamferP95 + '</span>');
+    if (m.drawn != null) note.push('<span class="vl-tag">已画 ' + m.drawn + '/' + m.total + '</span>');
+    if (m.undrawn && m.undrawn.length) note.push('<span class="vl-tag is-warn">未画 ' + m.undrawn.length + '</span>');
+    R.metrics.innerHTML =
+      '<div class="vl-metric-grid">' +
+        '<div class="vl-metric ' + cls(m.chamfer, 1.5, 3, true) + '"><b>' + (m.chamfer != null ? m.chamfer : '—') + '</b><span>Chamfer px</span></div>' +
+        '<div class="vl-metric ' + cls(m.recall, 0.9, 0.7) + '"><b>' + (m.recall != null ? round3(m.recall) : '—') + '</b><span>召回</span></div>' +
+        '<div class="vl-metric ' + cls(m.precision, 0.9, 0.7) + '"><b>' + (m.precision != null ? round3(m.precision) : '—') + '</b><span>精度</span></div>' +
+        '<div class="vl-metric"><b>' + (m.medianWidth != null ? m.medianWidth : '—') + '</b><span>中位线宽</span></div>' +
+      '</div>' +
+      (note.length ? '<div class="vl-metric-note">' + note.join('') + '</div>' : '');
+  }
+
+  function renderParts() {
+    if (!R.partsList) return;
+    R.partsN.textContent = String(S.strokes.length);
+    if (!S.strokes.length) {
+      R.partsList.innerHTML = '<div class="vl-none">还没有线段。先载入图片并提取。</div>';
+      R.legend.innerHTML = '';
+      if (R.layers) { R.layers.hidden = true; R.layers.innerHTML = ''; }
+      return;
+    }
+    /* 图层 = 语义组。组名、颜色、包含几块都列出来，点一行单独隐藏/显示，
+     * 用来核对每个部位各自的形状，而不是只能看一张糊在一起的画。 */
+    if (R.layers) {
+      if (!S.layers.length) {
+        R.layers.hidden = true; R.layers.innerHTML = '';
+      } else {
+        R.layers.hidden = false;
+        R.layers.innerHTML = '<div class="vl-legend-t">图层</div>' + S.layers.map(function (l) {
+          var off = !!S.hidden[l.id];
+          return '<div class="vl-part' + (off ? ' is-off' : '') + '" data-layer="' + esc(l.id) + '">' +
+            '<span class="vl-sw" style="background:' + esc(l.color) + '"></span>' +
+            '<div class="vl-part-main"><div class="vl-part-name">' + esc(l.name) + '</div>' +
+            '<div class="vl-part-meta"><span>' + l.keys.length + ' 块</span><span>' + (off ? '已隐藏' : '显示中') + '</span></div></div>' +
+            '</div>';
+        }).join('');
+      }
+    }
+    R.partsList.innerHTML = S.strokes.map(function (p) {
+      var src = p.source === 'user' ? '手改' : (p.source === 'model' ? '模型' : (p.source === 'llm' ? '模型' : '默认'));
+      var drawn = S.ops.has(p.key);
+      return '<div class="vl-part' + (p.key === S.activeKey ? ' is-on' : '') + '" data-key="' + esc(p.key) + '">' +
+        '<span class="vl-sw" style="background:' + esc(p.color) + '"></span>' +
+        '<div class="vl-part-main">' +
+          '<input class="vl-name" data-name="' + esc(p.key) + '" value="' + esc(partName(p)) + '">' +
+          '<div class="vl-part-meta"><span>长 ' + Math.round(p.length) + '</span><span>宽 ' + round2(p.width) +
+          '</span><span>' + p.anchors + ' 锚点</span><span class="vl-src">' + src + '</span></div>' +
+        '</div>' +
+        '<span class="vl-state' + (drawn ? ' is-drawn' : '') + '">' + (drawn ? '已画' : '参考') + '</span>' +
+        '</div>';
+    }).join('');
+
+    R.legend.innerHTML = '<div class="vl-legend-t">参考线</div>' + S.strokes.slice(0, 5).map(function (p) {
+      return '<div class="vl-legend-row"><i style="background:' + esc(p.color) + '"></i>' +
+        esc(partName(p)) + ' 长' + Math.round(p.length) + '</div>';
+    }).join('');
+  }
+
+  function updateStat() {
+    if (!R.stat) return;
+    R.stat.textContent = S.img
+      ? (S.imgName + ' · ' + S.w + '×' + S.h +
+        (S.region ? (' · 区域 ' + Math.round(S.region.w) + '×' + Math.round(S.region.h)) : '') +
+        (S.lastMode ? (' · ' + (S.lastMode === 'contour' ? '轮廓' : S.lastMode === 'dark' ? '中线·暗线' : '中线·边缘')) : '') +
+        (S.strokes.length ? (' · 已描绘 ' + S.ops.size + '/' + S.strokes.length) : ''))
+      : '未载入图像';
+    if (R.dot) {
+      R.dot.className = 'vl-dot' + (S.busy ? ' is-live' : (S.img ? ' is-ready' : ''));
+    }
+  }
+
+  function setBusyUI(on) {
+    var open = R.wrap.querySelector('[data-act="open"]');
+    var run = R.wrap.querySelector('[data-act="run"]');
+    var stop = R.wrap.querySelector('[data-act="stop"]');
+    var ext = R.wrap.querySelector('[data-act="extract"]');
+    if (open) open.disabled = on;
+    if (run) run.disabled = on;
+    if (ext) ext.disabled = on;
+    if (stop) stop.disabled = !on;
+  }
+
+  function readOpts() {
+    if (R.shape) S.opt.shape = R.shape.value;
+    if (R.src) S.opt.src = R.src.value;
+    if (R.threshold) S.opt.threshold = Number(R.threshold.value);
+    if (R.simplify) S.opt.simplify = Number(R.simplify.value);
+    if (R.minLen) S.opt.minLen = Number(R.minLen.value);
+    if (R.fill) S.opt.fill = !!R.fill.checked;
+    if (R.thresholdV) R.thresholdV.textContent = String(S.opt.threshold);
+    if (R.simplifyV) R.simplifyV.textContent = String(S.opt.simplify);
+    if (R.minLenV) R.minLenV.textContent = String(S.opt.minLen);
+  }
+
+  /* ---------------- 主流程 ---------------- */
+
+  async function startRedraw(variantId) {
+    if (S.busy) return;
+    if (!S.img) { setPhase('先载入图片', 'is-err'); return; }
+    if (!S.strokes.length) extractStrokes();
+
+    var conn = null;
+    try { conn = (typeof llmConn === 'function') ? llmConn() : null; } catch (e) { conn = null; }
+    if (!conn && !S.stub) {
+      setPhase('未配置语言模型', 'is-err');
+      note('还没有可用的语言模型。去「设置」里填接口地址 / Key / 模型，或登录云端账号。', true);
+      return;
+    }
+
+    readOpts();
+    S.busy = true; S.ctrl = new AbortController(); S.variant = variantId || '';
+    S.metrics = null; S.best = null;
+    /* 每次运行从空白开始：画布上的实线只能是这一轮模型自己画的 */
+    S.ops = new Map();
+    drawScene();
+    clearSup();
+    setBusyUI(true);
+    setPhase('思考中…', 'is-run');
+    S.round = 0;
+    R.round.textContent = '';
+    switchTab('sup');
+
+    var t0 = Date.now();
+    var roundBubble = null;
+    var res = null, err = null, review = '';
+    /* 位图必须随第一条消息发出去：矢量只说明墨在哪，认出「企鹅」只能靠看图。 */
+    var firstContent = [{
+      type: 'text',
+      text: '框选区域已提取 ' + S.strokes.length + ' 条参考线。附是该区域的原始位图（等比缩小，坐标与 strokes 一致）。先看清主体是什么，再逐条命名并重绘。'
+    }];
+    var shot = regionImageURL(768);
+    if (shot) firstContent.push({ type: 'image_url', image_url: { url: shot } });
+    try {
+      res = await toolLoopRun({
+        sys: sysText(),
+        messages: [{ role: 'user', content: firstContent }],
+        tools: toolsFor(S.form),
+        maxRounds: 8,
+        keepRounds: 2,
+        /* 位图只在首两轮随请求发出：后面每轮都重发同一张图，输入费用按轮次线性涨 */
+        stripImagesAfterRound: 2,
+        app: 'visionlab',
+        conn: conn,
+        signal: S.ctrl.signal,
+        executor: execTool,
+        digest: digestOf,
+        digestArgs: digestArgsOf,
+        facts: factsCard,
+        onDelta: function (acc, delta) {
+          if (!roundBubble) {
+            roundBubble = document.createElement('div');
+            roundBubble.className = 'vl-say';
+            R.sup.appendChild(roundBubble);
+          }
+          /* llmStreamRequest 的第一个参数是累计全文，第二个才是增量。
+           * 以前按增量拼累计值，长回答会指数级膨胀。 */
+          roundBubble.textContent = (typeof acc === 'string' && acc)
+            ? acc
+            : ((roundBubble.textContent || '') + (delta || ''));
+          R.sup.scrollTop = R.sup.scrollHeight;
+        },
+        onRound: function (r) {
+          S.round = r.round;
+          R.round.textContent = r.phase === 'final' ? '收口轮'
+            : ('第 ' + (r.round + 1) + ' 轮' + (r.maxRounds != null ? ' / ' + (r.maxRounds + 1) : ''));
+          roundBubble = null;
+          if (r.phase === 'request') setPhase('第 ' + (r.round + 1) + ' 轮：请求中', 'is-run');
+          if (r.phase === 'tools') setPhase('第 ' + (r.round + 1) + ' 轮：执行工具', 'is-run');
+        },
+        onToolStart: function (c) { addToolCard(c.name, c.args); },
+        onTool: function (rec) {
+          S.calls.push({ name: rec.name, args: rec.args, ms: rec.ms, error: rec.error || '', result: rec.result });
+          fillToolCard(S.openCard, rec);
+        }
+      });
+      /* 模型 force 重提取把线全清了、又没来得及重画：最好一轮别丢（快照里是模型自己画的线） */
+      if (!S.ops.size && S.best) {
+        try {
+          restoreBest();
+          note('结束时画布为空，已自动回到最好一轮（Chamfer ' + (S.metrics ? S.metrics.chamfer : '?') + '）。');
+        } catch (e4) {}
+      }
+      /* 模型最后一笔常常就是重绘；此时指标被清空，收口前补算一次，别让监督页停在「无指标」 */
+      if (!S.metrics && S.ops.size) { try { renderCheck(); } catch (e2) {} }
+      if (res && res.exhausted) note('达到工具轮次上限，已强制收口。');
+      if (res && res.text) note(String(res.text));
+      if (res && res.requests) {
+        /* 字符数不是 token：各家中转口径不同，只有「相对大小」是可靠的。
+         * 中文约 1.5 字/token、JSON 坐标约 3 字/token，这里按 2.5 粗估。 */
+        note('本次 ' + res.requests + ' 次请求，上下文合计 ' + fmtK(res.ctxChars) +
+          ' 字符（≈' + fmtK(Math.round((res.ctxChars || 0) / 2.5)) + ' tokens，粗估）。');
+      }
+      review = await askReview(res, conn);
+    } catch (e) {
+      err = e;
+      var msg = String((e && e.message) || e);
+      if (/abort|停止/i.test(msg) && S.ctrl && S.ctrl.signal.aborted) {
+        setPhase('已停止', 'is-err');
+        note('已停止。');
+      } else {
+        /* 与正常结束同一口径：画布被清空时先回滚最好一轮，再判断是否收口 */
+        if (!S.ops.size && S.best) { try { restoreBest(); } catch (e5) {} }
+        if (!S.metrics && S.ops.size) { try { renderCheck(); } catch (e3) {} }
+        if (S.calls.length && S.metrics) {
+          setPhase('已收口 · Chamfer ' + S.metrics.chamfer, 'is-run');
+          note('模型最后一轮没有给出结论（' + msg + '），已按当前描绘结果收口。');
+          err = null;
+        } else {
+          setPhase('出错', 'is-err');
+          note('出错：' + msg, true);
+        }
+      }
+    } finally {
+      S.busy = false; S.ctrl = null;
+      setBusyUI(false);
+      if (!err) setPhase(S.metrics ? ('完成 · Chamfer ' + S.metrics.chamfer) : '完成', 'is-run');
+
+      S.runs.unshift({
+        ts: new Date().toISOString(),
+        variant: variantId || '手控',
+        params: Object.assign({}, S.opt),
+        mode: S.lastMode,
+        strokes: S.strokes.length,
+        rounds: res ? res.rounds : S.round,
+        calls: (res && res.calls) ? res.calls.length : S.calls.length,
+        chamfer: S.metrics ? S.metrics.chamfer : null,
+        recall: S.metrics ? S.metrics.recall : null,
+        precision: S.metrics ? S.metrics.precision : null,
+        width: S.metrics ? S.metrics.medianWidth : null,
+        ms: Date.now() - t0,
+        requests: res && res.requests != null ? res.requests : null,
+        ctxChars: res && res.ctxChars != null ? res.ctxChars : null,
+        review: review || '',
+        error: err ? String((err && err.message) || err) : ''
+      });
+      if (S.runs.length > 30) S.runs.pop();
+      saveRuns(); renderRuns(); renderParts(); drawScene();
+    }
+  }
+
+  /* 跑完复盘：循环内的上下文只有最近两轮原文，所以退出后单独发一条请求
+   * （只挂一个 vl_review 工具），输入是这一轮的压缩账本 + 失败记录 + 最终指标，
+   * 让它以使用者身份指出工具哪里难用。用 ledger 而不是回放全量消息，成本只有几百 token。 */
+  async function askReview(res, conn) {
+    if (S.stub || !res || !res.calls || !res.calls.length) return '';
+    var mem = res.memory || {};
+    var m = S.metrics;
+    var fact = m
+      ? ('Chamfer ' + m.chamfer + ' / 召回 ' + m.recall + ' / 精度 ' + m.precision + ' / 中位线宽 ' + m.medianWidth)
+      : '未校验';
+    var ask = [
+      '这一轮重绘已经结束。下面是你刚才的调用账本与最终指标，不要继续画。',
+      '<WORK_LOG>', (mem.ledger || []).join('\n') || '(空)', '</WORK_LOG>',
+      '<REJECTED>', (mem.negatives || []).join('\n') || '(无)', '</REJECTED>',
+      '曲线口径：' + S.form + '；参考线 ' + S.strokes.length + ' 条，已描绘 ' + S.ops.size + ' 条；最终 ' + fact + '。',
+      '',
+      '请以「刚用过这套工具的人」的身份复盘，只通过 vl_review 工具提交，不要写正文：',
+      'friction 至少 2 条，每条要引用账本里的具体数字或返回字段；missing 写最缺的一个能力；keep 写最该保留的一条设定。'
+    ].join('\n');
+    /* 复盘也走工具调用：这台中转在「自由续写」上会退化成逐字加长的重复
+     * （实测把「最难用的一步：」重复了上千次，输出 600KB），而工具参数没出现过这个问题。 */
+    var tool = {
+      type: 'function',
+      function: {
+        name: 'vl_review',
+        description: '提交本轮工具使用的复盘',
+        parameters: {
+          type: 'object',
+          properties: {
+            friction: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  tool: { type: 'string', description: '工具名或指令条目' },
+                  what: { type: 'string', description: '哪里难用 / 哪里自相矛盾' },
+                  evidence: { type: 'string', description: '账本里的具体数字或返回字段' },
+                  fix: { type: 'string', description: '具体改法' }
+                },
+                required: ['tool', 'what', 'fix']
+              }
+            },
+            missing: { type: 'string', description: '最缺的一个能力' },
+            keep: { type: 'string', description: '最该保留的一条设定' }
+          },
+          required: ['friction', 'missing', 'keep']
+        }
+      }
+    };
+    var out = null;
+    try {
+      out = await llmStreamRequest('', [{ role: 'user', content: ask }], function () {},
+        { conn: conn, app: 'visionlab', tools: [tool] });
+    } catch (e) { return ''; }
+    var calls = (out && Array.isArray(out.toolCalls)) ? out.toolCalls : [];
+    if (!calls.length) return '';
+    var args = null;
+    try { args = JSON.parse(calls[0].function.arguments || '{}'); } catch (e) { args = null; }
+    if (!args) return '';
+    var txt = JSON.stringify(args);
+    S.lastReview = txt;
+    note('【模型复盘】' + txt);
+    return txt;
+  }
+
+  function stopRun() { if (S.ctrl) S.ctrl.abort(); }
+
+  /* ---------------- 实验 ---------------- */
+
+  var VARIANTS = [
+    { id: 'A', name: 'A 轮廓基线', desc: '轮廓模式（每字一圈闭合环），抽稀 0.5。文字 / 实心笔画首选。', opt: { shape: 'contour', src: 'auto', threshold: 20, simplify: 0.5, minLen: 8 } },
+    { id: 'B', name: 'B 轮廓强抽稀', desc: '轮廓 + 抽稀 1.8：锚点少、折角明显。检验可读性的锚点下限。', opt: { shape: 'contour', src: 'auto', threshold: 20, simplify: 1.8, minLen: 8 } },
+    { id: 'C', name: 'C 轮廓弱抽稀', desc: '轮廓 + 抽稀 0.3：锚点多、最贴边。与 B 形成锚点预算对照。', opt: { shape: 'contour', src: 'auto', threshold: 20, simplify: 0.3, minLen: 8 } },
+    { id: 'D', name: 'D 中线基线', desc: '中线 + 线宽，阈值 20、抽稀 0.8。单线手绘 / 线稿用它。', opt: { shape: 'center', src: 'auto', threshold: 20, simplify: 0.8, minLen: 8 } },
+    { id: 'E', name: 'E 中线低阈值', desc: '中线 + 阈值 12，抓更多淡线。检验召回与碎段数量的取舍。', opt: { shape: 'center', src: 'auto', threshold: 12, simplify: 0.8, minLen: 8 } },
+    { id: 'F', name: 'F 中线强抽稀', desc: '中线 + 抽稀 1.8，锚点少。检验几何精度下限与 Chamfer 的关系。', opt: { shape: 'center', src: 'auto', threshold: 20, simplify: 1.8, minLen: 8 } },
+    { id: 'G', name: 'G 贝塞尔（B 组）', desc: '强制 form:bezier：模型给端点与手柄，程序直接落三次贝塞尔。对照曲线表示法。', form: 'bezier', opt: { shape: 'contour', src: 'auto', threshold: 20, simplify: 0.5, minLen: 8 } },
+    { id: 'H', name: 'H 折线（A 组）', desc: '强制 points 折线 + Catmull-Rom。与 G 同图同参，只差曲线表示法。', form: 'poly', opt: { shape: 'contour', src: 'auto', threshold: 20, simplify: 0.5, minLen: 8 } },
+    { id: 'I', name: 'I 程序拟合手柄（C 组）', desc: '模型只给端点（按 breaks 切段），手柄由程序最小二乘求。用来分离「模型判断」与「程序拟合」。', form: 'fit', opt: { shape: 'contour', src: 'auto', threshold: 20, simplify: 0.5, minLen: 8 } }
+  ];
+
+  function applyVariant(v) {
+    S.form = v.form || 'auto';
+    Object.keys(v.opt).forEach(function (k) { S.opt[k] = v.opt[k]; });
+    if (R.shape) R.shape.value = S.opt.shape;
+    if (R.src) R.src.value = S.opt.src;
+    if (R.threshold) R.threshold.value = String(S.opt.threshold);
+    if (R.simplify) R.simplify.value = String(S.opt.simplify);
+    if (R.minLen) R.minLen.value = String(S.opt.minLen);
+    readOpts();
+    extractStrokes();
+  }
+
+  function renderVariants() {
+    if (!R.variants) return;
+    R.variants.innerHTML = VARIANTS.map(function (v, i) {
+      return '<div class="vl-variant">' +
+        '<span class="vl-variant-no">' + (i + 1) + '</span>' +
+        '<div class="vl-variant-body"><div class="vl-variant-t">' + esc(v.name) + '</div>' +
+        '<div class="vl-variant-d">' + esc(v.desc) + '</div></div>' +
+        '<button type="button" class="vl-btn" data-variant="' + v.id + '">跑</button></div>';
+    }).join('');
+  }
+
+  async function runVariant(id) {
+    var v = VARIANTS.filter(function (x) { return x.id === id; })[0];
+    if (!v) return;
+    if (!S.img) { setPhase('先载入图片', 'is-err'); switchTab('sup'); return; }
+    applyVariant(v);
+    await startRedraw(v.id);
+  }
+
+  function renderRuns() {
+    if (!R.runs) return;
+    if (!S.runs.length) {
+      R.runs.innerHTML = '<div class="vl-none">还没有记录。跑一次重绘后这里会出现指标。</div>';
+      return;
+    }
+    R.runs.innerHTML = '<div class="vl-runs-h"><span>方案</span><span>时间 / 调用 / 上下文</span><span>Chamfer</span></div>' +
+      S.runs.map(function (r) {
+        var t = String(r.ts || '').slice(11, 19);
+        var ctx = r.ctxChars ? ' / ≈' + fmtK(Math.round(r.ctxChars / 2.5)) + 't' : '';
+        return '<div class="vl-run"><b>' + esc(r.variant) + '</b><span>' + t + ' · ' + r.strokes + '段/' + r.calls + '调用' + ctx + '</span>' +
+          '<span class="vl-run-ch">' + (r.chamfer == null ? '—' : r.chamfer) + '</span></div>';
+      }).join('');
+  }
+
+  function saveRuns() {
+    if (/[?&]nostore=1/.test(location.search)) return;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(S.runs.slice(0, 30))); } catch (e) {}
+  }
+  function loadRuns() {
+    try {
+      var raw = localStorage.getItem(STORE_KEY);
+      if (raw) S.runs = JSON.parse(raw) || [];
+    } catch (e) { S.runs = []; }
+  }
+
+  function exportRun() {
+    var data = {
+      tool: 'visionlab',
+      kind: 'line',
+      at: new Date().toISOString(),
+      image: { name: S.imgName, w: S.w, h: S.h },
+      region: S.region,
+      params: S.opt,
+      mode: S.lastMode,
+      strokes: S.strokes.map(strokeBrief),
+      metrics: S.metrics,
+      runs: S.runs
+    };
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'visionlab-line-' + Date.now() + '.json';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    note('已导出运行记录 JSON。');
+  }
+
+  /* ---------------- 交互 ---------------- */
+
+  function switchTab(name) {
+    R.wrap.querySelectorAll('.vl-tab').forEach(function (b) {
+      b.classList.toggle('is-on', b.dataset.tab === name);
+    });
+    R.wrap.querySelectorAll('.vl-pane').forEach(function (p) {
+      p.hidden = p.dataset.pane !== name;
+    });
+  }
+
+  function bindCanvas() {
+    CV.addEventListener('pointerdown', function (ev) {
+      if (!S.img || S.busy) return;
+      CV.setPointerCapture(ev.pointerId);
+      var cp = canvasPt(ev);
+      if (ev.shiftKey || ev.button === 1) {
+        S.drag = { mode: 'pan', x: cp[0], y: cp[1], ox: S.view.ox, oy: S.view.oy };
+        return;
+      }
+      if (ev.button !== 0) return;
+      var ip = toImg(cp[0], cp[1]);
+      if (S.ckpt) {
+        /* 控制点模式：优先抓最近的控制点，抓空了不重提取（避免误把选区清掉） */
+        var hit = nearestAnchor(ip);
+        if (hit) { S.drag = { mode: 'ckpt', key: hit.key, idx: hit.idx, moved: false }; return; }
+        return;
+      }
+      S.drag = { mode: 'rect', x0: clamp(ip[0], 0, S.w), y0: clamp(ip[1], 0, S.h), rect: null };
+      drawScene();
+    });
+
+    CV.addEventListener('pointermove', function (ev) {
+      if (!S.drag) return;
+      var cp = canvasPt(ev);
+      if (S.drag.mode === 'pan') {
+        S.view.ox = S.drag.ox + (cp[0] - S.drag.x);
+        S.view.oy = S.drag.oy + (cp[1] - S.drag.y);
+        drawScene();
+        return;
+      }
+      var ip = toImg(cp[0], cp[1]);
+      if (S.drag.mode === 'ckpt') {
+        var part = S.strokes.filter(function (q) { return q.key === S.drag.key; })[0];
+        if (part && part.path[S.drag.idx]) {
+          part.path[S.drag.idx] = [clamp(ip[0], 0, S.w), clamp(ip[1], 0, S.h)];
+          part.bbox = bboxOfPath(part.path);
+          if (part.region) part.bez = fitBezLoop(part.path, part.tol || 2);
+          S.drag.moved = true;
+          drawScene();
+        }
+        return;
+      }
+      var x0 = S.drag.x0, y0 = S.drag.y0;
+      var x1 = clamp(ip[0], 0, S.w), y1 = clamp(ip[1], 0, S.h);
+      S.drag.rect = { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+      drawScene();
+    });
+
+    CV.addEventListener('pointerup', function () {
+      if (!S.drag) return;
+      var d = S.drag;
+      S.drag = null;
+      if (d.mode === 'ckpt') {
+        if (d.moved) {
+          /* 几何改了，旧指标就不再对应这张图，先清掉等下一次回读 */
+          S.metrics = null; S.best = null;
+          R.metrics.hidden = true;
+          renderParts();
+          note('控制点已调整。点「回读校验」或「监督重绘」再量一次 Chamfer。');
+        }
+        drawScene();
+        return;
+      }
+      if (d.mode === 'rect' && d.rect && d.rect.w >= 6 && d.rect.h >= 6) {
+        S.region = {
+          x: Math.round(d.rect.x), y: Math.round(d.rect.y),
+          w: Math.round(d.rect.w), h: Math.round(d.rect.h)
+        };
+        updateStat();
+        extractStrokes();
+      }
+      drawScene();
+    });
+
+    CV.addEventListener('wheel', function (ev) {
+      if (!S.img) return;
+      ev.preventDefault();
+      var cp = canvasPt(ev);
+      var before = toImg(cp[0], cp[1]);
+      var k = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+      S.view.s = clamp(S.view.s * k, 0.05, 12);
+      S.view.ox = cp[0] - before[0] * S.view.s;
+      S.view.oy = cp[1] - before[1] * S.view.s;
+      S.zoomed = true;
+      drawScene();
+    }, { passive: false });
+  }
+
+  function bindStage() {
+    R.stage.addEventListener('dragover', function (ev) { ev.preventDefault(); });
+    R.stage.addEventListener('drop', function (ev) {
+      ev.preventDefault();
+      var f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+      if (f) loadFile(f).catch(function (e) { note(e.message, true); });
+    });
+    document.addEventListener('paste', function (ev) {
+      if (R.wrap.offsetParent === null) return;
+      var items = ev.clipboardData && ev.clipboardData.items;
+      if (!items) return;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].type && items[i].type.indexOf('image') === 0) {
+          var f = items[i].getAsFile();
+          if (f) { loadFile(f).catch(function (e) { note(e.message, true); }); ev.preventDefault(); }
+          break;
+        }
+      }
+    });
+  }
+
+  function bindUI() {
+    R.wrap.addEventListener('click', function (ev) {
+      var act = ev.target.closest('[data-act]');
+      if (act) {
+        var a = act.dataset.act;
+        if (a === 'open') R.file.click();
+        else if (a === 'only') {
+          S.onlyDraw = !S.onlyDraw;
+          act.classList.toggle('is-on', S.onlyDraw);
+          drawScene();
+        }
+        else if (a === 'ckpt') {
+          /* 控制点模式：画布上的锚点可以直接拖，拖完几何就是新的。
+           * 和「框选提取」冲突，所以做成互斥的开关，而不是常驻。 */
+          S.ckpt = !S.ckpt;
+          act.classList.toggle('is-on', S.ckpt);
+          drawScene();
+          note(S.ckpt ? '控制点模式：拖动圆点即可改曲线，改动只影响几何。'
+            : '已退出控制点模式。');
+        }
+        else if (a === 'extract') extractStrokes();
+        else if (a === 'reset') {
+          /* 清空描绘：把画布还给「参考线」，不替模型补画 */
+          S.ops = new Map();
+          S.metrics = null; S.best = null; R.metrics.hidden = true;
+          drawScene(); renderParts(); updateStat();
+          note('已清空描绘。画布上剩下的淡虚线只是参考，不是成品。');
+        } else if (a === 'run') startRedraw('');
+        else if (a === 'stop') stopRun();
+        else if (a === 'export') exportRun();
+        return;
+      }
+      var tab = ev.target.closest('.vl-tab');
+      if (tab) { switchTab(tab.dataset.tab); return; }
+      var vbtn = ev.target.closest('[data-variant]');
+      if (vbtn) { runVariant(vbtn.dataset.variant); return; }
+      var part = ev.target.closest('.vl-part');
+      if (part && !ev.target.closest('.vl-name')) {
+        S.activeKey = S.activeKey === part.dataset.key ? '' : part.dataset.key;
+        renderParts(); drawScene();
+      }
+    });
+
+    R.file.addEventListener('change', function () {
+      var f = R.file.files && R.file.files[0];
+      if (f) loadFile(f).catch(function (e) { note(e.message, true); });
+      R.file.value = '';
+    });
+
+    R.partsList.addEventListener('change', function (ev) {
+      var inp = ev.target.closest('[data-name]');
+      if (!inp) return;
+      var key = inp.dataset.name;
+      var val = inp.value.trim();
+      if (!val) return;
+      setLex(key, val, '', 'user', 1);
+      renderParts();
+    });
+
+    if (R.layers) {
+      R.layers.addEventListener('click', function (ev) {
+        var row = ev.target.closest('[data-layer]');
+        if (!row) return;
+        var id = row.dataset.layer;
+        S.hidden[id] = !S.hidden[id];
+        renderParts(); drawScene();
+      });
+    }
+
+    ['threshold', 'simplify', 'minLen'].forEach(function (k) {
+      var el = R[k];
+      if (!el) return;
+      el.addEventListener('input', function () { readOpts(); });
+      el.addEventListener('change', function () { readOpts(); if (S.img) extractStrokes(); });
+    });
+    if (R.src) R.src.addEventListener('change', function () { readOpts(); if (S.img) extractStrokes(); });
+    if (R.shape) R.shape.addEventListener('change', function () { readOpts(); if (S.img) extractStrokes(); });
+    if (R.fill) R.fill.addEventListener('change', function () {
+      readOpts(); drawScene();
+      /* 填色改变「画出来的面积」，指标要跟着重算，否则监督页停在旧口径 */
+      if (S.ops.size) renderCheck();
+    });
+
+    if (window.ResizeObserver) {
+      new ResizeObserver(syncStage).observe(R.stage);
+    } else {
+      window.addEventListener('resize', syncStage);
+    }
+  }
+
+  /* ---------------- 注册 ---------------- */
+
+  registerApp({
+    id: 'visionlab',
+    name: '线稿重绘台',
+    title: '线稿重绘台 · 中线 + 线宽',
+    sub: '从位图提中线与线宽，监督模型重新描绘线稿并回读 Chamfer',
+    order: 95,
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M3 17c4-1 5-9 9-9s5 8 9 7"/><path d="M3 12h3M18 12h3"/>' +
+      '<circle cx="7" cy="6" r="1.2"/><circle cx="17" cy="6" r="1.2"/></svg>',
+    css: ['apps/visionlab/app.css'],
+    body: window.VL_BODY,
+
+    mount: function (body) {
+      R.wrap = body.querySelector('.vl-wrap');
+      ['stage', 'canvas', 'empty', 'legend', 'stat', 'dot', 'file', 'partsList', 'partsN', 'layers',
+        'phase', 'round', 'metrics', 'sup', 'variants', 'runs',
+        'shape', 'src', 'threshold', 'thresholdV', 'simplify', 'simplifyV', 'minLen', 'minLenV', 'fill'
+      ].forEach(function (k) { R[k] = body.querySelector('[data-ref="' + k + '"]'); });
+
+      CV = R.canvas;
+      CTX = CV.getContext('2d');
+      S.ready = true;
+
+      if (body.dataset.ready === '1') {
+        resizeCanvas(); fitView(); drawScene(); renderParts(); updateStat();
+        return;
+      }
+      body.dataset.ready = '1';
+
+      loadRuns();
+      renderVariants();
+      renderRuns();
+      readOpts();
+      resizeCanvas();
+      bindCanvas();
+      bindStage();
+      bindUI();
+      drawScene();
+      setPhase('待命', '');
+    }
+  });
+
+  /* ---------------- 测试钩子 ---------------- */
+
+  window.vlLab = {
+    __debug: function () {
+      return {
+        ready: S.ready,
+        visible: !!(R.wrap && R.wrap.offsetParent !== null),
+        image: !!S.img,
+        w: S.w, h: S.h,
+        view: { s: S.view.s, ox: S.view.ox, oy: S.view.oy },
+        ckpt: S.ckpt,
+        region: S.region,
+        strokes: S.strokes.length,
+        mode: S.lastMode,
+        auto: S.autoStats || null,
+        drawn: sortedOps().length,
+        metrics: S.metrics,
+        runs: S.runs.length,
+        calls: S.calls.length,
+        busy: S.busy,
+        stub: S.stub,
+        opts: Object.assign({}, S.opt)
+      };
+    },
+    __test: {
+      loadDemo: function () { return loadDemo(); },
+      loadFile: function (f) { return loadFile(f); },
+      loadDataURL: function (url) {
+        return new Promise(function (res, rej) {
+          var img = new Image();
+          img.onload = function () { setImage(img, 'pasted'); res(true); };
+          img.onerror = function () { rej(new Error('图片解码失败')); };
+          img.src = url;
+        });
+      },
+      setOnly: function (v) { S.onlyDraw = !!v; drawScene(); return S.onlyDraw; },
+      setOpt: function (o) {
+        Object.keys(o || {}).forEach(function (k) { if (k in S.opt) S.opt[k] = o[k]; });
+        /* 先写 DOM 再读回来：readOpts 会从控件取值，反过来会把刚设的值盖掉 */
+        if (R.shape) R.shape.value = S.opt.shape;
+        if (R.src) R.src.value = S.opt.src;
+        if (R.threshold) R.threshold.value = String(S.opt.threshold);
+        if (R.simplify) R.simplify.value = String(S.opt.simplify);
+        if (R.minLen) R.minLen.value = String(S.opt.minLen);
+        if (R.fill) R.fill.checked = !!S.opt.fill;
+        readOpts();
+        return Object.assign({}, S.opt);
+      },
+      setRegion: function (r) { S.region = r; updateStat(); return extractStrokes(); },
+      extract: function () { return extractStrokes(); },
+      autoDraw: function () {
+        return drawStrokes({
+          ops: S.strokes.map(function (p, i) {
+            return { key: p.key, width: p.width, color: p.color, order: i };
+          })
+        });
+      },
+      bez: function (key) {
+        var p = S.strokes.filter(function (x) { return x.key === key; })[0];
+        if (!p) return null;
+        return { tol: p.tol, segs: (p.bez || []).length, holeSegs: (p.holeBez || []).map(function (a) { return a.length; }),
+          first: (p.bez || [])[0] };
+      },
+      check: function () { return renderCheck(); },
+      parts: function () { return S.strokes.map(strokeBrief); },
+      path: function (key) {
+        var p = S.strokes.filter(function (x) { return x.key === key; })[0]
+          || S.strokes.filter(function (x) { return x.key === S.activeKey; })[0]
+          || S.strokes[0];
+        if (!p) return null;
+        var r = S.region || { x: 0, y: 0, w: S.w, h: S.h };
+        return {
+          key: p.key, points: p.path.length, anchors: p.anchors,
+          closed: !!p.closed, source: p.source, redrawn: !!p.redrawn,
+          bbox: p.bbox, width: p.width, name: partName(p),
+          /* 与 vl_view_region 同口径：相对区域 0–1000 */
+          samples: controlSamples(p.path, p.closed, sampleCount(p)).map(function (q) {
+            return [Math.round((q[0] - r.x) / Math.max(1, r.w) * 1000),
+              Math.round((q[1] - r.y) / Math.max(1, r.h) * 1000)];
+          }),
+          head: p.path.slice(0, 3),
+          form: p.form || '',
+          breaks: (function () {
+            var bk = bezierBreaks(p.path, p.closed, 16);
+            return bk ? { segs: bk.segs, points: bk.breaks.map(normPx) } : null;
+          })()
+        };
+      },
+      setForm: function (f) { S.form = FORM_NOTES[f] ? f : 'auto'; return S.form; },
+      /* 探针用它验证：分组提示词里不能残留 {{...}} 占位符 */
+      sys: function () { return sysText(); },
+      tools: function (f) { return toolsFor(f || S.form); },
+      lastReview: function () { return S.lastReview || ''; },
+      best: function () { return S.best ? { round: S.best.round, chamfer: S.best.m.chamfer } : null; },
+      restoreBest: function () { return restoreBest(); },
+      region: function () { return S.region; },
+      raw: function (key) {
+        var p = S.strokes.filter(function (x) { return x.key === key; })[0] || S.strokes[0];
+        return p ? { key: p.key, closed: !!p.closed, width: p.width, path: p.path } : null;
+      },
+      redraw: function (args) { return redrawParts(args); },
+      ops: function () { return sortedOps().map(function (it) { return { key: it.part.key, op: it.op }; }); },
+      variant: function (id) { return runVariant(id); },
+      calls: function () {
+        return S.calls.map(function (c) { return { name: c.name, args: c.args, ms: c.ms, error: c.error || '', result: c.result }; });
+      },
+      run: function () { return startRedraw(''); },
+      tool: function (name, args) { return execTool(name, args || {}); },
+      group: function (args) { return groupParts(args); },
+      semantics: function () { return semanticCheck(); },
+      groups: function () { return S.groups.map(function (g) { return { name: g.name, keys: g.keys.slice(), color: g.color }; }); },
+      /* 直接采样栅格化结果（与指标同口径），不受画布缩放/底图影响 */
+      sampleDraw: function (x, y) {
+        var r = S.region || { x: 0, y: 0, w: S.w, h: S.h };
+        var W = Math.max(1, Math.round(r.w)), H = Math.max(1, Math.round(r.h));
+        var d = rasterizeDrawn(W, H, 1).data;
+        var px = Math.round(x), py = Math.round(y);
+        if (px < 0 || py < 0 || px >= W || py >= H) return '';
+        var i = (py * W + px) * 4;
+        return hexOf([d[i], d[i + 1], d[i + 2]]);
+      },
+      /* 采样画布上的最终像素（区域坐标），用来断言「这一块最后是什么颜色」 */
+      sample: function (x, y) {
+        var dpr = window.devicePixelRatio || 1;
+        var cx = Math.round((x * S.view.s + S.view.ox) * dpr);
+        var cy = Math.round((y * S.view.s + S.view.oy) * dpr);
+        var d = CTX.getImageData(cx, cy, 1, 1).data;
+        return hexOf([d[0], d[1], d[2]]);
+      },
+      name: function (keys) { return nameUnknown(keys || []); },
+      viewImage: function (maxSide) { return regionImageURL(maxSide); },
+      lastUserParts: function () {
+        var m = S.stubMsgs && S.stubMsgs[0];
+        if (!m || !Array.isArray(m.content)) return [];
+        return m.content.map(function (p) { return p && p.type; });
+      },
+      firstUserParts: function () {
+        var m = S.stubFirst && S.stubFirst[0];
+        if (!m || !Array.isArray(m.content)) return [];
+        return m.content.map(function (p) { return p && p.type; });
+      },
+      stubLLM: function (script) {
+        S.stub = true;
+        S.stubFirst = null;
+        var i = 0;
+        if (!savedLLM) savedLLM = window.llmStreamRequest;
+        window.llmStreamRequest = async function (sys, msgs) {
+          S.stubMsgs = msgs;
+          if (!S.stubFirst) S.stubFirst = msgs;
+          var step = script[i++];
+          if (!step || step.finish) return { text: '（测试桩：完成）', toolCalls: [] };
+          return {
+            text: '',
+            toolCalls: [{
+              id: 'stub-' + i, type: 'function',
+              function: { name: step.tool, arguments: JSON.stringify(step.args || {}) }
+            }]
+          };
+        };
+        return true;
+      },
+      restoreLLM: function () {
+        S.stub = false;
+        if (savedLLM) { window.llmStreamRequest = savedLLM; savedLLM = null; }
+      },
+      reset: function () {
+        S.ops = new Map();
+        S.strokes = []; S.region = null; S.metrics = null; S.best = null; S.img = null;
+        S.runs = []; S.calls = []; S.lastMode = '';
+        S.groups = []; S.drop = {};
+        if (R.empty) R.empty.hidden = false;
+        renderParts(); drawScene(); updateStat();
+      }
+    }
+  };
+})();
+
+/* ---- apps/wardrobe/body.js ---- */
+/* 衣柜 App 的窗口 DOM（app-scan 会把它排在 app.js 之前内联）。
+ *
+ * 三栏：左边套装、中间皮套预览、右边部件清单。
+ * 皮套来自 apps/live2d/model/，由 tools/pack-live2d.js 预打包；
+ * 预览运行时在同目录 rig.js 里（window.WD_RIG）。
+ */
+window.WD_BODY = `
+<div class="wd-app" id="wdApp">
+  <header class="wd-top">
+    <div class="wd-brand">
+      <span class="wd-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 7.4V5.6a1.8 1.8 0 1 1 3.6 0"/>
+          <path d="M12 7.4 3.6 13.1a1.5 1.5 0 0 0 .8 2.8h15.2a1.5 1.5 0 0 0 .8-2.8L12 7.4Z"/>
+        </svg>
+      </span>
+      <div class="wd-brand-txt">
+        <b>衣柜</b>
+        <span>给数字人换皮套、挑部件、存套装</span>
+      </div>
+    </div>
+    <div class="wd-tools">
+      <label class="wd-model">
+        <span>皮套</span>
+        <select id="wdModelSel" aria-label="皮套"></select>
+      </label>
+      <button type="button" class="wd-btn primary" id="wdApplyHuman" title="把当前搭配同步到数字人">应用到数字人</button>
+    </div>
+  </header>
+
+  <div class="wd-main">
+    <aside class="wd-left">
+      <div class="wd-pane-head">
+        <h3>套装</h3>
+        <span class="wd-pane-num" id="wdOutfitCount">0</span>
+      </div>
+      <div class="wd-new">
+        <input type="text" id="wdOutfitName" maxlength="12" placeholder="套装名，如 校服" spellcheck="false">
+        <button type="button" class="wd-btn" id="wdSaveOutfit">保存当前</button>
+      </div>
+      <div class="wd-outfits" id="wdOutfits"></div>
+      <p class="wd-hint">套装 = 皮套 + 隐藏的部件。点卡片试穿，点「穿上」同步给数字人。</p>
+    </aside>
+
+    <section class="wd-stage" id="wdStage">
+      <div class="wd-bg" aria-hidden="true">
+        <i class="wd-glow g1"></i>
+        <i class="wd-glow g2"></i>
+        <i class="wd-dots"></i>
+        <i class="wd-floor"></i>
+      </div>
+
+      <div class="wd-canvas" id="wdCanvas"></div>
+
+      <div class="wd-state" id="wdLoading"><i></i><span>正在穿上皮套…</span></div>
+      <div class="wd-state is-err" id="wdErr" hidden><b>皮套加载失败</b><span></span></div>
+
+      <div class="wd-hud">
+        <span class="wd-chip" id="wdChip">等待皮套…</span>
+        <span class="wd-hud-gap"></span>
+        <button type="button" class="wd-mini" id="wdShowAll">全部显示</button>
+        <span class="wd-part-total" id="wdPartCount"></span>
+      </div>
+
+      <div class="wd-toast" id="wdToast" hidden></div>
+    </section>
+
+    <aside class="wd-right">
+      <div class="wd-pane-head">
+        <h3>部件</h3>
+        <span class="wd-pane-num" id="wdHiddenCount">隐藏 0</span>
+      </div>
+      <div class="wd-search">
+        <input type="text" id="wdSearch" placeholder="搜索部件名 / ID" spellcheck="false">
+        <button type="button" class="wd-btn" id="wdReset" title="取消所有隐藏">重置</button>
+      </div>
+      <div class="wd-parts" id="wdParts"></div>
+    </aside>
+  </div>
+</div>
+`;
+
+/* ---- apps/wardrobe/app.js ---- */
+/* 衣柜 —— 数字人皮套的换装台。
+ *
+ * 左边套装、中间预览、右边部件。皮套清单与数据包都复用数字人 App 的
+ * apps/live2d/model/（由 tools/pack-live2d.js 生成），预览运行时是 rig.js 的
+ * window.WD_RIG —— 这个文件只管界面与状态，不直接碰 Cubism。
+ *
+ * 数据只存本机：
+ *   hf_wardrobe_state = {
+ *     v: 1,
+ *     modelId,                    // 上次预览的皮套
+ *     activeId,                   // 最近穿上的套装（仅用于高亮）
+ *     outfits: [{ id, name, modelId, hidden: [partId], ts }],
+ *     draft: { modelId, hidden }  // 当前搭配：数字人启动时按它穿
+ *   }
+ *
+ * 「应用到数字人」写 draft 并调 window.__l2dApplyOutfit（数字人开着就即时生效，
+ * 没开就等它下次启动读 draft）。部件隐藏靠 Cubism 的部件透明度实现。
+ * 扩展点：PART_CATS 里加一条正则就有新分组；新的换装维度在 rig.js 上开方法。
+ */
+(function () {
+  'use strict';
+
+  var BODY_HTML = window.WD_BODY || '';
+
+  var ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 7.4V5.6a1.8 1.8 0 1 1 3.6 0"/>' +
+    '<path d="M12 7.4 3.6 13.1a1.5 1.5 0 0 0 .8 2.8h15.2a1.5 1.5 0 0 0 .8-2.8L12 7.4Z"/></svg>';
+
+  var STORE_KEY = 'hf_wardrobe_state';
+  var STORE_VER = 1;
+  var L2D_KEY = 'hf_live2d_state';
+
+  /* 部件分组：按 cdi3 的中文名归类；匹配不到落到「其他」。
+     想加一类（比如「尾巴」「翅膀」）在这里插一条正则即可。 */
+  var PART_CATS = [
+    { key: 'hair', label: '头发 / 头饰', re: /发|角|耳|帽|头饰|蝴蝶结|呆毛|兽耳/ },
+    { key: 'face', label: '面部 / 表情', re: /脸|眉|眼|嘴|口|腮|舌|泪|痣|表情/ },
+    { key: 'hand', label: '手 / 手臂', re: /手|爪|臂|指|腕/ },
+    { key: 'cloth', label: '服装', re: /衣|裙|裤|袜|鞋|领|袖|披风|围巾|制服|泳装/ },
+    { key: 'prop', label: '道具 / 场景', re: /饭|板|手机|包|桌|杯|盘|笔|书|伞|道具|麦克风|椅|床/ },
+    { key: 'fx', label: '特效 / 贴图', re: /特效|贴图|光|晕|符号|背景|阴影/ },
+    { key: 'other', label: '其他', re: /[\s\S]*/ }
+  ];
+
+  var S = null;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function readJson(key) {
+    var raw = null;
+    try { raw = localStorage.getItem(key); } catch (e) { return null; }
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch (e) { return null; }
+  }
+
+  function cleanIds(list) {
+    return (Array.isArray(list) ? list : []).filter(function (id) {
+      return typeof id === 'string' && id;
+    }).slice(0, 300);
+  }
+
+  /* ---------- 存档 ---------- */
+  function loadState() {
+    var out = { modelId: '', activeId: '', outfits: [], draft: null };
+    var d = readJson(STORE_KEY);
+    if (!d || d.v !== STORE_VER) {
+      /* 第一次用衣柜：沿用数字人当前的皮套，不硬切回第一套 */
+      var l2 = readJson(L2D_KEY);
+      if (l2 && typeof l2.modelId === 'string') out.modelId = l2.modelId;
+      return out;
+    }
+    if (typeof d.modelId === 'string') out.modelId = d.modelId;
+    if (typeof d.activeId === 'string') out.activeId = d.activeId;
+    if (d.draft && typeof d.draft === 'object') {
+      out.draft = {
+        modelId: typeof d.draft.modelId === 'string' ? d.draft.modelId : '',
+        hidden: cleanIds(d.draft.hidden)
+      };
+    }
+    if (Array.isArray(d.outfits)) {
+      out.outfits = d.outfits.filter(function (o) {
+        return o && typeof o.id === 'string' && o.id;
+      }).map(function (o) {
+        return {
+          id: o.id,
+          name: String(o.name || '未命名').slice(0, 16),
+          modelId: typeof o.modelId === 'string' ? o.modelId : '',
+          hidden: cleanIds(o.hidden),
+          ts: Number(o.ts) || 0
+        };
+      }).slice(0, 60);
+    }
+    if (out.activeId && !out.outfits.some(function (o) { return o.id === out.activeId; })) {
+      out.activeId = '';
+    }
+    return out;
+  }
+
+  function saveState() {
+    if (!S) return;
+    var payload = {
+      v: STORE_VER,
+      modelId: S.modelId || '',
+      activeId: S.activeId || '',
+      outfits: S.outfits.map(function (o) {
+        return { id: o.id, name: o.name, modelId: o.modelId, hidden: o.hidden.slice(), ts: o.ts };
+      }),
+      draft: { modelId: S.modelId || '', hidden: S.hidden.slice() }
+    };
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(payload)); } catch (e) { /* 配额满就只留在内存里 */ }
+  }
+
+  /* ---------- 启动 ---------- */
+  function boot(body) {
+    var loaded = loadState();
+
+    S = {
+      body: body,
+      win: body.closest ? body.closest('.os-win') : null,
+      models: [],
+      modelId: loaded.modelId || '',
+      hidden: loaded.draft ? loaded.draft.hidden.slice() : [],
+      outfits: loaded.outfits,
+      activeId: loaded.activeId,
+      rig: null,
+      ready: false,
+      loading: true,
+      error: '',
+      loadSeq: 0,
+      toastTimer: null,
+      refs: {}
+    };
+
+    cacheRefs();
+    bindEvents();
+    renderOutfits();
+    syncHiddenUI();
+    body.dataset.ready = '1';
+
+    if (!window.WD_RIG) {
+      S.loading = false;
+      S.error = '预览运行时没加载：检查 apps/wardrobe/rig.js';
+      setStageState();
+      return;
+    }
+
+    S.rig = window.WD_RIG.create(S.refs.canvas, {});
+    installProbe();
+
+    window.WD_RIG.runtime().then(function (models) {
+      S.models = (models || []).filter(function (m) { return m && m.id && m.pack; });
+      renderModels();
+      if (!S.models.length) {
+        S.loading = false;
+        S.error = '没有可用的皮套：把模型放进 apps/live2d/model/<id>/ 后跑 node tools/pack-live2d.js';
+        setStageState();
+        return;
+      }
+
+      var def = null;
+      S.models.forEach(function (m) { if (m.id === S.modelId) def = m; });
+      if (!def) {
+        def = S.models[0];
+        S.modelId = def.id;
+        /* 皮套变了，旧部件的隐藏状态没有意义 */
+        S.hidden = [];
+        S.activeId = '';
+      }
+      if (S.refs.modelSel) S.refs.modelSel.value = S.modelId;
+      S.rig.setHidden(S.hidden);
+      loadModel(S.modelId);
+    }).catch(function (err) {
+      S.loading = false;
+      S.error = (err && err.message) || String(err);
+      setStageState();
+    });
+  }
+
+  function cacheRefs() {
+    var b = S.body;
+    S.refs = {
+      modelSel: b.querySelector('#wdModelSel'),
+      applyHuman: b.querySelector('#wdApplyHuman'),
+      outfitCount: b.querySelector('#wdOutfitCount'),
+      outfitName: b.querySelector('#wdOutfitName'),
+      saveOutfit: b.querySelector('#wdSaveOutfit'),
+      outfits: b.querySelector('#wdOutfits'),
+      stage: b.querySelector('#wdStage'),
+      canvas: b.querySelector('#wdCanvas'),
+      loading: b.querySelector('#wdLoading'),
+      err: b.querySelector('#wdErr'),
+      chip: b.querySelector('#wdChip'),
+      showAll: b.querySelector('#wdShowAll'),
+      partCount: b.querySelector('#wdPartCount'),
+      toast: b.querySelector('#wdToast'),
+      hiddenCount: b.querySelector('#wdHiddenCount'),
+      search: b.querySelector('#wdSearch'),
+      reset: b.querySelector('#wdReset'),
+      parts: b.querySelector('#wdParts')
+    };
+  }
+
+  /* ---------- 事件 ---------- */
+  function bindEvents() {
+    var r = S.refs;
+
+    r.modelSel.addEventListener('change', function () {
+      changeModel(r.modelSel.value);
+    });
+
+    r.applyHuman.addEventListener('click', function () {
+      var name = activeOutfit() ? activeOutfit().name : '当前搭配';
+      pushToHuman(name);
+    });
+
+    r.saveOutfit.addEventListener('click', function () {
+      saveOutfit(r.outfitName.value);
+    });
+    r.outfitName.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); saveOutfit(r.outfitName.value); }
+    });
+
+    r.outfits.addEventListener('click', function (e) {
+      var card = e.target.closest ? e.target.closest('.wd-outfit') : null;
+      if (!card) return;
+      var id = card.getAttribute('data-oid');
+      var btn = e.target.closest ? e.target.closest('button') : null;
+      if (btn && btn.hasAttribute('data-del')) { removeOutfit(id); return; }
+      if (btn && btn.hasAttribute('data-human')) { wearOutfit(id, true); return; }
+      wearOutfit(id, false);
+    });
+
+    r.showAll.addEventListener('click', function () {
+      clearHidden();
+    });
+    r.reset.addEventListener('click', function () {
+      r.search.value = '';
+      clearHidden();
+      renderParts();
+    });
+
+    var searchTimer = 0;
+    r.search.addEventListener('input', function () {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(renderParts, 90);
+    });
+
+    r.parts.addEventListener('change', function (e) {
+      var input = e.target;
+      if (!input || input.type !== 'checkbox') return;
+      var id = input.getAttribute('data-pid');
+      if (!id) return;
+      togglePart(id, input.checked);
+    });
+
+    r.parts.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-solo]') : null;
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      isolatePart(btn.getAttribute('data-solo'));
+    });
+
+    /* 窗口从最小化 / 关标签回来时，舞台尺寸可能变过 */
+    if (window.ResizeObserver) {
+      S.refs.stageObserver = new ResizeObserver(function () {
+        if (S && S.rig) S.rig.fit();
+      });
+      S.refs.stageObserver.observe(r.stage);
+    }
+  }
+
+  /* ---------- 皮套 ---------- */
+  function renderModels() {
+    var sel = S.refs.modelSel;
+    if (!sel) return;
+    sel.innerHTML = '';
+    S.models.forEach(function (m) {
+      var o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = m.name || m.id;
+      sel.appendChild(o);
+    });
+    if (S.modelId) sel.value = S.modelId;
+  }
+
+  function modelName(id) {
+    var hit = '';
+    S.models.forEach(function (m) { if (m.id === id) hit = m.name || m.id; });
+    return hit || id || '';
+  }
+
+  function loadModel(id, done) {
+    if (!S || !S.rig) return;
+    var seq = ++S.loadSeq;
+    S.loading = true;
+    S.ready = false;
+    S.error = '';
+    setStageState();
+    S.rig.setHidden(S.hidden);
+
+    S.rig.load(id).then(function (info) {
+      if (seq !== S.loadSeq) return;
+      S.loading = false;
+      S.ready = !!(info && info.ready);
+      S.error = (info && info.error) || '';
+      if (info && info.modelId) S.modelId = info.modelId;
+      if (S.refs.modelSel) S.refs.modelSel.value = S.modelId;
+      if (S.ready) S.rig.setHidden(S.hidden);
+      saveState();
+      renderParts();
+      syncHiddenUI();
+      setStageState();
+      if (done) done();
+    });
+  }
+
+  function changeModel(id) {
+    if (!id || id === S.modelId) return;
+    S.modelId = id;
+    S.hidden = [];
+    S.activeId = '';
+    if (S.rig) S.rig.setHidden([]);
+    saveState();
+    renderOutfits();
+    loadModel(id, function () {
+      toast('已换上皮套：' + modelName(id));
+    });
+  }
+
+  function setStageState() {
+    var r = S.refs;
+    if (!r) return;
+    if (r.loading) r.loading.hidden = !S.loading;
+    if (r.err) {
+      r.err.hidden = !S.error;
+      if (S.error) {
+        var span = r.err.querySelector('span');
+        if (span) span.textContent = S.error;
+      }
+    }
+    if (r.chip) {
+      r.chip.textContent = S.ready
+        ? modelName(S.modelId)
+        : (S.error ? '皮套不可用' : '正在穿上皮套…');
+      r.chip.classList.toggle('is-err', !!S.error);
+    }
+  }
+
+  function toast(text) {
+    var el = S && S.refs ? S.refs.toast : null;
+    if (!el) return;
+    el.textContent = text;
+    el.hidden = false;
+    el.classList.add('on');
+    clearTimeout(S.toastTimer);
+    S.toastTimer = setTimeout(function () {
+      el.classList.remove('on');
+      el.hidden = true;
+    }, 2000);
+  }
+
+  /* ---------- 部件 ---------- */
+  function hiddenMap() {
+    var m = {};
+    (S ? S.hidden : []).forEach(function (id) { m[id] = 1; });
+    return m;
+  }
+
+  function syncHiddenUI() {
+    var hidden = hiddenMap();
+    var all = S.rig ? S.rig.parts() : [];
+    var n = 0;
+    all.forEach(function (p) { if (hidden[p.id]) n++; });
+
+    if (S.refs.hiddenCount) {
+      S.refs.hiddenCount.textContent = n ? ('隐藏 ' + n) : '全部显示';
+    }
+    if (S.refs.partCount) {
+      S.refs.partCount.textContent = '部件 ' + all.length + (n ? ' · 隐藏 ' + n : '');
+    }
+    if (S.refs.outfitCount) S.refs.outfitCount.textContent = String(S.outfits.length);
+
+    /* 只同步勾选与灰态，不重建列表 —— 保住滚动位置 */
+    var inputs = S.refs.parts ? S.refs.parts.querySelectorAll('input[data-pid]') : [];
+    for (var i = 0; i < inputs.length; i++) {
+      var id = inputs[i].getAttribute('data-pid');
+      var on = !hidden[id];
+      inputs[i].checked = on;
+      var row = inputs[i].closest ? inputs[i].closest('.wd-part') : null;
+      if (row) row.classList.toggle('is-off', !on);
+    }
+    renderOutfits();
+  }
+
+  function groupParts(list) {
+    var buckets = PART_CATS.map(function (c) { return { cat: c, items: [] }; });
+    list.forEach(function (p) {
+      for (var i = 0; i < buckets.length; i++) {
+        if (buckets[i].cat.re.test(p.name)) { buckets[i].items.push(p); return; }
+      }
+    });
+    return buckets.filter(function (b) { return b.items.length; });
+  }
+
+  function renderParts() {
+    var box = S.refs.parts;
+    if (!box) return;
+    var all = S.rig ? S.rig.parts() : [];
+    var hidden = hiddenMap();
+    var q = (S.refs.search && S.refs.search.value || '').trim().toLowerCase();
+
+    if (!all.length) {
+      box.innerHTML = '<p class="wd-empty">' +
+        (S.loading ? '正在读取部件…' : '这个皮套没有可列出的部件') + '</p>';
+      return;
+    }
+
+    var list = all.filter(function (p) {
+      if (!q) return true;
+      return p.name.toLowerCase().indexOf(q) >= 0 || p.id.toLowerCase().indexOf(q) >= 0;
+    });
+    if (!list.length) {
+      box.innerHTML = '<p class="wd-empty">没有匹配「' + esc(q) + '」的部件</p>';
+      return;
+    }
+
+    var html = '';
+    groupParts(list).forEach(function (g) {
+      html += '<section class="wd-group">' +
+        '<h4 class="wd-group-h"><span>' + esc(g.cat.label) + '</span><i>' + g.items.length + '</i></h4>';
+      g.items.forEach(function (p) {
+        var on = !hidden[p.id];
+        html += '<div class="wd-part' + (on ? '' : ' is-off') + '" data-pid="' + esc(p.id) + '">' +
+          '<label class="wd-part-main">' +
+            '<input type="checkbox" data-pid="' + esc(p.id) + '"' + (on ? ' checked' : '') +
+              ' aria-label="显示 ' + esc(p.name) + '">' +
+            '<span class="wd-part-name">' + esc(p.name) + '</span>' +
+            '<span class="wd-part-id">' + esc(p.id) + '</span>' +
+          '</label>' +
+          '<button type="button" class="wd-part-solo" data-solo="' + esc(p.id) + '" title="只显示这一件">只</button>' +
+        '</div>';
+      });
+      html += '</section>';
+    });
+    box.innerHTML = html;
+  }
+
+  /* 手改过部件就不再属于某个套装，清掉高亮 */
+  function markDirty() {
+    S.activeId = '';
+  }
+
+  function applyHidden() {
+    if (S.rig) S.rig.setHidden(S.hidden);
+    saveState();
+    syncHiddenUI();
+  }
+
+  function togglePart(id, show) {
+    var set = {};
+    S.hidden.forEach(function (x) { set[x] = 1; });
+    if (show) delete set[id]; else set[id] = 1;
+    S.hidden = Object.keys(set);
+    markDirty();
+    applyHidden();
+  }
+
+  function clearHidden() {
+    if (!S.hidden.length) { renderParts(); return; }
+    S.hidden = [];
+    markDirty();
+    applyHidden();
+    renderParts();
+    toast('已显示全部部件');
+  }
+
+  function isolatePart(id) {
+    if (!id) return;
+    var all = S.rig ? S.rig.parts() : [];
+    S.hidden = all.filter(function (p) { return p.id !== id; }).map(function (p) { return p.id; });
+    markDirty();
+    applyHidden();
+    renderParts();
+    var name = id;
+    all.forEach(function (p) { if (p.id === id) name = p.name; });
+    toast('只显示：' + name);
+  }
+
+  /* ---------- 套装 ---------- */
+  function activeOutfit() {
+    var hit = null;
+    S.outfits.forEach(function (o) { if (o.id === S.activeId) hit = o; });
+    return hit;
+  }
+
+  function saveOutfit(name) {
+    var nm = String(name || '').trim();
+    if (!nm) nm = '套装 ' + (S.outfits.length + 1);
+    var o = {
+      id: 'o' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      name: nm.slice(0, 16),
+      modelId: S.modelId,
+      hidden: S.hidden.slice(),
+      ts: Date.now()
+    };
+    S.outfits.unshift(o);
+    S.activeId = o.id;
+    S.refs.outfitName.value = '';
+    saveState();
+    renderOutfits();
+    syncHiddenUI();
+    toast('已保存套装：' + o.name);
+  }
+
+  function removeOutfit(id) {
+    var gone = null;
+    S.outfits = S.outfits.filter(function (o) {
+      if (o.id === id) { gone = o; return false; }
+      return true;
+    });
+    if (!gone) return;
+    if (S.activeId === id) S.activeId = '';
+    saveState();
+    renderOutfits();
+    if (S.refs.outfitCount) S.refs.outfitCount.textContent = String(S.outfits.length);
+    toast('已删除套装：' + gone.name);
+  }
+
+  function wearOutfit(id, toHuman) {
+    var o = null;
+    S.outfits.forEach(function (x) { if (x.id === id) o = x; });
+    if (!o) return;
+
+    S.activeId = o.id;
+    S.hidden = o.hidden.slice();
+    if (S.rig) S.rig.setHidden(S.hidden);
+    saveState();
+    renderOutfits();
+    syncHiddenUI();
+
+    if (o.modelId && o.modelId !== S.modelId) {
+      S.modelId = o.modelId;
+      if (S.refs.modelSel) S.refs.modelSel.value = o.modelId;
+      loadModel(o.modelId, function () {
+        if (S.rig) S.rig.setHidden(S.hidden);
+        saveState();
+        syncHiddenUI();
+        renderParts();
+        if (toHuman) pushToHuman(o.name);
+        else toast('试穿：' + o.name);
+      });
+      return;
+    }
+
+    if (S.rig) S.rig.setHidden(S.hidden);
+    renderParts();
+    syncHiddenUI();
+    if (toHuman) pushToHuman(o.name);
+    else toast('试穿：' + o.name);
+  }
+
+  function renderOutfits() {
+    var box = S.refs && S.refs.outfits;
+    if (!box) return;
+    if (S.refs.outfitCount) S.refs.outfitCount.textContent = String(S.outfits.length);
+    if (!S.outfits.length) {
+      box.innerHTML = '<p class="wd-empty">还没有套装。调好部件后点「保存当前」。</p>';
+      return;
+    }
+    var html = '';
+    S.outfits.forEach(function (o) {
+      var n = o.hidden.length;
+      html += '<article class="wd-outfit' + (o.id === S.activeId ? ' is-on' : '') + '" data-oid="' + esc(o.id) + '">' +
+        '<div class="wd-outfit-top">' +
+          '<b>' + esc(o.name) + '</b>' +
+          '<span>' + (n ? ('隐藏 ' + n) : '全套') + '</span>' +
+        '</div>' +
+        '<div class="wd-outfit-meta">' + esc(modelName(o.modelId) || '未记录皮套') + '</div>' +
+        '<div class="wd-outfit-acts">' +
+          '<button type="button" class="wd-mini" data-human="' + esc(o.id) + '">穿上</button>' +
+          '<button type="button" class="wd-mini ghost" data-del="' + esc(o.id) + '" title="删除套装">删除</button>' +
+        '</div>' +
+      '</article>';
+    });
+    box.innerHTML = html;
+  }
+
+  /* 把当前搭配同步给数字人；数字人开着就即时生效，没开就等它下次启动读 draft */
+  function pushToHuman(name) {
+    var payload = {
+      name: name || '当前搭配',
+      modelId: S.modelId,
+      hidden: S.hidden.slice()
+    };
+    saveState();
+    var fn = window.__l2dApplyOutfit;
+    if (typeof fn === 'function') {
+      fn(payload);
+      toast('数字人已穿上：' + payload.name);
+    } else {
+      toast('已保存搭配，打开「数字人」就会穿上');
+    }
+  }
+
+  /* 探针只读钩子：无头测试读部件、隐藏状态与存档用 */
+  function installProbe() {
+    if (!window.__wdRig) {
+      window.__wdRig = function () {
+        if (!S) return null;
+        var info = S.rig ? S.rig.info() : { ready: false, loading: true, error: '', parts: [], hidden: [] };
+        return {
+          ready: !!info.ready,
+          loading: !!info.loading,
+          error: info.error || '',
+          modelId: S.modelId,
+          parts: (info.parts || []).map(function (p) { return { id: p.id, name: p.name }; }),
+          partCount: (info.parts || []).length,
+          hidden: S.hidden.slice(),
+          applied: (info.hidden || []).slice(),
+          activeId: S.activeId,
+          outfits: S.outfits.map(function (o) {
+            return { id: o.id, name: o.name, modelId: o.modelId, hidden: o.hidden.slice() };
+          })
+        };
+      };
+    }
+    if (!window.__wdPartOpacity) {
+      window.__wdPartOpacity = function (id) {
+        return S && S.rig ? S.rig.partOpacity(id) : null;
+      };
+    }
+    if (!window.__wdState) {
+      window.__wdState = function () { return readJson(STORE_KEY); };
+    }
+  }
+
+  /* ---------- 注册 ---------- */
+  registerApp({
+    id: 'wardrobe',
+    name: '衣柜',
+    title: '衣柜 · 数字人皮套',
+    sub: '换皮套、挑部件、存套装',
+    icon: ICON,
+    order: 17,
+    cls: 'wardrobe',
+    win: 'wardrobeWin',
+    css: ['apps/wardrobe/app.css'],
+    scripts: ['apps/wardrobe/rig.js'],
+    body: BODY_HTML,
+    mount: function (body) {
+      if (body.dataset.ready === '1' && S && S.body === body) {
+        /* 切回来只同步状态与尺寸，不重建 DOM，预览也不重载 */
+        syncHiddenUI();
+        setStageState();
+        if (S.rig) S.rig.fit();
+        return;
+      }
+      boot(body);
+    }
+  });
 })();

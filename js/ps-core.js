@@ -130,6 +130,8 @@ const PS = (function () {
       visible: opts.visible !== false,
       opacity: typeof opts.opacity === 'number' ? opts.opacity : 1,
       blend: opts.blend || 'normal',
+      /* 锁定后移动工具拖不动；默认背景层为 true */
+      locked: opts.locked === true,
       x: opts.x || 0,
       y: opts.y || 0,
       width: Math.max(1, Math.round(opts.width || doc.width)),
@@ -1542,7 +1544,7 @@ const PS = (function () {
       var item = {
         name: l.name, type: l.type, x: l.x, y: l.y,
         width: l.width, height: l.height,
-        opacity: l.opacity, blend: l.blend, visible: l.visible
+        opacity: l.opacity, blend: l.blend, visible: l.visible, locked: !!l.locked
       };
       if (l.type === 'pixel') {
         if (l.tiles.size) {
@@ -1591,7 +1593,8 @@ const PS = (function () {
         height: lh,
         opacity: typeof it.opacity === 'number' ? it.opacity : 1,
         blend: it.blend || 'normal',
-        visible: it.visible !== false
+        visible: it.visible !== false,
+        locked: it.locked === true
       };
       if (it.type === 'shape') {
         common.type = 'shape';

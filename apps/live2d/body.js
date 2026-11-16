@@ -115,11 +115,22 @@ window.L2D_BODY = `
 
           <div class="l2d-field">
             <span class="l2d-lab">朗读声音</span>
-            <div class="l2d-tts">
-              <select id="l2dVoiceSel" class="l2d-select" aria-label="音色"></select>
-              <label class="l2d-range"><span>语速</span><input type="range" id="l2dRate" min="0.7" max="1.4" step="0.02" value="1.04"><em id="l2dRateVal">1.04</em></label>
-              <label class="l2d-range"><span>音调</span><input type="range" id="l2dPitch" min="0.7" max="1.5" step="0.02" value="1.12"><em id="l2dPitchVal">1.12</em></label>
-              <button type="button" class="l2d-btn" id="l2dVoiceTest">试听一句</button>
+            <div class="l2d-tts" id="l2dTts">
+              <div class="l2d-tts-top">
+                <select id="l2dVoiceSel" class="l2d-select" aria-label="音色"></select>
+                <button type="button" class="l2d-btn l2d-btn-ico" id="l2dVoiceRefresh" title="重新检测系统语音与本地模型">检测</button>
+              </div>
+              <div class="l2d-tts-state">
+                <span class="l2d-tag" id="l2dVoiceEngine">系统语音</span>
+                <span class="l2d-tts-status" id="l2dVoiceStatus">检测中…</span>
+              </div>
+              <label class="l2d-range" id="l2dRateRow"><span>语速</span><input type="range" id="l2dRate" min="0.7" max="1.4" step="0.02" value="1.04"><em id="l2dRateVal">1.04</em></label>
+              <label class="l2d-range" id="l2dPitchRow"><span>音调</span><input type="range" id="l2dPitch" min="0.7" max="1.5" step="0.02" value="1.12"><em id="l2dPitchVal">1.12</em></label>
+              <div class="l2d-tts-acts">
+                <button type="button" class="l2d-btn" id="l2dVoiceTest">试听一句</button>
+                <button type="button" class="l2d-btn" id="l2dVoiceOpen">语音设置</button>
+              </div>
+              <p class="l2d-tts-hint" id="l2dVoiceHint"></p>
             </div>
           </div>
 
@@ -137,10 +148,11 @@ window.L2D_BODY = `
 
           <div class="l2d-field">
             <span class="l2d-lab">皮套</span>
+            <select id="l2dModelSel" class="l2d-select" aria-label="皮套"></select>
             <div class="l2d-credit">
-              <b>鲸鱼娘 · c_0120</b>
-              <span>形象：上善无形 / ZipZipPipe　模型：氵六青</span>
-              <span>CC BY-NC-SA 4.0 · 仅非商业使用</span>
+              <b id="l2dCreditName">鲸鱼娘 · c_0120</b>
+              <span id="l2dCreditAuthor">形象：上善无形 / ZipZipPipe　模型：氵六青</span>
+              <span id="l2dCreditLicense">CC BY-NC-SA 4.0 · 仅非商业使用</span>
             </div>
           </div>
 

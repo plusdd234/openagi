@@ -1547,7 +1547,7 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
       assetRead: async id => ({ ok: true, dataURL: store[id] }),
       assetThumb: async () => ({ ok: false })
     };
-    return { bytes: withExtras.length, nodes: copy.nodes.length };
+    return { bytes: withExtras.length, nodes: copy.nodes.length, slots: copy.materials.slotNames.length };
   });
   info('测试资产', JSON.stringify(dockAsset));
 
@@ -1560,6 +1560,7 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
     sub: (document.getElementById('mdDockSub') || {}).textContent || '',
     buttons: Array.from(document.querySelectorAll('.md-cb-card:first-child button')).map(b => b.textContent),
     nodeCount: window.modelDesk.getState().nodeCount,
+    slotNames: window.modelDesk.getState().slotNames,
     undo: window.modelDesk.getState().undo
   }));
   check(dockOpen.on && /内容浏览器/.test(dockOpen.tab) && dockOpen.cards === 1 && dockOpen.sub === '1 个模型',
@@ -1581,19 +1582,157 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
   check(/已置于/.test(placed.status) && placed.on,
     '置于后有状态提示，内容浏览器保持展开', placed.status);
 
+  /* 11.9b 材质不串：源材质整体并入后，新旧对象各用自己的槽位与稳定 id */
+  const matIso = await page.evaluate(() => {
+    const s = window.modelDesk.getState();
+    const doc = window.modelDesk.getDocument();
+    const S = window.SeedModel.Scene;
+    const nodes = S.nodesOf(doc);
+    /* getMesh 拿到的是解码后的基础网格；doc.meshes[*].faceSlots 是 base64 压缩串 */
+    const orig = (S.getMesh(doc, nodes[0]).faceSlots || []).slice();
+    const app = (S.getMesh(doc, nodes[nodes.length - 1]).faceSlots || []).slice();
+    return {
+      names: s.slotNames.slice(), ids: s.slotIds.slice(),
+      active: s.activeSlots.slice(), orig, app, meshSlots: s.meshSlots
+    };
+  });
+  check(matIso.names.length === dockOpen.slotNames.length + dockAsset.slots &&
+    matIso.ids.length === matIso.names.length &&
+    matIso.ids.every((v, i, a) => a.indexOf(v) === i) &&
+    matIso.orig.every(v => v < dockOpen.slotNames.length) &&
+    matIso.app.every(v => v >= dockOpen.slotNames.length) &&
+    matIso.active.every(v => v >= dockOpen.slotNames.length),
+    '置于后材质整体后移且 id 唯一：新旧模型各用自己的槽，不再串通',
+    JSON.stringify({ names: matIso.names.length, ids: matIso.ids, orig: matIso.orig.slice(0, 6), app: matIso.app.slice(0, 6), active: matIso.active }));
+
+  const undoPlace = await page.evaluate(() => {
+    window.modelDesk.undo();
+    const s = window.modelDesk.getState();
+    return {
+      nodes: s.nodeCount, slots: s.slotNames.length, ids: s.slotIds.length,
+      detail: (() => {
+        const S = window.SeedModel.Scene, doc = window.modelDesk.getDocument();
+        return S.nodesOf(doc).map(n => {
+          const m = S.getMesh(doc, n);
+          return { ref: n.meshRef, sl: m ? m.faceSlots.slice(0, 3) : [] };
+        });
+      })()
+    };
+  });
+  check(undoPlace.nodes === dockOpen.nodeCount && undoPlace.slots === dockOpen.slotNames.length &&
+    undoPlace.ids === undoPlace.slots,
+    '撤销「置于」同时回滚节点与并进来的材质槽', JSON.stringify(undoPlace));
+
+  const redoPlace = await page.evaluate(() => {
+    window.modelDesk.redo();
+    const s = window.modelDesk.getState();
+    const S = window.SeedModel.Scene, doc = window.modelDesk.getDocument();
+    return {
+      nodes: s.nodeCount, slots: s.slotNames.length,
+      detail: S.nodesOf(doc).map(n => {
+        const m = S.getMesh(doc, n);
+        return { ref: n.meshRef, sl: m ? m.faceSlots.slice(0, 3) : [] };
+      })
+    };
+  });
+  /* 重做后原对象必须还是自己的网格与槽 0：曾经这里被 active 兜底覆盖成副本（面槽 1） */
+  check(redoPlace.nodes === placed.nodeCount && redoPlace.slots === matIso.names.length &&
+    redoPlace.detail[0].sl.every(v => v < dockOpen.slotNames.length),
+    '重做「置于」恢复节点与材质槽，原对象没被副本盖掉', JSON.stringify(redoPlace));
+
+  const roundTrip = await page.evaluate(() => {
+    const S = window.SeedModel.Scene;
+    /* 走真实落盘格式：toSeedModel → JSON 字符串 → validate，和保存/打开同一条归一化路径 */
+    const raw = JSON.parse(JSON.stringify(S.toSeedModel(window.modelDesk.getDocument())));
+    const back = S.validate(raw).doc;
+    const nodes = S.nodesOf(back);
+    return {
+      ids: (back.materials.slotIds || []).slice(),
+      meshSlots: back.meshSlots,
+      orig: (S.getMesh(back, nodes[0]).faceSlots || []).slice(),
+      app: (S.getMesh(back, nodes[nodes.length - 1]).faceSlots || []).slice()
+    };
+  });
+  check(roundTrip.ids.length === matIso.ids.length &&
+    roundTrip.ids.every((v, i) => v === matIso.ids[i]) &&
+    roundTrip.orig.every(v => v < dockOpen.slotNames.length) &&
+    roundTrip.app.every(v => v >= dockOpen.slotNames.length),
+    '存盘往返（JSON → validate）后材质稳定 id 与每对象归属都还在',
+    JSON.stringify({ ids: roundTrip.ids, orig: roundTrip.orig.slice(0, 6), app: roundTrip.app.slice(0, 6), meshSlots: roundTrip.meshSlots }));
+
+  /* 对象级归属（纯函数，用副本验证，不动真实文档）：
+   * 给 A 加槽 / 从 A 删槽，B 的归属与面槽都不能跟着变。 */
+  const objScope = await page.evaluate(() => {
+    const S = window.SeedModel.Scene;
+    const raw = JSON.parse(JSON.stringify(S.toSeedModel(window.modelDesk.getDocument())));
+    const doc = S.validate(raw).doc;
+    const nodes = S.nodesOf(doc);
+    const a = nodes[0], b = nodes[nodes.length - 1];
+    const before = { a: S.slotsOf(doc, a).slice(), b: S.slotsOf(doc, b).slice() };
+    const beforeNames = doc.materials.slotNames.length;
+    const idx = S.addSlot(doc, { node: a, name: '只属于 A' });
+    const added = { a: S.slotsOf(doc, a).slice(), b: S.slotsOf(doc, b).slice(), names: doc.materials.slotNames.length };
+    S.removeSlot(doc, idx, { node: a });
+    const removed = {
+      a: S.slotsOf(doc, a).slice(), b: S.slotsOf(doc, b).slice(),
+      names: doc.materials.slotNames.length,
+      bFaces: (S.getMesh(doc, b).faceSlots || []).slice()
+    };
+    return { before, beforeNames, idx, added, removed };
+  });
+  check(objScope.added.a.indexOf(objScope.idx) >= 0 &&
+    objScope.added.b.indexOf(objScope.idx) < 0 &&
+    objScope.added.names === objScope.beforeNames + 1,
+    '给一个对象加材质槽，不会出现在另一个对象上',
+    JSON.stringify(objScope.added));
+  check(objScope.removed.names === objScope.beforeNames,
+    '删槽后材质库回收这一槽',
+    JSON.stringify({ names: objScope.removed.names, before: objScope.beforeNames }));
+  check(JSON.stringify(objScope.removed.b) === JSON.stringify(objScope.before.b) &&
+    objScope.removed.bFaces.every(v => v < objScope.removed.names),
+    '删 A 的槽不影响 B 的归属与面槽',
+    JSON.stringify({ b: objScope.removed.b, faces: objScope.removed.bFaces.slice(0, 4) }));
+
+  /* 老资产（材质库被回收过）的 faceSlots 可能指向已不存在的槽：这些面在视口里没有材质，
+   * 绘画命中时拿不到槽 → 静默无反应。加载时必须夹回合法槽并给出提示。 */
+  const slotClamp = await page.evaluate(() => {
+    const S = window.SeedModel.Scene;
+    const raw = JSON.parse(JSON.stringify(S.toSeedModel(window.modelDesk.getDocument())));
+    const doc = S.validate(raw).doc;
+    const node = S.nodesOf(doc)[0];
+    const mesh = S.getMesh(doc, node);
+    const slotN = doc.materials.slotNames.length;
+    /* 造一个越界面槽，再走一遍真实落盘 → 加载路径 */
+    mesh.faceSlots[0] = slotN + 3;
+    S.setMesh(doc, mesh, node);
+    const v = S.validate(JSON.parse(JSON.stringify(S.toSeedModel(doc))));
+    const back = S.getMesh(v.doc, S.nodesOf(v.doc)[0]);
+    return {
+      ok: v.ok, slotN, first: back.faceSlots[0],
+      allValid: back.faceSlots.every(s => s >= 0 && s < slotN),
+      warned: v.warnings.some(w => /材质槽下标越界/.test(w))
+    };
+  });
+  check(slotClamp.ok === true && slotClamp.first === 0 && slotClamp.allValid === true && slotClamp.warned === true,
+    '越界 faceSlots 加载时夹回槽 0（老资产不再出现「点不到材质」的面）',
+    JSON.stringify(slotClamp));
+
   await page.click('.md-cb-card:first-child [data-md-cb-open]');
   await page.waitForTimeout(600);
   const reopened = await page.evaluate(() => ({
     nodeCount: window.modelDesk.getState().nodeCount,
     undo: window.modelDesk.getState().undo,
     names: window.modelDesk.getState().docNodes.map(n => n.name),
-    status: window.modelDesk.getState().status
+    status: window.modelDesk.getState().status,
+    ids: window.modelDesk.getState().slotIds.slice()
   }));
   check(reopened.nodeCount === dockAsset.nodes && reopened.undo === 0 &&
     reopened.names.indexOf('置于球') >= 0,
     '「打开」清空场景并载入资产（历史重置）',
     JSON.stringify({ nodes: reopened.nodeCount, undo: reopened.undo, names: reopened.names }));
   check(/已打开/.test(reopened.status), '打开后有状态提示', reopened.status);
+  check(reopened.ids.length === dockAsset.slots && reopened.ids.every((v, i, a) => a.indexOf(v) === i),
+    '打开资产后材质 id 与资产一致且唯一', JSON.stringify(reopened.ids));
 
   /* 11.10 普通 GLB（没有 seedModel）也要能打开：转成可编辑网格 */
   const plainBytes = await page.evaluate(async () => {
@@ -2864,6 +3003,66 @@ Connections:  {
   check(paintOpts.brush === 'hard' && paintOpts.size === 60 && paintOpts.color === '#22c55e',
     '笔刷类型 / 大小 / 颜色设置生效', JSON.stringify(paintOpts));
 
+  /* 笔刷预览条 / 色板：数值与状态必须和滑杆同一份，点色板要真的改到笔刷颜色 */
+  const paintUi = await page.evaluate(() => {
+    const meta = document.getElementById('mdPaintPrevMeta');
+    const dot = document.getElementById('mdPaintPrevDot');
+    const sw = document.querySelector('.md-paint-sw[data-md-swatch="#2b7cd3"]');
+    if (sw) sw.click();
+    const s = window.modelDesk.getState();
+    return {
+      meta: meta ? meta.textContent : '', dotW: dot ? dot.style.width : '',
+      color: s.brushColor, swOn: document.querySelectorAll('.md-paint-sw.is-on').length,
+      slotDot: !!document.getElementById('mdPaintSlotDot')
+    };
+  });
+  check(/60 px/.test(paintUi.meta) && paintUi.dotW && paintUi.color === '#2b7cd3' &&
+    paintUi.swOn === 1 && paintUi.slotDot,
+    '笔刷预览条 / 色板与笔刷状态联动', JSON.stringify(paintUi));
+
+  /* 面板分区不允许互相压住：相邻两个可见分区的矩形不能有纵向交叠 */
+  const paintLayout = await page.evaluate(() => {
+    const box = document.getElementById('mdPaintBox');
+    const kids = Array.from(box.children)
+      .filter(el => el.offsetParent !== null && el.tagName !== 'INPUT');
+    const rects = kids.map(el => ({
+      c: String(el.className), t: el.getBoundingClientRect().top, b: el.getBoundingClientRect().bottom
+    }));
+    let overlap = 0;
+    for (let i = 1; i < rects.length; i++) if (rects[i].t < rects[i - 1].b - 1) overlap++;
+    return { overlap, n: rects.length, rects };
+  });
+  check(paintLayout.overlap === 0, '绘画面板分区互不遮挡', JSON.stringify(paintLayout));
+
+  /* 自定义笔尖：走真实的文件选择 → 解码 → 状态 / 预览 */
+  const b64 = await page.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = c.height = 16;
+    const g = c.getContext('2d');
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(8, 8, 7, 0, Math.PI * 2); g.fill();
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  await page.setInputFiles('#mdBrushFile',
+    { name: 'dot.png', mimeType: 'image/png', buffer: Buffer.from(b64, 'base64') });
+  await page.waitForTimeout(200);
+  const customBrush = await page.evaluate(() => {
+    const s = window.modelDesk.getState();
+    return {
+      shape: s.brushShape, name: s.brushCustom,
+      rowShown: !document.getElementById('mdBrushCustomRow').hidden,
+      tmb: !document.getElementById('mdBrushTmb').hidden
+    };
+  });
+  check(customBrush.shape === 'custom' && customBrush.name === 'dot.png' &&
+    customBrush.rowShown && customBrush.tmb,
+    '自定义笔尖：载入图片后切到自定义形状', JSON.stringify(customBrush));
+
+  /* 收回内置形状，后面的笔画断言仍按圆形笔尖计算 */
+  await page.evaluate(() => {
+    const sel = document.getElementById('mdBrushShape');
+    sel.value = 'round';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+
   const paintStroke = await page.evaluate(() => {
     const API = window.modelDesk, d = API.__debug(), T = window.THREE;
     const canvas = d.canvas, r = canvas.getBoundingClientRect();
@@ -2960,6 +3159,236 @@ Connections:  {
     paintUndo.gizmoHidden === true,
     '画笔笔画可撤销 / 重做（栈里少一层再回来，贴图始终在）',
     JSON.stringify({ undoOk: paintUndo.undoOk, ops: paintUndo.n0 + '→' + paintUndo.nMid + '→' + paintUndo.nBack, mapSame: paintUndo.mapSame, gizmoHidden: paintUndo.gizmoHidden }));
+
+  /* 平铺 / atlas UV（导入模型的 uv 常超出 0–1）：修复前笔刷落在画布外，
+   * UV 岛遮罩还会把整笔裁成空 —— 表现就是「有贴图的模型上绘制无反应」。
+   * 这里把 UV 乘 2 再加 0.5（0.5–2.5），验证仍能画上，画完恢复原 UV。 */
+  const paintTiled = await page.evaluate(() => {
+    const API = window.modelDesk, d = API.__debug(), T = window.THREE;
+    const m = d.mesh;
+    if (!m || !m.uvs || !m.uvs.length) return { skip: true };
+    const orig = Array.from(m.uvs);
+    for (let i = 0; i < m.uvs.length; i++) m.uvs[i] = m.uvs[i] * 2 + 0.5;
+    try {
+      const canvas = d.canvas, r = canvas.getBoundingClientRect();
+      const camPos = d.camera.getWorldPosition(new T.Vector3());
+      let bestDot = -Infinity, bestC = null;
+      for (let f = 0; f < m.faceIds.length; f++) {
+        const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+        if (e - s < 3) continue;
+        const c = new T.Vector3();
+        for (let k = s; k < e; k++) {
+          const vi = m.faceIndices[k] * 3;
+          c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
+        }
+        c.multiplyScalar(1 / (e - s));
+        const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
+        const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+        const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+        const n = new T.Vector3().crossVectors(v1, v2).normalize();
+        const wc = d.pivot.localToWorld(c.clone());
+        const wn = n.clone().transformDirection(d.pivot.matrixWorld);
+        const dot = wn.dot(camPos.clone().sub(wc).normalize());
+        if (dot > bestDot) { bestDot = dot; bestC = wc; }
+      }
+      if (!bestC) return { skip: true };
+      const p = bestC.clone().project(d.camera);
+      const x = r.left + (p.x * 0.5 + 0.5) * r.width, y = r.top + (-p.y * 0.5 + 0.5) * r.height;
+      const send = (type, cx, cy) => canvas.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+        pointerId: 78, clientX: cx, clientY: cy
+      }));
+      const slot = API.getState().paintSlot;
+      const n0 = window.TexStack ? window.TexStack.ops(API.getDocument(), slot).length : -1;
+      send('pointerdown', x, y);
+      const mid = API.getState();
+      /* 命中面的槽可能与上一笔不同（多槽资产）：基线必须按这一笔真正落到的槽取 */
+      const paintSlot = mid.paintSlot;
+      const nMid = window.TexStack ? window.TexStack.ops(API.getDocument(), paintSlot).length : -1;
+      for (let i = 1; i <= 5; i++) send('pointermove', x + i * 8, y + i * 5);
+      send('pointerup', x + 40, y + 25);
+      const end = API.getState();
+      const stack = window.TexStack ? window.TexStack.ops(API.getDocument(), end.paintSlot) : [];
+      let inkPx = 0;
+      if (stack.length) {
+        const ic = stack[stack.length - 1].canvas;
+        const dd = ic.getContext('2d').getImageData(0, 0, ic.width, ic.height).data;
+        for (let i = 3; i < dd.length; i += 4) if (dd[i] > 8) inkPx++;
+      }
+      return {
+        n0, paintSlot, nMid, n1: stack.length, inkPx,
+        clipped: mid.paintClipped, clipPolys: mid.paintClipPolys,
+        status: (document.getElementById('mdStatus') || {}).textContent || ''
+      };
+    } finally {
+      for (let i = 0; i < orig.length; i++) m.uvs[i] = orig[i];
+    }
+  });
+  check(paintTiled.skip !== true && paintTiled.n1 === paintTiled.nMid + 1 && paintTiled.nMid >= 0 &&
+    paintTiled.inkPx > 0 && paintTiled.clipped === false && /已写入贴图/.test(paintTiled.status),
+    '平铺 / 越界 UV 的模型仍能画上（越界时不做岛裁剪，也不落画布外）',
+    JSON.stringify(paintTiled));
+
+  /* 11.16 绘画材质槽：面板里能显式选槽，选中的槽优先于「落笔面自动取槽」。
+   * 为了证明不是「碰巧命中同一槽」，故意把落笔点选在槽 0 的面上，再强制写槽 1。 */
+  const paintSlotPick = await page.evaluate(async () => {
+    const API = window.modelDesk, T = window.THREE;
+    const doc = API.getDocument();
+    const mats = doc.materials;
+    const names0 = (mats.slotNames || []).slice();
+    const colors0 = (mats.slotColors || []).slice();
+    const maps0 = (mats.slotMaps || []).slice();
+    const mesh = window.SeedModel.Scene.getMesh(doc);
+    const slots0 = Array.from(mesh.faceSlots);
+    const urls = ['#8899ff', '#ffcc66'].map(col => {
+      const c = document.createElement('canvas'); c.width = 8; c.height = 8;
+      const g = c.getContext('2d'); g.fillStyle = col; g.fillRect(0, 0, 8, 8);
+      return c.toDataURL('image/png');
+    });
+    mats.slotNames = ['材质A', '材质B'];
+    mats.slotColors = ['#ffffff', '#ffffff'];
+    mats.slotMaps = urls;
+    for (let f = 0; f < mesh.faceSlots.length; f++) mesh.faceSlots[f] = f % 2;
+    window.SeedModel.Mesh.bump(mesh);
+    window.SeedModel.Scene.revision(doc, 'mesh');
+    API.applyMesh(mesh, 'dbg-two-slot');
+    await new Promise(r => setTimeout(r, 150));
+
+    const sel = document.getElementById('mdPaintSlotSel');
+    const out = { opts: sel ? Array.from(sel.options).map(o => o.textContent) : [] };
+    try {
+      sel.value = '1';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      out.userSlot = API.getState().paintUserSlot;
+
+      const d = API.__debug(), m = d.mesh;
+      const canvas = d.canvas, r = canvas.getBoundingClientRect();
+      const camPos = d.camera.getWorldPosition(new T.Vector3());
+      let bestDot = -Infinity, bestC = null, bestFace = -1;
+      for (let f = 0; f < m.faceIds.length; f++) {
+        if ((m.faceSlots[f] | 0) !== 0) continue;
+        const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+        if (e - s < 3) continue;
+        const c = new T.Vector3();
+        for (let k = s; k < e; k++) {
+          const vi = m.faceIndices[k] * 3;
+          c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
+        }
+        c.multiplyScalar(1 / (e - s));
+        const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
+        const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+        const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+        const n = new T.Vector3().crossVectors(v1, v2).normalize();
+        const wc = d.pivot.localToWorld(c.clone());
+        const wn = n.clone().transformDirection(d.pivot.matrixWorld);
+        const dot = wn.dot(camPos.clone().sub(wc).normalize());
+        if (dot > bestDot) { bestDot = dot; bestC = wc; bestFace = f; }
+      }
+      const p = bestC.clone().project(d.camera);
+      const x = r.left + (p.x * 0.5 + 0.5) * r.width, y = r.top + (-p.y * 0.5 + 0.5) * r.height;
+      const send = (type, cx, cy) => canvas.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+        pointerId: 79, clientX: cx, clientY: cy
+      }));
+      const n0 = window.TexStack.ops(doc, 0).length;
+      const n1 = window.TexStack.ops(doc, 1).length;
+      send('pointerdown', x, y);
+      const mid = API.getState();
+      send('pointermove', x + 12, y + 6);
+      send('pointerup', x + 24, y + 12);
+      const end = API.getState();
+      out.faceSlot = (m.faceSlots[bestFace] | 0);
+      out.midSlot = mid.paintSlot;
+      out.endSlot = end.paintSlot;
+      out.delta0 = window.TexStack.ops(doc, 0).length - n0;
+      out.delta1 = window.TexStack.ops(doc, 1).length - n1;
+      out.status = (document.getElementById('mdStatus') || {}).textContent || '';
+    } finally {
+      /* 还原单槽，后面的隔离 / 导出用例不受影响。
+       * applyMesh 可能把网格重新打包，还原必须作用在文档当前那份网格上。 */
+      mats.slotNames = names0; mats.slotColors = colors0; mats.slotMaps = maps0;
+      const live = window.SeedModel.Scene.getMesh(doc);
+      for (let f = 0; f < live.faceSlots.length && f < slots0.length; f++) live.faceSlots[f] = slots0[f];
+      window.SeedModel.Mesh.bump(live);
+      window.SeedModel.Scene.revision(doc, 'mesh');
+      API.applyMesh(live, 'dbg-restore');
+      const sel2 = document.getElementById('mdPaintSlotSel');
+      if (sel2) { sel2.value = '-1'; sel2.dispatchEvent(new Event('change', { bubbles: true })); }
+    }
+    return out;
+  });
+  check(paintSlotPick.opts.length === 3 && /自动/.test(paintSlotPick.opts[0]) &&
+    /材质B/.test(paintSlotPick.opts[2]) && paintSlotPick.userSlot === 1 &&
+    paintSlotPick.faceSlot === 0 && paintSlotPick.midSlot === 1 && paintSlotPick.endSlot === 1 &&
+    paintSlotPick.delta1 === 1 && paintSlotPick.delta0 === 0 && /已写入贴图/.test(paintSlotPick.status),
+    '绘画材质槽：选定槽后落在别的槽的面也只写这一槽',
+    JSON.stringify(paintSlotPick));
+
+  /* 11.17 多对象绘画：激活对象不是鼠标下那个时，落笔前自动切过去。
+   * 导入的多材质模型常拆成多个节点，只按激活对象求交会「点哪都没反应」。 */
+  const paintAutoNode = await page.evaluate(() => {
+    const API = window.modelDesk, SM = window.SeedModel, T = window.THREE;
+    const doc = API.getDocument();
+    const aId = API.getState().activeNodeId;
+    API.createPrimitive('sphere');
+    const sId = API.getState().activeNodeId;
+    if (!sId || sId === aId) return { skip: true };
+    const nodes = SM.Scene.nodesOf(doc);
+    const aNode = nodes.filter(n => n.id === aId)[0];
+    const sNode = nodes.filter(n => n.id === sId)[0];
+    /* 球体放原点（相机对准的位置），原对象挪远，保证落笔点不被遮挡也不出画 */
+    SM.Scene.setNodeTransform(doc, sNode, [0, 0, 0]);
+    SM.Scene.setNodeTransform(doc, aNode, [30, 0, 0]);
+    API.selectNodeById(aId);
+    API.selectNodeById(sId);
+    API.selectNodeById(aId);
+    const d = API.__debug();
+    const pv = d.pivots[sId];
+    const sm = SM.Scene.getMesh(doc, sNode);
+    const camPos = d.camera.getWorldPosition(new T.Vector3());
+    let bestDot = -Infinity, bestC = null;
+    for (let f = 0; f < sm.faceIds.length; f++) {
+      const s = sm.faceOffsets[f], e = sm.faceOffsets[f + 1];
+      if (e - s < 3) continue;
+      const c = new T.Vector3();
+      for (let k = s; k < e; k++) {
+        const vi = sm.faceIndices[k] * 3;
+        c.x += sm.positions[vi]; c.y += sm.positions[vi + 1]; c.z += sm.positions[vi + 2];
+      }
+      c.multiplyScalar(1 / (e - s));
+      const a0 = sm.faceIndices[s] * 3, a1 = sm.faceIndices[s + 1] * 3, a2 = sm.faceIndices[s + 2] * 3;
+      const v1 = new T.Vector3(sm.positions[a1] - sm.positions[a0], sm.positions[a1 + 1] - sm.positions[a0 + 1], sm.positions[a1 + 2] - sm.positions[a0 + 2]);
+      const v2 = new T.Vector3(sm.positions[a2] - sm.positions[a0], sm.positions[a2 + 1] - sm.positions[a0 + 1], sm.positions[a2 + 2] - sm.positions[a0 + 2]);
+      const n = new T.Vector3().crossVectors(v1, v2).normalize();
+      const wc = pv.localToWorld(c.clone());
+      const wn = n.clone().transformDirection(pv.matrixWorld);
+      const dot = wn.dot(camPos.clone().sub(wc).normalize());
+      if (dot > bestDot) { bestDot = dot; bestC = wc; }
+    }
+    const canvas = d.canvas, r = canvas.getBoundingClientRect();
+    const p = bestC.clone().project(d.camera);
+    const x = r.left + (p.x * 0.5 + 0.5) * r.width, y = r.top + (-p.y * 0.5 + 0.5) * r.height;
+    const send = (type, cx, cy) => canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      pointerId: 80, clientX: cx, clientY: cy
+    }));
+    const n0 = window.TexStack.ops(doc, 0).length;
+    const activeBefore = API.getState().activeNodeId;
+    send('pointerdown', x, y);
+    const mid = API.getState();
+    send('pointerup', x, y);
+    const end = API.getState();
+    return {
+      skip: false, aId, sId, activeBefore,
+      switched: mid.activeNodeId === sId && end.activeNodeId === sId,
+      delta: window.TexStack.ops(doc, 0).length - n0,
+      status: (document.getElementById('mdStatus') || {}).textContent || ''
+    };
+  });
+  check(paintAutoNode.skip !== true && paintAutoNode.activeBefore === paintAutoNode.aId &&
+    paintAutoNode.switched === true && paintAutoNode.delta === 1,
+    '多对象绘画：点中非激活对象时自动切过去再落笔',
+    JSON.stringify(paintAutoNode));
 
   /* 单独显示（隔离所选）：只留当前对象，再点一次恢复；文档里的 node.visible 不受影响 */
   const iso = await page.evaluate(() => {
@@ -3266,7 +3695,263 @@ Connections:  {
     '命令行 camera / display / tone / exposure 全部生效',
     JSON.stringify({ view: uiCtrl.cmdView, verts: uiCtrl.cmdVertsOff, tone: uiCtrl.cmdTone, exp: uiCtrl.cmdExposure }));
 
-  /* 12. 截图（整窗 + 视口） */
+  /* 12. 选择：对象多选（视口 Shift/Ctrl）、对象框选、全选/反选/清除、预选、岛色、持久化 */
+  await page.keyboard.press('F8');
+  await page.evaluate(() => {
+    const API = window.modelDesk, S = window.SeedModel.Scene;
+    const d = API.__debug();
+    if (S.nodesOf(d.doc).length < 2) API.createPrimitive('sphere');
+    const nodes = S.nodesOf(d.doc);
+    /* 两个对象沿 X 分开：视口点选 / 框选都不受遮挡影响 *
+     * （setNodeTransform 只改文档，切一次激活对象触发 rebuildModel 把 pivot 摆过去） */
+    S.setNodeTransform(d.doc, nodes[1], [2.4, 0, 0]);
+    API.selectNodeById(nodes[1].id, 'replace');
+    document.querySelector('.md-tool[data-md-tool="select"]').click();
+    API.selectNodeById(nodes[0].id, 'replace');
+  });
+  await page.keyboard.press('a');          /* 帧显全部对象，保证两个都落在视口里 */
+  await page.waitForTimeout(200);
+  const selSetup = await page.evaluate(() => {
+    const API = window.modelDesk, S = window.SeedModel.Scene, T = window.THREE, d = API.__debug();
+    const nodes = S.nodesOf(d.doc);
+    const r = d.canvas.getBoundingClientRect();
+    const screenOf = (id) => {
+      const pv = API.__debug().pivots[id];
+      pv.updateMatrixWorld(true);
+      const v = new T.Vector3();
+      pv.getWorldPosition(v);
+      v.project(d.camera);
+      return {
+        x: Math.round(r.left + (v.x * 0.5 + 0.5) * r.width),
+        y: Math.round(r.top + (-v.y * 0.5 + 0.5) * r.height)
+      };
+    };
+    return {
+      ids: nodes.map(n => n.id),
+      a: screenOf(nodes[0].id),
+      b: screenOf(nodes[1].id),
+      rect: { left: r.left, top: r.top, width: r.width, height: r.height }
+    };
+  });
+  const objSel = await page.evaluate(({ ids, a, b }) => {
+    const API = window.modelDesk, canvas = API.__debug().canvas;
+    const send = (type, pt, mods) => canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0,
+      buttons: type === 'pointerup' ? 0 : 1, pointerId: 91,
+      clientX: pt.x, clientY: pt.y,
+      shiftKey: !!(mods && mods.shift), ctrlKey: !!(mods && mods.ctrl)
+    }));
+    const click = (pt, mods) => { send('pointerdown', pt, mods); send('pointerup', pt, mods); };
+    const out = {};
+    /* 点第二个对象 = 换选 */
+    click(b, null);
+    let s = API.getState();
+    out.clickB = { ids: s.nodeIds.slice(), active: s.activeNodeId };
+    /* Shift 点第一个 = 加到 2 个；激活切到第一个，第二个画出包围盒 */
+    click(a, { shift: true });
+    s = API.getState();
+    out.shiftA = { ids: s.nodeIds.slice(), active: s.activeNodeId, hi: s.objSelHighlight, hud: document.getElementById('mdHud').textContent };
+    /* Ctrl 再点第二个 = 切换掉（回到 1 个） */
+    click(b, { ctrl: true });
+    s = API.getState();
+    out.ctrlB = { ids: s.nodeIds.slice(), active: s.activeNodeId, hi: s.objSelHighlight };
+    /* 对象模式框选：拖一个盖住两个对象的矩形 */
+    const x0 = Math.max(2, Math.min(a.x, b.x) - 120), y0 = Math.max(2, Math.min(a.y, b.y) - 120);
+    const x1 = Math.min(window.innerWidth - 2, Math.max(a.x, b.x) + 120);
+    const y1 = Math.min(window.innerHeight - 2, Math.max(a.y, b.y) + 120);
+    send('pointerdown', { x: x0, y: y0 }, null);
+    send('pointermove', { x: (x0 + x1) / 2, y: (y0 + y1) / 2 }, null);
+    send('pointermove', { x: x1, y: y1 }, null);
+    send('pointerup', { x: x1, y: y1 }, null);
+    s = API.getState();
+    out.marquee = { ids: s.nodeIds.slice(), count: s.objSelCount, hi: s.objSelHighlight };
+    /* 全选 / 反选 / 清除（对象模式） */
+    out.all = { n: API.selectAll(), ids: API.getState().nodeIds.slice() };
+    out.inv = { n: API.invertSelection(), ids: API.getState().nodeIds.slice() };
+    out.clear = { ids: API.clearSelection() === 0 ? API.getState().nodeIds.slice() : null, status: API.getState().status };
+    return { out, ids };
+  }, { ids: selSetup.ids, a: selSetup.a, b: selSetup.b });
+
+  const o = objSel.out;
+  check(o.clickB.ids.length === 1 && o.clickB.active === objSel.ids[1],
+    '视口点选对象：换选并激活', JSON.stringify(o.clickB));
+  check(o.shiftA.ids.length === 2 && o.shiftA.active === objSel.ids[0] && o.shiftA.hi === true,
+    '视口 Shift 点选 = 对象加选，次选画出包围盒', JSON.stringify(o.shiftA));
+  check(o.shiftA.hud.indexOf('选择 对象 2') >= 0, 'HUD 显示对象选择数量', o.shiftA.hud);
+  check(o.ctrlB.ids.length === 1 && o.ctrlB.active === objSel.ids[0] && o.ctrlB.hi === false,
+    '视口 Ctrl 点选 = 取消该对象（切换）', JSON.stringify(o.ctrlB));
+  check(o.marquee.count === 2 && o.marquee.hi === true,
+    '对象模式框选：框住的两个对象一起选中', JSON.stringify(o.marquee));
+  check(o.all.n === 2 && o.all.ids.length === 2, '对象模式全选', JSON.stringify(o.all));
+  check(o.inv.n === 0 && o.inv.ids.length === 0, '对象模式反选：全选后反选 = 空选（允许 0 个）', JSON.stringify(o.inv));
+  check(o.clear.ids && o.clear.ids.length === 0 && /选择已清空/.test(o.clear.status),
+    '对象模式清除 = 空选（不再强行保留当前对象）', JSON.stringify(o.clear));
+
+  /* 空选：点视口空白 / Esc 都能清到 0 个；手柄收起；空选写进文档并原样恢复 */
+  const emptySel = await page.evaluate(() => {
+    const API = window.modelDesk, S = window.SeedModel.Scene, d = API.__debug();
+    const nodes = S.nodesOf(d.doc);
+    API.applyNodeSelection(nodes.map(n => n.id), 'replace', nodes[0].id);
+    const before = API.getState();
+    const r = d.canvas.getBoundingClientRect();
+    const blank = { x: Math.round(r.left + 8), y: Math.round(r.top + 8) };
+    const send = (type) => d.canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      pointerId: 92, clientX: blank.x, clientY: blank.y
+    }));
+    send('pointerdown'); send('pointerup');
+    const after = API.getState();
+    return {
+      before: before.nodeIds.length, after: after.nodeIds.length,
+      mode: after.selMode, gizmo: d.gizmo.group.visible,
+      hud: document.getElementById('mdHud').textContent,
+      activeKept: after.activeNodeId === before.activeNodeId,
+      docIds: ((API.getDocument().selection || {}).nodeIds || []).length,
+      status: after.status
+    };
+  });
+  check(emptySel.before >= 1 && emptySel.after === 0 && emptySel.gizmo === false &&
+    emptySel.activeKept === true && emptySel.docIds === 0 && /已清空选择|选择已清空/.test(emptySel.status),
+    '对象空选：点空白清到 0 个、手柄收起、激活对象保留、文档同步空集', JSON.stringify(emptySel));
+  const escEmpty = await page.evaluate(() => {
+    const API = window.modelDesk, S = window.SeedModel.Scene;
+    const nodes = S.nodesOf(API.getDocument());
+    API.selectNodeById(nodes[0].id, 'replace');
+    return API.getState().nodeIds.length;
+  });
+  await page.keyboard.press('Escape');
+  const escAfter = await page.evaluate(() => window.modelDesk.getState().nodeIds.length);
+  check(escEmpty === 1 && escAfter === 0, 'Esc 清除对象选择（单选也能清空）', JSON.stringify({ escEmpty, escAfter }));
+
+  /* 「选择」菜单：条目齐全，点「全选」真的走到命令上 */
+  const selMenu = await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('.md-mitem[data-md-menu]'))
+      .find(b => b.textContent.trim() === '选择');
+    if (!btn) return { error: '没有「选择」菜单' };
+    btn.click();
+    const drop = document.querySelector('.md-drop:not([hidden])');
+    const items = drop ? Array.from(drop.querySelectorAll('.md-mi')).map(x => x.textContent.trim()) : [];
+    if (drop) {
+      const all = Array.from(drop.querySelectorAll('.md-mi')).find(x => x.textContent.indexOf('全选') >= 0);
+      if (all) all.click();
+    }
+    return { items, count: window.modelDesk.getState().nodeIds.length };
+  });
+  check(!selMenu.error && selMenu.items.some(x => x.indexOf('全选') >= 0) &&
+    selMenu.items.some(x => x.indexOf('清除选择') >= 0) && selMenu.count === 2,
+    '「选择」菜单：全选 / 反选 / 清除条目齐全且全选生效', JSON.stringify(selMenu));
+
+  /* 预选幽灵：面模式下鼠标停在模型上，hoverPick 给出 face:id；移开就消失 */
+  await page.keyboard.press('F11');
+  await page.mouse.move(selSetup.a.x, selSetup.a.y);
+  await page.waitForTimeout(150);
+  const hoverOn = await page.evaluate(() => window.modelDesk.getState().hoverPick);
+  await page.mouse.move(Math.round(selSetup.rect.left + 8), Math.round(selSetup.rect.top + 8));
+  await page.waitForTimeout(150);
+  const hoverOff = await page.evaluate(() => window.modelDesk.getState().hoverPick);
+  check(/^face:/.test(hoverOn) && hoverOff === '',
+    '组件预选：悬停给出 face 幽灵，移开后清空', JSON.stringify({ on: hoverOn, off: hoverOff }));
+
+  /* UV 岛模式高亮色独立（青绿），不与面（橙）混用 */
+  const faceColor = await page.evaluate(() => window.modelDesk.getState().selColor);
+  await page.keyboard.press('F12');
+  const islandColor = await page.evaluate(() => window.modelDesk.getState().selColor);
+  await page.keyboard.press('F8');
+  check(islandColor !== faceColor && islandColor === '#2dd4bf',
+    'UV 岛模式使用独立高亮色', JSON.stringify({ face: faceColor, island: islandColor }));
+
+  /* 多选持久化：选择集写进文档，保存 → 重新打开后恢复 */
+  const persist = await page.evaluate(async () => {
+    const API = window.modelDesk, S = window.SeedModel.Scene;
+    try {
+      const nodes = S.nodesOf(API.getDocument());
+      if (nodes.length < 2) return { skip: true };
+      API.applyNodeSelection([nodes[0].id, nodes[1].id], 'replace', nodes[0].id);
+      const inDoc = ((API.getDocument().selection || {}).nodeIds || []).length;
+      const store = {};
+      window.openagiDesktop = {
+        assetPut: async o => { store[o.id] = o.data; return { ok: true, asset: { id: o.id, name: o.name } }; },
+        assetRead: async id => ({ ok: true, dataURL: store[id] }),
+        assetList: async () => ({ ok: true, assets: [] }),
+        assetThumb: async () => ({ ok: false }),
+        assetThumbSave: async () => ({ ok: true })
+      };
+      const saved = await API.save();
+      if (!saved || !saved.ok) return { inDoc, saved };
+      const id = API.getDocument().assetId;
+      await API.openAsset(id);
+      const after = API.getState();
+      return { inDoc, savedOk: true, reopened: after.nodeIds.length, activeRestored: after.activeNodeId === nodes[0].id };
+    } catch (e) {
+      return { error: String((e && e.stack) || e) };
+    }
+  });
+  check(persist.skip !== true && persist.inDoc === 2 && persist.savedOk === true &&
+    persist.reopened === 2 && persist.activeRestored === true,
+    '对象多选持久化：保存后重新打开恢复选择集', JSON.stringify(persist));
+
+  /* 空选也要能存盘恢复：不能被「激活对象」偷偷补回 1 个 */
+  const emptyPersist = await page.evaluate(async () => {
+    const API = window.modelDesk;
+    API.applyNodeSelection([], 'replace');
+    const saved = await API.save();
+    const id = API.getDocument().assetId;
+    await API.openAsset(id);
+    const s = API.getState();
+    return { savedOk: !!(saved && saved.ok), reopened: s.nodeIds.length, active: !!s.activeNodeId };
+  });
+  check(emptyPersist.savedOk === true && emptyPersist.reopened === 0 && emptyPersist.active === true,
+    '空选持久化：保存 → 重开仍是 0 个选中（激活对象保留）', JSON.stringify(emptyPersist));
+
+  /* 导出到电脑：四种格式都能出数据；对话框支持重名 + 多格式连续导出 */
+  const exp = await page.evaluate(async () => {
+    const API = window.modelDesk;
+    const obj = await API.exportPayload('obj');
+    const stl = await API.exportPayload('stl');
+    const gltf = await API.exportPayload('gltf');
+    const glb = await API.exportPayload('glb');
+    let gltfJson = null;
+    try { gltfJson = JSON.parse(gltf.text); } catch (e) {}
+    const opened = API.openExport();
+    const tabs = Array.from(document.querySelectorAll('[data-md-exp-fmt]')).map(b => b.dataset.mdExpFmt);
+    const nameInput = document.getElementById('mdExpName');
+    const calls = [];
+    window.openagiDesktop = {
+      fileSave: async req => {
+        calls.push({ name: req.name, ext: req.ext });
+        return { ok: true, path: 'C:/tmp/' + req.name + '.' + req.ext, bytes: 1 };
+      }
+    };
+    if (nameInput) nameInput.value = '重名模型';
+    document.querySelector('[data-md-exp-fmt="obj"]').click();
+    const r1 = await API.runExport();
+    /* 第一次导出成功后对话框会关掉；重开再选另一种格式，文件名保持同名 */
+    API.openExport();
+    document.getElementById('mdExpName').value = '重名模型';
+    document.querySelector('[data-md-exp-fmt="stl"]').click();
+    const r2 = await API.runExport();
+    return {
+      objHead: obj.text.split('\n')[0],
+      objFaces: (obj.text.match(/^f /gm) || []).length,
+      stlOk: /^solid /.test(stl.text) && /facet normal/.test(stl.text),
+      gltfOk: !!(gltfJson && gltfJson.asset && gltfJson.asset.version && (gltfJson.meshes || []).length),
+      glbBytes: glb.buffer ? glb.buffer.byteLength : 0,
+      opened, tabs, hasName: !!nameInput, calls, r1, r2
+    };
+  });
+  check(exp.objHead.indexOf('# modeldesk OBJ export') === 0 && exp.objFaces >= 12,
+    '导出 OBJ：世界坐标几何（面数 = ' + exp.objFaces + '）', exp.objHead);
+  check(exp.stlOk === true, '导出 STL：solid / facet normal 结构正确', '');
+  check(exp.gltfOk === true, '导出 GLTF：JSON 内含 asset 与 meshes（贴图内嵌）', '');
+  check(exp.glbBytes > 500, '导出 GLB：二进制非空', exp.glbBytes + ' bytes');
+  check(exp.opened === true && exp.hasName === true &&
+    ['glb', 'gltf', 'obj', 'stl'].every(k => exp.tabs.indexOf(k) >= 0),
+    '导出对话框：文件名输入 + 四种格式页签', JSON.stringify({ opened: exp.opened, tabs: exp.tabs }));
+  check(exp.calls.length === 2 && exp.calls[0].name === '重名模型' && exp.calls[1].name === '重名模型' &&
+    exp.calls[0].ext === 'obj' && exp.calls[1].ext === 'stl' && exp.r1.ok === true && exp.r2.ok === true,
+    '允许重名 + 多格式：同名连续导出 OBJ / STL 都成功', JSON.stringify({ calls: exp.calls, r1: exp.r1.ok, r2: exp.r2.ok }));
+
+  /* 13. 截图（整窗 + 视口） */
   try {
     const win = await page.$('#modelDeskWin');
     const shotWin = win ? await RUN.shot(win, 'window.png') : null;

@@ -338,6 +338,8 @@ function switchTab(name){
   }
   // 网页操作页：助手地址是运行期真值（桌面端 ?tripo= 会改端口），每次进来都重填并探测一次
   if(name === 'webop' && typeof fillWebopPane === 'function') fillWebopPane();
+  // 语音合成：系统语音是异步填充的、本地音色按磁盘判断，每次进来重算一遍清单
+  if(name === 'tts' && typeof ttsPaneRender === 'function') ttsPaneRender();
 }
 function openSettings(tab){
   if(tab) switchTab(tab);

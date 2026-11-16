@@ -660,12 +660,16 @@
     <div class="set-body">
       <!-- ⚠ 这些 .tab 的 data-tab 是 switchTab() 的唯一依据，js 里还有
            openSettings('image' / 'llm') 的直接调用，改 key 会静默跳到空页。
-           导航右侧的小圆点由 settings-home.js 统一刷新（已配置 / 未配置）。 -->
+           导航右侧的小圆点由 settings-home.js 统一刷新（已配置 / 未配置）。
+           中间的分组标题（模型 / 服务 / 本地）只是视觉分隔，不参与 switchTab。 -->
       <nav class="set-nav" role="tablist" aria-label="设置分类">
         <button class="tab active" role="tab" aria-selected="true" data-tab="overview">
           <svg class="set-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7.4" height="7.4" rx="1.6"/><rect x="13.6" y="3" width="7.4" height="7.4" rx="1.6"/><rect x="3" y="13.6" width="7.4" height="7.4" rx="1.6"/><rect x="13.6" y="13.6" width="7.4" height="7.4" rx="1.6"/></svg>
           <span class="set-nav-name">总览</span>
         </button>
+
+        <div class="set-nav-sep">模型</div>
+
         <button class="tab" role="tab" aria-selected="false" data-tab="llm">
           <svg class="set-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v10H9l-5 4V5Z"/></svg>
           <span class="set-nav-name">语言模型</span>
@@ -676,6 +680,14 @@
           <span class="set-nav-name">图像生成</span>
           <span class="set-dot off" data-dot="image"></span>
         </button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="tts">
+          <svg class="set-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10v4M7.6 7.4v9.2M11.2 5v14M14.8 8.2v7.6M18.4 10.4v3.2"/></svg>
+          <span class="set-nav-name">语音合成</span>
+          <span class="set-dot off" data-dot="tts"></span>
+        </button>
+
+        <div class="set-nav-sep">服务</div>
+
         <button class="tab" role="tab" aria-selected="false" data-tab="search">
           <svg class="set-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M3.6 12h16.8"/><path d="M12 3.6a12 12 0 0 1 0 16.8a12 12 0 0 1 0-16.8Z"/></svg>
           <span class="set-nav-name">联网搜索</span>
@@ -889,6 +901,70 @@
               <button class="linkbtn" id="testIMG">测试生图接口</button>
             </div>
             <div id="testIMGResult" class="test-list"></div>
+          </section>
+        </div>
+
+        <!-- ==================== 语音合成 ====================
+             音色清单是运行期真值：系统语音由 speechSynthesis 异步填充，本地音色
+             按磁盘已下载的模型判断，所以面板由 js/settings-tts.js 懒渲染。
+             默认音色直接读写 hf_ttsVoice，与模型商店「设为默认」同源；
+             ⚠ 不要把它加进 config.js 的 CFG——页面加载时 select 里还没有选项，
+             saveAll() 会把已存的音色覆盖成空值。 -->
+        <div class="tabpane hidden" data-pane="tts">
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">默认音色</div>
+              <div class="set-sec-s">数字人朗读与模型商店试听都用这里选的音色。系统语音随系统语音包提供；Piper / Kokoro / MeloTTS / ZipVoice 是本地模型，先在模型商店里下载。</div>
+            </div>
+            <div class="tts-row">
+              <select id="ttsVoiceSel" aria-label="默认音色"><option value="">系统默认</option></select>
+              <button type="button" class="btn sm" id="ttsVoiceReload">刷新</button>
+            </div>
+            <div class="note" id="ttsVoiceHint">读取中…</div>
+            <div class="set-kv">
+              <span class="set-kv-k">引擎</span>
+              <span class="set-kv-v" id="ttsStatus">检测中…</span>
+              <button type="button" class="btn sm" id="ttsStore">模型商店</button>
+            </div>
+          </section>
+
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">声音克隆</div>
+              <div class="set-sec-s">下载 ZipVoice 克隆模型后可用：选一段 5-15 秒的清晰人声（WAV），并填写录音里说的那句话。参考录音只保存在本机，不会上传。</div>
+            </div>
+            <div class="field">
+              <label for="ttsCloneText">参考文本</label>
+              <input id="ttsCloneText" type="text" maxlength="200" placeholder="例如：今天天气不错，我们出去走走吧。">
+            </div>
+            <div class="inline tts-actions">
+              <button type="button" class="btn sm primary" id="ttsClonePick">选择录音并保存</button>
+              <button type="button" class="btn sm" id="ttsClonePlay">试听克隆音色</button>
+              <button type="button" class="btn sm" id="ttsCloneClear">清除录音</button>
+            </div>
+            <div class="note" id="ttsCloneStatus">检测中…</div>
+          </section>
+
+          <section class="set-sec">
+            <div class="set-sec-head">
+              <div class="set-sec-t">试听</div>
+              <div class="set-sec-s">先听一遍再决定默认音色。本地模型首次合成要加载权重，可能等一两秒；引擎没起来时会直接提示。</div>
+            </div>
+            <div class="field">
+              <label for="ttsText">试听文本</label>
+              <textarea id="ttsText" rows="2" maxlength="80" placeholder="留空就用示例句，最多 80 字"></textarea>
+            </div>
+            <div class="tts-rate">
+              <label for="ttsRate">试听语速</label>
+              <input type="range" id="ttsRate" min="0.7" max="1.4" step="0.05" value="1" aria-label="试听语速">
+              <span class="tts-rate-val" id="ttsRateVal">1.00</span>
+            </div>
+            <div class="inline tts-actions">
+              <button type="button" class="btn sm primary" id="ttsPlay">试听</button>
+              <button type="button" class="btn sm" id="ttsStop">停止</button>
+              <span class="note" id="ttsPlayMsg"></span>
+            </div>
+            <div class="note">试听语速只影响这一页；数字人朗读的语速与音调在「数字人」App 的语音面板里调整。</div>
           </section>
         </div>
 
@@ -1258,6 +1334,9 @@
 <!-- 设置总览的状态卡与左侧小圆点：只读真值，不另存状态。必须在 workbench.js 之后
      （要用 switchTab 跳分组），且 config.js 之后（要读 relayBase / gwSession） -->
 <script src="js/settings-home.js"></script>
+<!-- 语音合成设置：音色读写 hf_ttsVoice（与模型商店「设为默认」同源），
+     试听走系统语音或本地引擎桥；必须在 provider.js / model-catalog.js 之后 -->
+<script src="js/settings-tts.js"></script>
 <script src="js/blueprint-core.js"></script>
 <script src="js/node-registry.js"></script>
 <script src="js/node-defs.js"></script>

@@ -103,6 +103,99 @@ function eq(a, b, name){
   ok(!fs.existsSync(path.join(userData, 'tts', 'sherpa')), '卸载删除共享引擎目录');
   eq(TTS.kokoroStatus(userData).installed, false, '卸载后回到未就绪');
 
+  /* ---- MeloTTS 共享模型（与 Kokoro 共用引擎，模型独立） ---- */
+  const m0 = TTS.meloStatus(userData);
+  eq(m0.ok, true, 'MeloTTS 状态查询不因缺文件报错');
+  eq(m0.installed, false, '没下载时 MeloTTS installed=false');
+  ok(/melo$/.test(TTS.meloDir(userData)), 'MeloTTS 模型落在固定 melo 目录');
+
+  fs.mkdirSync(path.dirname(TTS.kokoroExe(userData)), { recursive: true });
+  fs.writeFileSync(TTS.kokoroExe(userData), 'x');
+  const md = TTS.meloDir(userData);
+  fs.mkdirSync(md, { recursive: true });
+  fs.writeFileSync(path.join(md, 'model.onnx'), 'x');
+  fs.writeFileSync(path.join(md, 'tokens.txt'), 'x');
+  eq(TTS.meloStatus(userData).installed, false, 'MeloTTS 少 lexicon.txt 时不算就绪');
+  fs.writeFileSync(path.join(md, 'lexicon.txt'), 'x');
+  eq(TTS.meloStatus(userData).installed, true, 'MeloTTS 引擎 + 三个模型文件齐全时 installed=true');
+
+  /* 装了 Melo 时卸载 Kokoro 不能把共享引擎一起删掉 */
+  fs.mkdirSync(TTS.kokoroDir(userData), { recursive: true });
+  fs.writeFileSync(path.join(TTS.kokoroDir(userData), 'model.int8.onnx'), 'x');
+  fs.writeFileSync(path.join(TTS.kokoroDir(userData), 'voices.bin'), 'x');
+  fs.writeFileSync(path.join(TTS.kokoroDir(userData), 'tokens.txt'), 'x');
+  await TTS.removeKokoro(userData);
+  ok(fs.existsSync(TTS.kokoroExe(userData)), '还有 MeloTTS 在用引擎时不删 sherpa');
+  eq(TTS.meloStatus(userData).installed, true, '卸载 Kokoro 不影响 MeloTTS');
+
+  await TTS.removeMelo(userData);
+  ok(!fs.existsSync(md), '卸载删除 MeloTTS 模型目录');
+  ok(!fs.existsSync(path.join(userData, 'tts', 'sherpa')), '没有其它共享模型时才删引擎');
+  eq(TTS.meloStatus(userData).installed, false, '卸载 MeloTTS 后回到未就绪');
+
+  /* ---- ZipVoice 声音克隆：模型齐全 ≠ 克隆可用，还要参考录音与文本 ---- */
+  fs.mkdirSync(path.dirname(TTS.kokoroExe(userData)), { recursive: true });
+  fs.writeFileSync(TTS.kokoroExe(userData), 'x');
+  const zd = TTS.zipvoiceDir(userData);
+  fs.mkdirSync(zd, { recursive: true });
+  fs.writeFileSync(path.join(zd, 'encoder.int8.onnx'), 'x');
+  fs.writeFileSync(path.join(zd, 'decoder.int8.onnx'), 'x');
+  fs.writeFileSync(path.join(zd, 'tokens.txt'), 'x');
+  fs.writeFileSync(path.join(zd, 'lexicon.txt'), 'x');
+  const z0 = TTS.zipvoiceStatus(userData);
+  eq(z0.installed, false, 'ZipVoice 缺声码器时不算装好');
+  fs.writeFileSync(path.join(zd, 'vocos_24khz.onnx'), 'x');
+  const z1 = TTS.zipvoiceStatus(userData);
+  eq(z1.installed, true, 'ZipVoice 模型与声码器齐全时 installed=true');
+  eq(z1.clone, false, '没有参考录音时 clone=false');
+
+  const wav = path.join(userData, 'ref-source.wav');
+  fs.writeFileSync(wav, 'RIFF');
+  let zerr = '';
+  try{ await TTS.setReference(userData, { source: path.join(userData, 'ref.mp3'), text: '你好' }); }
+  catch(e){ zerr = String(e.message || e); }
+  ok(/WAV/.test(zerr), '参考音频只接受 WAV', zerr);
+
+  const z2 = await TTS.setReference(userData, { source: wav, text: '这是我的声音样本。' });
+  eq(z2.clone, true, '参考音频 + 文本齐全后 clone=true');
+  eq(z2.referenceText, '这是我的声音样本。', '参考文本写入 status，设置页可回填');
+  ok(fs.existsSync(TTS.referenceAudio(userData)), '参考音频复制到固定 ref.wav');
+
+  const z3 = await TTS.removeReference(userData);
+  eq(z3.clone, false, '清除参考录音后 clone=false');
+  ok(!fs.existsSync(TTS.referenceAudio(userData)), '清除会删掉 ref.wav');
+
+  await TTS.removeZipvoice(userData);
+  ok(!fs.existsSync(zd), '卸载删除 ZipVoice 模型目录');
+  eq(TTS.zipvoiceStatus(userData).installed, false, '卸载 ZipVoice 后回到未就绪');
+
+  /* ---- 角色音色 VITS（共享引擎，模型文件名随模型变化） ---- */
+  fs.mkdirSync(path.dirname(TTS.kokoroExe(userData)), { recursive: true });
+  fs.writeFileSync(TTS.kokoroExe(userData), 'x');
+  const vd = TTS.vitsDir(userData);
+  ok(/vits-theresa$/.test(vd), '角色音色模型落在固定 vits-theresa 目录');
+  eq(TTS.vitsStatus(userData).installed, false, '没下载时角色音色 installed=false');
+  fs.mkdirSync(vd, { recursive: true });
+  fs.writeFileSync(path.join(vd, 'theresa.onnx'), 'x');
+  fs.writeFileSync(path.join(vd, 'tokens.txt'), 'x');
+  eq(TTS.vitsStatus(userData).installed, false, '角色音色少 lexicon.txt 时不算就绪');
+  fs.writeFileSync(path.join(vd, 'lexicon.txt'), 'x');
+  eq(TTS.vitsStatus(userData).installed, true, 'onnx + tokens + lexicon 齐全时 installed=true');
+  ok(/theresa\.onnx$/.test(TTS.vitsModelFile(userData)), '模型文件名按目录里的 *.onnx 取');
+
+  /* 装了角色音色时卸载 MeloTTS 不能把共享引擎一起删掉 */
+  fs.mkdirSync(md, { recursive: true });
+  fs.writeFileSync(path.join(md, 'model.onnx'), 'x');
+  fs.writeFileSync(path.join(md, 'tokens.txt'), 'x');
+  fs.writeFileSync(path.join(md, 'lexicon.txt'), 'x');
+  await TTS.removeVits(userData);
+  ok(!fs.existsSync(vd), '卸载删除角色音色模型目录');
+  ok(fs.existsSync(TTS.kokoroExe(userData)), '还有 MeloTTS 在用引擎时不删 sherpa');
+  eq(TTS.meloStatus(userData).installed, true, '卸载角色音色不影响 MeloTTS');
+  await TTS.removeMelo(userData);
+  ok(!fs.existsSync(path.join(userData, 'tts', 'sherpa')), '角色音色与 Melo 都卸载后才删引擎');
+  eq(TTS.vitsStatus(userData).installed, false, '卸载角色音色后回到未就绪');
+
   fs.rmSync(userData, { recursive: true, force: true });
   console.log('\n结果：' + pass + ' / ' + (pass + fail) + ' 通过');
   process.exit(fail ? 1 : 0);

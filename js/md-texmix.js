@@ -116,15 +116,33 @@
       var names = (doc && doc.materials && doc.materials.slotNames) || [];
       return Math.max(1, names.length);
     }
+    /* 纹理配置按「材质稳定 id」落库：改名 / 删槽 / 追加资产之后仍是同一份配置，
+     * 不同模型里同名的槽也不会再共享一条记录。老数据按槽名存过，读的时候做一次兜底。 */
     function slotKeyOf(doc, slot) {
+      var ids = (doc && doc.materials && doc.materials.slotIds) || [];
+      if (ids[slot]) return String(ids[slot]);
       var names = (doc && doc.materials && doc.materials.slotNames) || [];
       return names[slot] ? String(names[slot]) : ('slot' + slot);
     }
     function slotIndexOf(doc, key) {
+      var ids = (doc && doc.materials && doc.materials.slotIds) || [];
+      for (var j = 0; j < ids.length; j++) if (String(ids[j]) === key) return j;
       var names = (doc && doc.materials && doc.materials.slotNames) || [];
       for (var i = 0; i < names.length; i++) if (String(names[i]) === key) return i;
       var m = /^slot(\d+)$/.exec(key || '');
       return m ? Number(m[1]) : -1;
+    }
+    /* 混合面板只列「当前对象自己的槽」：场景里并排摆着几个模型时，
+     * 下拉里不该出现别人模型的材质；没有归属信息时退回全量。 */
+    function listSlots(doc) {
+      var n = slotCount(doc);
+      var out = [];
+      try {
+        var S = global.SeedModel && global.SeedModel.Scene;
+        if (S && S.slotsOf) out = S.slotsOf(doc, S.nodeOf(doc));
+      } catch (e) { out = []; }
+      if (!out.length) { for (var i = 0; i < n; i++) out.push(i); }
+      return out;
     }
 
     function readStore() {
@@ -221,7 +239,9 @@
       var assetKey = doc.materials && doc.materials.textureConfigKey;
       if (!assetKey) return { v: 2, layers: [], baked: null, ops: [] };
       var all = readStore();
-      return normCfg(all[assetKey] && all[assetKey][k]);
+      var bag = all[assetKey];
+      if (bag && bag[k]) return normCfg(bag[k]);
+      return { v: 2, layers: [], baked: null, ops: [] };
     }
     /* 写配置：本会话快照一定更新；能落盘的（有资产 id 的层）同步写 localStorage。
      * 不落盘的层只留在 sessionCfg 里，和模型库「网页版本次会话有效」的语义一致。
@@ -255,6 +275,51 @@
       if (p) m[k] = p; else delete m[k];
       if (Object.keys(m).length) all[assetKey] = m; else delete all[assetKey];
       writeStore(all);
+    }
+    /* 老资产把纹理配置按「槽名」存在同一个资产 key 下；
+     * 现在改按材质稳定 id 存，打开时一次性搬过去，之后读写都不再猜名字，
+     * 避免两个模型里有同名槽时读到同一条配置（跨模型串贴图的根因）。 */
+    function migrateLegacy(doc) {
+      if (!doc || !doc.materials) return 0;
+      var assetKey = doc.materials.textureConfigKey;
+      var names = doc.materials.slotNames || [];
+      var ids = doc.materials.slotIds || [];
+      if (!assetKey || !names.length) return 0;
+      var all = readStore();
+      var bag = all[assetKey];
+      if (!bag || typeof bag !== 'object') return 0;
+      var mem = sessionCfg.get(doc), moved = 0;
+      for (var i = 0; i < names.length; i++) {
+        var id = ids[i], nm = names[i];
+        if (!id || !nm || id === nm) continue;
+        if (!bag[id] && bag[nm]) { bag[id] = bag[nm]; moved++; }
+        if (mem && !mem[id] && mem[nm]) mem[id] = mem[nm];
+      }
+      if (moved) writeStore(all);
+      return moved;
+    }
+    /* 追加资产时把源材质的整份纹理配置搬到目标槽上：
+     * 源 key 下可能还是「槽名」旧键，所以候选键由调用方按 id → 名字依次给。 */
+    function adoptSlot(doc, destSlot, srcAssetKey, srcKeys) {
+      if (!doc || !srcAssetKey) return false;
+      var all = readStore();
+      var bag = all[srcAssetKey];
+      if (!bag) return false;
+      var raw = null;
+      (srcKeys || []).some(function (key) {
+        if (key && bag[key]) { raw = bag[key]; return true; }
+        return false;
+      });
+      if (!raw) return false;
+      var k = slotKeyOf(doc, destSlot);
+      memOf(doc)[k] = normCfg(raw);
+      var assetKey = doc.materials && doc.materials.textureConfigKey;
+      if (!assetKey) return true;
+      var m = (all[assetKey] && typeof all[assetKey] === 'object') ? all[assetKey] : {};
+      m[k] = raw;
+      all[assetKey] = m;
+      writeStore(all);
+      return true;
     }
     function snapCfg(slot) {
       /* 快照**不含 ops**：混合配置的撤销只该管图层与烘焙图，
@@ -1569,9 +1634,11 @@
         return;
       }
 
+      var slots = listSlots(doc);
       var n = slotCount(doc);
       var names = doc.materials.slotNames || [];
-      var slot = Math.min(curSlot, n - 1);
+      var slot = slots.indexOf(curSlot) >= 0 ? curSlot : slots[0];
+      if (slot == null) slot = Math.min(curSlot, n - 1);
       curSlot = slot;
       var cfg = readCfg(doc, slot);
       var count = document.createElement('em');
@@ -1588,7 +1655,8 @@
       slotRow.appendChild(slotLab);
       slotSel = document.createElement('select');
       slotSel.className = 'md-mix-slot';
-      for (var i = 0; i < n; i++) {
+      for (var si = 0; si < slots.length; si++) {
+        var i = slots[si];
         var o = document.createElement('option');
         o.value = String(i);
         o.textContent = shortName(names[i] || ('插槽 ' + (i + 1)), 22);
@@ -1678,7 +1746,9 @@
     function selectSlot(slot) {
       var doc = docOf();
       if (!doc) return;
-      slot = Math.max(0, Math.min(slotCount(doc) - 1, Number(slot) || 0));
+      var slots = listSlots(doc);
+      slot = Math.round(Number(slot) || 0);
+      if (slots.indexOf(slot) < 0) slot = slots[0] != null ? slots[0] : 0;
       if (slot === curSlot) return;
       curSlot = slot;
       if (uiReady) renderUi();
@@ -1709,7 +1779,8 @@
       /* 单槽刷新（投射改了编辑层栈之后调它）：会重新解码层再合成 */
       refreshSlot: refreshSlot,
       baseImageFor: baseImageFor, bakedImageFor: bakedImageFor, texFor: texFor, applyPatch: applyPatch,
-      rekey: rekey, selectSlot: selectSlot
+      rekey: rekey, selectSlot: selectSlot, adoptSlot: adoptSlot, listSlots: listSlots,
+      migrateLegacy: migrateLegacy
     };
   }
 

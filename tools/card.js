@@ -116,12 +116,12 @@ async function openCard(page){
   check(/LV5/.test(content.lv), '等级徽标', content.lv);
   check(content.tag.length > 6, '一句话标签非空', content.tag);
   check(content.statN === 4, '数字条 4 格', content.statN + ' 格');
-  check(/7,890/.test(content.statText.join('|')), '粉丝数在数字条里', content.statText[0]);
+  check(/8,247/.test(content.statText.join('|')), '粉丝数在数字条里', content.statText[0]);
   check(content.aboutN === 2, '关于我 2 段', content.aboutN + ' 段');
   check(content.trackN === 4, '四条线 4 张卡', content.trackN + ' 张');
   check(content.workN === 7, '合集列表 7 条（一条都不能丢）', content.workN + ' 条');
   check(content.linkN === 2, '链接区 2 条', content.linkN + ' 条');
-  check(/2026-10-29/.test(content.foot), '数据日期标注存在', content.foot);
+  check(/2026-11-15/.test(content.foot), '数据日期标注存在', content.foot);
   check(!content.empty, '合集区不是空的');
 
   /* 逐列填充：左列应该是第 1、2、3、4 条（DOM 顺序照旧，靠 grid-auto-flow 排版） */

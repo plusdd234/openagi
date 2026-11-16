@@ -165,7 +165,11 @@
           }
         });
       }
-      if (s && s.meshHash) {
+      /* s.meshHash 是快照时 active 节点的网格；它只在没有 per-node 指纹时兜底。
+       * 多对象下 active 会在撤销/重做后换人，若无条件套用会把这份网格写到
+       * 另一个对象头上（实测：重做「置于」后原立方体被换成副本的面槽）。 */
+      var activeHash = (s && s.meshHashes) ? s.meshHashes[st.doc.activeNodeId] : '';
+      if (!activeHash && s && s.meshHash) {
         var rec2 = meshStore[s.meshHash];
         if (rec2 && hashOf(SeedModel.Scene.getMesh(st.doc)) !== s.meshHash) {
           SeedModel.Scene.setMesh(st.doc, SeedModel.Mesh.clone(rec2.mesh));

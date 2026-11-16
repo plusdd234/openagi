@@ -4,7 +4,7 @@
  *
  * 视觉与工作站主界面统一：白色面板 / #e5e8eb 细描边 / 10px 圆角 /
  * #5b8fd9 蓝色强调 / 13px 系统字体；工作区用浅灰渐变托住白色文档。
- * 布局沿用专业编辑器：菜单条 → 工具箱 → 选项栏 / 文档标签 / 画布
+ * 布局沿用专业编辑器：菜单条 → 全宽选项栏 → 工具箱 / 文档标签 + 画布
  * → 右侧图标槽 + 面板栈 → 状态栏。
  * ============================================================ */
 .os-win.imglab .os-win-body {
@@ -457,13 +457,20 @@
 .ps-lay-kind.is-vector { color: #a5761a; }
 .ps-lay-lock { flex: 0 0 13px; width: 13px; height: 13px; color: #b3bac5; display: flex; align-items: center; justify-content: center; }
 .ps-lay-lock svg { width: 10px; height: 10px; }
+.ps-lay-lock.is-locked { color: #6a7488; }
 .ps-empty-panel { padding: 18px 12px; color: #98a0ae; font-size: 11px; text-align: center; line-height: 1.7; }
 .ps-empty-panel span { color: #b3bac5; font-size: 10px; }
 .ps-layer-acts {
   flex: 0 0 32px; height: 32px; display: flex; align-items: center; gap: 5px; padding: 0 8px;
   background: #fbfcfd; border-top: 1px solid #eff1f3;
 }
-.ps-layer-acts .ps-mini { flex: 1 1 0; min-width: 0; height: 23px; padding: 0; font-size: 11px; border-radius: 6px; }
+.ps-layer-acts .ps-mini {
+  flex: 1 1 0; min-width: 0; height: 23px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #5b6472; font-size: 11px; border-radius: 6px;
+}
+.ps-layer-acts .ps-mini svg { width: 14px; height: 14px; }
+.ps-layer-acts .ps-mini:hover { color: #1f2328; }
 .ps-layers.is-alt .ps-layer-props, .ps-layers.is-alt .ps-layer-acts { display: none; }
 
 /* 历史列表 */

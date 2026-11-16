@@ -503,197 +503,253 @@
 
   /* ===================== 名片 App =====================
      两栏：左边「我是谁 / 在做什么 / 做过什么」，右边「怎么找我 / 怎么请我喝咖啡」。
-     右侧固定 264px——二维码小于 180px 就开始难扫，这是下限推出来的宽度，不是审美。 */
+     右侧固定 276px——二维码小于 180px 就开始难扫，这是下限推出来的宽度，不是审美。
+     视觉口径：白卡 + 发丝描边 + 极浅投影（与建模 / 图像工坊一致），
+     强调色只在主阵地与互动反馈上出现，避免做成粉丝向海报。 */
   .cd-wrap {
-    display: grid; grid-template-columns: minmax(0, 1fr) 264px;
-    gap: 16px; height: 100%; min-height: 0;
+    --cd-ink: #161c26;
+    --cd-sub: #59637a;
+    --cd-line: #e4e8ee;
+    --cd-soft: #f7f9fc;
+    --cd-accent: #3f6ea8;
+    display: grid; grid-template-columns: minmax(0, 1fr) 276px;
+    gap: 18px; height: 100%; min-height: 0;
   }
-  .cd-main { min-width: 0; overflow-y: auto; padding-right: 4px; }
-  .cd-side { min-width: 0; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+  .cd-main { min-width: 0; overflow-y: auto; padding-right: 6px; }
+  .cd-side { min-width: 0; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
   /* 全局滚动条是深色的（给深色面板配的），落在浅色名片上像贴了块黑胶布 */
   .cd-main::-webkit-scrollbar, .cd-side::-webkit-scrollbar { width: 8px; }
   .cd-main::-webkit-scrollbar-track, .cd-side::-webkit-scrollbar-track { background: transparent; }
   .cd-main::-webkit-scrollbar-thumb, .cd-side::-webkit-scrollbar-thumb { background: #e0e4ea; border-radius: 4px; }
   .cd-main::-webkit-scrollbar-thumb:hover, .cd-side::-webkit-scrollbar-thumb:hover { background: #ccd3dd; }
 
-  /* ---- 头像与身份 ---- */
-  .cd-hero { display: flex; align-items: center; gap: 15px; margin-bottom: 13px; }
+  /* ---- 身份卡：头像 + 名字 + 标签 + UID 收进一张白卡 ---- */
+  .cd-hero {
+    position: relative; display: flex; align-items: center; gap: 18px;
+    padding: 16px 20px; margin-bottom: 12px;
+    border: 1px solid var(--cd-line); border-radius: 14px;
+    background:
+      radial-gradient(560px 190px at 92% -60%, rgba(91,143,217,.13), transparent 72%),
+      linear-gradient(180deg, #fff, #fbfcfe);
+    box-shadow: 0 1px 2px rgba(22,28,38,.04), 0 16px 30px -28px rgba(22,28,38,.55);
+    overflow: hidden;
+  }
   .cd-ava {
-    position: relative; flex: 0 0 auto; width: 78px; height: 78px; border-radius: 50%;
-    background: #101216; overflow: hidden;
-    box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--gold), 0 8px 18px -10px rgba(28,38,60,.5);
+    position: relative; flex: 0 0 auto; width: 84px; height: 84px; border-radius: 18px;
+    background: #eef2f7; overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(22,28,38,.07), 0 14px 26px -20px rgba(22,28,38,.6);
   }
   .cd-ava img { width: 100%; height: 100%; display: block; object-fit: cover; }
   .cd-ava img.hidden { display: none; }
   .cd-ava-fb {
     position: absolute; inset: 0; display: none; place-items: center;
-    font-size: 27px; font-weight: 700; color: var(--gold);
+    font-size: 30px; font-weight: 700; color: var(--cd-accent);
   }
   .cd-ava-fb.show { display: grid; }
 
   .cd-id { min-width: 0; }
   .cd-name-row { display: flex; align-items: center; gap: 9px; }
-  .cd-name { font-size: 25px; font-weight: 700; letter-spacing: .01em; line-height: 1.15; }
+  .cd-name {
+    font-size: 26px; font-weight: 700; letter-spacing: .005em; line-height: 1.15;
+    color: var(--cd-ink);
+  }
   .cd-lv {
-    flex: 0 0 auto; padding: 2px 7px; border-radius: 6px; font-size: 10.5px; font-weight: 700;
-    color: var(--gold-ink); background: var(--gold); letter-spacing: .02em;
+    flex: 0 0 auto; padding: 1px 7px; border-radius: 5px;
+    border: 1px solid #dde4ef; background: #f2f5fa; color: #5b6b85;
+    font-size: 9.5px; font-weight: 700; letter-spacing: .08em;
   }
   .cd-tag {
-    margin-top: 6px; font-size: 13px; color: var(--muted); line-height: 1.5;
-    display: flex; align-items: center; gap: 5px;
+    margin-top: 8px; font-size: 12.5px; color: var(--cd-sub); line-height: 1.55;
+    display: flex; align-items: center; gap: 6px;
   }
-  .cd-tag-ico { flex: 0 0 auto; width: 14px; height: 14px; color: #fb7299; }
-  .cd-uid { margin-top: 7px; display: flex; align-items: center; gap: 7px; }
-  .cd-uid-v { font-family: var(--mono); font-size: 11px; color: #8b94a5; letter-spacing: .03em; }
+  .cd-tag-ico { flex: 0 0 auto; width: 13px; height: 13px; color: #ef7a9b; }
+  .cd-uid { margin-top: 10px; display: flex; align-items: center; gap: 8px; }
+  .cd-uid-v {
+    font-family: var(--mono); font-size: 10.5px; color: #8b95a6; letter-spacing: .04em;
+  }
   .cd-copy {
-    border: 1px solid var(--border); background: #fff; color: #5d6675;
-    font-size: 10.5px; padding: 1px 7px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--cd-line); background: #fff; color: #667085;
+    font-size: 10px; padding: 2px 8px; border-radius: 5px; cursor: pointer;
     transition: border-color .12s ease, color .12s ease, background .12s ease;
   }
-  .cd-copy:hover { border-color: var(--gold); color: var(--gold-deep); background: #fffbef; }
+  .cd-copy:hover { border-color: #c3d3e8; color: var(--cd-accent); background: #f6f9fd; }
 
-  /* ---- 数字条 ---- */
+  /* ---- 数字条：一格一格用发丝线隔开，数字比标签重 ---- */
   .cd-stats {
     display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 1px; background: var(--border-soft); border: 1px solid var(--border-soft);
-    border-radius: 10px; overflow: hidden; margin-bottom: 15px;
+    background: #fff; border: 1px solid var(--cd-line);
+    border-radius: 12px; overflow: hidden; margin-bottom: 14px;
   }
-  .cd-stat { background: #fff; padding: 9px 8px; text-align: center; }
+  .cd-stat { padding: 10px 14px 9px; border-right: 1px solid #eef2f7; }
+  .cd-stat:last-child { border-right: 0; }
   .cd-stat-v {
-    display: block; font-size: 17px; font-weight: 700; color: #1f2328;
-    font-variant-numeric: tabular-nums; letter-spacing: -.01em;
+    display: block; font-size: 19px; font-weight: 700; color: var(--cd-ink);
+    font-variant-numeric: tabular-nums; letter-spacing: -.01em; line-height: 1.25;
   }
-  .cd-stat-k { display: block; margin-top: 2px; font-size: 10.5px; color: #97a0b0; }
+  .cd-stat-k {
+    display: block; margin-top: 3px; font-size: 10px; color: #8b95a6; letter-spacing: .06em;
+  }
 
-  /* ---- 小节 ---- */
-  .cd-sec { margin-bottom: 15px; }
+  /* ---- 小节标题：小色条 + 中文 + 英文小字 + 右侧发丝线 ---- */
+  .cd-sec { margin-bottom: 14px; }
+  .cd-sec:last-child { margin-bottom: 0; }
   .cd-h2 {
-    position: relative; font-size: 12.5px; font-weight: 700; color: #3d4657;
-    padding-left: 9px; margin-bottom: 8px; letter-spacing: .04em;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 700; color: #2a3240;
+    letter-spacing: .04em; margin-bottom: 9px;
   }
   .cd-h2::before {
-    content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
-    width: 3px; height: 12px; border-radius: 2px;
-    background: linear-gradient(180deg, var(--gold), var(--gold-deep));
+    content: ''; flex: 0 0 auto; width: 3px; height: 11px; border-radius: 2px;
+    background: var(--cd-accent);
   }
-  .cd-h2-note { margin-left: 8px; font-size: 10px; font-weight: 400; color: #a8b0be; letter-spacing: 0; }
-  .cd-p { font-size: 13px; line-height: 1.78; color: #4a5365; margin-bottom: 7px; }
+  .cd-h2::after {
+    content: ''; flex: 1 1 auto; height: 1px;
+    background: linear-gradient(90deg, #e8edf4, rgba(232,237,244,0));
+  }
+  .cd-h2-en {
+    font-size: 9px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase;
+    color: #a6b0c0;
+  }
+  .cd-h2-note {
+    font-size: 10px; font-weight: 400; color: #9aa4b4; letter-spacing: 0;
+  }
+  .cd-p { font-size: 12.8px; line-height: 1.8; color: #4c5666; margin-bottom: 7px; }
+  .cd-p:first-child { color: #39424f; }
   .cd-p:last-child { margin-bottom: 0; }
 
   /* ---- 四条线 ---- */
-  .cd-tracks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .cd-tracks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .cd-track {
-    border: 1px solid var(--border); border-radius: 10px; padding: 10px 11px;
-    background: #fff; transition: border-color .14s ease, box-shadow .14s ease;
+    border: 1px solid var(--cd-line); border-radius: 12px; padding: 10px 12px;
+    background: #fff;
+    transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
   }
-  .cd-track:hover { border-color: #d8cba8; box-shadow: 0 3px 10px -6px rgba(28,38,60,.4); }
-  .cd-track-h { display: flex; align-items: center; gap: 6px; }
-  .cd-track-ico { flex: 0 0 auto; width: 14px; height: 14px; color: var(--gold-deep); }
-  .cd-track-n { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 600; color: #232a36; }
+  .cd-track:hover {
+    border-color: #cfdaea; box-shadow: 0 12px 24px -22px rgba(22,38,60,.75);
+    transform: translateY(-1px);
+  }
+  .cd-track-h { display: flex; align-items: center; gap: 8px; }
+  .cd-track-ico {
+    flex: 0 0 auto; width: 26px; height: 26px; padding: 6px; box-sizing: border-box;
+    border-radius: 8px; border: 1px solid #e9eef5; background: var(--cd-soft);
+    color: var(--cd-accent);
+  }
+  .cd-track-n { flex: 1 1 auto; min-width: 0; font-size: 12.8px; font-weight: 600; color: #1e2530; }
   .cd-track-c {
-    flex: 0 0 auto; font-size: 10px; color: #99a2b2; font-variant-numeric: tabular-nums;
-    border: 1px solid var(--border-soft); border-radius: 5px; padding: 0 5px;
+    flex: 0 0 auto; font-size: 9.5px; line-height: 1.6; color: #7c8698;
+    background: #fcfdfe; border: 1px solid var(--cd-line); border-radius: 4px; padding: 0 5px;
+    font-variant-numeric: tabular-nums;
   }
-  .cd-track-d { margin-top: 6px; font-size: 12px; line-height: 1.65; color: #6a7488; }
+  .cd-track-d { margin-top: 7px; font-size: 11.5px; line-height: 1.65; color: #677182; }
 
   /* ---- 合集列表：两列，逐列填充（行数由 JS 写进 --cd-work-rows） ---- */
   .cd-works {
     display: grid; grid-auto-flow: column;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-rows: repeat(var(--cd-work-rows, 4), auto);
-    gap: 1px 6px;
+    gap: 0 20px;
   }
   .cd-work {
-    display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; text-align: left;
-    border: 0; background: transparent; border-radius: 8px; padding: 6px 7px;
+    display: flex; align-items: center; gap: 9px; min-width: 0; width: 100%; text-align: left;
+    border: 0; background: transparent; border-radius: 8px; padding: 5px 7px;
     cursor: pointer; transition: background .12s ease;
   }
-  .cd-work:hover { background: #f6f7f9; }
-  .cd-work-ico { flex: 0 0 auto; width: 12px; height: 12px; color: #b9c0cd; }
-  .cd-work:hover .cd-work-ico { color: var(--gold-deep); }
+  .cd-work:hover { background: #f7f9fc; }
+  .cd-work-i {
+    flex: 0 0 auto; width: 16px; font-family: var(--mono); font-size: 9.5px;
+    color: #b7c0ce; font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+  }
+  .cd-work-ico { flex: 0 0 auto; width: 11px; height: 11px; color: #c4ccd9; }
+  .cd-work:hover .cd-work-ico { color: var(--cd-accent); }
   .cd-work-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .cd-work-t {
-    font-size: 12.5px; color: #333c4c; overflow: hidden;
+    font-size: 12.4px; line-height: 1.35; color: #2f3847; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
   }
-  .cd-work:hover .cd-work-t { color: var(--accent2); }
+  .cd-work:hover .cd-work-t { color: var(--cd-accent); }
   .cd-work-m {
-    font-size: 10.5px; color: #97a0b0; overflow: hidden;
+    font-size: 10.5px; line-height: 1.3; color: #939dae; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
   }
   .cd-work-p {
-    flex: 0 0 auto; font-size: 10.5px; color: #9aa3b3;
-    font-variant-numeric: tabular-nums;
+    flex: 0 0 auto; min-width: 34px; text-align: right;
+    font-size: 10.5px; color: #7e8899; font-variant-numeric: tabular-nums;
   }
 
   /* ---- 赞赏卡 + 技术交流群卡 ----
      两张码竖排：都是「扫码」这个同构动作，分开摆反而要多想一次「哪个是哪个」。
      高度按窗口 690 算过——两张各 160px 的码 + 链接 + 脚注，合计约 610，留得下。 */
   .cd-pay {
-    flex: 0 0 auto; border: 1px solid #ecdfbd; border-radius: 12px;
-    background: linear-gradient(180deg, #fffdf7, #fffaf0);
-    padding: 11px 12px 10px; text-align: center;
+    flex: 0 0 auto; border: 1px solid var(--cd-line); border-radius: 12px;
+    background: #fff; padding: 12px 13px 11px; text-align: center;
   }
-  .cd-pay-h { font-size: 12px; font-weight: 700; color: #6b5316; letter-spacing: .04em; }
+  .cd-pay-h { font-size: 11px; font-weight: 700; color: #39424f; letter-spacing: .1em; }
   .cd-group {
-    flex: 0 0 auto; border: 1px solid var(--border); border-radius: 12px;
-    background: #fafbfc; padding: 11px 12px 10px; text-align: center;
+    flex: 0 0 auto; border: 1px solid var(--cd-line); border-radius: 12px;
+    background: #fff; padding: 12px 13px 11px; text-align: center;
   }
   .cd-group-h {
-    font-size: 12px; font-weight: 600; color: #3d4657;
+    font-size: 11px; font-weight: 600; color: #39424f;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
   /* 二维码要「安静区」：白底 + 一定留白，贴着边扫不出来 */
   .cd-qr {
-    position: relative; margin: 9px auto 7px; width: 100%; max-width: 162px; aspect-ratio: 1/1;
-    background: #fff; border: 1px solid #efe4c8; border-radius: 10px;
+    position: relative; margin: 10px auto 8px; width: 100%; max-width: 158px; aspect-ratio: 1/1;
+    background: #fff; border: 1px solid #eef1f5; border-radius: 10px;
     padding: 8px; overflow: hidden;
   }
-  .cd-qr-sm { border-color: #e0e4ea; }
+  .cd-qr-sm { border-color: var(--cd-line); }
   .cd-qr img { width: 100%; height: 100%; display: block; object-fit: contain; }
   .cd-qr img.hidden { display: none; }
   .cd-qr-fb {
     position: absolute; inset: 8px; display: none; place-items: center; text-align: center;
-    padding: 13px; border: 1.5px dashed #ddd0ab; border-radius: 8px;
-    font-size: 10.5px; line-height: 1.6; color: #a08a56;
+    padding: 13px; border: 1.5px dashed #dbe2ec; border-radius: 8px;
+    font-size: 10.5px; line-height: 1.6; color: #8b95a6;
   }
   .cd-qr-fb.show { display: grid; }
-  .cd-pay-s { font-size: 10.5px; line-height: 1.6; color: #94804a; }
+  .cd-pay-s { font-size: 10px; line-height: 1.6; color: #8b95a6; }
   .cd-group-foot { display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 4px; }
-  .cd-group-id { font-size: 11px; color: #6a7488; font-variant-numeric: tabular-nums; }
+  .cd-group-id { font-size: 10.5px; color: #7c8698; font-variant-numeric: tabular-nums; }
 
-  /* ---- 联系方式 ---- */
-  .cd-links { flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; }
+  /* ---- 联系方式：整块白卡 + 行分隔线，主阵地用一条品红细边标注 ---- */
+  .cd-links {
+    flex: 0 0 auto; display: flex; flex-direction: column;
+    border: 1px solid var(--cd-line); border-radius: 12px;
+    background: #fff; overflow: hidden;
+  }
   .cd-link {
-    display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px;
+    display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+    border-bottom: 1px solid #f0f3f7;
     cursor: pointer; transition: background .12s ease;
   }
-  .cd-link:hover { background: #f6f7f9; }
-  .cd-link-ico { flex: 0 0 auto; width: 13px; height: 13px; color: #b9c0cd; }
-  .cd-link:hover .cd-link-ico { color: var(--gold-deep); }
+  .cd-link:last-child { border-bottom: 0; }
+  .cd-link:hover { background: #f8fafd; }
+  .cd-link-ico { flex: 0 0 auto; width: 13px; height: 13px; color: #c1c9d6; }
+  .cd-link:hover .cd-link-ico { color: var(--cd-accent); }
   .cd-link-k { flex: 0 0 auto; font-size: 11.5px; color: #6a7488; }
   .cd-link-v {
-    flex: 1 1 auto; min-width: 0; text-align: right; font-size: 11.5px; color: #333c4c;
+    flex: 1 1 auto; min-width: 0; text-align: right; font-size: 11.5px; color: #2f3847;
     font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .cd-link-act {
     flex: 0 0 auto; font-size: 10.5px; color: #b0b8c6;
   }
-  .cd-link:hover .cd-link-act { color: var(--accent2); }
+  .cd-link:hover .cd-link-act { color: var(--cd-accent); }
 
-  /* B 站是主阵地：这一行用平台色（粉）描边，视觉上先于另外两条被看到。
+  /* B 站是主阵地：一条 2px 品红细边 + 淡粉底，视觉上先于另外两条被看到。
    * 只在「主阵地」这一条用粉——满页粉会把名片做成粉丝向海报，反而降格。 */
-  .cd-link.is-main {
-    background: #fff6f9; border: 1px solid #fbdae5; margin-bottom: 3px;
-  }
-  .cd-link.is-main .cd-link-ico { color: #fb7299; }
+  .cd-link.is-main { background: #fff9fb; box-shadow: inset 2px 0 0 #f5a3bf; }
+  .cd-link.is-main .cd-link-ico { color: #ef7a9b; }
   .cd-link.is-main .cd-link-k { color: #a8406a; font-weight: 600; }
   .cd-link.is-main .cd-link-v { color: #87304f; }
-  .cd-link.is-main .cd-link-act { color: #fb7299; }
-  .cd-link.is-main:hover { background: #ffeef3; }
+  .cd-link.is-main .cd-link-act { color: #ef7a9b; }
+  .cd-link.is-main:hover { background: #fff2f7; }
 
-  .cd-foot { margin-top: auto; padding-top: 4px; font-size: 10px; line-height: 1.6; color: #b0b8c6; }
+  .cd-foot {
+    margin-top: auto; padding-top: 2px; font-size: 9.5px; line-height: 1.6;
+    color: #aab3c1; letter-spacing: .03em;
+  }
 
   /* 换码/复制的反馈条：挂在窗口内底部，2 秒自己走 */
   .cd-toast {
@@ -720,7 +776,12 @@
     .os-win.card .os-win-body::-webkit-scrollbar-thumb:hover { background: #ccd3dd; }
     .cd-wrap { grid-template-columns: minmax(0, 1fr); height: auto; }
     .cd-main, .cd-side { overflow: visible; padding-right: 0; }
-    .cd-side { margin-top: 4px; }
+    /* 侧栏掉下来以后横向空间够用：两张码并排，链接与脚注各占一整行 */
+    .cd-side {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px; margin-top: 4px;
+    }
+    .cd-links, .cd-foot { grid-column: 1 / -1; }
     .cd-tracks { grid-template-columns: minmax(0, 1fr); }
     /* 单列时逐列填充失去意义，改回逐行；行数也要放回 auto，
      * 否则 7 条被压进「4 行 × 2 列」的旧网格里会从中间断开。 */

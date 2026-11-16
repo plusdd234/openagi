@@ -10,7 +10,7 @@
 | 能力 | 实现位置 | 状态 |
 |---|---|---|
 | Cubism 4 皮套渲染（moc3 + 2 张 2048 纹理） | `apps/live2d/model/` + `vendor/` | 已上线 |
-| `file://` 加载（moc3 base64 + Live2DLoader 中间件 + 纹理 data URL） | `app.js` `loadRig()` / `serveFromPack()` | 已上线 |
+| `file://` 加载（moc3 base64 + Live2DLoader 中间件 + 纹理 data URL） | `app.js` `usePack()` / `tools/pack-live2d.js` | 已上线 |
 | 呼吸 / 眨眼 / 物理 / 视线跟随 | 模型自带 + `focusController` | 已上线 |
 | 7 种情绪映射 exp3、44 表情中 6 个可手动试演 | `EXPR` | 已上线 |
 | 8 组 motion3 动作条 | `ACT_LINES` | 已上线 |
@@ -21,7 +21,7 @@
 
 | 编号 | 设计点 | 现状 | 本期 | 取舍理由 |
 |---|---|---|---|---|
-| D01 | 多皮套切换 | 无 | 不做 | 缺第二套可商用素材；单套再增约 10MB |
+| D01 | 多皮套切换 | 无 | **做**（架构） | 先落地「一目录一套 + 运行时换装」；第二套素材另加，不随仓库内置 |
 | D02 | 皮套缩放 / 位置拖拽 | 固定 0.97 居中贴底 | 不做 | 已有 ResizeObserver 自适应，收益低 |
 | D03 | 语音输入 ASR | 无 | 不做 | Web Speech 识别依赖联网，`file://` 与无头环境都不可靠、不可测 |
 | D04 | TTS 音色 / 语速 / 音调 | 硬编码 1.04 / 1.12 | **做** | 系统语音即可，零依赖、可持久化 |
@@ -65,6 +65,39 @@
 - 探针新增只读钩子：`window.__l2dDiag()`（speaking / tts / mem / aff / msgs / busy）与 `window.__l2dExportText()`；`__l2dRig()` 增加 `angleZ`。
 - 探针新增断言 11 项，覆盖 S1–S3 与持久化。
 
+### S5 多皮套装载（2026-11-15 追加）
+
+皮套本身是标准 Cubism 3/4（`*.model3.json` + `moc3` + 纹理 + exp3/motion3），
+不是画出来的假人；此前只有一套数据包，所以换装要改代码。现在拆成「目录约定 + 运行时切换」：
+
+- 目录：`apps/live2d/model/<id>/` 放一整套标准文件，可选 `meta.json`（`name` / `author` / `license`）。
+  源码里的 `model/` 不再平铺模型文件。
+- 打包：`node tools/pack-live2d.js` 扫描全部 `model/<id>/`，给每套生成 `pack.js`
+  （moc3 → base64、纹理 → data URL（`file://` 下 `<img>` 会被 CORS 拦）、json → 对象），
+  并生成 `model/models.js` 清单；`node tools/pack-live2d.js <id>` 只重打一套。
+- 加载：运行时先注入 `models.js`，再按选中项注入对应 `pack.js`；
+  `Live2DLoader` 中间件只装一次，换装时替换 hook 里的包，不堆旧中间件。
+- 切换：角色面板「皮套」下拉，选择即 `dispose → 重新加载`，销毁旧 PIXI 应用与 canvas，
+  加载代数 `rig.gen` 防止并发叠模型；选择写入 `hf_live2d_state.modelId`。
+- 兼容：第二套皮套可能没有 `excited/blush/...` 表情或 `selfie/bubble/...` 动作组，
+  缺失时静默跳过（表情 try/catch、动作 Promise catch），idle 组有 `idle` 优先、否则用模型自带 `Idle`。
+- 默认：没有存档时用清单第一套；存档里的皮套被删掉时自动退回第一套。
+
+### S6 语音合成配置对齐系统能力（2026-11-16 追加）
+
+角色面板的朗读声音不再只列中文系统语音，而是与 `js/settings-tts.js` 共用一份音色清单：
+
+- `window.ttsBridge` 加法扩展：`catalog({refresh})`（系统语音 + 本地模型 + 引擎状态快照）、
+  `label(value)`、`spec(value)`、`supportsPitch(value)`、`openSettings()`；设置页改默认音色、
+  探测完成、克隆声音就绪时分别派发 `hf-tts-changed` / `hf-tts-status`。
+- 下拉分组：`系统语音`（全量，带 `lang`）+ `本地模型`（Piper / Kokoro / MeloTTS / 角色音色 / ZipVoice，
+  未就绪与缺参考录音都带后缀）；已存音色不在清单时补一项「（未就绪）」，避免悄悄退回系统默认。
+- 引擎标签与状态行：`系统语音` / `本地模型` 徽标；状态行汇总「系统语音 N 个 · Piper 就绪 · …」。
+- 音调：本地模型由权重决定，选中本地音色时 `#l2dPitch` 禁用、`#l2dPitchRow` 置灰并标注「仅系统语音」。
+- 入口：「检测」重新探测本地引擎（首次进角色页也会探测一次）；「语音设置」直接跳到
+  `openSettings('tts')`，ZipVoice 缺参考录音时在提示里指路到「声音克隆」。
+- 音色优先级不变：人设 `persona.tts.voice` 优先，未选时跟随 `hf_ttsVoice` 默认音色，提示行会写明正在跟随谁。
+
 ## 3. 多 AI 分工（文件所有权）
 
 | 角色 | 文件 | 任务 | 约束 |
@@ -100,14 +133,18 @@
 
 ## 6. 验收记录
 
-- `node tools/test-headless.js live2d` → **PASS 5/5**（app-scan / ns-guard / conf-guard / css-links / probe），最近一次产物 `.workbuddy/runs/20261113-230812-34420`。
-- 探针共 49 项断言，新增 13 项：音色下拉、语速落盘与文案、试听 utterance 语速与角色名、boundary 口型、说话态与 Esc 归零、记忆写入面板与 diag、摘要请求分流、记忆注入下一次对话、导出 Markdown、快捷话题、清空记忆、鼠标在头顶上方时抬头。
-- 舞台气泡：49 项中含 3 项气泡断言——最新回复同步到头顶气泡、气泡落在舞台可见范围内、点击可收起；另有窄窗「不压名牌、不出舞台」1 项。
+- `node tools/test-headless.js live2d` → **PASS 5/5**（app-scan / ns-guard / conf-guard / css-links / probe），最近一次产物 `.workbuddy/runs/20261115-165433-19768`。
+- 探针共 51 项断言，新增 13 项：音色下拉、语速落盘与文案、试听 utterance 语速与角色名、boundary 口型、说话态与 Esc 归零、记忆写入面板与 diag、摘要请求分流、记忆注入下一次对话、导出 Markdown、快捷话题、清空记忆、鼠标在头顶上方时抬头。
+- 舞台气泡：51 项中含 3 项气泡断言——最新回复同步到头顶气泡、气泡落在舞台可见范围内、点击可收起；另有窄窗「不压名牌、不出舞台」1 项。
+- 多皮套：2 项断言——皮套下拉可见且列出 `c_0120`、署名跟随模型。
+- 换装实测（临时第二套皮套，验证后删除）：切换后旧 canvas 销毁、舞台上仅 1 份 canvas、选择与 `hf_live2d_state.modelId` 落盘、切回原皮套正常，无脚本错误。
 - 视线修正：原点从「舞台中心」改为「模型眼睛的屏幕位置」，纵向按 `focusController` 的上正坐标取反；舞台比皮套宽时不再出现「鼠标停在脸上却低头」。
 - 视觉复验：1440×900 角色面板三块新 UI 排列整齐；900×760 切上下布局，侧栏与 App 横向溢出均为 0，角色面板内部滚动正常。
 - 视觉复验（气泡）：宽窗气泡贴头顶、尾巴朝下，与名牌/亲密度条不重叠；窄窗头顶空间不足时退到底部浮层（`is-tight`，隐藏尾巴），避开 HUD 与动作条；顺带把 toast 挪到左上，避免压住气泡。
 - 已知：`SpeechSynthesisUtterance.rate` 是 float32（1.2 → 1.200000047），探针用 0.01 容差比较。
-- 已知：`?nostore=1` 只阻断中转回写，不阻断原生 `localStorage`，本地中转仍会把上次的 `hf_*` 回填进来；探针在打开窗口后先点 App 的「恢复默认」，保证起点确定。
+- 已知：`?nostore=1` 只阻断中转回写，不阻断原生 `localStorage`，本地中转仍会把上次的 `hf_*` 回填进来；探针在打开窗口后先点 App 的「恢复默认」，保证起点确定。默认音色可能来自 `hf_ttsVoice` 的本地模型，语音断言里显式先选一项系统语音，避免依赖机器状态。
+- 2026-11-16 语音配置：探针共 59 项，新增 8 项——音色下拉分组数量、状态行「系统语音 N 个」、检测 / 语音设置入口可见、选系统语音后引擎标签与音调同步、本地音色（melo）时音调禁用与引擎标签、本地音色提示音调不生效、切回系统语音后音调恢复。
+- 2026-11-16 回归：`node tools/probe-live2d.js` 全绿；`node tools/probe-wardrobe.js` 23 项全绿；`node tools/test-headless.js --all` PASS 10/10；`--full` PASS 6/6（含 app-registry / apps-all）。
 
 ## 7. 变更记录
 
@@ -115,3 +152,6 @@
 - 2026-11-13：S1–S4 全部落地；`apps/live2d/app.js`、`body.js`、`app.css`、`tools/probe-live2d.js` 更新；验收通过，状态转「已生效」。
 - 2026-11-13：修正视线跟随——原点改为模型眼睛位置，纵向符号取反；探针补「鼠标在头顶上方时抬头」断言（46 项）。
 - 2026-11-13：对话气泡框——舞台新增 `#l2dSay`（流式实时同步、超时/点击自动收起、发送与清空时隐藏），宽窗贴头顶、窄窗退到底部浮层；`__l2dRig()` 增加 `anchorX/anchorY/headTop` 诊断；探针补 3 项气泡断言，共 49 项。
+- 2026-11-15：皮套装载改成标准 Cubism 目录——`model/<id>/`（model3.json + moc3 + 纹理 + exp3/motion3 + `meta.json`），`tools/pack-live2d.js` 逐套打包并生成 `model/models.js` 清单；`app.js` 去掉写死的单包，改为清单驱动 + 运行时换装（`usePack/mountModel/disposeRig/switchModel`，`rig.gen` 防并发）；角色面板加「皮套」下拉，选择写入存档；表情/动作缺失时静默降级；探针补 2 项断言，共 51 项。
+- 2026-11-15：衣柜联动——启动读 `hf_wardrobe_state.draft`（皮套 + 隐藏部件），`beforeModelUpdate` 压部件透明度；新增 `window.__l2dApplyOutfit` 与 `__l2dRig().hidden`；加载器中间件改为按 `settings.__l2dPack` 认领，衣柜与数字人同时打开也不会串包。详见 `docs/提案-衣柜App.md`。
+- 2026-11-16：语音合成配置对齐系统能力（S6）——`js/settings-tts.js` 的 `ttsBridge` 增补 `catalog/label/spec/supportsPitch/openSettings` 并派发 `hf-tts-changed` / `hf-tts-status`；角色面板改为分组音色下拉 + 引擎徽标 / 状态行 / 检测 / 语音设置入口，本地音色禁用音调并给出说明；探针补 8 项，共 59 项。

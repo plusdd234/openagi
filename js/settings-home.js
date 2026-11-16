@@ -18,6 +18,7 @@
   var ICO = {
     llm: '<path d="M4 5h16v10H9l-5 4V5Z"/>',
     image: '<rect x="3.5" y="4.5" width="17" height="14" rx="2.5"/><circle cx="8.6" cy="9.6" r="1.4"/><path d="m4.5 16.5 4.6-4 3.4 2.7 3-2.2 4 3.5"/>',
+    tts: '<path d="M4 10v4M7.6 7.4v9.2M11.2 5v14M14.8 8.2v7.6M18.4 10.4v3.2"/>',
     search: '<circle cx="12" cy="12" r="8.4"/><path d="M3.6 12h16.8"/>',
     relay: '<path d="M4 8h11l-3-3M20 16H9l3 3"/>',
     webop: '<rect x="3" y="4.5" width="18" height="14" rx="2.5"/><path d="M3 8.5h18"/><circle cx="5.8" cy="6.5" r=".2"/><circle cx="8" cy="6.5" r=".2"/>',
@@ -50,7 +51,7 @@
     return m === 'local';
   }
 
-  /* ---------------- 六张卡的真值判定 ---------------- */
+  /* ---------------- 八张卡的真值判定 ---------------- */
 
   function cardLlm() {
     var key = val('llmKey'), model = val('llmModel'), base = val('llmBaseUrl');
@@ -80,6 +81,40 @@
       key: 'image', name: '图像生成', ico: 'image',
       state: k && m ? 'ok' : (k || m ? 'warn' : 'off'),
       value: m ? esc(m) + ' · ' + esc(hostOf(b)) : '在线接口，还没选生图模型'
+    };
+  }
+
+  function voiceLabel(v) {
+    var s = String(v || '');
+    if (s.indexOf('piper:') === 0) {
+      var it = (typeof catalogGet === 'function') ? catalogGet(s.slice(6)) : null;
+      return it ? ('Piper · ' + it.name) : '本地 Piper';
+    }
+    if (s.indexOf('kokoro:') === 0) {
+      var sid = Number(s.slice(7));
+      var list = (typeof catalogOf === 'function') ? (catalogOf('tts') || []) : [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].engine === 'kokoro' && Number(list[i].sid) === sid) return 'Kokoro · ' + list[i].name;
+      }
+      return '本地 Kokoro';
+    }
+    return s;
+  }
+
+  function cardTts() {
+    var v = '';
+    try { v = String(localStorage.getItem('hf_ttsVoice') || ''); } catch (e) { v = ''; }
+    var sys = 0;
+    try {
+      sys = (window.speechSynthesis && typeof window.speechSynthesis.getVoices === 'function')
+        ? (window.speechSynthesis.getVoices() || []).length : 0;
+    } catch (e) { sys = 0; }
+    if (v) {
+      return { key: 'tts', name: '语音合成', ico: 'tts', state: 'ok', value: esc(voiceLabel(v)) };
+    }
+    return {
+      key: 'tts', name: '语音合成', ico: 'tts', state: sys ? 'warn' : 'off',
+      value: sys ? ('系统默认 · 共 ' + sys + ' 个系统音色') : '未检测到音色，去模型商店下载本地语音'
     };
   }
 
@@ -153,7 +188,7 @@
   }
 
   function cards() {
-    return [cardLlm(), cardImage(), cardWebop(), cardSearch(), cardRelay(), cardAccount(), cardAssets()];
+    return [cardLlm(), cardImage(), cardTts(), cardWebop(), cardSearch(), cardRelay(), cardAccount(), cardAssets()];
   }
 
   /* ---------------- 渲染 ---------------- */

@@ -90,6 +90,22 @@ ok(ttsKokoro.every(m => m.shared === 'kokoro'), 'Kokoro 音色标记为共享模
 ok(ttsKokoro.every(m => !m.voice && !m.urls && !m.voiceFile), 'Kokoro 不冒充满系统语音，也不带独立下载地址');
 ok(ttsKokoro.some(m => m.lang === 'zh-CN') && ttsKokoro.some(m => /^en/i.test(m.lang)), 'Kokoro 中英文音色都有');
 
+/* 更强的本地语音：MeloTTS（单共享模型）与 ZipVoice（零样本克隆） */
+const ttsMelo = ttsDl.filter(m => m.engine === 'melo');
+const ttsZip = ttsDl.filter(m => m.engine === 'zipvoice');
+ok(ttsMelo.length === 1 && ttsMelo[0].shared === 'melo', 'MeloTTS 是一只共享模型音色');
+ok(ttsMelo.every(m => !m.voice && !m.urls && !m.voiceFile), 'MeloTTS 不冒充系统语音，也不带独立下载地址');
+ok(ttsZip.length === 1 && ttsZip[0].shared === 'zipvoice', 'ZipVoice 标记为共享模型');
+ok(ttsZip.every(m => m.clone === true), 'ZipVoice 条目声明是声音克隆');
+ok(ttsZip.every(m => !m.voice && !m.urls && !m.voiceFile), 'ZipVoice 不冒充系统语音，也不带独立下载地址');
+
+/* 角色音色：DeepSeek 风格二次元声线的本地近似（社区 VITS） */
+const ttsVits = ttsDl.filter(m => m.engine === 'vits');
+ok(ttsVits.length === 1 && ttsVits[0].shared === 'vits', '角色音色是一只共享模型音色');
+ok(ttsVits.every(m => m.sizeGB > 0 && m.sizeGB <= 0.2), '角色音色体积在百 MB 量级');
+ok(ttsVits.every(m => !m.voice && !m.urls && !m.voiceFile), '角色音色不冒充系统语音，也不带独立下载地址');
+ok(ttsVits.every(m => /近似/.test(m.name)), '角色音色名字标明是官方音色的近似');
+
 ok(ttsDl.every(m => m.sizeGB > 0 && m.sizeGB <= 0.2 && m.vramGB === 0),
   '本地音色体积在百 MB 量级，且不占显存', ttsDl.map(m => m.id + '=' + m.sizeGB + 'GB').join(' '));
 ok(ttsDl.every(m => !m.voice), '可下载音色不参与系统语音匹配（否则会认错人）');
@@ -645,6 +661,8 @@ function stateOf(env){ return vm.runInContext('msState', env); }
   const html0 = env.__els.mcStore.innerHTML;
   ok(/共享/.test(html0), '卡片标出「共享」体积');
   ok(/所有 Kokoro 音色共用同一份模型/.test(html0), '未下载时提示共享模型只下一次');
+  ok(/data-ms-ttstext/.test(html0), '语音类目提供自定义试听文本输入框');
+  ok(/试听文本/.test(html0), '输入框有可读的标签');
 
   await env.msInstall(kokoro);
   eq(calls.install, 1, '安装走 Kokoro 共享模型下载');
@@ -661,12 +679,28 @@ function stateOf(env){ return vm.runInContext('msState', env); }
   };
   env.URL = { createObjectURL: () => 'blob:k', revokeObjectURL: () => {} };
   env.window.Audio = function () { this.play = () => Promise.resolve(); this.pause = () => {}; };
+  /* 输入框实时写入试听文本，且不触发重绘（否则会打断输入法） */
+  env.msOnStoreInput({ target: { dataset: { msTtstext: '' }, value: '自定义试听：今天的天气真不错。' } });
+  eq(stateOf(env).previewText, '自定义试听：今天的天气真不错。', '输入框写入自定义试听文本');
+  env.msOnStoreInput({ target: { dataset: { msTtstext: '' }, value: '很长的句子'.repeat(30) } });
+  eq(stateOf(env).previewText.length, 80, '输入框限长 80 字，避免顶到合成超时');
+  env.msOnStoreInput({ target: { dataset: { msTtstext: '' }, value: '自定义试听：今天的天气真不错。' } });
+
   delete stateOf(env).error[kokoro.id];
   await env.msPreview(kokoro);
   eq(asked.length, 1, 'Kokoro 试听打到本地引擎桥');
   eq(asked[0].body.engine, 'kokoro', '试听请求带 engine=kokoro');
   eq(asked[0].body.sid, kokoro.sid, '试听请求带 sid（不是文件名）');
   ok(!asked[0].body.voice, 'Kokoro 不传 voice 字段');
+  eq(asked[0].body.text, stateOf(env).previewText, '试听使用自定义文本而不是示例句');
+  env.msStopPreview();
+
+  /* 清空后回到卡片自带的示例句 */
+  stateOf(env).previewText = '';
+  env.msOnStoreInput({ target: { dataset: { msTtstext: '' }, value: '' } });
+  delete stateOf(env).error[kokoro.id];
+  await env.msPreview(kokoro);
+  eq(asked[1].body.text, kokoro.sample, '清空后回退到示例句');
   env.msStopPreview();
 
   await env.msCancel(kokoro);
@@ -676,6 +710,83 @@ function stateOf(env){ return vm.runInContext('msState', env); }
   eq(calls.remove, 1, '卸载会删除共享模型');
   eq(env.__ls.getItem('hf_ttsVoice'), null, '卸载共享模型时清掉默认音色');
   ok(!env.msIsInstalled(kokoro) && !env.msIsInstalled(other), '卸载后所有 Kokoro 音色回到未安装');
+}
+
+/* MeloTTS 与 ZipVoice：同样是共享模型，但启用值、卸载入口与克隆提示各自独立。
+ * 关键断言：装一份不会连带另一份，且 ZipVoice 未录音时能指出下一步。 */
+{
+  const env = makeEnv();
+  env.window.speechSynthesis = { getVoices(){ return []; }, addEventListener(){}, cancel(){}, speak(){} };
+  const calls = { melo: 0, zip: 0, removeMelo: 0, removeZip: 0, vits: 0, removeVits: 0 };
+  env.__melo = false;
+  env.__zip = false;
+  env.__clone = false;
+  env.__vits = false;
+  env.window.openagiDesktop = {
+    async storeKokoroStatus(){ return { ok: true, installed: false }; },
+    async storeMeloStatus(){ return { ok: true, installed: env.__melo }; },
+    async storeVitsStatus(){ return { ok: true, installed: env.__vits }; },
+    async storeZipvoiceStatus(){ return { ok: true, installed: env.__zip, clone: env.__clone, referenceText: '' }; },
+    async storeInstallMelo(){ calls.melo++; env.__melo = true; return { ok: true, installed: true }; },
+    async storeInstallVits(){ calls.vits++; env.__vits = true; return { ok: true, installed: true }; },
+    async storeInstallZipvoice(){ calls.zip++; env.__zip = true; return { ok: true, installed: true, clone: false }; },
+    async storeRemoveMelo(){ calls.removeMelo++; env.__melo = false; return { ok: true }; },
+    async storeRemoveVits(){ calls.removeVits++; env.__vits = false; return { ok: true }; },
+    async storeRemoveZipvoice(){ calls.removeZip++; env.__zip = false; return { ok: true }; },
+    async storeTtsList(){ return { ok: true, voices: [] }; },
+    async storeCancel(){ return { ok: true }; }
+  };
+  await env.renderModelStore(gpu4);
+  const melo = env.catalogGet('melo-zh-en');
+  const zip = env.catalogGet('zipvoice-clone');
+  const vits = env.catalogGet('vits-theresa');
+  ok(!!melo && melo.engine === 'melo' && melo.shared === 'melo', '目录里有 MeloTTS 中英混读');
+  ok(!!zip && zip.engine === 'zipvoice' && zip.clone === true, '目录里有 ZipVoice 声音克隆');
+  ok(!!vits && vits.engine === 'vits' && vits.shared === 'vits', '目录里有二次元角色音色');
+
+  await env.msInstall(melo);
+  eq(calls.melo, 1, '安装 MeloTTS 走专用 IPC');
+  eq(env.__ls.getItem('hf_ttsVoice'), 'melo:zh_en', 'MeloTTS 启用值固定为 melo:zh_en');
+  ok(env.msIsInstalled(melo), 'MeloTTS 共享模型就绪后判为已安装');
+
+  await env.msInstall(vits);
+  eq(calls.vits, 1, '安装角色音色走专用 IPC');
+  eq(env.__ls.getItem('hf_ttsVoice'), 'vits:theresa', '角色音色启用值固定为 vits:theresa');
+  ok(env.msIsInstalled(vits), '角色音色共享模型就绪后判为已安装');
+  ok(/角色音色（二次元）/.test(env.__els.mcStore.innerHTML), '引擎面板列出角色音色');
+
+  await env.msInstall(zip);
+  eq(calls.zip, 1, '安装 ZipVoice 走专用 IPC');
+  eq(env.__ls.getItem('hf_ttsVoice'), 'zipvoice:clone', 'ZipVoice 启用值固定为 zipvoice:clone');
+  ok(env.msIsInstalled(zip), 'ZipVoice 模型就绪后判为已安装');
+
+  const html = env.__els.mcStore.innerHTML;
+  ok(/还没有参考录音/.test(html), '模型已下载但未录音时提示去设置页录制');
+  ok(/MeloTTS 中英混读/.test(html) && /ZipVoice 声音克隆/.test(html), '引擎面板列出两套新语音');
+
+  const asked = [];
+  env.fetch = async (url, init) => {
+    asked.push({ url, body: JSON.parse(init.body) });
+    return { ok: true, blob: async () => new Blob([new Uint8Array([82, 73, 70, 70])], { type: 'audio/wav' }) };
+  };
+  env.URL = { createObjectURL: () => 'blob:z', revokeObjectURL: () => {} };
+  env.window.Audio = function () { this.play = () => Promise.resolve(); this.pause = () => {}; };
+  await env.msPreview(zip);
+  eq(asked[0].body.engine, 'zipvoice', 'ZipVoice 试听带 engine=zipvoice');
+  ok(!asked[0].body.voice, 'ZipVoice 不传 voice 字段');
+  env.msStopPreview();
+
+  await env.msPreview(vits);
+  eq(asked[1].body.engine, 'vits', '角色音色试听带 engine=vits');
+  ok(!asked[1].body.voice, '角色音色不传 voice 字段');
+  env.msStopPreview();
+
+  await env.msRemove(melo);
+  eq(calls.removeMelo, 1, '卸载 MeloTTS 走专用 IPC');
+  await env.msRemove(vits);
+  eq(calls.removeVits, 1, '卸载角色音色走专用 IPC');
+  await env.msRemove(zip);
+  eq(calls.removeZip, 1, '卸载 ZipVoice 走专用 IPC');
 }
 
 /* 一只系统语音都没有：仍要能看到可下载的高级音色，而不是一屏空 */

@@ -24,6 +24,8 @@ const MUST = {
   overview: ['setHomeGrid', 'setHomePaths'],
   llm: ['llmKey', 'llmBaseUrl', 'llmModel', 'btnLoadModels', 'modelStatus', 'testLLM', 'llmPresetLinks'],
   image: ['genEngine', 'imgKey', 'imgBaseUrl', 'imgModel', 'btnLoadImgModels', 'imgEndpoint', 'imgSize', 'respPath', 'sendImage', 'testIMG'],
+  tts: ['ttsVoiceSel', 'ttsVoiceReload', 'ttsVoiceHint', 'ttsStatus', 'ttsStore', 'ttsText', 'ttsRate', 'ttsRateVal', 'ttsPlay', 'ttsStop', 'ttsPlayMsg',
+    'ttsCloneText', 'ttsClonePick', 'ttsClonePlay', 'ttsCloneClear', 'ttsCloneStatus'],
   search: ['wsProvider', 'wsBase', 'wsKey', 'wsCount', 'btnTestSearch', 'wsStatus'],
   relay: ['relayUrl', 'relayOn', 'btnTestRelay', 'relayStatus'],
   account: ['gwEmail', 'gwPassword', 'gwLogin', 'gwRegister', 'gwLoggedOut', 'gwLoggedIn', 'gwUsage', 'gwLogout'],
@@ -45,12 +47,36 @@ const MUST = {
   const nav = await page.evaluate(() => {
     const tabs = Array.from(document.querySelectorAll('.set-nav .tab')).map(t => t.dataset.tab);
     const panes = Array.from(document.querySelectorAll('.tabpane')).map(p => p.dataset.pane);
-    return { tabs, panes };
+    /* 分隔标题只是视觉分组，真正的切换仍只看 data-tab。
+     * 这里顺带把「标题 → 它下面挂了哪些 tab」算出来，防止重构时把某一组清空。 */
+    const groups = [];
+    let cur = null;
+    Array.from(document.querySelectorAll('.set-nav > *')).forEach(el => {
+      if (el.classList.contains('set-nav-sep')) {
+        cur = { label: el.textContent.trim(), tabs: [] };
+        groups.push(cur);
+      } else if (el.classList.contains('tab') && cur) {
+        cur.tabs.push(el.dataset.tab);
+      }
+    });
+    return { tabs, panes, groups };
   });
   check(nav.tabs.length >= 8, '导航项数量', String(nav.tabs.length));
   check(nav.tabs.length === nav.panes.length, 'tab 数与 pane 数相等', nav.tabs.length + ' / ' + nav.panes.length);
   const diff = nav.tabs.filter(t => !nav.panes.includes(t)).concat(nav.panes.filter(p => !nav.tabs.includes(p)));
   check(diff.length === 0, 'tab 与 pane 完全对齐', diff.length ? '对不上：' + diff.join(',') : '零差异');
+  const expectGroups = {
+    '模型': ['llm', 'image', 'tts'],
+    '服务': ['search', 'relay', 'webop', 'account'],
+    '本地': ['assets', 'desktop', 'about']
+  };
+  const gotGroups = nav.groups.map(g => g.label);
+  check(gotGroups.join('/') === Object.keys(expectGroups).join('/'),
+    '分组标题按「模型 / 服务 / 本地」排列', gotGroups.join('/'));
+  nav.groups.forEach(g => {
+    const want = (expectGroups[g.label] || []).join(',');
+    check(want === g.tabs.join(','), '「' + g.label + '」分组内容', g.tabs.join(',') || '空');
+  });
 
   console.log('\n=== 2. 每个 pane 的关键 id 齐全 ===');
   for (const [pane, ids] of Object.entries(MUST)) {
@@ -74,7 +100,7 @@ const MUST = {
     };
   });
   check(!!home && home.visible, '设置面板打开了');
-  check(home && home.n === 7, '总览 7 张状态卡（含网页操作）', home ? String(home.n) : 'null');
+  check(home && home.n === 8, '总览 8 张状态卡（含网页操作 / 语音合成）', home ? String(home.n) : 'null');
   check(home && home.states.every(s => !!s), '每张卡都有状态类', home ? home.states.join(',') : '');
   check(home && home.texts.every(t => t && t.trim() && t !== '读取中…'), '每张卡都有说明文字');
   check(home && home.goes.every(g => nav.tabs.includes(g)), '卡片跳转目标都是合法 tab', home ? home.goes.join(',') : '');

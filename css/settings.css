@@ -476,6 +476,42 @@
 .set-kv-v.is-err { color: var(--s2-bad); font-family: inherit; }
 .set-kv .btn { flex: 0 0 auto; }
 
+/* 语音合成：音色下拉与刷新按钮同排（.inline 会吃到全局 width:100%，这里单开一条） */
+.settings2 .tts-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings2 .tts-row > select { flex: 1 1 0; width: auto; min-width: 0; }
+.settings2 .tts-row > .btn { flex: 0 0 auto; }
+
+/* 试听语速：滑杆吃满剩余宽度，数值固定右对齐，避免拖动时整行抖动 */
+.settings2 .tts-rate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 8px;
+}
+.settings2 .tts-rate > label { flex: 0 0 auto; margin: 0; }
+.settings2 .tts-rate > input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--s2-gold-deep);
+}
+.settings2 .tts-rate-val {
+  flex: 0 0 34px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--s2-ink2);
+  text-align: right;
+}
+.settings2 .tts-actions { margin-top: 2px; }
+.settings2 .tts-actions > .note { margin: 0; }
+
 /* ---------------- 总览 ---------------- */
 
 .set-home-grid {

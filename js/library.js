@@ -65,6 +65,32 @@ function libDesk(){
   const d = window.openagiDesktop;
   return (d && typeof d.assetList === 'function') ? d : null;
 }
+
+/* 剪辑台项目（含自动快照）里引用了哪些图库资产。
+ * 删图前必须和「流程引用」一起检查：时间线里用过的图被删掉，
+ * 用户下次打开项目只会看到打不开的素材。 */
+function libStudioRefs(ids, projects){
+  const want = new Set((ids || []).map(String));
+  const out = {};
+  const scan = function(p){
+    if(!p || !Array.isArray(p.media)) return;
+    p.media.forEach(function(m){
+      if(m && m.assetId && want.has(String(m.assetId))){
+        out[m.assetId] = (out[m.assetId] || 0) + 1;
+      }
+    });
+  };
+  if(Array.isArray(projects)){ projects.forEach(scan); return out; }
+  try{
+    const raw = JSON.parse(localStorage.getItem('hf_studio_project_v1') || 'null');
+    if(raw && raw.project) scan(raw.project);
+    const snaps = JSON.parse(localStorage.getItem('hf_studio_snaps_v1') || '[]');
+    (Array.isArray(snaps) ? snaps : []).forEach(function(s){
+      if(s && s.project) scan(s.project);
+    });
+  }catch(e){}
+  return out;
+}
 function libFmt(b){
   const n = Number(b) || 0;
   if(n >= 1073741824) return (n / 1073741824).toFixed(2) + ' GB';
@@ -159,6 +185,7 @@ async function libRemoveSelected(){
   if(!d || !libState.sel.size) return;
   const ids = Array.from(libState.sel);
   const used = ids.filter(id => (libState.refs[id] || 0) > 0);
+  const inStudio = libStudioRefs(ids);
   let msg = '把选中的 ' + ids.length + ' 个资产移到回收站？';
   if(used.length){
     /* 引用不为零时必须说清后果，而且要点名是哪个流程——
@@ -172,6 +199,17 @@ async function libRemoveSelected(){
     });
     msg = '注意：有 ' + used.length + ' 个资产正被流程引用——\n' + names.join('\n') +
       '\n\n删掉后那些流程里会变成打不开的图。确认删除？';
+  }
+  const studioIds = Object.keys(inStudio);
+  if(studioIds.length){
+    const names = studioIds.slice(0, 3).map(id => {
+      const a = libState.assets.find(x => x.id === id);
+      return '· ' + (a ? a.name : id) + '（剪辑台项目引用）';
+    });
+    msg = (used.length ? msg + '\n\n' : '') +
+      '注意：有 ' + studioIds.length + ' 个资产正在剪辑台项目里使用——\n' + names.join('\n') +
+      (studioIds.length > 3 ? '\n…' : '') +
+      '\n删掉后时间线里会变成打不开的素材。确认删除？';
   }
   if(!confirm(msg)) return;
   libState.busy = '删除中';
@@ -1567,6 +1605,42 @@ async function renderAssetsPane(){
   });
 }
 
+/* 给其它 App（如剪辑台）用的最小资产接口。
+ * App 代码不允许直接摸 window.openagiDesktop（AGENTS.md 2 节），统一从这里走。 */
+if(typeof window !== 'undefined'){
+  window.assetBridge = {
+    available(){
+      const d = libDesk();
+      return !!(d && typeof d.assetList === 'function');
+    },
+    async list(kind){
+      const d = libDesk();
+      if(!d) return [];
+      try{
+        const r = await d.assetList();
+        const arr = (r && r.assets) || [];
+        return kind ? arr.filter(a => a && a.kind === kind) : arr;
+      }catch(e){ return []; }
+    },
+    async read(id){
+      const d = libDesk();
+      if(!d || !id || typeof d.assetRead !== 'function') return '';
+      try{
+        const r = await d.assetRead(String(id));
+        return (r && r.ok && r.dataURL) || '';
+      }catch(e){ return ''; }
+    },
+    async thumb(id){
+      const d = libDesk();
+      if(!d || !id || typeof d.assetThumb !== 'function') return '';
+      try{
+        const r = await d.assetThumb(String(id));
+        return (r && r.ok && r.dataURL) || '';
+      }catch(e){ return ''; }
+    }
+  };
+}
+
 if(typeof module !== 'undefined' && module.exports){
-  module.exports = { LIB_KINDS, libState, libScanRefs, libPaint, openLibrary, libFmt, libForgetThumb, libOpenAsset, renderAssetsPane, libUvOpen, libUvClose };
+  module.exports = { LIB_KINDS, libState, libScanRefs, libStudioRefs, libPaint, openLibrary, libFmt, libForgetThumb, libOpenAsset, renderAssetsPane, libUvOpen, libUvClose };
 }

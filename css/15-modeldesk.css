@@ -3627,3 +3627,143 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
 .md-app .md-uv-kit::-webkit-scrollbar-thumb:hover { background: #cdd3db; }
 .md-app input[type=color] { background: #ffffff; }
 .md-app ::selection { background: #cfe2f6; color: #1f2328; }
+
+/* ---------- 21. 绘画面板（专业化打磨） ----------
+ * 只作用在 .md-app 里的绘画页签：预览条 + 槽缩略图 + 色板 + 提示框。
+ * 全部沿用 20.12 的浅色卡片语言（白底 / 1px 冷灰描边 / 轻投影 / 8px 圆角）。 */
+.md-app .md-paint { gap: 9px; }
+
+/* 21.1 预览条：左边棋盘舞台，右边当前笔刷摘要 */
+.md-app .md-paint-prev {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  background: #ffffff;
+  border: 1px solid #e3e6ea;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(28, 38, 60, .05);
+}
+.md-app .md-paint-prev-stage {
+  position: relative; flex: 0 0 50px; width: 50px; height: 50px;
+  border: 1px solid #e3e6ea; border-radius: 6px; overflow: hidden;
+  background-color: #ffffff;
+  /* 棋盘 = 透明底：预览的是笔迹本身，不是「压在白色上的结果」 */
+  background-image:
+    linear-gradient(45deg, #eef0f4 25%, transparent 25%, transparent 75%, #eef0f4 75%),
+    linear-gradient(45deg, #eef0f4 25%, transparent 25%, transparent 75%, #eef0f4 75%);
+  background-size: 10px 10px;
+  background-position: 0 0, 5px 5px;
+  box-shadow: inset 0 1px 3px rgba(28, 38, 60, .10);
+}
+.md-app .md-paint-prev-stage > i {
+  position: absolute; left: 50%; top: 50%;
+  width: 24px; height: 24px; border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: #d94f4f;
+  box-shadow: 0 1px 2px rgba(28, 38, 60, .18);
+  transition: width .12s ease, height .12s ease, background-color .12s ease;
+}
+/* 橡皮擦没有颜色：用虚线轮廓表示「擦掉」 */
+.md-app .md-paint-prev-stage > i.is-erase {
+  background: transparent !important;
+  border: 1px dashed #8a95a5;
+  box-shadow: none;
+}
+.md-app .md-paint-prev-info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.md-app .md-paint-prev-info > b {
+  font-size: 12px; font-weight: 600; color: #1f2328;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.md-app .md-paint-prev-info > span {
+  font-size: 10px; color: #6a7488; font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 21.2 材质槽缩略图：贴在槽下拉右边，说明「笔迹会进哪张贴图 / 哪种底色」 */
+.md-app .md-paint-slotdot {
+  flex: 0 0 20px; width: 20px; height: 20px;
+  border: 1px solid #d9dde3; border-radius: 4px;
+  background-color: #f1f2f4;
+  background-size: cover; background-position: center;
+  box-shadow: inset 0 1px 2px rgba(28, 38, 60, .10);
+}
+.md-app .md-paint-slotdot.is-auto {
+  background-image: linear-gradient(135deg, #c9ccd4 50%, #e9ebef 50%);
+}
+
+/* 21.3 常用色板：整行均分，9 个 19px 色块在 260px 的栏宽里不会换行 */
+.md-app .md-paint-swatches {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 4px;
+  padding: 1px 0 0;
+}
+.md-app .md-paint-sw {
+  width: 19px; height: 19px; padding: 0; flex: 0 0 auto;
+  border: 1px solid rgba(28, 38, 60, .16); border-radius: 5px;
+  background: var(--c, #ffffff);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45);
+  cursor: pointer;
+  transition: transform .1s ease, box-shadow .1s ease;
+}
+.md-app .md-paint-sw:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 5px rgba(28, 38, 60, .18), inset 0 1px 0 rgba(255, 255, 255, .45);
+}
+.md-app .md-paint-sw.is-on {
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3px var(--md-on);
+}
+
+/* 21.4 提示框：从一行小字升级成可读的操作说明块 */
+.md-app .md-paint-hint {
+  padding: 7px 9px;
+  border: 1px solid #e3e6ea; border-radius: 8px;
+  background: #f7f8fa;
+  color: #5a6068; font-size: 10px; line-height: 1.65;
+}
+.md-app .md-paint-hint > b { font-weight: 600; color: #3b4147; }
+
+/* 21.5 行内留白：数值列等宽，滑杆与下拉的右缘对齐 */
+.md-app .md-paint-card { padding: 9px 10px 11px; gap: 9px; }
+.md-app .md-paint-card-h em { color: #8a9098; }
+.md-app .md-paint-row > span { flex: 0 0 56px; font-size: 10.5px; }
+.md-app .md-paint-row > b { flex: 0 0 46px; }
+
+/* 21.6 分区不参与 flex 收缩
+ * 右栏是整条滚动（.md-paint 自己有 overflow-y），分区一旦被允许收缩，
+ * 内容比剩余高度长时就会溢出到下一个分区下面 —— 这就是「UI 相互遮挡」的来源。
+ * 所有分区固定为自身高度，超出部分交给外层面板滚动。 */
+.md-app .md-paint > * { flex: 0 0 auto; }
+.md-app .md-paint-mix {
+  flex: 0 0 auto;
+  margin-top: 0; padding: 9px 10px 11px;
+  border: 1px solid #e3e6ea;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(28, 38, 60, .05);
+}
+/* 混合分区内部的分隔线是给「无卡片」版式留的，卡片化后去掉 */
+.md-app .md-paint-mix .md-mix-list { padding: 0; }
+
+/* 21.7 自定义笔尖：只在形状 = 自定义时出现 */
+.md-app .md-paint-row[hidden] { display: none; }
+.md-app .md-paint-custom { gap: 6px; }
+.md-app .md-paint-file {
+  flex: 1 1 auto; min-width: 0; height: 22px; padding: 0 8px;
+  border: 1px solid #d9dde3; border-radius: 3px;
+  background: #ffffff; color: #2a2f36;
+  font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
+}
+.md-app .md-paint-file:hover { background: #f5f6f8; border-color: #c9ced6; }
+.md-app .md-paint-brushtmb {
+  flex: 0 0 22px; width: 22px; height: 22px;
+  border: 1px solid #d9dde3; border-radius: 3px;
+  /* 灰底：白色 / 浅色笔尖图也能看出轮廓 */
+  background-color: #e6e9ee; background-position: center; background-repeat: no-repeat; background-size: contain;
+}
+.md-app .md-paint-brushtmb[hidden] { display: none; }
+.md-app .md-paint-custom > em {
+  flex: 1 1 auto; min-width: 0; font-style: normal; font-size: 10px; color: #6a7488;
+  text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+

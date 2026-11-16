@@ -64,7 +64,10 @@ const CASES = [
   }
 
   const rows = [];
+  /* 可选：AISEARCH_CASES=T3,T6 只跑指定题目，改完一处后快速回归。 */
+  const only = String(process.env.AISEARCH_CASES || '').split(',').map(s => s.trim()).filter(Boolean);
   for (const c of CASES) {
+    if (only.length && only.indexOf(c.id) < 0) continue;
     await page.evaluate((mode) => {
       const home = document.querySelector('#aisearchWin [data-act="home"], #aisearchWin .ais-brand');
       if (home) home.click();
@@ -86,20 +89,22 @@ const CASES = [
       hits: [...document.querySelectorAll('#aisearchWin .ais-hit')].map((el) =>
         el.querySelector('.ais-hit-title').textContent + ' | ' + el.querySelector('.ais-hit-url').textContent),
       filtered: document.querySelector('#aisearchWin .ais-filtered').textContent.trim(),
-      promptLen: (window.__llmUser || '').length
+      read: document.querySelectorAll('#aisearchWin .ais-src.is-read').length,
+      sources: document.querySelectorAll('#aisearchWin .ais-src').length
     }));
     const pool = out.hits.join(' ').toLowerCase();
     const hits = c.expect.filter((k) => pool.includes(k.toLowerCase()));
     rows.push({
       id: c.id, q: c.q, status: out.status, n: out.hits.length,
       expectHit: hits.length + '/' + c.expect.length,
-      hits: out.hits.slice(0, 8), trace: out.trace, filtered: out.filtered, promptLen: out.promptLen
+      hits: out.hits.slice(0, 8), trace: out.trace, filtered: out.filtered,
+      read: out.read, sources: out.sources
     });
     await page.waitForTimeout(5000);
   }
 
   for (const r of rows) {
-    console.log('\n### ' + r.id + ' ' + r.q + '  → ' + r.status + ' · ' + r.n + ' 条 · 期望命中 ' + r.expectHit + ' · 资料 ' + r.promptLen + ' 字');
+    console.log('\n### ' + r.id + ' ' + r.q + '  → ' + r.status + ' · ' + r.n + ' 条 · 期望命中 ' + r.expectHit + ' · 精读 ' + r.read + '/' + r.sources + ' 篇');
     console.log('  trace: ' + r.trace.join(' ｜ '));
     console.log('  hits:'); r.hits.forEach((h) => console.log('   - ' + h));
     if (r.filtered) console.log('  ' + r.filtered);

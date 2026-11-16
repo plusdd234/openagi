@@ -627,6 +627,7 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
+  margin-top: 8px;
   padding: 8px 10px;
   border: 1px solid #e6ebf3;
   border-radius: 9px;
@@ -712,6 +713,47 @@
 
 /* ---------- 朗读声音 ---------- */
 .l2d-tts { display: flex; flex-direction: column; gap: 8px; }
+
+.l2d-tts-top { display: flex; align-items: center; gap: 6px; }
+.l2d-tts-top .l2d-select { flex: 1 1 auto; min-width: 0; }
+.l2d-btn-ico { flex: 0 0 auto; height: 34px; padding: 0 10px; font-size: 12px; }
+
+.l2d-tts-state { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.l2d-tag {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(91, 143, 217, 0.12);
+  color: var(--l2d-accent-deep);
+  font-size: 10.5px;
+  line-height: 18px;
+}
+.l2d-tag.is-local { background: rgba(61, 214, 140, 0.16); color: #2f8f63; }
+.l2d-tts-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--l2d-dim);
+  word-break: break-word;
+}
+.l2d-tts-status.is-err { color: #c0563f; }
+
+.l2d-tts-acts { display: flex; gap: 8px; }
+.l2d-tts .l2d-tts-acts .l2d-btn { flex: 1 1 0; height: 30px; font-size: 12px; }
+
+.l2d-tts-hint {
+  margin: 0;
+  color: var(--l2d-dim);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.l2d-range.is-off { opacity: 0.48; }
+.l2d-range.is-off input { cursor: not-allowed; }
 
 .l2d-select {
   width: 100%;

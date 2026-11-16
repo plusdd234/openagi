@@ -274,10 +274,16 @@ async function launchNow(cfgFile, o){
   try{
     /* 启动参数照便携版自带的 run_nvidia_gpu.bat 来：
      * -s 不加载用户 site-packages（避免和系统装的其他包冲突），
-     * 便携版再加 --windows-standalone-build（跳过一些 Windows 上的兼容检查）。 */
+     * 便携版再加 --windows-standalone-build（跳过一些 Windows 上的兼容检查）。
+     *
+     * ⚠ --windows-standalone-build 会顺手把 auto_launch 打开：ComfyUI 每次起来
+     *   都往系统默认浏览器弹一个 127.0.0.1:8188 标签页。工作站的界面已经把这个
+     *   网页内嵌进「本地生图」App 了，再弹一次浏览器纯属打扰，所以必须显式关掉。
+     *   注意顺序：cli_args.py 里 standalone 先把 auto_launch 置 True，
+     *   后面才处理 --disable-auto-launch，两个一起给才能压住。 */
     const launchArgs = ['-s', path.join(layout.comfyDir, 'main.py'),
       '--port', String(COMFY_PORT), '--listen', '127.0.0.1'];
-    if(layout.mode === 'portable') launchArgs.push('--windows-standalone-build');
+    if(layout.mode === 'portable') launchArgs.push('--windows-standalone-build', '--disable-auto-launch');
 
     pushLog('$ ' + layout.python + ' ' + launchArgs.join(' '));
     child = spawn(layout.python, launchArgs, {

@@ -3,7 +3,7 @@
  *
  * 为什么单独一个：这套东西的关键卖点在「大图 + 瓦片 + 历史」，
  * 光看代码看不出真机上会不会白屏。这里从桌面图标点进去，验证：
- *   ① 演示稿建得起来、瓦片渲染有统计；
+ *   ① 默认是空白画布、瓦片渲染有统计；演示素材可随时载入；
  *   ② 缩小时走 mip（一次 drawImage 顶替一堆瓦片）；
  *   ③ 画笔 / 油漆桶 / 滤镜都进历史，撤销能回来；
  *   ④ 调整层、导出、超大图降采样、大图导入都能工作；
@@ -38,9 +38,53 @@ const check = (ok, name, extra) => {
   check(!!dbg && dbg.ready, 'psLab 就绪', '');
   check(!!dbg && dbg.visible, '窗口已翻到前台（没有 hidden）', '');
   check(await page.evaluate(() => !!document.querySelector('#psStageHost canvas.ps-canvas')), '画布节点存在', '');
-  check(dbg.doc.w === 1600 && dbg.doc.h === 1000, '演示稿尺寸 1600 × 1000', dbg.doc.w + ' × ' + dbg.doc.h);
-  check(dbg.doc.layers >= 3, '演示稿至少 3 个图层', dbg.doc.layers + ' 层：' + dbg.doc.names.join(' / '));
-  check(dbg.tiles > 0, '首帧画出了瓦片', dbg.tiles + ' 瓦片');
+  check(dbg.doc.w === 1600 && dbg.doc.h === 1000, '默认空白画布 1600 × 1000', dbg.doc.w + ' × ' + dbg.doc.h);
+  check(dbg.doc.layers === 1 && dbg.doc.names[0] === '背景', '默认只有一层白色背景', dbg.doc.layers + ' 层：' + dbg.doc.names.join(' / '));
+  check(dbg.tiles > 0, '空白画布首帧生成瓦片', dbg.tiles + ' 瓦片');
+
+  /* 默认背景层锁定：移动工具拖不动（对齐 PS 的背景层行为） */
+  const bgLocked = await page.evaluate(() => window.psLab.__test.activeLayer());
+  check(bgLocked && bgLocked.locked === true, '默认背景层已锁定', 'locked=' + (bgLocked && bgLocked.locked));
+  const blankView = await page.evaluate(() => {
+    const c = document.querySelector('#imgLabWin canvas.ps-canvas');
+    const r = c.getBoundingClientRect();
+    const d = window.psLab.__debug();
+    return { left: r.left, top: r.top, px: d.pan.x, py: d.pan.y, z: d.zoom };
+  });
+  await page.click('#psTools [data-tool="move"]');
+  const bgFrom = { x: blankView.left + blankView.px + 300 * blankView.z, y: blankView.top + blankView.py + 300 * blankView.z };
+  await page.mouse.move(bgFrom.x, bgFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(bgFrom.x + 60, bgFrom.y + 40, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  const bgAfter = await page.evaluate(() => window.psLab.__test.activeLayer());
+  check(bgAfter.locked === true && bgAfter.x === 0 && bgAfter.y === 0,
+    '锁定背景拖不动', 'locked=' + bgAfter.locked + ' @' + bgAfter.x + ',' + bgAfter.y);
+
+  /* 默认布局（对齐参考图）：选项栏横跨整个工作区；历史 / 导航器收起，图层展开 */
+  const layout = await page.evaluate(() => {
+    const app = document.getElementById('psApp');
+    const opt = app.querySelector('.ps-options');
+    const bar = app.querySelector('.ps-menubar');
+    const r = opt.getBoundingClientRect();
+    return {
+      optW: Math.round(r.width), appW: Math.round(app.getBoundingClientRect().width),
+      belowMenu: r.top >= bar.getBoundingClientRect().bottom - 1,
+      hist: document.getElementById('psHistCard').classList.contains('is-collapsed'),
+      nav: document.getElementById('psNavCard').classList.contains('is-collapsed'),
+      layers: document.getElementById('psLayersCard').classList.contains('is-collapsed')
+    };
+  });
+  check(layout.optW === layout.appW && layout.belowMenu, '选项栏横跨整个工作区', layout.optW + ' / ' + layout.appW);
+  check(layout.hist && layout.nav && !layout.layers, '默认布局：历史与导航器收起、图层展开',
+    'hist=' + layout.hist + ' / nav=' + layout.nav + ' / layers=' + layout.layers);
+
+  /* 空白通过后载入演示素材，后面的渲染 / 选区 / 图层测试沿用固定内容 */
+  await page.evaluate(() => window.psLab.__test.loadDemo());
+  await page.waitForTimeout(500);
+  dbg = await page.evaluate(() => window.psLab.__debug());
+  check(dbg.doc.layers >= 3, '演示素材可载入（供后续测试）', dbg.doc.layers + ' 层：' + dbg.doc.names.join(' / '));
 
   /* 1. 缩放：100% 用瓦片；缩到 18% 用 mip */
   await page.evaluate(() => window.psLab.__test.setZoom(1));

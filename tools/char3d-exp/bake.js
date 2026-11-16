@@ -55,7 +55,7 @@ async function main() {
   await setLayout();
 
   const results = {};
-  for (const tag of ['B', 'D']) {
+  for (const tag of ['B', 'D', 'H', 'H2', 'H3', 'H4', 'HU']) {
     const src = path.join(genDir, 'bake_' + tag + '.png');
     if (!fs.existsSync(src)) { console.log('缺少 ' + src); continue; }
     const dataUrl = 'data:image/png;base64,' + fs.readFileSync(src).toString('base64');

@@ -1,0 +1,1365 @@
+	<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "https://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:wb="//open.weibo.com/wb">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>奇客资讯网</title>
+    <meta name="baidu-site-verification" content="DFUjePAJQQ" />
+    <meta property="wb:webmaster" content="14038afe88cfc78f" />
+    <meta name="keywords" content="IT,开源,开发者,软件,硬件,书籍,互联网,科学,社会,奇客,社区"/>
+    <meta property="qc:admins" content="4316552177637414746727" />
+    <meta name="description" content="奇客Solidot是至顶网下的科技资讯网站，主要面对开源自由软件和关心科技资讯读者群，包括众多中国开源软件的开发者，爱好者和布道者。口号是“奇客的知识，重要的东西”。"/>
+    <base href="//www.solidot.org" />
+    <link href="https://icon.solidot.org/css/default/common.css?v2.0.0.1.1" rel="stylesheet" type="text/css" /><link href="https://icon.solidot.org/css/default/base2.0.css?v2.0.0.1.1" rel="stylesheet" type="text/css" /><link href="https://icon.solidot.org/css/green/index.css?v2.0.0.1.1" rel="stylesheet" type="text/css" />    <!--script src="//tjs.sjs.sinajs.cn/open/api/js/wb.js?appkey=3991498076" type="text/javascript" charset="utf-8"></script-->
+    <script type="text/javascript" language="javascript" src="https://icon.solidot.org/js/jquery-1.7.2.min.js"></script>
+        <link rel="alternate" title="奇客Solidot RSS" href="//www.solidot.org/index.rss" type="application/rss+xml" />
+    <link href="https://icon.solidot.org/images/m/logo.jpg" rel="apple-touch-icon-precomposed">
+    <link rel="alternate" title="科技行者 原创" href="//www.techwalker.com/cnetnews.xml" type="application/rss+xml" />
+    <link rel="alternate" title="至顶网网络频道 原创" href="//net.zhiding.cn/network_security_zone/netrss.xml" type="application/rss+xml"/>
+    <link rel="alternate" title="至顶网服务器频道 原创" href="//server.zhiding.cn/server/serverrss.xml" type="application/rss+xml" />
+    <link rel="alternate" title="至顶网软件频道 原创" href="//soft.zhiding.cn/software_zone/softrss.xml" type="application/rss+xml" />
+    <link rel="alternate" title="至顶网存储频道 原创" href="//stor-age.zhiding.cn/stor-age/storrss.xml" type="application/rss+xml" />
+    <link rel="alternate" title="至顶网 CIO 频道 原创" href="//cio.zhiding.cn/cio/ciorss.xml" type="application/rss+xml" />
+    <link rel="alternate" title="至顶网安全频道 原创" href="//security.zhiding.cn/security_zone/securityrss.xml" type="application/rss+xml" />
+</head>
+<body class="bg_col">
+<div id="main">
+
+<style>
+    .logo_sosobox{
+        display: flex;
+        justify-content: space-between;
+        /* background: url(https://icon.solidot.org/images/lightgreen/lightg_repeat.jpg) repeat-x; */
+    }
+    .logo_sosobox .logos{
+        display: flex;
+        align-items: center;
+    }
+    .logo_sosobox .logos .shell{
+        display: flex;
+        gap: 10px;
+        margin-left: 20px;
+    }
+    .logo_sosobox .logos .shell li, .logo_sosobox .logos .shell li a{
+        color: #fff;
+        font-size: 14px;
+        position: relative;
+    }
+    .logo_sosobox .logos .shell li a:hover{
+        text-decoration: none;
+    }
+
+    .logo_sosobox .logos .shell li::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -4px;
+        height: 2px;
+        background: #b9ff45;
+        transform: scaleX(0);
+        transform-origin: center;
+        transition: transform .15s ease;
+    }
+
+    .logo_sosobox .logos .shell li.current::after {
+        transform: scaleX(1);
+    }
+
+    /* 鼠标移到其他 li 时，隐藏 current */
+    .logo_sosobox .logos .shell:has(li:not(:first-child):not(.current):hover)
+    li.current::after {
+        transform: scaleX(0);
+    }
+
+    /* 鼠标经过的 li 显示 */
+    .logo_sosobox .logos .shell li:hover::after {
+        transform: scaleX(1);
+    }
+
+    .logo_sosobox .logos .shell li:first-child:after{
+        content: none !important;
+    }
+
+</style>
+<div class="logo_sosobox soso_inp">
+    <!-- <a style="background:url('https://icon.solidot.org/images/solidot-logo.png') no-repeat;background-size:auto 100%;width:176px;height:43px;float:left;margin-right:-3px;cursor:pointer;" href="/" title="奇客Solidot 奇客的知识，重要的东西"></a> -->
+    <div class="logos">
+        <a style="background:url('https://icon.solidot.org/images/solidot-logo.png') no-repeat;background-size:auto 100%;width:176px;height:43px;cursor:pointer;display: block;" href="/" title="奇客Solidot 奇客的知识，重要的东西"></a>
+        <ul class="shell">
+            <li>至顶科技：</li>
+            <li><a href="https://www.zhiding.cn/" target="_blank" alt="至顶网" title="至顶网">至顶网</a></li>
+            <li><a href="https://www.techwalker.com/" target="_blank" alt="科技行者" title="科技行者">科技行者</a></li>
+            <li class="current"><a href="https://www.solidot.org/" target="_blank" alt="Solidot" title="Solidot">Solidot</a></li>
+        </ul>
+    </div>
+    <div class="soso_inp">
+        <div class="login_rr">
+                        <div class="login_r"><a href="/login">登录</a> <a href="/register">注册</a></div>
+                        <ul id="ul_nav">
+                                <li class="s_icon">
+                    <span>文章</span>
+                    <div class="translat_down hiden" style="right:2px;">
+                        <a href="/?issue=20261114">往日文章</a>
+                        <a href="/polllist">往日投票</a>
+                                            </div>
+                </li>
+                                <li class="s_icon">
+                    <span>皮肤</span>
+                    <div class="translat_down hiden">
+                        <a href="/?theme=blue">蓝色</a>
+                        <a href="/?theme=yellow">橙色</a>
+                        <a href="/?theme=green">绿色</a>
+                        <a href="/?theme=clightgreen">浅绿色</a>
+                    </div>
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+<div class="nav-secondary-wrap">
+    <nav class="nav-secondary" role="secondary-navigation">
+        <ul>
+            <li class="nav-label">分类: </li>
+                                    <li class="left_on"><a href="//www.solidot.org/">首页</a></li>
+                                                <li><a href="//linux.solidot.org/">Linux</a></li>
+                                                <li><a href="//science.solidot.org/">科学</a></li>
+                                                <li><a href="//technology.solidot.org/">科技</a></li>
+                                                <li><a href="//mobile.solidot.org/">移动</a></li>
+                                                <li><a href="//apple.solidot.org/">苹果</a></li>
+                                                <li><a href="//hardware.solidot.org/">硬件</a></li>
+                                                <li><a href="//software.solidot.org/">软件</a></li>
+                                                <li><a href="//security.solidot.org/">安全</a></li>
+                                                <li><a href="//games.solidot.org/">游戏</a></li>
+                                                <li><a href="//books.solidot.org/">书籍</a></li>
+                                                <li><a href="//idle.solidot.org/">idle</a></li>
+                                                <li><a href="//cloud.solidot.org/">云计算</a></li>
+                                                <li><a href="//story.solidot.org/">高飞的电子替身</a></li>
+                        	                  
+        </ul>
+    </nav>
+    <div class="combined_log" style="width:178px; padding-right:0;">
+        <h2 style="color:#fff; margin-top:-0.1em;">关注我们：</h2>
+        <ul class="clearfix">
+        	<li><a class="rss" title="rss" href="/index.rss"></a></li>
+            <li><a class="xima" target="_blank" rel="nofollow" title="喜马拉雅" href="http://www.ximalaya.com/keji/16007374/"></a></li>
+            <li><a class="wechat" title="扫码关注solidot" href="javascript:void(0);"></a></li>
+        </ul>
+     </div>
+</div>
+<div class="headWraningBox">
+    <div class="headWraning">
+		solidot新版网站常见问题，请点击<a class="same_the" href="/QA">这里</a>查看。    </div>
+</div>
+<div class="clear"></div>
+
+
+
+<div id="right">
+    <div class="wechat_code hiden" style="right:0px;"></div>
+	        <div class="block_r">
+        <div class="rig_tittle">
+            <h2>Solidot 公告</h2>
+        </div>
+        <div class="contentbox">
+            <div class="content">
+                <b>文章提交注意事项：</b>
+                <br>
+                请在发布文章时用HTML代码加上至少一条新闻来源的链接；原创性消息，可加入相关信息（如涉及公司的网址）的链接。有任何问题，<b>邮件至：he.fang#zhiding.cn<br>
+                </b>
+                <span class="pad_10px">注意：收到邮件乱码的用户请修改客户端的默认字体编码，从"简体中文（GB2312）"修改为"Unicode（UTF-8）"。</span>
+            </div>
+        </div>
+        <div class="r_end"></div>
+    </div>
+	
+	    <div class="block_r">
+        <div class="rig_tittle">
+            <h2>投 票</h2>
+        </div>
+        <div class="contentbox">
+            <div class="content">
+                <form method="post" action="/poll?op=dopoll&qid=243" name="form1" id="form1" class="tp">
+                    <fieldset>
+                        <b>如果Solidot做一些纪念品，你想要什么？</b><br/>
+                                                                        <input name="aid[]" type="radio" value="1" /> <b>电脑和手机周边</b>
+                                                <br/>                        <input name="aid[]" type="radio" value="2" /> <b>服饰</b>
+                                                <br/>                        <input name="aid[]" type="radio" value="3" /> <b>潮玩伴手礼</b>
+                                                <br/>                        <input name="aid[]" type="radio" value="4" /> <b>只要是Solidot出品，啥都行</b>
+                                                <div class="hei5px"></div>
+                        <input type="submit" class="tp_btn" value="投票" /> <span class="v_anwers"> [ <a
+                                href="/poll?qid=243&op=result"><b>结果</b></a> | <a
+                                href="/polllist"><b>投票</b></a>]
+                        </span>
+                        <div class="hei5px"></div>
+                        评论:<b>0</b> | 得票数:<b>2992</b>
+                    </fieldset>
+                </form>
+            </div>
+        </div>
+        <div class="r_end"></div>
+    </div>
+            <div class="block_r">
+        <div class="rig_tittle">
+            <h2>热门文章</h2>
+        </div>
+        <div class="contentbox">
+            <div class="content">
+                <ul class="old_articles">
+                    <li class="old_blockli">
+                        <ul class="comment_on">
+                                                <li><a href="/story?sid=85878">英伟达员工请愿让黄仁勋复职</a>
+                            <em>(0)</em></li>
+                                                <li><a href="/story?sid=85879">《幻兽帕鲁》开发商给员工五天假期畅玩 GTA 6</a>
+                            <em>(0)</em></li>
+                                                <li><a href="/story?sid=85880">地球冰冻圈不再处于安全运行空间内</a>
+                            <em>(0)</em></li>
+                                                <li><a href="/story?sid=85881">台积电内部员工数据泄露</a>
+                            <em>(0)</em></li>
+                                                <li><a href="/story?sid=85882">非洲加速发展太阳能</a>
+                            <em>(0)</em></li>
+                                                <li><a href="/story?sid=85883">旅行者 1 号距离地球的距离达到一光日</a>
+                            <em>(0)</em></li>
+                                                <li><a href="/story?sid=85884">美国历史上第三次航班大停飞</a>
+                            <em>(0)</em></li>
+                                                <li><a href="/story?sid=85886">微软云服务宕机持续逾 24 小时</a>
+                            <em>(0)</em></li>
+                                                <li><a href="/story?sid=85887">天问四号将尝试登陆木卫四</a>
+                            <em>(0)</em></li>
+                                                <li><a href="/story?sid=85889">美国失去麻疹消除地位</a>
+                            <em>(0)</em></li>
+                                            </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        <div class="r_end"></div>
+    </div>
+            <div class="block_r">
+        <div class="rig_tittle">
+            <h2>热门评论</h2>
+        </div>
+        <div class="contentbox">
+            <div class="content">
+                <ul class="comment_on">
+                                        <li><a
+                            href="/story?sid=84911#comment_296690"><b>很正常</b></a>
+                        (1 points, 一般)
+                        by Craynic                        在 2026年07月27日13时22分 星期一 
+                        评论到 <a href="/story?sid=84911">古代语言的多样性远超今日</a>
+                    </li>
+                                        <li><a
+                            href="/story?sid=84461#comment_296689"><b>发电不需要油吗</b></a>
+                        (1 points, 一般)
+                        by Craynic                        在 2026年06月03日13时51分 星期三 
+                        评论到 <a href="/story?sid=84461">能源危机推动 37 个国家的电动汽车销量创新高</a>
+                    </li>
+                                        <li><a
+                            href="/story?sid=84075#comment_296687"><b>所以firefox 已经路边一条，对用户的需求漠视的结果就是这样了</b></a>
+                        (1 points, 一般)
+                        by solidot1745479987                        在 2026年04月20日11时14分 星期一 
+                        评论到 <a href="/story?sid=84075">Firefox 加入了对 Web Serial API 的支持</a>
+                    </li>
+                                        <li><a
+                            href="/story?sid=83976#comment_296686"><b></b></a>
+                        (1 points, 一般)
+                        by solidot1775703930                        在 2026年04月09日11时09分 星期四 
+                        评论到 <a href="/story?sid=83976">Sam Altman 能被信任吗？</a>
+                    </li>
+                                        <li><a
+                            href="/story?sid=83977#comment_296685"><b>很难想象现代Linux居然还能跑在i486上</b></a>
+                        (1 points, 一般)
+                        by Craynic                        在 2026年04月07日19时41分 星期二 
+                        评论到 <a href="/story?sid=83977">Linux 准备移除对 i486 CPU 的支持 </a>
+                    </li>
+                                        <li><a
+                            href="/story?sid=83956#comment_296684"><b>很多单词已经不再实用</b></a>
+                        (1 points, 一般)
+                        by Craynic                        在 2026年04月07日13时22分 星期二 
+                        评论到 <a href="/story?sid=83956">人们日常说话的单词量比上一年减少 300 个单词</a>
+                    </li>
+                                        <li><a
+                            href="/story?sid=83907#comment_296683"><b>表示方向不还是得有那么多个维度吗</b></a>
+                        (1 points, 一般)
+                        by Craynic                        在 2026年03月30日13时35分 星期一 
+                        评论到 <a href="/story?sid=83907">Google TurboQuant AI 压缩算法大幅减少大模型内存使用</a>
+                    </li>
+                                        <li><a
+                            href="/story?sid=83884#comment_296682"><b>sora的核心用户是内容创作者</b></a>
+                        (1 points, 一般)
+                        by Craynic                        在 2026年03月27日13时16分 星期五 
+                        评论到 <a href="/story?sid=83884">Sora 为何失败：每天推理成本最高 1500 万美元总收入仅为 210 万美元</a>
+                    </li>
+                                        <li><a
+                            href="/story?sid=83775#comment_296681"><b>夏天骑摩托的时候，最喜欢带着有线耳机听相声或小说</b></a>
+                        (1 points, 一般)
+                        by kracker1911                        在 2026年03月17日09时36分 星期二 
+                        评论到 <a href="/story?sid=83775">有线耳机销量暴增</a>
+                    </li>
+                                        <li><a
+                            href="/story?sid=83719#comment_296680"><b>不如用网易邮箱</b></a>
+                        (1 points, 一般)
+                        by Craynic                        在 2026年03月10日11时20分 星期二 
+                        评论到 <a href="/story?sid=83719">FBI 通过 Proton Mail 识别抗议者身份</a>
+                    </li>
+                                    </ul>
+            </div>
+        </div>
+        <div class="r_end"></div>
+    </div>
+    
+    <div class="block_r">
+        <div class="rig_tittle">
+            <h2>快速链接</h2>
+        </div>
+        <div class="contentbox">
+            <div class="content">
+                <ul class="haveno_circle">
+                    <li><a target="_blank" href="//www.zhiding.cn">至顶网</a></li>
+                    <li><a target="_blank" href="//linux.cn">Linux中国</a></li>
+	                <li><a target="_blank" href="//www.techwalker.com/index.shtml">科技行者</a></li>
+	                <li><a target="_blank" href="//m.ximalaya.com/keji/16007374/">奇客情报站</a></li>
+                    <li><a target="_blank" href="//www.zhiding.cn/intel_oem/2020">智者新时代</a></li>
+                    <li><a target="_blank" href="//www.glxdh.com/">管理现代化</a></li>
+                    <li><a target="_blank" href="https://ofox.io/">OfoxAI</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="r_end"></div>
+    </div>
+    
+</div><style>
+    /*html {*/
+    /*    -webkit-filter: grayscale(100%);*/
+    /*    -moz-filter: grayscale(100%);*/
+    /*    -ms-filter: grayscale(100%);*/
+    /*    -o-filter: grayscale(100%);*/
+    /*    filter: grayscale(100%);*/
+    /*    filter:progid:DXImageTransform.Microsoft.BasicImage(grayscale=1);*/
+    /*    filter:gray;*/
+    /*}*/
+</style>
+<div id="center">
+		        <div id="ads">
+			        </div>
+				        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						
+                        <a href="/story?sid=84518">免费领取价值30/90美金的NVIDIA DLI自学课程并测试获得证书</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=3" title="开源"><img
+                                width="61" height="59"
+                                src="https://icon.solidot.org/images/topics/topicopensource.png?12" alt="开源" /></a>
+
+					                </div>
+                <span class="user" id="25739">
+                <a href="/specialist~imest">imest</a>(25739)
+                <div class=user_box></div>
+            </span>
+                发表于2026年06月08日 17时18分				星期一<br/>
+                <b>来自开普勒62号6：秘密</b>
+            </div>
+            <div class="p_content">
+									                        <div class="limg posit"><img style="max-width:120px;max-height:120px" class="limg" src="https://img.solidot.org/0/208/lixU2dNimiZr6-small.png" /></div>
+									                <div class="p_mainnew">
+					
+领取规则：未注册过开发者的用户可以通过如下链接免费选择一门 DLI 在线自主培训的付费课程，配套云端实验环境和可获得 NVIDIA 培训证书。每位用户（每个邮箱账号）仅可选择一门。
+https://developer.nvidia.cn/login?ncid=ref-dev-557858&amp;sfdcid=Zhiding<br>
+<br>
+
+
+
+目前可选课程包括 5&nbsp;门英文课，4 门中文课，目前课程列表如下，随时下架，免费名额有限，先到先得：
+
+<span data-lark-record-data="{&quot;rootId&quot;:&quot;KYfVdUrskoy4yMxA1zGczwUqnib&quot;,&quot;text&quot;:{&quot;initialAttributedTexts&quot;:{&quot;text&quot;:{&quot;0&quot;:&quot;目前可选课程包括 5门英文课，4 门中文课，目前课程列表如下，随时下架，免费名额有限，先到先得：&quot;},&quot;attribs&quot;:{&quot;0&quot;:&quot;*0*1+9*2*1+1*0*1+5*2*1+1*0*1+w&quot;}},&quot;apool&quot;:{&quot;numToAttrib&quot;:{&quot;0&quot;:[&quot;author&quot;,&quot;7366562237269442562&quot;],&quot;1&quot;:[&quot;bold&quot;,&quot;true&quot;],&quot;2&quot;:[&quot;author&quot;,&quot;7509359449770721299&quot;]},&quot;nextNum&quot;:3}},&quot;type&quot;:&quot;text&quot;,&quot;referenceRecordMap&quot;:{},&quot;extra&quot;:{&quot;channel&quot;:&quot;saas&quot;,&quot;isEqualBlockSelection&quot;:false,&quot;pasteRandomId&quot;:&quot;458ea3c4-be81-4e8f-8e39-1f7d53702f68&quot;,&quot;mention_page_title&quot;:{},&quot;external_mention_url&quot;:{}},&quot;isKeepQuoteContainer&quot;:false,&quot;isFromCode&quot;:false,&quot;selection&quot;:[{&quot;id&quot;:4,&quot;type&quot;:&quot;text&quot;,&quot;selection&quot;:{&quot;start&quot;:2,&quot;end&quot;:50},&quot;recordId&quot;:&quot;O174dgxJmotiESxfS4FcZTAinTb&quot;}],&quot;payloadMap&quot;:{},&quot;isCut&quot;:false}" data-lark-record-format="docx/text" class="lark-record-clipboard"></span>
+
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="84518">
+                    <li><a href="/story?sid=84518">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="84518"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>3637</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="84518"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=84518&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						                                <span><a href='//science.solidot.org'>科学</a>: </span>
+								
+                        <a href="/story?sid=85889">美国失去麻疹消除地位</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=168" title="USA"><img
+                                width="57" height="57"
+                                src="https://icon.solidot.org/images/topics/topicUSA.png?12" alt="USA" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月15日 00时52分				星期日<br/>
+                <b>来自精灵王之女</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					受益于疫苗接种，美国自 2000 年起被认定“消灭”了麻疹。但最近几年疫苗接种率持续下降，麻疹卷土重来在美国多地再次流行。如果由同一毒株引起的感染在同一国家内持续发生人际传播，且时间至少达到一年，那么该感染即被视为“地方性流行”，即失去消除地位。犹他州的研究人员今年 8 月报告，麻疹同一毒株引起的感染在该州持续传播超过一年。今年美国已报告逾 5400 例麻疹病例，创下自 1991 年以来的最高纪录。今年报告的病例几乎所有患者此前都未接种过麻疹、腮腺炎和风疹（MMR）疫苗，或者其疫苗接种状况不明。根据美国各州的报告，至少 10 人在感染麻疹后死亡。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85889">
+                    <li><a href="/story?sid=85889">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85889"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>24</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85889"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85889&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						                                <span><a href='//science.solidot.org'>科学</a>: </span>
+								
+                        <a href="/story?sid=85887">天问四号将尝试登陆木卫四</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=102" title="太空"><img
+                                width="61" height="61"
+                                src="https://icon.solidot.org/images/topics/topicsapce.png?12" alt="太空" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月14日 22时12分				星期六<br/>
+                <b>来自约翰的预言</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					11 月 13 日，探月与航天工程中心发布通知，天问四号有效载荷研制方案开展征集。天问四号任务将执行环绕木星、环绕木卫四、着陆木卫四三大任务。木卫四或 Callisto 是太阳系第三大卫星，也是木星第二大卫星，仅次于木卫三。木卫四的直径为水星直径的 99%，但是质量只有它的三分之一。木卫四由近乎等量的岩石和水所构成，其表面下 100 公里处可能有一个液态水构成的地下海洋，可能具有孕育生命的基本条件。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85887">
+                    <li><a href="/story?sid=85887">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85887"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>25</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85887"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85887&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						
+                        <a href="/story?sid=85886">微软云服务宕机持续逾 24 小时</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=150" title="微软"><img
+                                width="59" height="59"
+                                src="https://icon.solidot.org/images/topics/topicMicrosoft.png?12" alt="微软" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月14日 21时55分				星期六<br/>
+                <b>来自Microsoft 364</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					微软周六表示，影响各国企业和政府所用 Microsoft 365 应用的全球服务中断已经结束，这次中断持续了超过 24 小时。微软在 X 上发文说：“我们已完成解决这一事件根本问题的工作，并为其余受影响的客户和地区恢复了服务。”Teams、Outlook 和 Copilot 等微软应用都受到了这次服务中断的影响，导致数十个国家出现通信问题。微软表示，“没有发现”任何可能导致这次服务中断的外部干扰，并将问题归咎于服务器故障。这次中断是微软历史上持续时间最长的中断之一，也是今年的第二次。英国国家网络安全中心前负责人 Ciaran Martin 认为这次宕机事故在规模上类似亚马逊 AWS 和 CrowdStrike 事故，其影响可能更为严重。日本政府的 IT 基础设施也受到影响，英国国家医疗服务体系（NHS）工作人员不得不改用纸质记录，无法调用线上存储的资料。这次中断凸显出，各国政府和企业普遍依赖极少数大型科技公司，而这种依赖充满风险。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85886">
+                    <li><a href="/story?sid=85886">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85886"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>28</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85886"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85886&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						
+                        <a href="/story?sid=85884">美国历史上第三次航班大停飞</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=168" title="USA"><img
+                                width="57" height="57"
+                                src="https://icon.solidot.org/images/topics/topicUSA.png?12" alt="USA" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月14日 21时24分				星期六<br/>
+                <b>来自超能第七感·碰撞</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					美国 FAA 本周五宣布了其历史上第三次全国航班停飞，持续 4.5 小时后解除。此举导致近 1 万架次航班被取消。FAA 历史上第一次全国航班停飞是 2001 年的 911 事件，第二次是 2023 年 1 月 11 日，持续不到 2 小时。对于最新的事件，美国交通部长 Sean Duffy 给出的理由是空管系统依赖的仍是几十年前的模拟设备，已完全无法满足 21 世纪的需求。但也有报道称此次事件与软件升级失败有关：由 L3Harris Technologies 管理的通信网络更新时导致系统重启，进而导致系统崩溃及通信中断。L3Harris 未回应这一说法。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85884">
+                    <li><a href="/story?sid=85884">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85884"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>25</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85884"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85884&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						                                <span><a href='//science.solidot.org'>科学</a>: </span>
+								
+                        <a href="/story?sid=85883">旅行者 1 号距离地球的距离达到一光日</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=102" title="太空"><img
+                                width="61" height="61"
+                                src="https://icon.solidot.org/images/topics/topicsapce.png?12" alt="太空" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月14日 01时14分				星期六<br/>
+                <b>来自无尽的边界</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					北京时间 11 月 18 日 18 时 16 分 07 秒，旅行者 1 号与地球的距离将达到约 259 亿公里，相当于光在真空中传播 24 小时的距离，也就是“一光日”。如果将一光年划分为 365 个刻度，每格代表一个光日，那么 1977 年 9 月 5 日启程的旅行者 1 号，经过近半个世纪的飞行，终于抵达了第一格。今年 10 月，旅行者 1 号曾经历一场短暂的通信中断。NASA JPL 称，18 日和 19 日，NASA 深空网络连续两次未能收到探测器预期发出的信号。直到 20 日，信号才重新出现，异常原因仍在调查中。对于一艘运行近半个世纪的探测器而言，设备老化始终是地面团队面临的挑战。旅行者 1 号依靠三台放射性同位素热电发生器供电，利用钚-238 衰变释放的热量产生电能。随着发电功率逐年下降，电力日益紧张。两艘旅行者探测器的可用电功率每年约减少 4 瓦，工程师必须精打细算地安排每一瓦电。旅行者 1 号发射时搭载了 10 台专用科学仪器，如今仅剩磁强计和等离子体波动仪仍在运行。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85883">
+                    <li><a href="/story?sid=85883">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85883"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>50</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85883"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85883&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						                                <span><a href='//hardware.solidot.org'>硬件</a>: </span>
+								
+                        <a href="/story?sid=85882">非洲加速发展太阳能</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=97" title="电源"><img
+                                width="60" height="60"
+                                src="https://icon.solidot.org/images/topics/topicpower.png?12" alt="电源" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月14日 01时07分				星期六<br/>
+                <b>来自海底两万里</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					在津巴布韦首都哈拉雷（Harare）的一个工业区，如果想要寻找一个新的发电项目，你需要抬起头。Limpopo Way Power 太阳能发电站没有传统的独立厂区，而是将一排排太阳能电池板铺在两座仓库的屋顶上，它通过协议向工厂供电。在非洲和亚洲的很多地区，太阳能革命随处可见。能源智库 Ember 的报告预测，2026 年非洲太阳能新增装机量有望达到 17 GW，同比增长 45%。报告作者之一的 African Tech Futures Lab 研究总监 Joel Nana 表示，我们正见证一场自下而上的革命。多种因素共同推动了非洲太阳能的普及：光伏电池板成本的下降、市电供应的不稳定性、日益加剧的全国性能源危机，发电机所用柴油成本的上涨，以及非洲大部分地区拥有充足且稳定的日照。Deloitte 南非公司的 Jayne Mammatt 表示，非洲很多国家缺乏完善的电网或稳定的电力供应，而太阳能技术已相当成熟，成为一种可在本地直接部署的切实可行的方案。非洲太阳能增长量的 75% 是小型太阳能发电装置，Solar as a Service（缩写 SaaS）就是其中一种活跃的模式。非洲仅有 10%-20% 的家庭实现了通电，其增长空间远未见顶。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85882">
+                    <li><a href="/story?sid=85882">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85882"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>51</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85882"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85882&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						                                <span><a href='//security.solidot.org'>安全</a>: </span>
+								
+                        <a href="/story?sid=85881">台积电内部员工数据泄露</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=100" title="安全"><img
+                                width="56" height="62"
+                                src="https://icon.solidot.org/images/topics/topicsecurity.png?12" alt="安全" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月13日 18时37分				星期五<br/>
+                <b>来自光环：新斯巴达</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					台积电在递交到 SEC 的一份声明中称，部分现任及前任员工的个人数据在未经授权的情况下出现在了一个外网上。相关信息与存储在某云服务提供商系统服务中的数据相吻合。台积电表示，目前尚未发现其自身系统遭到入侵的证据，且这些数据与其业务运营或客户信息无关。公司正通知受影响的员工，与该云服务商、相关调查机构以及一家外部网络安全公司合作，以查明事件真相。据报道，黑客在 DarkForums、BreachForums 等地下论坛上拍卖 6.9GB 容量的台积电员工数据，起标价为 3 BTC。黑客提供的样本显示数据涵盖员工姓名、生日、职称、住址、身分证字号、手机号码、银行帐户等资讯，甚至还有紧急连络人电话。黑客称，如果一周内没有找到买家，将会公开所有数据。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85881">
+                    <li><a href="/story?sid=85881">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85881"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>52</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85881"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85881&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						                                <span><a href='//science.solidot.org'>科学</a>: </span>
+								
+                        <a href="/story?sid=85880">地球冰冻圈不再处于安全运行空间内</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=136" title="地球"><img
+                                width="59" height="59"
+                                src="https://icon.solidot.org/images/topics/topicearth.png?12" alt="地球" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月13日 17时52分				星期五<br/>
+                <b>来自蓝莓村</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					地球上的冰冻部分——包括冰盖、冰川、海冰、积雪和永久冻土——在调节地球气候、水资源供应和碳循环等诸多生态系统服务中发挥着至关重要的作用。但根据中外研究人员的一项新分析，冰冻圈的基本功能已不再处于安全运行空间（SOS）之内；其被推越界限的程度将给地球人口带来长期挑战。作为地球界限（planetary boundaries）方法的一部分，安全运行空间（SOS）定义了地球系统保持稳定与韧性、并使人类及生态系统能够繁荣发展的环境界限。研究人员对关键控制变量（包括陆地冰体积、海冰面积、积雪面积和永久冻土温度）进行分析后得出结论：冰冻圈的完整性正在经历“加速且部分不可逆的丧失”。他们指出，这些控制变量的状况已经恶化，或已注定将恶化至超过定义冰冻圈安全运行空间的全新世水平。他们写道：“为了维护和恢复地球系统的韧性，现在需要全球采取紧急行动，停止并逆转温室气体和黑碳排放，并减少人类局部干扰的影响，例如在冰冻圈地区扩张基础设施。”
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85880">
+                    <li><a href="/story?sid=85880">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85880"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>57</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85880"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85880&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						                                <span><a href='//idle.solidot.org'>idle</a>: </span>
+								
+                        <a href="/story?sid=85879">《幻兽帕鲁》开发商给员工五天假期畅玩 GTA 6</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=118" title="Idle"><img
+                                width="57" height="57"
+                                src="https://icon.solidot.org/images/topics/topicidle.png?12" alt="Idle" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月13日 16时49分				星期五<br/>
+                <b>来自完美女孩</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					《幻兽帕鲁（Palworld）》开发商 Pocketpair 宣布了五天特别假期，让员工可以畅玩即将发售的 GTA 6。GTA 6 将于 11 月 19 日上市，有望创下游戏销售新记录，预计首周销量将高达数千万份拷贝。Pocketpair 表示，所有想要玩 GTA 6 的员工都可以利用这一特别假期。它同时表示《Palworld》和《Craftopia》的开发顺利，会按计划推进。此前游戏外设制造商罗技也宣布给所有员工放假一天去畅玩 GTA 6。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85879">
+                    <li><a href="/story?sid=85879">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85879"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>55</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85879"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85879&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						
+                        <a href="/story?sid=85878">英伟达员工请愿让黄仁勋复职</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=54" title="商业"><img
+                                width="59" height="59"
+                                src="https://icon.solidot.org/images/topics/topicbiz.png?12" alt="商业" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月13日 16时33分				星期五<br/>
+                <b>来自电波骑士</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					英伟达创始人黄仁勋辞职后公司内部员工发起请愿让他复职。一名员工在内部意见系统上写道：我们都是人、都会犯错，黄仁勋办了那么多好事，理应得到第二次机会。黄仁勋担任英伟达 CEO 长达 33 年，领导公司成为世界市值最高的公司之一，很多员工都认为他对公司的贡献巨大，不应因此遭到抹杀。英伟达员工还通过 LinkedIn 公开表达对他的支持，且无人公开支持罢免他。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85878">
+                    <li><a href="/story?sid=85878">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85878"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>58</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85878"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85878&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						                                <span><a href='//security.solidot.org'>安全</a>: </span>
+								
+                        <a href="/story?sid=85877">无印良品客户信用卡数据泄露</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=100" title="安全"><img
+                                width="56" height="62"
+                                src="https://icon.solidot.org/images/topics/topicsecurity.png?12" alt="安全" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月13日 14时47分				星期五<br/>
+                <b>来自心灵之眼</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					运营无印良品的良品计划公司社长清水智 12 日就遭遇非法访问问题在东京都内召开记者会，致歉称：“给大家带来了巨大担忧与困扰，对此由衷道歉。”包括已经解约的在内，信用卡的完整号码等可能已有约 109 万条信息泄露。清水承认信息管理存在疏漏，说明称部分系统存在漏洞，未能阻止非法访问。清水透露说“本应废弃的信用卡信息仍被保存”，表示“将推进建立不持有非必要信息的机制”。对于信息有可能泄露的信用卡，他表态说将承担换发新卡的手续费。良品计划 10 月 30 日发布消息称，官方 APP“MUJI APP”遭到非法访问，最多可能有约 2726 万条客户信息泄露。此后的调查又发现，信用卡的完整号码、货到付款的配送地址等约 44 万条客户信息也可能外泄。除了官方网上商城和官方 APP 的部分功能外，公司已暂停了相关服务，正在推进加强安全对策。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85877">
+                    <li><a href="/story?sid=85877">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85877"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>59</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85877"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85877&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						
+                        <a href="/story?sid=85876">美国扣押了从币安盗走的逾 12 亿美元加密货币</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=168" title="USA"><img
+                                width="57" height="57"
+                                src="https://icon.solidot.org/images/topics/topicUSA.png?12" alt="USA" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月13日 14时36分				星期五<br/>
+                <b>来自钻石</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					FBI 周四宣布扣押了价值逾 12 亿美元的加密货币。这些加密货币是黑客组织 TraderTraitor 此前从全球最大加密货币交易所币安盗走的。币安在这次事件中被盗走了价值 63 亿美元的加密货币，其中约半数的被盗加密货币——全部是稳定币，稳定币发行方能通过智能合约冻结交易——被成功冻结，但另外一半是难以被冻结的比特币、以太币和 XRP。美国政府表示它通过法庭授权扣押或冻结了逾 12 亿美元的加密货币。它没有透露更多细节。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85876">
+                    <li><a href="/story?sid=85876">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85876"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>61</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85876"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85876&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						
+                        <a href="/story?sid=85875">微软云服务全球宕机</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=150" title="微软"><img
+                                width="59" height="59"
+                                src="https://icon.solidot.org/images/topics/topicMicrosoft.png?12" alt="微软" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月13日 13时30分				星期五<br/>
+                <b>来自梦蛇</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					微软云服务全球宕机，受影响服务包括了 Outlook、Teams 和 OneDrive 等办公工具以及 AI 工具 Copilot。微软通过其社交媒体账号表示正全力解决该问题。根据 Downdetector 的报告，截至周四 18:00 GMT，全球报告的 Outlook 故障数量接近 14 万。目前无迹象表明此次大范围宕机是由网络攻击引起的。微软表示，受影响的用户可能无法查看部分文件，或无法在日历应用中查看详细信息。Copilot 也可能无法正常运行。即时通讯和在线会议功能基本保持正常。微软称此次事故是由部分服务器意外不可用导致的，这给其余系统造成了沉重负担。与微软有合作的 AI 巨头 Anthropic 和 OpenAI 也报告了故障。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85875">
+                    <li><a href="/story?sid=85875">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85875"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>61</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85875"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85875&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						
+                        <a href="/story?sid=85874">用户抱怨难以在流媒体服务上找到想看的内容</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=87" title="媒体"><img
+                                width="60" height="53"
+                                src="https://icon.solidot.org/images/topics/topicmedia.gif?12" alt="媒体" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月12日 22时42分				星期四<br/>
+                <b>来自白鸟异传</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					根据尼尔森的 Gracenote 对美国、巴西、法国、德国、墨西哥和英国的 3000 名 18 岁及以上的流媒体用户进行的调查：虽然流媒体平台内容无比丰富，但用户经常找不到想要看的内容。逾 51% 的受访者表示：内容和流媒体服务的极度丰富，反而让人更难找到想看的东西。19.2% 的受访者表示，他们总是或经常遇到这种情况：不知道该看什么，也找不到想看的内容，最终只能去做别的事。27.4% 的受访者表示，他们总是或经常在试图观看特定节目时却因无法在流媒体平台上找到它，最终只好放弃。47% 的受访者表示，他们花在寻找观看内容上的时间比一年前更多了，平均耗时 12 分钟。72.3% 的受访者表示，他们希望拥有一份整合所有已订阅流媒体平台中可用节目的完整指南。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85874">
+                    <li><a href="/story?sid=85874">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85874"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>75</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85874"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85874&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						                                <span><a href='//apple.solidot.org'>苹果</a>: </span>
+								
+                        <a href="/story?sid=85873">印度苹果代工厂发生三名合同工死亡事故</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=54" title="商业"><img
+                                width="59" height="59"
+                                src="https://icon.solidot.org/images/topics/topicbiz.png?12" alt="商业" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月12日 22时28分				星期四<br/>
+                <b>来自羊皮纸迷踪</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					塔塔电子位于泰米尔纳德邦、为苹果公司 iPhone 生产零部件的工厂发生三名处理废水处理设施的合同工死亡事故。事故发生于周一晚间，地点位于 Krishnagiri 的 Hosur。工人在检查一个外部纳滤罐时吸入了气体导致了悲剧的发生。三名工人被送往一家私立医院，医生在他们抵达时确认其已经死亡。塔塔电子承担了印度约 40% 的 iPhone 组装工作，其余由富士康负责。近几个月塔塔电子的 iPhone 业务面临诸多挑战，包括遭遇勒索软件攻击，以及引发了水污染的担忧。随着苹果将生产扩大到中国之外地区，印度已成为一个关键的制造枢纽，目前全球约四分之一的 iPhone 产自印度。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85873">
+                    <li><a href="/story?sid=85873">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85873"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>79</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85873"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85873&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						
+                        <a href="/story?sid=85872">黄仁勋辞职</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=54" title="商业"><img
+                                width="59" height="59"
+                                src="https://icon.solidot.org/images/topics/topicbiz.png?12" alt="商业" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月12日 22时03分				星期四<br/>
+                <b>来自去月球</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					英伟达宣布，黄仁勋即日起辞去公司总裁、CEO 及董事会成员职务；Colette Kress 被任命为临时 CEO。在确定正式继任者之前，Colette Kress 将继续担任执行副总裁兼首席财务官。董事会已启动继任者遴选程序，将同时考虑内部和外部候选人。Harvey C. Jones 被任命为董事会首任主席。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85872">
+                    <li><a href="/story?sid=85872">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85872"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>79</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85872"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85872&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						                                <span><a href='//science.solidot.org'>科学</a>: </span>
+								
+                        <a href="/story?sid=85871">BMI 误判数百万人肥胖</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=19" title="科学"><img
+                                width="62" height="75"
+                                src="https://icon.solidot.org/images/topics/topicscience.png?12" alt="科学" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月12日 22时01分				星期四<br/>
+                <b>来自阿尔法计划</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					中外研究团队基于中国、英国、美国、西班牙4国、超 84 万人的数据研究证实，肥胖诊断不能只看体重，更不能单凭BMI(体重除以身高的平方)“一刀切”。长期以来，全球普遍以 BMI 作为筛查和判定肥胖的核心指标。但论文第一作者及共同通讯作者、华中科技大学同济医学院公共卫生学院教授潘安指出，BMI 存在天然缺陷——它只能算出体重与身高的关系，却无法区分增加的究竟是肌肉还是脂肪，更无法判断积累的脂肪是否已伤害到内脏器官。此项研究中，潘安团队与合作者通过研究超 84 万人的跨国数据发现，5.2%—8.6% 参与者的肥胖程度被 BMI低估，1.2%—3.1% 被高估。在体脂过多者中，仅 22.7%—31.3% 出现归因于肥胖的器官功能受损或身体功能受限(“临床肥胖”)，绝大多数仍处于器官及身体功能未因肥胖而导致受损的“临床前肥胖”阶段。在超过 10 年追踪随访中，研究团队还发现，与健康人群相比，处于“临床前肥胖”阶段的人全因死亡风险增加19%，而一旦恶化为“临床肥胖”，死亡风险将陡增至 69%。此外，约 77%—91% 的“临床前肥胖”者并没有进展为“临床肥胖”，这意味着只要在器官未受损的早中期阶段及时进行科学干预和生活方式重塑，绝大多数人有望守住健康底线，阻断病情发展。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85871">
+                    <li><a href="/story?sid=85871">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85871"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>77</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85871"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85871&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						                                <span><a href='//science.solidot.org'>科学</a>: </span>
+								
+                        <a href="/story?sid=85870">天文学家发现一个恒星系统每八分钟发射一次射电信号</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=102" title="太空"><img
+                                width="61" height="61"
+                                src="https://icon.solidot.org/images/topics/topicsapce.png?12" alt="太空" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月12日 21时55分				星期四<br/>
+                <b>来自地下航线</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					天文学家发现一个不同寻常的双星系统 GPM J071507−114153，由一颗白矮星——一颗恒星死亡后留下的致密核心——和一颗类太阳 G 型恒星组成。白矮星自转一周八分钟，它每八分钟发射一次射电信号。这是首次在绕类太阳恒星运行的白矮星中探测到射电脉冲。此类双星属于被称为长周期瞬变天体（long-period transients，LPT）的天体。天文学家至今共探测到十多个 LPT 天体。天文学家表示，通过白矮星发射出的射电脉冲，研究团队探测到了类太阳恒星上的恒星耀斑。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85870">
+                    <li><a href="/story?sid=85870">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85870"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>75</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85870"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85870&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+			        <div class="block_m">
+            <div class="ct_tittle">
+                <div class="bg_htit">
+                    <h2>
+						                                <span><a href='//technology.solidot.org'>科技</a>: </span>
+								
+                        <a href="/story?sid=85869">《Big Walk》开发商利用 AI 修 Bug 引起争议</a>
+                    </h2>
+                </div>
+            </div>
+            <div class="talk_time">
+                <div class="icon_float">
+                    <a href="/search?tid=151" title="人工智能"><img
+                                width="56" height="56"
+                                src="https://icon.solidot.org/images/topics/topicAI.png?12" alt="人工智能" /></a>
+
+					                </div>
+                <span class="user" id="42866">
+                <a href="/specialist~Edwards">Edwards</a>(42866)
+                <div class=user_box></div>
+            </span>
+                发表于2026年11月12日 21时27分				星期四<br/>
+                <b>来自守夜者</b>
+            </div>
+            <div class="p_content">
+													                <div class="p_mainnew">
+					热门独游《Big Walk》开发商 House House 承认在生成式 AI 帮助下修 bug，结果在独立游戏节（Independent Games Festival，IGF）上引发了激烈争议。IGF 评委团的多名成员周一发表联合声明，强烈反对使用生成式 AI 的游戏，并督促官方制定强有力的反 AI 政策。《Big Walk》是一款非常受欢迎的合作冒险游戏，使用了 Unity 引擎开发，开发商发现游戏存在一个拖慢游戏速度的 bug，联络 Unity 工程师后被告知无法解决，于是询问了生成式 AI 工具，大模型提供了一种修复思路，House House 在此基础上写出了用于最终产品的 10 行代码。这种利用 AI 工具加速开发和辅助修 bug 的做法在行业已经非常普遍。但 House House 的做法引发了争议，游戏在 Steam 平台还遭遇了差评轰炸。游戏开发者 Brendan Keogh 认为这种对生成式 AI 零容忍的立场其效果可能会适得其反，可能会促使其它游戏开发商不披露使用 AI 的信息，而未来要避开完全不使用 AI 工具的游戏几乎是不可能的。
+<p></p>
+                </div>
+            </div>
+            <div class="talkMores2 actions">
+                <ul data="85869">
+                    <li><a href="/story?sid=85869">阅读原文</a></li>
+					                    <li title="点赞" class="hvala">
+                        <a href="javascript:void(0);" rel="hvala" class="hvala" data="85869"><svg t="1632392460726" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2573" width="14" height="14"><path d="M621.674667 408.021333c16.618667-74.24 28.224-127.936 34.837333-161.194666C673.152 163.093333 629.941333 85.333333 544.298667 85.333333c-77.226667 0-116.010667 38.378667-138.88 115.093334l-0.586667 2.24c-13.728 62.058667-34.72 110.165333-62.506667 144.586666a158.261333 158.261333 0 0 1-119.733333 58.965334l-21.909333 0.469333C148.437333 407.808 106.666667 450.816 106.666667 503.498667V821.333333c0 64.8 52.106667 117.333333 116.394666 117.333334h412.522667c84.736 0 160.373333-53.568 189.12-133.92l85.696-239.584c21.802667-60.96-9.536-128.202667-70.005333-150.186667a115.552 115.552 0 0 0-39.488-6.954667H621.674667z" p-id="2574"></path></svg><span>79</span></a>
+                    </li>
+                    <li title="收藏" class="farivote">
+                        <a href="javascript:;" rel=fav class="favorite" data="85869"><svg t="1632392544777" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5026" width="14" height="14"><path d="M509.606998 104.904235c-24.043602 0-45.922912 13.226233-56.177464 33.95637L356.189863 336.302419l-223.674269 32.54216c-22.983457 3.304256-42.100864 18.718317-49.481971 39.659255-7.381108 21.048385-1.812275 44.23241 14.431687 60.033281l163.916257 160.125931-38.011732 222.016513c-3.868097 22.408359 6.03239 44.819788 25.458835 57.94676 10.69662 7.116071 23.204491 10.784624 35.757388 10.784624 10.298554 0 20.663622-2.475378 30.055526-7.337105l194.987926-102.7205L704.662463 912.072815c9.369392 4.861728 19.712971 7.337105 29.990035 7.337105 12.57541 0 25.082258-3.668553 35.778878-10.784624 19.426445-13.126972 29.305443-35.538401 25.460882-57.94676l-38.012755-222.016513 163.937746-160.125931c16.22145-15.812127 21.810748-38.984896 14.408151-60.033281-7.402597-20.940938-26.51898-36.353976-49.503461-39.659255L663.04767 336.302419l-97.240695-197.441814C555.619962 118.131491 533.695626 104.904235 509.606998 104.904235L509.606998 104.904235z" p-id="5027"></path></svg><span>收藏</span></a>
+                    </li>
+                    <li><a href='//www.solidot.org/comments?sid=85869&op=reply&type=story'><svg t="1635220166991" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1943" width="14" height="14"><path d="M925.696 384q19.456 0 37.376 7.68t30.72 20.48 20.48 30.72 7.68 37.376q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68l-287.744 0 0 287.744q0 20.48-7.68 37.888t-20.48 30.208-30.72 20.48-37.376 7.68q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888l0-287.744-287.744 0q-20.48 0-37.888-7.68t-30.208-20.48-20.48-30.208-7.68-37.888q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68l287.744 0 0-287.744q0-19.456 7.68-37.376t20.48-30.72 30.208-20.48 37.888-7.68q39.936 0 68.096 28.16t28.16 68.096l0 287.744 287.744 0z" p-id="1944" fill="#8a8e93"></path></svg><span>评论</span></a></li>
+					                </ul>
+            </div>
+			        </div>
+		<div class="page">
+	<a href='//www.solidot.org/?issue=20261114'>昨天的文章</a></div>
+</div>
+<script type="text/javascript" language="javascript">
+    function effect_add(ele,num2=1){
+        var num1 = parseInt(ele.text());
+        num2=num1+1;
+        var tt = 15;
+        var cc = 3;
+        var span_num = num2-num1;
+        if(span_num<=0)return false;
+        if(span_num<10){
+            tt=0.1;cc=1;
+        }else if(span_num>=10 && span_num<20){
+            tt=10;cc=2;
+        }else{
+            tt=15;cc=3;
+        }
+        var nn = 0;
+        var tc = parseInt(span_num/cc);
+        var c_num = 0;
+        var rt = parseInt(tt*100/tc);
+        var t = setInterval(function(){
+            if(c_num == tc){
+                var val = num1+span_num;
+                clearInterval(t);
+            }else{
+                var val = num1+cc*c_num;
+            }
+            ele.text(val);
+            c_num++;
+        },rt);
+    }
+    $("div.actions a[rel=hvala]").click(function () {
+        var _this = $(this);
+        var span = _this.find('span');
+        var id = _this.attr('data');
+        $.post('//www.solidot.org/my/act?op=hvala', {id: id}, function (data) {
+            var data = eval("(" + data + ")");
+            if (data.id == 1) {
+                effect_add(span,data.num);
+                _this.parent('li').toggleClass('active');
+            } else {
+                alert(data.msg);
+                if (data.id == -2) {
+                    window.location.href = "/login";
+                }
+            }
+        });
+    });
+	    $("div.actions a[rel=fav]").click(function () {
+        window.location.href="/login";
+    })
+	    $('div.block_m span.user').mouseover(function () {
+        var _this = $(this).children('.user_box');
+        if (_this.html() == "") {
+            var start = '<div class="user_on"></div><div class="user_midd">';
+            var end = '</div><div class="user_down"></div>';
+            _this.html(start + '<div class="us_box cenTer"><div class="tloading"></div></div>' + end);
+            $.ajax({
+                type: "POST",
+                url: "/user/userinfo",
+                data: "user=" + $(this).attr('id'),
+                success: function (data) {
+                    var data = eval("(" + data + ")");
+                    var content = '';
+                    if (data[0] == -2) {
+                        content += '<div class="us_box cenTer">暂无个人简介</div>';
+                    } else {
+                        content += '<div class="us_box">' + data[0][0] + data[0][1] + '</div>';
+                        content += '<div class="us_box"><b class="l">关系：</b>';
+                        if (data[1] == -1) {
+                            content += '自己';
+                        } else if (data[1][0] == 0) {
+                            content += '<img src="https://icon.solidot.org/images/default/neutral.gif" class="my_rship"/>普通&nbsp;<a href="/my/check?uid=' + data[1][1] + '" class="same_the">修改关系</a>';
+                        } else if (data[1][0] == 1) {
+                            content += '<img src="https://icon.solidot.org/images/default/friend.gif" class="my_rship"/>朋友&nbsp;<a href="/my/check?uid=' + data[1][1] + '" class="same_the">修改关系</a>';
+                        } else if (data[1][0] == 2) {
+                            content += '<img src="https://icon.solidot.org/images/default/foe.gif" class="my_rship"/>敌人&nbsp;<a href="/my/check?uid=' + data[1][1] + '" class="same_the">修改关系</a>';
+                        }
+                        content += "</div>";
+                        if (data[2] != undefined) {
+                            content += '<div class="us_box"><b>签名：</b>' + data[2] + '</div>';
+                        }
+                    }
+                    _this.html(start + content + end);
+                }
+            })
+        }
+        else
+            _this.removeClass('hiden')
+    }).mouseout(function () {
+        $(this).children('div.user_box').addClass('hiden')
+    })
+</script>
+﻿<div class="clear"></div>
+<div id="footer">
+    <p class="famous">恐惧比利剑更伤人--《冰与火之歌》</p>
+    <div class="btmnav">
+        <ul>
+            <li class="begin"> <a href="/">首页</a> </li>
+            <li> <a href="http://www.zhiding.cn" target="_blank">至顶网</a> </li>
+            <li> <a href="/?issume=20261114">往日文章</a> </li>
+            <li> <a href="/polllist">过去的投票</a> </li>
+            <li> <a href="/authors">编辑介绍</a> </li>
+            <li> <a href="/privacy">隐私政策</a> </li>
+            <li> <a href="/terms">使用条款</a> </li>
+            <li> <a href="/introd">网站介绍</a> </li>
+            <li> <a href="/index.rss">RSS</a> </li>
+        </ul>
+    </div>
+    <div id="copyinfo">
+        <p>本站提到的所有注册商标属于他们各自的所有人所有，评论属于其发表者所有，其余内容版权属于 solidot.org(2009-<script>document.write(new Date().getFullYear());</script>) 所有 。</p>
+        <p>
+            <a href="//php.net/" title="PHP 服务器" target="_blank"><img border="0" src="https://icon.solidot.org/images/btn/php.gif" alt="php"></a>
+            <a href="//apache.org/" title="Apache 服务器" target="_blank"><img border="0" src="https://icon.solidot.org/images/btn/apache.gif" alt="apache"></a>
+            <a href="//www.mysql.com/" title="MySQL" target="_blank"><img border="0" src="https://icon.solidot.org/images/btn/mysql.gif" alt="mysql"></a>
+        </p>
+        <p><a href="//www.solidot.org" title="solidot.org"><img border="0" src="https://icon.solidot.org/images/btn/solidot-s.gif"></a></p>
+        <p>京ICP证161336号&nbsp;&nbsp;&nbsp;&nbsp;<a target="_blank" href="http://beian.miit.gov.cn">京ICP备15039648号-15</a> 北京市公安局海淀分局备案号：11010802021500 <a href="//icp.valu.cn/search/domain/solidot.org?verifyCode=pu7c4"><img src="//icon.zhiding.cn/beian/icon.png" style="margin-right:8px;"></a> </p>
+        <p>举报电话：010-62641205　涉未成年人举报专线：010-62641208 举报邮箱：jubao@zhiding.cn　网上有害信息举报专区：<a href="https://www.12377.cn" target="_blank">https://www.12377.cn</a></p>
+    </div>
+    <div class="clear"></div>
+</div>
+</div>
+<script type='text/javascript' language='javascript' src='https://icon.solidot.org/js/base.js'></script><script type="text/javascript">
+    $('#ul_nav li.s_icon').mouseover(function(){
+        var d = $(this).children('div');
+        d.toggleClass('hiden');
+    }).mouseout(function(){
+        var d = $(this).children('div');
+        d.toggleClass('hiden');
+    });
+    $('.wechat').mouseover(function(){
+        $('.wechat_code').toggleClass('hiden');
+    }).mouseout(function(){
+        $('.wechat_code').toggleClass('hiden');
+    });
+	$(document).ready(function(){
+		$('.nav-secondary a').click(function(){
+			var _txt = $(this).text();
+			_hmt.push(['_trackEvent', 'nav', 'click', _txt])
+		})
+        $('.btn_ss').click(function(){
+            var _txt = $(".textinp").val()
+            _hmt.push(['_trackEvent', 'search', 'click', _txt])
+        })
+        $('.block_m a').click(function(){
+            var _txt = $(this).text();
+            _hmt.push(['_trackEvent', 'story', 'click', _txt])
+        })
+	})
+</script>
+
+<script>
+    document.write(unescape("%3Cscript src='https://hm.baidu.com/h.js%3Fd11396a350156e4682e4156a671bdaf1' type='text/javascript'%3E%3C/script%3E"));
+</script>
+</body>
+</html>

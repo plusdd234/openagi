@@ -47,7 +47,7 @@
     'cpro.baidu.com', 'pos.baidu.com', 'union-click.jd.com', 's.click.taobao.com', 'uland.taobao.com',
     /* 文库 / 知道 / 文档搬运：正文读不到，只剩登录墙与广告 */
     'wenku.baidu.com', 'zhidao.baidu.com', 'docin.com', 'doc88.com', 'book118.com',
-    'renrendoc.com', 'taodocs.com', '360doc.com', 'mbalib.com',
+    'renrendoc.com', 'taodocs.com', '360doc.com', 'mbalib.com', 'wenku.so.com',
     /* 软件下载站：标题常带「破解版 / 绿色版 / 高速下载」，且整页是下载器广告 */
     'pc6.com', 'cr173.com', 'downxia.com', 'xiazaizhijia.com', 'onlinedown.net',
     'duote.com', 'ddooo.com', 'xiazai.zol.com.cn',
@@ -160,15 +160,22 @@
     [/俯视/, 'top-down'], [/引擎/, 'engine'], [/框架/, 'framework'],
     [/插件/, 'plugin'], [/工具/, 'tool'], [/示例/, 'example'], [/教程/, 'tutorial'],
     [/多人/, 'multiplayer'], [/地图/, 'map'], [/战斗/, 'combat'], [/贴图/, 'texture'],
-    [/材质/, 'material'], [/建模/, 'modeling'], [/动画/, 'animation'], [/服务端|服务器/, 'server']
+    [/材质/, 'material'], [/建模/, 'modeling'], [/动画/, 'animation'], [/服务端|服务器/, 'server'],
+    /* 以下三条由实测补：只查 ai / readability 时找不到爬虫与正文抽取项目。 */
+    [/爬虫/, 'crawler'], [/正文/, 'content'], [/抽取/, 'extract']
   ];
-  /* GitHub 检索是 AND 语义，词越多命中越少，所以准备一主一退化两条检索式：
-     先用完整组合，没结果再退到核心词（去掉 template / framework 这类修饰）。
-     注意 ai 不能被当过泛词删掉 —— 「AI 开发的游戏模板」里它是核心限定词。 */
+  /* GitHub 检索是 AND 语义，词越多命中越少，所以准备三档检索式：
+     ① 主档：完整组合；② 核心档：去掉 template / framework 这类修饰词；
+     ③ 宽松档：再去掉最短的实词（通常是 2d / ai 这种限定词）。
+     ③ 只在①②合计仍不足 GH_MIN 时才发 —— 每次请求都吃「未登录 60 次/小时」的额度。
+     注意 ai 不能被当过泛词直接删掉 —— 「AI 开发的游戏模板」里它是核心限定词。 */
   function githubQueries(q) {
     if (!GH_INTENT.test(q)) return [];
+    /* github / open source 这类词是「去哪找」而不是「找什么」：
+       把它们拼进检索式会让 AND 语义直接落空（实测只回 ★0 的边角仓库）。 */
+    var GH_NOISE = /^(github|gitee|open|source|site|http|https|www)$/i;
     var words = (String(q).match(/[a-z0-9][a-z0-9.+#-]*/gi) || [])
-      .filter(function (w) { return w.length > 1 && !/^(the|and|for|of|in|to)$/i.test(w); });
+      .filter(function (w) { return w.length > 1 && !/^(the|and|for|of|in|to)$/i.test(w) && !GH_NOISE.test(w); });
     GH_WORDS.forEach(function (p) { if (p[0].test(q)) words.push(p[1]); });
     var seen = Object.create(null);
     var list = words.filter(function (w) {
@@ -181,55 +188,139 @@
       return !/^(template|framework|tool|plugin|example|tutorial|library|engine)$/i.test(w);
     });
     if (core.length && core.length < list.length) out.push(core.join(' '));
+    if (core.length > 2) {
+      var drop = core.slice().sort(function (a, b) { return a.length - b.length; })[0];
+      var relax = core.filter(function (w) { return w !== drop; }).join(' ');
+      if (relax && out.indexOf(relax) < 0) out.push(relax);
+    }
     return out;
   }
 
-  /* 仓库检索的两条规矩：
-     ① 一次问完全部检索式再合并 —— 只取第一条有结果的，会把「131 个仓库」缩成 6 个；
-     ② 每条检索式多拿一些（per_page=20），否则「有没有更多」这个判断本身就不成立。
-     相关性按「除 template / engine 这类修饰词之外还命中了什么」来判：
-     只因为出现 template 就混进来的排版模板、脚手架仓库，不能占射击模板的位置。 */
+  /* 仓库检索的规矩：
+     ① 全部检索式都问完再合并 —— 只取第一条有结果的，会把「131 个仓库」缩成 6 个；
+     ② 每条检索式 per_page=20，否则「有没有更多」这个判断本身就不成立；
+     ③ 主档按 star 排拿「大而全」，核心档按最佳匹配拿「小而准」，合并后重排；
+     ④ 归档仓库不参与（archived:false + 客户端兜底过滤）；
+     ⑤ 同一检索式 10 分钟内复用 —— 未登录只有 60 次/小时，重复搜索不该再打一遍。 */
   var GH_MODIFIER = /^(template|framework|tool|plugin|example|tutorial|library|engine|boilerplate|starter|kit|demo)$/i;
+  var GH_MIN = 6;                 // 少于这个数就再放宽一档
+  var GH_CACHE_TTL = 10 * 60000;
+  var GH_CACHE = Object.create(null);
+  var GH_COOL_UNTIL = 0;
+
+  /* 仓库打分：先看「除修饰词之外命中了什么」，再看星数与最近更新。
+     只按 stars 排序会把 awesome-list、CMS 这类高星泛仓库顶到真正的模板前面；
+     星数用 log 缩放，避免 9 万星的清单页把一个几百星但精确命中的模板压死。 */
+  function repoScore(x, core) {
+    var name = String(x.full_name || '').toLowerCase();
+    var desc = String(x.description || '').toLowerCase();
+    var topics = (x.topics || []).map(function (t) { return String(t).toLowerCase(); });
+    var covered = 0, nameHit = 0, topicHit = 0;
+    core.forEach(function (t) {
+      var w = String(t || '').toLowerCase();
+      if (!w) return;
+      var inName = name.indexOf(w) >= 0;
+      var inDesc = desc.indexOf(w) >= 0;
+      var inTopic = topics.indexOf(w) >= 0;
+      if (!inName && !inDesc && !inTopic) return;
+      covered++;
+      if (inName) nameHit++;
+      if (inTopic) topicHit++;
+    });
+    var score = covered * 20 + nameHit * 4 + topicHit * 4;
+    score += Math.log10((Number(x.stargazers_count) || 0) + 1) * 2.5;
+    var pushed = Date.parse(x.pushed_at || '');
+    if (!isNaN(pushed)) {
+      var days = (Date.now() - pushed) / 86400000;
+      if (days <= 400) score += 6;
+      else if (days <= 1100) score += 3;
+      else if (days > 1800) score -= 2;
+    }
+    return { score: score, hits: covered };
+  }
+
+  function dedupeRepos(groups) {
+    var seen = Object.create(null);
+    var out = [];
+    (groups || []).forEach(function (list) {
+      (list || []).forEach(function (x) {
+        var u = x && x.html_url;
+        if (!u || seen[u] || x.archived) return;
+        seen[u] = 1;
+        out.push(x);
+      });
+    });
+    return out;
+  }
+
+  function toRepoResult(x) {
+    var desc = String(x.description || '').replace(/\s+/g, ' ').trim();
+    var meta = ['★' + (Number(x.stargazers_count) || 0)];
+    if (x.language) meta.push(String(x.language));
+    var pushed = String(x.pushed_at || '').slice(0, 7);
+    if (pushed) meta.push('更新 ' + pushed);
+    var topics = (x.topics || []).slice(0, 3);
+    if (topics.length) meta.push(topics.map(function (t) { return '#' + t; }).join(' '));
+    return {
+      title: clip(x.full_name + (desc ? ' · ' + desc : ''), 120),
+      url: x.html_url,
+      snippet: clip((desc || 'GitHub 仓库') + ' · ' + meta.join(' · '), 360),
+      repo: true
+    };
+  }
+
+  function ghSearch(qq, mode, signal) {
+    var key = qq + '|' + mode;
+    var hit = GH_CACHE[key];
+    var fresh = hit && Date.now() - hit.at < GH_CACHE_TTL;
+    if (fresh) return Promise.resolve(hit.items);
+    /* 已经撞过限流：这一轮不再打，有旧缓存就先用旧缓存。 */
+    if (GH_COOL_UNTIL > Date.now()) return Promise.resolve(hit ? hit.items : []);
+    var url = 'https://api.github.com/search/repositories?q='
+      + encodeURIComponent(qq + ' archived:false') + '&per_page=20'
+      + (mode === 'stars' ? '&sort=stars&order=desc' : '');
+    return fetchJson(url, signal).then(function (j) {
+      var items = (j && j.items) || [];
+      GH_CACHE[key] = { at: Date.now(), items: items };
+      return items;
+    }).catch(function (e) {
+      /* 403 / 429 基本都是「未登录 60 次/小时」用完了：记 10 分钟冷却，
+         同一检索式之前拿到的缓存还能继续用，不至于整轮空手。 */
+      if (/HTTP\s+(403|429)/.test(String(e && e.message || ''))) {
+        GH_COOL_UNTIL = Date.now() + GH_CACHE_TTL;
+        S.ghRateLimited = true;
+      }
+      return hit ? hit.items : [];
+    });
+  }
+
   function githubResults(q, signal) {
     var queries = githubQueries(q);
     if (!queries.length) return Promise.resolve([]);
     var core = relevantTokens(q).filter(function (t) { return !GH_MODIFIER.test(t); });
     /* 英文里 FPS / shooter 是同一类说法：只认 shooter 会漏掉 SimpleFPSTemplate 这种仓库。 */
     if (/(射击|枪战|shooter|fps)/i.test(q) && core.indexOf('fps') < 0) core.push('fps');
-    function one(qq) {
-      var url = 'https://api.github.com/search/repositories?q=' + encodeURIComponent(qq)
-        + '&sort=stars&order=desc&per_page=20';
-      return fetchJson(url, signal).then(function (j) {
-        return ((j && j.items) || []).map(function (x) {
-          var desc = String(x.description || '').replace(/\s+/g, ' ').trim();
-          return {
-            title: clip(x.full_name + (desc ? ' · ' + desc : ''), 120),
-            url: x.html_url,
-            snippet: clip((desc || 'GitHub 仓库') + ' · ★' + (x.stargazers_count || 0)
-              + (x.language ? ' · ' + x.language : ''), 360),
-            repo: true
-          };
-        });
-      }).catch(function () { return []; });
-    }
-    return Promise.all(queries.map(one)).then(function (groups) {
-      var seen = Object.create(null);
-      var all = [];
-      groups.forEach(function (list) {
-        list.forEach(function (r) {
-          if (!r.url || seen[r.url]) return;
-          seen[r.url] = 1;
-          all.push(r);
-        });
+    var plans = queries.slice(0, 2).map(function (qq, i) {
+      return ghSearch(qq, i === 0 ? 'stars' : 'match', signal);
+    });
+    return Promise.all(plans).then(function (groups) {
+      var all = dedupeRepos(groups);
+      if (all.length >= GH_MIN || queries.length <= 2 || S.ghRateLimited) return all;
+      return ghSearch(queries[2], 'match', signal).then(function (list) {
+        return dedupeRepos([all, list]);
       });
+    }).then(function (all) {
       if (!all.length) return [];
       S.ghQuery = queries[0];
-      var strong = core.length ? all.filter(function (r) {
-        var text = (r.title + ' ' + r.snippet).toLowerCase();
-        return core.some(function (t) { return t && text.indexOf(t) >= 0; });
-      }) : all;
-      /* 强相关太少时退回全集：宁可多给几条让用户自己挑，也不要因为筛得太狠又只剩个位数。 */
-      return (strong.length >= 6 ? strong : all).slice(0, 20);
+      var ranked = all.map(function (x) {
+        var s = repoScore(x, core);
+        return { x: x, score: s.score, hits: s.hits };
+      });
+      var strong = ranked.filter(function (r) { return r.hits > 0; });
+      /* 强相关太少时退回全集：宁可多给几条让用户自己挑，也不要筛得太狠只剩个位数。 */
+      if (strong.length >= GH_MIN) ranked = strong;
+      ranked.sort(function (a, b) { return b.score - a.score; });
+      return ranked.slice(0, 20).map(function (r) { return toRepoResult(r.x); });
     });
   }
 
@@ -542,6 +633,7 @@
     skim: { pages: 0, keywords: [], links: [] },
     liveNote: '',
     ghQuery: '',
+    ghRateLimited: false,
     pageCache: Object.create(null),
     answer: '',
     error: '',
@@ -594,6 +686,27 @@
     for (var i = 0; i < TRUSTED.length; i++) { if (TRUSTED[i].test(h)) return true; }
     return false;
   }
+  /* 站内功能页不是资料：搜索源会把 GitHub 的登录 / 提交记录 / 标签页当成正文页，
+     点开全是导航文字，还会挤掉真正的仓库。按「主机 + 路径」拦，不误伤仓库主页。 */
+  var CHROME_HOSTS = ['help.github.com', 'fanyi.so.com'];
+  /* 这些路径都来自实测混进结果的站内功能页；没观察到的路径不预先拦，避免误伤。 */
+  var GH_CHROME_PATH = new RegExp(
+    '^/(?:login|signup|events|features|team|customer-stories)(?:/|$)'
+    + '|^/[^/]+/[^/]+/(?:actions|tags|projects|commits|security|activity|forks|tree)(?:/|$)', 'i');
+  function chromeReason(url) {
+    var host = hostOf(url).toLowerCase();
+    for (var i = 0; i < CHROME_HOSTS.length; i++) {
+      var h = CHROME_HOSTS[i];
+      if (host === h || host.slice(-(h.length + 1)) === '.' + h) return '站内功能页 / 插件页';
+    }
+    if (/(^|\.)github\.com$/.test(host)) {
+      var p = '';
+      try { p = new URL(url).pathname; } catch (e) { p = ''; }
+      if (GH_CHROME_PATH.test(p)) return 'GitHub 站内功能页';
+    }
+    return '';
+  }
+
   function blockedReason(r) {
     var url = String(r && r.url || '');
     var host = hostOf(url).toLowerCase();
@@ -605,7 +718,7 @@
       if (host === b || host.slice(-(b.length + 1)) === '.' + b) return '广告 / 低质站点';
     }
     if (PIRATE_TITLE.test(String(r.title || ''))) return '下载站 / 盗版资源';
-    return '';
+    return chromeReason(url);
   }
 
   /* 与问题无关的结果要丢掉：搜索源（尤其百度式索引）很爱把「开源」这种词
@@ -667,6 +780,9 @@
         host: hostOf(url),
         seed: !!raw.seed,
         repo: !!raw.repo,
+        /* 备用源（360）的结果链接都指向 so.com 跳转：这个标记必须带下去，
+           否则排序时会被当成同一个站点，10 条只留下 2 条。 */
+        alt: !!raw.alt,
         trusted: trustedHost(hostOf(url))
       });
     });
@@ -859,11 +975,74 @@
   }
 
   /* ---------------- 正文抽取 ----------------
-   * 只做「去标签 + 去导航」这一层，不引入 Readability 那种大依赖：
-   * 目标是给模型一份能读的文字，不是还原网页排版。挑不到 article/main 就用整页，
-   * 靠「短行丢弃 + 相邻去重」把菜单、版权、分享按钮过滤掉。 */
+   * 目标是给模型一份能读的文字，不是还原网页排版；但「有 article 就用、没有就整页」
+   * 会把导航、相关阅读、评论区一起送进去（GitHub 仓库页就是典型）。这里按
+   * Readability / trafilatura 的思路做：先整块剥掉典型外壳（class / id 命中导航、
+   * 推荐、评论等），再在 article → main → 带正文语义的 div/section 里按 <p> 文字量
+   * 挑主块。 */
   function stripTags(html) {
     return decodeEnt(String(html || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+  }
+
+  function plainLen(html) {
+    return stripTags(html).length;
+  }
+
+  var BOILER_ATTR = /(^|[-_\s])(nav|navbar|menu|breadcrumb|sidebar|side-bar|related|recommend|comment|comments|footer|header|share|social|copyright|advert)([-_\s]|$)/i;
+  function stripBoiler(html) {
+    return String(html || '').replace(/<(div|section|ul|ol)\b([^>]*)>([\s\S]*?)<\/\1>/gi, function (m, tag, attrs) {
+      var a = /(?:id|class)\s*=\s*["']([^"']*)["']/i.exec(attrs);
+      return a && BOILER_ATTR.test(a[1]) ? ' ' : m;
+    });
+  }
+
+  /* 只数 <p> 里的文字：导航、文件列表、相关阅读多用 <li> / <a>，不进正文分。
+     这样 `<main>` 这种整页包裹层不会因为「含得多」而稳压内部真正的正文块。 */
+  function paraLen(html) {
+    var n = 0;
+    String(html || '').replace(/<p\b[^>]*>([\s\S]*?)<\/p>/gi, function (m, inner) {
+      n += plainLen(inner);
+      return m;
+    });
+    return n;
+  }
+
+  function blockScore(html) {
+    var p = paraLen(html);
+    if (p < 300 || plainLen(html) < 400) return 0;
+    return p;
+  }
+
+  function pickTag(src, tag) {
+    var re = new RegExp('<' + tag + '\\b[^>]*>[\\s\\S]*?<\\/' + tag + '>', 'gi');
+    var best = '', bestScore = 0, m;
+    while ((m = re.exec(src))) {
+      var s = blockScore(m[0]);
+      if (s > bestScore) { bestScore = s; best = m[0]; }
+    }
+    return best;
+  }
+
+  function pickMainBlock(src) {
+    /* article / main 是明确的正文语义，优先采用；
+       只有站点用 <div id="content"> 这类写法时，才退回按分数挑 div。 */
+    var art = pickTag(src, 'article');
+    if (art) return art;
+    var main = pickTag(src, 'main');
+    if (main) return main;
+    var best = '', bestScore = 0, bestLen = 0, m;
+    var re = /<(div|section)\b[^>]*(?:id|class)\s*=\s*["'][^"']*(?:article|content|post|entry|main|text|body)[^"']*["'][^>]*>[\s\S]*?<\/\1>/gi;
+    while ((m = re.exec(src))) {
+      var s = blockScore(m[0]);
+      if (s <= 0) continue;
+      var len = plainLen(m[0]);
+      if (s > bestScore || (s > bestScore * 0.85 && len < bestLen)) {
+        bestScore = Math.max(bestScore, s);
+        best = m[0];
+        bestLen = len;
+      }
+    }
+    return best;
   }
 
   function extractPage(html) {
@@ -881,14 +1060,16 @@
       if (h1) title = clip(decodeEnt(h1[1].replace(/<[^>]+>/g, ' ')), 120);
     }
 
+    /* 外壳块 / 主内容块都必须在「闭合标签转换行」之前处理，否则拿不到完整的 <div>…</div>。 */
     var src = raw
       .replace(/<!--[\s\S]*?-->/g, ' ')
-      .replace(/<(script|style|noscript|svg|canvas|template|iframe|object|embed|nav|aside|footer|header|form|button|select|input|textarea)\b[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<(script|style|noscript|svg|canvas|template|iframe|object|embed|nav|aside|footer|header|form|button|select|input|textarea)\b[\s\S]*?<\/\1>/gi, ' ');
+    src = stripBoiler(src);
+    var block = pickMainBlock(src);
+    if (block) src = block;
+    src = src
       .replace(/<(br|hr)\s*\/?>/gi, '\n')
       .replace(/<\/(p|div|section|article|li|ul|ol|h[1-6]|tr|blockquote|pre|dd|dt|figure|table)>/gi, '\n');
-
-    var block = /<article\b[\s\S]*?<\/article>/i.exec(src) || /<main\b[\s\S]*?<\/main>/i.exec(src);
-    if (block && stripTags(block[0]).length > 400) src = block[0];
 
     var text = decodeEnt(src.replace(/<[^>]+>/g, ' '));
     var lines = [];
@@ -900,7 +1081,8 @@
       if (lines.length && lines[lines.length - 1] === t) return;
       lines.push(t);
     });
-    return { title: title, text: lines.join('\n').slice(0, MAX_PAGE_TEXT) };
+    var body = lines.join('\n');
+    return { title: title, text: body.slice(0, MAX_PAGE_TEXT) };
   }
 
   /* 从正文页里抽出可追踪的线索链接（绝对地址），供第二轮「顺着线索再读两篇」使用。 */
@@ -1538,6 +1720,7 @@
     S.skim = { pages: 0, keywords: [], links: [], urls: [] };
     S.liveNote = '';
     S.ghQuery = '';
+    S.ghRateLimited = false;
     S.pageCache = Object.create(null);
     S.answer = '';
     S.error = '';
@@ -1761,7 +1944,9 @@
       }).then(function (gh) {
         if (ctrl.signal.aborted) return null;
         var repos = gh || [];
-        if (repos.length) {
+        if (S.ghRateLimited && !repos.length) {
+          trace({ kind: '仓库', text: 'GitHub 检索被限流（未登录 60 次/小时）', res: '本轮回退到网页结果', ok: false });
+        } else if (repos.length) {
           trace({ kind: '仓库', text: 'GitHub 搜「' + (S.ghQuery || '') + '」', res: repos.length + ' 个仓库', ok: true });
         }
         if (seeds.length) {

@@ -1,0 +1,93 @@
+{
+  "cnblogs-home": {
+    "url": "https://www.cnblogs.com/",
+    "chars": 3828,
+    "noise": 0,
+    "cov": 89,
+    "anchor": "同一个端口能不能被两个程序同时监听"
+  },
+  "csdn-readability": {
+    "url": "",
+    "chars": 5121,
+    "noise": 0,
+    "cov": 80,
+    "anchor": "提起网页正文提取和网页内容去噪"
+  },
+  "discourse-topic": {
+    "url": "https://discuss.python.org/t/add-list-replace-old-new-count-1-for-in-place-element-replacement/110122",
+    "chars": 302,
+    "noise": 0,
+    "cov": 0,
+    "anchor": ""
+  },
+  "docs-python": {
+    "url": "https://docs.python.org/3/library/asyncio-task.html",
+    "chars": 493,
+    "noise": 0,
+    "cov": 1,
+    "anchor": "This section outlines high-level asyncio APIs"
+  },
+  "gh-crawl4ai": {
+    "url": "https://github.com/unclecode/crawl4ai",
+    "chars": 5200,
+    "noise": 0,
+    "cov": 43,
+    "anchor": "Crawl4AI Cloud is a hosted web scraping"
+  },
+  "gh-crawlee": {
+    "url": "https://github.com/apify/crawlee",
+    "chars": 4663,
+    "noise": 0,
+    "cov": 78,
+    "anchor": "Crawlee covers your crawling and scraping end-to-end"
+  },
+  "github-issue": {
+    "url": "https://github.com/psf/requests/issues/1",
+    "chars": 2058,
+    "noise": 1,
+    "cov": 100,
+    "anchor": "Does this support cookies"
+  },
+  "hn-item": {
+    "url": "https://news.ycombinator.com/item?id=1",
+    "chars": 367,
+    "noise": 0,
+    "cov": null,
+    "anchor": "57 points by pg"
+  },
+  "mdn-promise": {
+    "url": "https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Promise",
+    "chars": 5200,
+    "noise": 0,
+    "cov": 54,
+    "anchor": "Promise 对象表示异步操作最终的完成"
+  },
+  "overreacted": {
+    "url": "https://overreacted.io/a-complete-guide-to-useeffect/",
+    "chars": 5200,
+    "noise": 0,
+    "cov": 12,
+    "anchor": "You wrote a few components with Hooks"
+  },
+  "solidot-list": {
+    "url": "https://www.solidot.org/",
+    "chars": 5200,
+    "noise": 0,
+    "cov": 0,
+    "anchor": "英伟达员工请愿让黄仁勋复职"
+  },
+  "v2ex-topic": {
+    "url": "https://www.v2ex.com/t/1257215",
+    "chars": 1269,
+    "noise": 0,
+    "cov": null,
+    "anchor": "2026 年最强 AI 中转站"
+  },
+  "wiki-zh": {
+    "url": "https://zh.wikipedia.org/wiki/HTTP",
+    "chars": 5200,
+    "noise": 0,
+    "cov": 94,
+    "anchor": "超文本传输协议"
+  }
+}

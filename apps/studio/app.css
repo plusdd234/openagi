@@ -754,6 +754,20 @@
 .st-exresult a { margin-top: 4px; align-self: flex-start; text-decoration: none; }
 .st-confirm-msg { font-size: 11.5px; line-height: 1.7; color: #b7bfcd; }
 
+/* 素材弹层来源页签：视频库 / 图库 */
+.st-libtabs { display: flex; gap: 4px; padding: 8px 12px 0; }
+.st-libtab {
+  flex: 1 1 0; height: 26px;
+  border: 1px solid var(--st-line); border-radius: 6px;
+  background: transparent; color: var(--st-mut);
+  font-size: 11.5px; cursor: pointer;
+}
+.st-libtab:hover { color: #d8dee9; border-color: #414958; }
+.st-libtab.on {
+  color: var(--st-gold); border-color: rgba(240,180,41,.5);
+  background: rgba(240,180,41,.1); font-weight: 600;
+}
+
 .st-libsearch { display: flex; align-items: center; gap: 9px; }
 .st-libsearch input {
   flex: 1 1 auto; height: 28px; padding: 0 9px;
@@ -776,11 +790,13 @@
 .st-librow:hover { background: #232834; }
 .st-librow.on { background: #2a2f3c; border-color: rgba(240,180,41,.5); }
 .st-librow .st-libico {
-  flex: 0 0 auto; width: 26px; height: 20px;
+  flex: 0 0 auto; width: 40px; height: 24px;
   display: grid; place-items: center;
   border-radius: 4px; background: #101319; color: #89a6cc;
   font-size: 8.5px; letter-spacing: .02em;
+  overflow: hidden;
 }
+.st-libthumb { width: 100%; height: 100%; object-fit: cover; display: block; }
 .st-librow .st-libname {
   flex: 1 1 auto; min-width: 0; font-size: 11px; color: #d5dbe6;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -827,6 +843,63 @@
 .st-ctx-hint { color: #7d8698; font-size: 10px; }
 .st-ctx button:disabled .st-ctx-hint { color: inherit; }
 .st-ctx-sep { display: block; height: 1px; margin: 4px 6px; background: #2c3341; }
+
+/* 素材类型筛选 */
+.st-fchips { display: flex; gap: 4px; padding: 7px 10px 0; }
+.st-fchip {
+  flex: 1 1 0; height: 22px;
+  border: 1px solid var(--st-line); border-radius: 999px;
+  background: transparent; color: var(--st-mut);
+  font-size: 10.5px; cursor: pointer;
+}
+.st-fchip:hover { color: #d8dee9; border-color: #414958; }
+.st-fchip.on {
+  color: var(--st-gold-ink); background: var(--st-gold);
+  border-color: var(--st-gold); font-weight: 600;
+}
+
+/* 检查器页签：基础 / 画面 / 声音 / 动画 / 关键帧 */
+.st-insp-tabs {
+  position: sticky; top: 0; z-index: 3;
+  display: flex; gap: 2px;
+  padding: 6px 8px;
+  background: var(--st-panel);
+  border-bottom: 1px solid var(--st-line-soft);
+}
+.st-insp-tab {
+  flex: 1 1 0; height: 24px;
+  border: 0; border-radius: 5px;
+  background: transparent; color: var(--st-mut);
+  font-size: 11px; cursor: pointer;
+}
+.st-insp-tab:hover { color: #d8dee9; background: rgba(255,255,255,.05); }
+.st-insp-tab.on { color: var(--st-gold); background: rgba(240,180,41,.12); font-weight: 600; }
+.st-voice-btn { margin-top: 8px; gap: 6px; }
+.st-voice-btn svg { width: 14px; height: 14px; }
+.st-insp[data-itab="basic"] .st-insp-sec[data-g]:not([data-g="basic"]),
+.st-insp[data-itab="visual"] .st-insp-sec[data-g]:not([data-g="visual"]),
+.st-insp[data-itab="audio"] .st-insp-sec[data-g]:not([data-g="audio"]),
+.st-insp[data-itab="motion"] .st-insp-sec[data-g]:not([data-g="motion"]),
+.st-insp[data-itab="kf"] .st-insp-sec[data-g]:not([data-g="kf"]) { display: none; }
+
+/* 底部状态栏 */
+.st-status {
+  flex: 0 0 22px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 10px;
+  background: #171a21;
+  border-top: 1px solid #0e1015;
+  color: #7f8899; font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.st-st-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #5fbf7f;
+  box-shadow: 0 0 6px rgba(95,191,127,.55);
+}
+.st-st-sep { width: 1px; height: 10px; background: #2b3140; }
+.st-st-grow { flex: 1 1 auto; }
 
 /* 图标按钮：统一尺寸与居中（图标代替文字后保持点击热区） */
 .st-icomin {

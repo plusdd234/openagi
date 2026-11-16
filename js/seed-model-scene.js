@@ -112,17 +112,184 @@
     /* 导入时从源模型里抽出的基础色贴图（data URL）。只是显示用，不进 GLB 主材质，
      * 但跟着 seedModel 走，重开资产才不会又变回一片灰。 */
     var maps = Array.isArray(o.slotMaps) ? o.slotMaps.map(function (u) { return String(u || ''); }) : [];
-    for (var i = 0; i < names.length; i++) {
-      if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(colors[i] || '')) colors[i] = '#c9ccd4';
+    /* 材质稳定 id：改名 / 删槽 / 追加资产之后，纹理配置还认得住同一个材质。
+     * 老文档没有这个字段，按位置补一个确定性的 id，打开后行为不变。 */
+    var ids = Array.isArray(o.slotIds) ? o.slotIds.map(function (v) { return String(v); }) : [];
+    for (var k = 0; k < names.length; k++) {
+      if (!ids[k]) ids[k] = 'slot-' + (k + 1);
+      if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(colors[k] || '')) colors[k] = '#c9ccd4';
     }
     return {
       slotNames: names,
+      slotIds: ids.slice(0, names.length),
       /* 只用于视口显示；贴图配置仍按 textureConfigKey 去 m3d-slots 查 */
       slotColors: colors.slice(0, names.length),
       slotMaps: maps.slice(0, names.length),
       textureConfigKey: str(o.textureConfigKey, assetId),
       textureConfigMissing: !!o.textureConfigMissing
     };
+  }
+
+  /* ---------------- 材质归属（meshId → 材质下标） ----------------
+   * 材质库仍是文档级（slotNames / slotColors / slotMaps / slotIds 同长），
+   * 但每个网格只「拥有」自己用到的下标。追加资产时源材质整体后移，
+   * faceSlots 跟着重映射，两个模型就不会再落到同一批槽上。 */
+  function uniqSlots(list) {
+    var seen = Object.create(null), out = [];
+    (list || []).forEach(function (v) {
+      var n = Math.round(Number(v));
+      if (!(n >= 0)) return;
+      if (seen[n]) return;
+      seen[n] = 1;
+      out.push(n);
+    });
+    out.sort(function (a, b) { return a - b; });
+    return out;
+  }
+  /* GLB 里 faceSlots 是 packI32 的 base64 字符串，不是数组；
+   * 直接当数组用会拿到字符串，迁移时按面解码出真实下标。 */
+  function packedSlotsOf(meshJson) {
+    var raw = meshJson && meshJson.faceSlots;
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string' && raw) {
+      try {
+        var bin = global.atob ? global.atob(raw) : '';
+        var n = Math.floor(bin.length / 4), out = new Array(n);
+        for (var i = 0; i < n; i++) {
+          var o = i * 4;
+          out[i] = bin.charCodeAt(o) | (bin.charCodeAt(o + 1) << 8) |
+            (bin.charCodeAt(o + 2) << 16) | (bin.charCodeAt(o + 3) << 24);
+        }
+        return out;
+      } catch (e) { return []; }
+    }
+    return [];
+  }
+  function usedSlotsOfMeshJson(meshJson) {
+    var fs = packedSlotsOf(meshJson);
+    return uniqSlots(fs.length ? fs : [0]);
+  }
+  function usedSlotsOfMesh(mesh) {
+    return usedSlotsOfMeshJson(mesh);
+  }
+  function meshSlotsOfRaw(raw, meshJson, minCount) {
+    if (isObj(raw)) {
+      var out = Object.create(null);
+      Object.keys(raw).forEach(function (k) {
+        if (Array.isArray(raw[k])) out[k] = uniqSlots(raw[k]);
+      });
+      return out;
+    }
+    var one = Object.create(null);
+    one[MESH_REF] = usedSlotsOfMeshJson(meshJson);
+    return one;
+  }
+  function meshSlotsOf(doc, nodeOrId) {
+    if (!doc) return [];
+    doc.meshSlots = isObj(doc.meshSlots) ? doc.meshSlots : Object.create(null);
+    var id = nodeOrId
+      ? (typeof nodeOrId === 'string' ? nodeOrId : (nodeOrId.meshRef || MESH_REF))
+      : (nodeOf(doc) ? (nodeOf(doc).meshRef || MESH_REF) : MESH_REF);
+    if (id && isObj(doc.meshes) && doc.meshes[id] && !Array.isArray(doc.meshSlots[id])) {
+      doc.meshSlots[id] = usedSlotsOfMeshJson(doc.meshes[id]);
+    }
+    return doc.meshSlots[id] || [];
+  }
+  function setMeshSlots(doc, nodeOrId, list) {
+    if (!doc) return [];
+    doc.meshSlots = isObj(doc.meshSlots) ? doc.meshSlots : Object.create(null);
+    var id = typeof nodeOrId === 'string' ? nodeOrId : (nodeOrId && (nodeOrId.meshRef || MESH_REF));
+    if (!id) return [];
+    doc.meshSlots[id] = uniqSlots(list);
+    return doc.meshSlots[id];
+  }
+  function slotsOf(doc, node) {
+    var names = slotNamesOf(doc);
+    return meshSlotsOf(doc, node).filter(function (i) { return i >= 0 && i < names.length; });
+  }
+  function slotNamesFor(doc, list) {
+    var names = (doc && doc.materials && doc.materials.slotNames) || [];
+    return uniqSlots(list).map(function (i) { return names[i] || ('插槽 ' + (i + 1)); });
+  }
+  function refreshNodeSlotNames(doc) {
+    (doc && doc.nodes || []).forEach(function (n) {
+      n.materialSlots = slotNamesFor(doc, meshSlotsOf(doc, n));
+    });
+  }
+
+  function slotIdsOf(doc) {
+    if (!doc) return [];
+    var names = slotNamesOf(doc);
+    doc.materials = doc.materials || {};
+    var ids = doc.materials.slotIds;
+    if (!Array.isArray(ids)) ids = doc.materials.slotIds = [];
+    var seen = Object.create(null);
+    for (var i = 0; i < names.length; i++) {
+      var s = ids[i] ? String(ids[i]) : '';
+      if (!s || seen[s]) {
+        var k = i + 1, id = 'slot-' + k;
+        while (seen[id]) { k++; id = 'slot-' + k; }
+        s = ids[i] = id;
+      }
+      seen[s] = 1;
+    }
+    ids.length = names.length;
+    return ids;
+  }
+  /* 为「追加进来的材质」生成一批不会撞车的稳定 id */
+  function freshSlotIds(ids, n) {
+    var used = Object.create(null), max = 0;
+    (ids || []).forEach(function (x) {
+      var s = String(x);
+      used[s] = 1;
+      var m = /^(?:slot-|m)(\d+)$/.exec(s);
+      if (m) max = Math.max(max, Number(m[1]));
+    });
+    var out = [], k = Math.max(max, (ids || []).length);
+    for (var i = 0; i < n; i++) {
+      var id;
+      do { k++; id = 'm' + k; } while (used[id]);
+      used[id] = 1;
+      out.push(id);
+    }
+    return out;
+  }
+  /* 把另一份文档的材质整体并入当前材质库；返回下标偏移与 id 对照，
+   * 调用方据此重映射 faceSlots 并迁移纹理配置。 */
+  function adoptMaterials(doc, srcDoc) {
+    var names = slotNamesOf(doc);
+    var colors = slotArray(doc, 'slotColors');
+    var maps = slotArray(doc, 'slotMaps');
+    var ids = slotIdsOf(doc);
+    var sm = (srcDoc && srcDoc.materials) || {};
+    var sNames = Array.isArray(sm.slotNames) ? sm.slotNames : [];
+    var sColors = Array.isArray(sm.slotColors) ? sm.slotColors : [];
+    var sMaps = Array.isArray(sm.slotMaps) ? sm.slotMaps : [];
+    var sIds = Array.isArray(sm.slotIds) ? sm.slotIds : [];
+    var count = Math.max(sNames.length, 1);
+    var offset = names.length;
+    var fresh = freshSlotIds(ids, count);
+    for (var i = 0; i < count; i++) {
+      names.push(str(sNames[i], '插槽 ' + (names.length + 1)).slice(0, 60));
+      colors.push(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(sColors[i] || '')) ? sColors[i] : '#c9ccd4');
+      maps.push(str(sMaps[i], ''));
+      ids.push(fresh[i]);
+    }
+    return {
+      offset: offset, count: count, ids: fresh,
+      srcIds: Array.prototype.slice.call(sIds, 0, count),
+      srcNames: sNames.slice(0, count),
+      textureConfigKey: str(sm.textureConfigKey, srcDoc && srcDoc.assetId)
+    };
+  }
+  function remapSlotIndices(mesh, offset) {
+    if (!mesh || !Array.isArray(mesh.faceSlots) || !offset) return mesh;
+    for (var i = 0; i < mesh.faceSlots.length; i++) {
+      var s = Number(mesh.faceSlots[i]);
+      mesh.faceSlots[i] = (s >= 0 ? s : 0) + offset;
+    }
+    M.Mesh.bump(mesh);
+    return mesh;
   }
 
   function nodeOfRaw(raw, index) {
@@ -153,7 +320,10 @@
     var mats = materialsOf(opts.materials, assetId);
     var node = nodeOfRaw(opts.node, 0);
     node.name = str(opts.nodeName, name);
-    node.materialSlots = mats.slotNames.slice();
+    var ownSlots0 = meshSlotsOfRaw(opts.meshSlots, meshJson, mats.slotNames.length);
+    node.materialSlots = (ownSlots0[MESH_REF] || []).map(function (i) {
+      return mats.slotNames[i] || ('插槽 ' + (i + 1));
+    });
 
     var revIn = isObj(opts.revision) ? opts.revision : {};
     var rev = revisionOf({
@@ -175,6 +345,9 @@
       activeNodeId: node.id,
       selection: selectionOf(opts.selection),
       materials: mats,
+      /* meshId → 该网格自己用到的材质下标（材质库是文档级，归属是网格级）。
+       * 追加资产时导入的材质会整体后移，归属表让每个对象只看到自己的槽。 */
+      meshSlots: meshSlotsOfRaw(opts.meshSlots, meshJson, mats.slotNames.length),
       historyBoundary: {
         undoPersisted: false,
         loadedAtRevision: Math.max(0, Math.round(num(opts.historyBoundary && opts.historyBoundary.loadedAtRevision, rev.current))),
@@ -193,7 +366,6 @@
      * 否则「打开一个空模型」会冒出一个幽灵对象。只有缺 nodes 字段的老格式才补默认节点。 */
     var nodes = Array.isArray(raw.nodes) ? raw.nodes.map(nodeOfRaw) : [nodeOfRaw({}, 0)];
     var mats = materialsOf(raw.materials, raw.assetId);
-    if (nodes.length && !nodes[0].materialSlots.length) nodes[0].materialSlots = mats.slotNames.slice();
 
     /* v2 → v2.1 迁移：只补结构，不改数据。meshRef 指向不存在的网格时统一落到第一个，
      * 否则节点会「指向空气」，渲染时表现为打开后什么都没有。 */
@@ -201,6 +373,15 @@
     nodes.forEach(function (n) {
       if (n.type !== 'mesh') return;
       if (!n.meshRef || !mm.map[n.meshRef]) n.meshRef = mm.first || MESH_REF;
+    });
+    /* v2.2 迁移：老文档没有 meshSlots，按每个网格实际用到的 faceSlots 反推归属；
+     * 这样打开老资产时，材质面板显示的范围和以前一致（不会把没用到的槽也算进来）。 */
+    var meshSlots = meshSlotsOfRaw(raw.meshSlots, null, mats.slotNames.length);
+    Object.keys(mm.map).forEach(function (id) {
+      if (!Array.isArray(meshSlots[id])) meshSlots[id] = usedSlotsOfMeshJson(mm.map[id]);
+    });
+    nodes.forEach(function (n) {
+      if (!n.materialSlots.length) n.materialSlots = slotNamesFor({ materials: mats }, meshSlots[n.meshRef] || []);
     });
     var actId = str(raw.activeNodeId, '');
     if (!actId || !nodes.some(function (n) { return n.id === actId; })) {
@@ -220,6 +401,7 @@
       activeNodeId: actId,
       selection: selectionOf(raw.selection),
       materials: mats,
+      meshSlots: meshSlots,
       historyBoundary: {
         undoPersisted: false,
         loadedAtRevision: Math.max(0, Math.round(num(raw.historyBoundary && raw.historyBoundary.loadedAtRevision, rev.current))),
@@ -243,9 +425,23 @@
     if (!isObj(raw.meshes) && isObj(raw.mesh)) warnings.push('老格式（单 mesh）已迁移为 meshes.main');
 
     var doc = normalizeDoc(raw);
+    var slotN = Math.max(1, ((doc.materials && doc.materials.slotNames) || []).length);
     Object.keys(doc.meshes).forEach(function (id) {
       try {
-        cacheOf(doc)[id] = M.Mesh.fromJSON(doc.meshes[id]);
+        var mesh = M.Mesh.fromJSON(doc.meshes[id]);
+        /* 老资产（材质串通时代保存、材质库被回收过）的 faceSlots 可能指向已不存在的槽。
+         * 这些面在视口里没有材质，绘画命中时拿不到材质 → 静默无反应。加载时夹回槽 0。 */
+        var bad = false;
+        for (var i = 0; i < mesh.faceSlots.length; i++) {
+          var s = mesh.faceSlots[i];
+          if (!(s >= 0) || s >= slotN) { mesh.faceSlots[i] = 0; bad = true; }
+        }
+        cacheOf(doc)[id] = mesh;
+        if (bad) {
+          doc.meshes[id] = M.Mesh.toJSON(mesh);
+          doc.meshSlots[id] = usedSlotsOfMeshJson(doc.meshes[id]);
+          warnings.push('网格 ' + id + ' 的材质槽下标越界，已夹回槽 0');
+        }
       } catch (e) {
         errors.push('网格 ' + id + ' 解析失败：' + ((e && e.message) || e));
       }
@@ -416,10 +612,19 @@
     if (!doc || !mesh) return null;
     node = node || nodeOf(doc);
     doc.meshes = doc.meshes || Object.create(null);
-    var id = meshIdOfNode(doc, node) || MESH_REF;
+    /* 写回必须认节点自己声明的 meshRef：撤销会先回收未引用网格（pruneMeshes），
+     * 重做时 meshRef 指向的键暂时不存在，若这时回退到「第一个网格」，
+     * 就会把新对象的网格盖到旧对象头上（多对象 + 撤销/重做后几何与材质一起串）。
+     * 回退只在节点没有 meshRef 时使用。 */
+    var id = (node && node.meshRef) || meshIdOfNode(doc, node) || MESH_REF;
     doc.meshes[id] = M.Mesh.toJSON(mesh);
     if (node) node.meshRef = id;
     cacheOf(doc)[id] = mesh;
+    /* 归属表只增不减：结合 / 分离 / 布尔产出的新下标也要纳进来，
+     * 否则新出现的槽在材质面板里看不见、也没法指派。 */
+    doc.meshSlots = isObj(doc.meshSlots) ? doc.meshSlots : Object.create(null);
+    doc.meshSlots[id] = uniqSlots((doc.meshSlots[id] || []).concat(usedSlotsOfMesh(mesh)));
+    if (node) node.materialSlots = slotNamesFor(doc, doc.meshSlots[id]);
     return doc;
   }
 
@@ -448,7 +653,11 @@
       meshRef: meshId,
       visible: opts.visible
     }, doc.nodes.length);
-    node.materialSlots = (doc.materials && doc.materials.slotNames ? doc.materials.slotNames : []).slice();
+    doc.meshSlots = isObj(doc.meshSlots) ? doc.meshSlots : Object.create(null);
+    doc.meshSlots[meshId] = opts.slots && Array.isArray(opts.slots)
+      ? uniqSlots(opts.slots)
+      : usedSlotsOfMeshJson(doc.meshes[meshId]);
+    node.materialSlots = slotNamesFor(doc, doc.meshSlots[meshId]);
     doc.nodes.push(node);
     return node;
   }
@@ -467,7 +676,11 @@
     var ref = removed.meshRef;
     if (ref && isObj(doc.meshes) && doc.meshes[ref]) {
       var used = doc.nodes.some(function (n) { return n.meshRef === ref; });
-      if (!used) { delete doc.meshes[ref]; delete cacheOf(doc)[ref]; }
+      if (!used) {
+        delete doc.meshes[ref];
+        delete cacheOf(doc)[ref];
+        if (isObj(doc.meshSlots)) delete doc.meshSlots[ref];
+      }
     }
     if (doc.activeNodeId === id) {
       var next = nodesOf(doc)[0] || doc.nodes[0];
@@ -528,8 +741,7 @@
     return doc.materials.slotNames;
   }
   function syncSlotNamesToNodes(doc) {
-    var names = (doc && doc.materials && doc.materials.slotNames) || [];
-    (doc.nodes || []).forEach(function (n) { n.materialSlots = names.slice(); });
+    refreshNodeSlotNames(doc);
   }
   function slotArray(doc, key) {
     doc.materials = doc.materials || {};
@@ -542,12 +754,18 @@
     var names = slotNamesOf(doc);
     var colors = slotArray(doc, 'slotColors');
     var maps = slotArray(doc, 'slotMaps');
+    var ids = slotIdsOf(doc);
     var name = str(opts.name, '插槽 ' + (names.length + 1)).slice(0, 60);
     names.push(name);
     colors.push(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(opts.color || '')) ? opts.color : '#c9ccd4');
     maps.push('');
+    ids.push(freshSlotIds(ids, 1)[0]);
+    var index = names.length - 1;
+    /* 新槽归到当前对象名下：别的模型的面不会自动跑到这个槽上 */
+    var node = opts.node || nodeOf(doc);
+    if (node) setMeshSlots(doc, node, meshSlotsOf(doc, node).concat([index]));
     syncSlotNamesToNodes(doc);
-    return names.length - 1;
+    return index;
   }
   function renameSlot(doc, index, name) {
     if (!doc) return false;
@@ -560,34 +778,74 @@
     syncSlotNamesToNodes(doc);
     return true;
   }
-  function removeSlot(doc, index) {
+  /* 删槽现在是「对象级」：只从当前对象的归属里摘掉，面改指它自己的另一个槽；
+   * 只有当别的网格也不再引用这个材质时，才真正从文档材质库里回收并整体重排。 */
+  function removeSlot(doc, index, opts) {
     if (!doc) return false;
+    opts = opts || {};
     var names = slotNamesOf(doc);
     index = Math.round(Number(index));
     if (!(index >= 0 && index < names.length)) return false;
     /* 至少留一个槽：零槽文档会让「槽名 → 贴图 key」整条链没有落点 */
     if (names.length <= 1) return false;
+    var node = opts.node || nodeOf(doc);
+    var ref = node ? (node.meshRef || MESH_REF) : null;
+    var own = node ? meshSlotsOf(doc, node).slice() : [];
+    if (own.indexOf(index) >= 0) {
+      /* 每个对象至少保留一个材质槽，否则它就没有可绘制/可指派的落点 */
+      if (own.length <= 1) return false;
+      own.splice(own.indexOf(index), 1);
+    }
+    var target = own.length ? own[0] : (index > 0 ? index - 1 : 1);
+    var mesh = null;
+    try { mesh = node ? getMesh(doc, node) : null; } catch (e) { mesh = null; }
+    if (mesh && mesh.faceSlots) {
+      for (var f = 0; f < mesh.faceSlots.length; f++) {
+        if ((mesh.faceSlots[f] || 0) === index) mesh.faceSlots[f] = target;
+      }
+      M.Mesh.bump(mesh);
+    }
+    /* 还有别的网格引用这个下标 → 只做对象级摘除，材质库保持不动 */
+    var shared = Object.keys(doc.meshSlots || {}).some(function (id) {
+      if (id === ref) return false;
+      return (doc.meshSlots[id] || []).indexOf(index) >= 0;
+    });
+    if (shared) {
+      if (ref && Array.isArray(doc.meshSlots[ref])) {
+        setMeshSlots(doc, ref, doc.meshSlots[ref].filter(function (i) { return i !== index; }));
+      }
+      if (mesh) setMesh(doc, mesh, node);
+      syncSlotNamesToNodes(doc);
+      return true;
+    }
+    /* 没别的对象用了：从材质库回收，所有网格（包括当前）整体 -1 重排 */
     names.splice(index, 1);
     var colors = slotArray(doc, 'slotColors');
     var maps = slotArray(doc, 'slotMaps');
+    var ids = slotIdsOf(doc);
     if (colors.length > index) colors.splice(index, 1);
     if (maps.length > index) maps.splice(index, 1);
-    /* 每个 meshRef 只重排一次：两个节点共用一份网格时不能算两遍 */
-    var seen = Object.create(null);
+    if (ids.length > index) ids.splice(index, 1);
+    var seenMesh = Object.create(null);
     (doc.nodes || []).forEach(function (n) {
-      var ref = n.meshRef || MESH_REF;
-      if (seen[ref]) return;
-      seen[ref] = 1;
-      var mesh = null;
-      try { mesh = getMesh(doc, n); } catch (e) { mesh = null; }
-      if (!mesh || !mesh.faceSlots) return;
-      for (var i = 0; i < mesh.faceSlots.length; i++) {
-        var s = mesh.faceSlots[i] || 0;
-        if (s === index) mesh.faceSlots[i] = 0;
-        else if (s > index) mesh.faceSlots[i] = s - 1;
+      var r = n.meshRef || MESH_REF;
+      if (seenMesh[r]) return;
+      seenMesh[r] = 1;
+      var m = null;
+      try { m = getMesh(doc, n); } catch (e) { m = null; }
+      if (!m || !m.faceSlots) return;
+      for (var i = 0; i < m.faceSlots.length; i++) {
+        var s = m.faceSlots[i] || 0;
+        if (s === index) m.faceSlots[i] = 0;
+        else if (s > index) m.faceSlots[i] = s - 1;
       }
-      M.Mesh.bump(mesh);
-      setMesh(doc, mesh, n);
+      M.Mesh.bump(m);
+      setMesh(doc, m, n);
+    });
+    Object.keys(doc.meshSlots || {}).forEach(function (id) {
+      doc.meshSlots[id] = (doc.meshSlots[id] || [])
+        .filter(function (i) { return i !== index; })
+        .map(function (i) { return i > index ? i - 1 : i; });
     });
     syncSlotNamesToNodes(doc);
     return true;
@@ -634,8 +892,14 @@
     return clone({
       name: doc.name,
       nodes: doc.nodes,
+      /* 激活对象一起回滚：多对象下撤销/重做后 active 若停在已删除的节点，
+       * 兜底恢复网格会写错对象（把另一个对象的网格盖掉）。 */
+      activeNodeId: doc.activeNodeId,
       selection: doc.selection,
-      revision: doc.revision
+      revision: doc.revision,
+      /* 槽位归属和网格引用一起回滚：撤销「新建对象 / 结合 / 分离」时，
+       * 否则会出现网格没了、归属还挂着的悬空条目 */
+      meshSlots: doc.meshSlots || {}
     });
   }
 
@@ -643,8 +907,10 @@
     if (!doc || !isObj(snap)) return doc;
     if (snap.name != null) doc.name = String(snap.name);
     if (Array.isArray(snap.nodes)) doc.nodes = clone(snap.nodes);
+    if (snap.activeNodeId && nodeById(doc, snap.activeNodeId)) doc.activeNodeId = snap.activeNodeId;
     if (isObj(snap.selection)) doc.selection = selectionOf(snap.selection);
     if (isObj(snap.revision)) doc.revision = revisionOf(snap.revision);
+    if (isObj(snap.meshSlots)) doc.meshSlots = clone(snap.meshSlots);
     if (!nodeById(doc, doc.activeNodeId)) {
       var next = nodesOf(doc)[0] || doc.nodes[0];
       doc.activeNodeId = next ? next.id : '';
@@ -664,6 +930,7 @@
     Object.keys(doc.meshes).forEach(function (k) {
       if (used[k]) return;
       delete doc.meshes[k];
+      if (isObj(doc.meshSlots)) delete doc.meshSlots[k];
       if (c) delete c[k];
     });
   }
@@ -704,6 +971,15 @@
     renameSlot: renameSlot,
     removeSlot: removeSlot,
     assignSlot: assignSlot,
+    /* 材质归属：材质库是文档级，归属是网格级；追加资产靠 adoptMaterials + remapSlotIndices */
+    slotIdsOf: slotIdsOf,
+    slotsOf: slotsOf,
+    meshSlotsOf: meshSlotsOf,
+    setMeshSlots: setMeshSlots,
+    usedSlotsOfMesh: usedSlotsOfMesh,
+    adoptMaterials: adoptMaterials,
+    remapSlotIndices: remapSlotIndices,
+    syncSlotNamesToNodes: syncSlotNamesToNodes,
     meshIds: meshIds,
     meshIdOfNode: meshIdOfNode,
     stats: stats,

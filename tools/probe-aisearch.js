@@ -55,6 +55,42 @@ const LONG = 'DeepSeek 官方文档说明：模型支持 128K 上下文窗口，
 
   /* ---- 网络替身：健康检查、网页抓取、搜索源、语言模型 ---- */
   await page.evaluate(() => {
+    window.__ghCalls = 0;
+    /* 仓库检索的桩：7 个精确命中的模板 + 3 个干扰项。
+       归档仓库必须被剔掉；9.9 万星的泛清单不能被 topics 精确命中的小仓库压住。 */
+    const repoStub = () => {
+      const items = Array.from({ length: 7 }, (_, i) => ({
+        full_name: 'stub/shooter-template-' + i,
+        description: 'open source shooter game template ' + i,
+        html_url: 'https://github.com/stub/shooter-template-' + i,
+        stargazers_count: 900 - i,
+        language: 'C#',
+        pushed_at: '2025-03-01T00:00:00Z',
+        topics: ['game', 'template', 'shooter']
+      }));
+      items.push({
+        full_name: 'stub/archived-shooter',
+        description: 'archived shooter game template',
+        html_url: 'https://github.com/stub/archived-shooter',
+        stargazers_count: 8800, language: 'C++', archived: true,
+        pushed_at: '2019-01-01T00:00:00Z', topics: ['game', 'shooter']
+      });
+      items.push({
+        full_name: 'stub/awesome-game-list',
+        description: 'curated list of every game ever made',
+        html_url: 'https://github.com/stub/awesome-game-list',
+        stargazers_count: 99000, language: 'JavaScript',
+        pushed_at: '2025-01-01T00:00:00Z', topics: ['awesome-list']
+      });
+      items.push({
+        full_name: 'stub/2d-arena',
+        description: 'a tiny arena demo',
+        html_url: 'https://github.com/stub/2d-arena',
+        stargazers_count: 40, language: 'C++',
+        pushed_at: '2025-06-01T00:00:00Z', topics: ['shooter', 'game']
+      });
+      return items;
+    };
     window.fetch = function (url, init) {
       const u = String(url);
       if (/\/health$/.test(u)) {
@@ -66,15 +102,8 @@ const LONG = 'DeepSeek 官方文档说明：模型支持 128K 上下文窗口，
         const h = (init && init.headers) || {};
         const target = h['X-Relay-Target'] || h['x-relay-target'] || '';
         if (/api\.github\.com\/search\/repositories/.test(target)) {
-          /* 仓库检索的桩：一次给 12 个，用来验证「不能只取 6 条就下结论」。 */
-          const items = Array.from({ length: 12 }, (_, i) => ({
-            full_name: 'stub/shooter-template-' + i,
-            description: 'open source shooter game template ' + i,
-            html_url: 'https://github.com/stub/shooter-template-' + i,
-            stargazers_count: 900 - i,
-            language: 'C#'
-          }));
-          return Promise.resolve(new Response(JSON.stringify({ items }), {
+          window.__ghCalls += 1;
+          return Promise.resolve(new Response(JSON.stringify({ items: repoStub() }), {
             status: 200, headers: { 'content-type': 'application/json' }
           }));
         }
@@ -82,6 +111,8 @@ const LONG = 'DeepSeek 官方文档说明：模型支持 128K 上下文窗口，
         if (/api-docs/.test(target)) {
           html += '<h1>DeepSeek 模型文档</h1><p>' + 'A'.repeat(10) + '</p>';
           html += '<p>' + 'DeepSeek 的上下文窗口为 128K，并支持函数调用与 JSON 输出。这一段是正文，足够长以便通过抽取阈值。'.repeat(4) + '</p>';
+          /* 推荐位噪声：class 命中外壳规则，抽取后不该出现在送给模型的正文里。 */
+          html += '<div class="related-recommend"><p>相关阅读：十个你不知道的上下文技巧，点开还有更多推荐内容与站点导航。</p></div>';
         } else if (/example\.org/.test(target)) {
           html += '<p>' + '更新说明：本次发布调整了价格并新增了推理模型，旧模型继续可用。'.repeat(6) + '</p>';
         } else if (/v\.qq\.com/.test(target)) {
@@ -99,15 +130,8 @@ const LONG = 'DeepSeek 官方文档说明：模型支持 128K 上下文窗口，
         }));
       }
       if (/api\.github\.com\/search\/repositories/.test(u)) {
-        /* 仓库检索的桩：一次给 12 个，用来验证「不能只取 6 条就下结论」。 */
-        const items = Array.from({ length: 12 }, (_, i) => ({
-          full_name: 'stub/shooter-template-' + i,
-          description: 'open source shooter game template ' + i,
-          html_url: 'https://github.com/stub/shooter-template-' + i,
-          stargazers_count: 900 - i,
-          language: 'C#'
-        }));
-        return Promise.resolve(new Response(JSON.stringify({ items }), {
+        window.__ghCalls += 1;
+        return Promise.resolve(new Response(JSON.stringify({ items: repoStub() }), {
           status: 200, headers: { 'content-type': 'application/json' }
         }));
       }
@@ -140,6 +164,13 @@ const LONG = 'DeepSeek 官方文档说明：模型支持 128K 上下文窗口，
           { title: 'DeepSeek 使用心得', url: 'https://news.example.com/p/1', snippet: '一篇普通文章' },
           { title: 'DeepSeek 使用心得', url: 'https://news.example.com/p/2', snippet: '同站重复标题' }
         ];
+        if (/射击/.test(String(q || ''))) {
+          results.push(
+            { title: 'Projects', url: 'https://github.com/stub/shooter-template-0/projects', snippet: '仓库项目板' },
+            { title: 'Sign in to GitHub', url: 'https://github.com/login?return_to=x', snippet: '登录后继续' },
+            { title: '开源 射击 游戏 模板 - 360翻译', url: 'https://fanyi.so.com/?src=onebox', snippet: '翻译结果' }
+          );
+        }
         if (round > 0) {
           results.push(
             { title: 'DeepSeek 上下文窗口 128K 详解', url: 'https://example.org/news/extra', snippet: '模型上下文与接口说明' },
@@ -236,6 +267,9 @@ const LONG = 'DeepSeek 官方文档说明：模型支持 128K 上下文窗口，
   await page.waitForTimeout(200);
   const answer = await page.evaluate(() => document.querySelector('#aisearchWin .ais-answer-body').textContent);
   check(answer.includes('128K'), '摘要读到了正文里的关键事实');
+  const prompt = await page.evaluate(() => (window.__llmLast && window.__llmLast.user) || '');
+  check(prompt.includes('128K') && !prompt.includes('相关阅读'),
+    '正文抽取丢掉推荐位噪声，保留文章主体');
   const cites = await page.evaluate(() => document.querySelectorAll('#aisearchWin .ais-cite').length);
   check(cites >= 2, '摘要带来源编号', cites + ' 个');
 
@@ -321,6 +355,48 @@ const LONG = 'DeepSeek 官方文档说明：模型支持 128K 上下文窗口，
     .map((el) => el.querySelector('.ais-hit-url').textContent));
   check(repoHits.filter((u) => /github\.com/.test(u)).length >= 8,
     '仓库检索一次取够（不再只给 6 条）', repoHits.length + ' 条结果');
+
+  /* ---- 6.7 仓库质量：归档剔除 / 精确命中优先 / 卡片带元信息 ---- */
+  const repoDetail = await page.evaluate(() => {
+    const items = [...document.querySelectorAll('#aisearchWin .ais-hit')];
+    const urls = items.map((el) => el.querySelector('.ais-hit-url').textContent);
+    const rank = (re) => urls.findIndex((u) => re.test(u));
+    const sn = (re) => {
+      const el = items.find((x) => re.test(x.querySelector('.ais-hit-url').textContent));
+      return el ? el.querySelector('.ais-hit-sn').textContent : '';
+    };
+    return {
+      calls: window.__ghCalls || 0,
+      urls,
+      archived: rank(/archived-shooter/),
+      arena: rank(/2d-arena/),
+      awesome: rank(/awesome-game-list/),
+      arenaSn: sn(/2d-arena/)
+    };
+  });
+  check(repoDetail.archived < 0, '归档仓库不进结果');
+  check(!/github\.com\/(login|stub\/shooter-template-0\/projects)|fanyi\.so\.com/.test(repoDetail.urls.join(' ')),
+    'GitHub 功能页 / 翻译 onebox 已被剔除');
+  check(repoDetail.arena >= 0 && (repoDetail.awesome < 0 || repoDetail.arena < repoDetail.awesome),
+    '精确命中排在 9.9 万星泛清单之前', '2d-arena #' + repoDetail.arena + ' / awesome #' + repoDetail.awesome);
+  check(/★40/.test(repoDetail.arenaSn) && /C\+\+/.test(repoDetail.arenaSn) && /#shooter/.test(repoDetail.arenaSn),
+    '仓库卡展示星数 / 语言 / topics', repoDetail.arenaSn.slice(0, 80));
+
+  /* ---- 6.8 同一检索式命中缓存，不再重复请求 GitHub（未登录只有 60 次/小时） ---- */
+  await page.evaluate(() => {
+    const home = document.querySelector('#aisearchWin .ais-brand');
+    if (home) home.click();
+  });
+  await page.waitForTimeout(250);
+  await page.fill('#aisearchWin .ais-hero-input', '开源的射击游戏模板');
+  await page.press('#aisearchWin .ais-hero-input', 'Enter');
+  await page.waitForFunction(() => {
+    const s = document.querySelector('#aisearchWin .ais-status');
+    return s && /完成|未找到|失败/.test(s.textContent || '');
+  }, null, { timeout: 20000 });
+  const callsAgain = await page.evaluate(() => window.__ghCalls || 0);
+  check(callsAgain === repoDetail.calls, '重复搜索命中仓库缓存，不再请求 GitHub',
+    repoDetail.calls + ' → ' + callsAgain);
 
   /* ---- 7. 回首页 ---- */
   await page.evaluate(() => document.querySelector('#aisearchWin .ais-brand').click());

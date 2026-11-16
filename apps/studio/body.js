@@ -86,6 +86,12 @@ window.STUDIO_BODY = `
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5.2" width="7.4" height="13.6" rx="1.6"/><rect x="13.6" y="5.2" width="7.4" height="13.6" rx="1.6"/><path d="M6.7 8.8v2.2M17.3 8.8v2.2"/></svg>
             </button>
           </div>
+          <div class="st-fchips" id="stMediaFilter" role="group" aria-label="素材类型筛选">
+            <button type="button" class="st-fchip on" data-fk="all" aria-pressed="true">全部</button>
+            <button type="button" class="st-fchip" data-fk="video" aria-pressed="false">视频</button>
+            <button type="button" class="st-fchip" data-fk="image" aria-pressed="false">图片</button>
+            <button type="button" class="st-fchip" data-fk="audio" aria-pressed="false">音频</button>
+          </div>
           <button type="button" class="st-ghost st-wide" id="stImport">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v10"/><path d="m8 9 4-4 4 4"/><path d="M4.6 15.4v2.6a2 2 0 0 0 2 2h10.8a2 2 0 0 0 2-2v-2.6"/></svg>
             导入文件
@@ -236,17 +242,36 @@ window.STUDIO_BODY = `
     </div>
   </div>
 
+  <footer class="st-status" id="stStatus" aria-label="状态栏">
+    <span class="st-st-dot" aria-hidden="true"></span>
+    <span id="stStClips">0 片段</span>
+    <span class="st-st-sep" aria-hidden="true"></span>
+    <span id="stStSel">未选中</span>
+    <span class="st-st-sep" aria-hidden="true"></span>
+    <span id="stStTracks">4 轨道</span>
+    <span class="st-st-grow"></span>
+    <span id="stStTool">选择工具</span>
+    <span class="st-st-sep" aria-hidden="true"></span>
+    <span id="stStZoom">80 px/s</span>
+    <span class="st-st-sep" aria-hidden="true"></span>
+    <span id="stStDur2">00:00</span>
+  </footer>
+
   <input type="file" id="stProjFile" accept=".hfstudio,.json,application/json" aria-label="导入项目文件" hidden>
 
   <div class="st-modal hidden" id="stLibModal">
     <div class="st-modal-card wide" role="dialog" aria-modal="true" aria-label="从视频库添加">
       <div class="st-modal-h">
-        <b>从视频库添加</b>
+        <b>添加素材</b>
         <button type="button" class="st-modal-x" data-close="stLibModal" aria-label="关闭">×</button>
+      </div>
+      <div class="st-libtabs" role="tablist" aria-label="素材来源">
+        <button type="button" class="st-libtab on" data-libtab="media" role="tab" aria-selected="true">视频库</button>
+        <button type="button" class="st-libtab" data-libtab="asset" role="tab" aria-selected="false">图库</button>
       </div>
       <div class="st-modal-body">
         <div class="st-libsearch">
-          <input type="search" id="stLibSearch" placeholder="搜索视频库…" aria-label="搜索视频库">
+          <input type="search" id="stLibSearch" placeholder="搜索素材…" aria-label="搜索素材">
           <span class="st-mut" id="stLibCount"></span>
         </div>
         <div class="st-liblist" id="stLibList"></div>

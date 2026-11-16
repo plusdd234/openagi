@@ -843,7 +843,9 @@ async function main() {
   /* --only-peel：只跑「部位剥离 + P 组（front/back 两套级联）」，其余图全部复用。
    * 验证「原画像素直接当参考」对头发的影响时，不必重跑整套对照组。 */
   const ONLY_PEEL = process.argv.includes('--only-peel');
-  const REUSE = ONLY_CN || ONLY_PEEL;
+  const HYBRID_UV = process.argv.includes('--hybrid-uv');
+  const HYBRID = process.argv.includes('--hybrid') || HYBRID_UV;
+  const REUSE = ONLY_CN || ONLY_PEEL || HYBRID;
   const front = inputs.front;
   const CN_LINE = 'control_v11p_sd15_lineart_fp16.safetensors';
   const CN_DEPTH = 'control_v11f1p_sd15_depth_fp16.safetensors';
@@ -923,6 +925,62 @@ async function main() {
         ' head ' + c.m.regions.head.detail + ' feet ' + c.m.regions.feet.detail);
     }
     console.log('[pick] best ' + cand[0].seed + ' → gen/BEST_front.png');
+    await ops.close();
+    return;
+  }
+
+  /* ---------- --cn-refine：CN 二段精修 ----------
+   * 第一段 depth 1.0 出结构，第二段用同一张结果当初值、更低的 denoise 再采一次，
+   * 继续挂 depth CN（r35/r45），另加一组不挂 CN 的对照，确认细节增益来自 CN 还是
+   * 单纯多走一遍采样。 */
+  if (process.argv.includes('--cn-refine')) {
+    const pass1 = await gen(comfy.controlnet({
+      positive: POS, negative: NEG, image: front.depth, cnet: CN_DEPTH, strength: 1.0,
+      base: front.line, latent: true, denoise: 0.6, seed: SEED, prefix: prefix + '_RF1', w: PX, h: PX
+    }), 'RF_base');
+    const rfBase = comfy.pushInput(pass1.file, 'c3_' + runTag + '_rf_base.png');
+    const cfgs = [
+      ['r35', L => comfy.controlnet(Object.assign({
+        positive: POS, negative: NEG, image: front.depth, cnet: CN_DEPTH, strength: 1.0,
+        base: rfBase, latent: true, denoise: 0.35, seed: SEED, prefix: prefix + '_RF_r35', w: PX, h: PX
+      }, L))],
+      ['r45', L => comfy.controlnet(Object.assign({
+        positive: POS, negative: NEG, image: front.depth, cnet: CN_DEPTH, strength: 1.0,
+        base: rfBase, latent: true, denoise: 0.45, seed: SEED, prefix: prefix + '_RF_r45', w: PX, h: PX
+      }, L))],
+      ['r35_nocn', () => comfy.img2img({
+        positive: POS, negative: NEG, image: rfBase, denoise: 0.35, seed: SEED, prefix: prefix + '_RF_r35_nocn'
+      })]
+    ];
+    const lab = {
+      r0: pass1
+    };
+    for (const [name, make] of cfgs) lab[name] = await gen(make({}), 'RF_' + name);
+    await ops.load(Object.keys(lab).map(k => ({
+      name: 'RF_' + k, url: 'data:image/png;base64,' + fs.readFileSync(lab[k].file).toString('base64')
+    })));
+    const treeFront = manifest.tree.front;
+    const rows = {};
+    for (const k of Object.keys(lab)) {
+      rows[k] = await ops.measure('RF_' + k, 'in_front_mask', { x: 0, y: 0, w: PX, h: PX }, treeFront);
+      console.log('[refine] ' + k + ' iou ' + rows[k].iou + ' prec ' + rows[k].precision +
+        ' head ' + rows[k].regions.head.detail + ' torso ' + rows[k].regions.torso.detail +
+        ' feet ' + rows[k].regions.feet.detail);
+    }
+    /* 只把精修结果接进身体部件（躯干/胯/腿/脚），头部与轮廓保留第一段，
+     * 避免二段采样把外沿推出去、把头发抹平。 */
+    let cur = 'RF_r0';
+    for (const b of ['torso', 'hip', 'legs', 'feet']) {
+      const out = 'RF_masked_' + b;
+      await ops.compose(out, cur, 'RF_r35', { x: 0, y: 0, w: PX, h: PX }, 'pm_front_' + b, 2);
+      cur = out;
+    }
+    rows.r35_masked = await ops.measure(cur, 'in_front_mask', { x: 0, y: 0, w: PX, h: PX }, treeFront);
+    saveUrl(path.join(genDir, 'RF_r35_masked.png'), await ops.page.evaluate(n => window.BUF[n].toDataURL('image/png'), cur));
+    console.log('[refine] r35_masked iou ' + rows.r35_masked.iou + ' prec ' + rows.r35_masked.precision +
+      ' head ' + rows.r35_masked.regions.head.detail + ' torso ' + rows.r35_masked.regions.torso.detail +
+      ' feet ' + rows.r35_masked.regions.feet.detail);
+    fs.writeFileSync(path.join(RUN_DIR, 'cnrefine.json'), JSON.stringify({ seed: SEED, rows }, null, 2));
     await ops.close();
     return;
   }
@@ -1305,6 +1363,527 @@ async function main() {
     recon.bake.D = await bakeSheet('bake_D', dFiles);
   }
 
+  /* ---------- --hybrid：细节（depth CN + 二段）与配色（UV 语义底图回灌）解耦 ----------
+   * 每个视图：depth 1.0 → 0.35 二段（只接躯干/腿/脚）→ 用 flat_<v> 回灌色相 → 锁轮廓。
+   * 验证两件事：①细节是否保住 CND 的水平；②跨视角色差是否接近 D。 */
+  if (HYBRID) {
+    const Hfiles = {};
+    const Hraw = {};
+    const HsFiles = {};
+    const Hsraw = {};
+    const HhFiles = {};
+    const Hhraw = {};
+    const HlFiles = {};
+    const Hlraw = {};
+    for (const v of VIEWS) {
+      await flatBase(v);
+      /* 同 seed / 同参数下 p1p2 可复用，只调回灌口径时不必重采样 */
+      const p1Path = path.join(genDir, 'H_' + v + '_p1.png');
+      const p2Path = path.join(genDir, 'H_' + v + '_p2.png');
+      const p1 = fs.existsSync(p1Path) ? { file: p1Path, ms: 0 } : await gen(comfy.controlnet({
+        positive: POS, negative: NEG, image: inputs[v].depth, cnet: CN_DEPTH, strength: 1.0,
+        base: inputs[v].line, latent: true, denoise: 0.6, seed: SEED,
+        prefix: prefix + '_H1_' + v, w: PX, h: PX
+      }), 'H_' + v + '_p1');
+      const p1Name = comfy.pushInput(p1.file, 'c3_' + runTag + '_h1_' + v + '.png');
+      const p2 = fs.existsSync(p2Path) ? { file: p2Path, ms: 0 } : await gen(comfy.controlnet({
+        positive: POS, negative: NEG, image: inputs[v].depth, cnet: CN_DEPTH, strength: 1.0,
+        base: p1Name, latent: true, denoise: 0.35, seed: SEED,
+        prefix: prefix + '_H2_' + v, w: PX, h: PX
+      }), 'H_' + v + '_p2');
+      await ops.load([
+        { name: 'H1_' + v, url: 'data:image/png;base64,' + fs.readFileSync(p1.file).toString('base64') },
+        { name: 'H2_' + v, url: 'data:image/png;base64,' + fs.readFileSync(p2.file).toString('base64') }
+      ]);
+      let cur = 'H1_' + v;
+      for (const b of ['torso', 'hip', 'legs', 'feet']) {
+        const out = 'H_' + v + '_m_' + b;
+        await ops.compose(out, cur, 'H2_' + v, { x: 0, y: 0, w: PX, h: PX }, 'pm_' + v + '_' + b, 2);
+        cur = out;
+      }
+      /* 两种回灌口径，同一张生成图上直接对比：
+       *   mul  逐像素亮度比 × 底图色（早期 D 的口径，会压细节）
+       *   hsl  色相/饱和取底图、亮度取生成图（理论上保留全部亮度细节） */
+      const variants = await ops.page.evaluate(({ srcName, baseName, maskName, idName, tag }) => {
+        const S = 512;
+        const mk = (name) => {
+          const c = document.createElement('canvas');
+          c.width = c.height = S;
+          const g = c.getContext('2d');
+          g.drawImage(window.BUF[name], 0, 0, S, S);
+          return g.getImageData(0, 0, S, S).data;
+        };
+        const gen = mk(srcName), base = mk(baseName), m = mk(maskName);
+        const rgb2hsl = (r, g, b) => {
+          r /= 255; g /= 255; b /= 255;
+          const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+          let h = 0, s = 0;
+          const l = (mx + mn) / 2;
+          if (mx !== mn) {
+            const d = mx - mn;
+            s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+            h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+            h /= 6;
+          }
+          return [h, s, l];
+        };
+        const hsl2rgb = (h, s, l) => {
+          if (!s) return [l * 255, l * 255, l * 255];
+          const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+          const f = t => {
+            t = (t + 1) % 1;
+            if (t < 1 / 6) return p + (q - p) * 6 * t;
+            if (t < 1 / 2) return q;
+            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+            return p;
+          };
+          return [f(h + 1 / 3) * 255, f(h) * 255, f(h - 1 / 3) * 255];
+        };
+        const outs = {};
+        for (const mode of ['mul', 'hsl', 'hue']) {
+          const c = document.createElement('canvas');
+          c.width = c.height = S;
+          const g = c.getContext('2d');
+          const od = g.createImageData(S, S);
+          for (let i = 0; i < gen.length; i += 4) {
+            if (m[i] < 128) continue;
+            let rgb;
+            if (mode === 'mul') {
+              const lb = 0.299 * base[i] + 0.587 * base[i + 1] + 0.114 * base[i + 2];
+              const lg = 0.299 * gen[i] + 0.587 * gen[i + 1] + 0.114 * gen[i + 2];
+              const k = Math.max(0.55, Math.min(1.9, (lg + 8) / (Math.max(lb, 20) + 8)));
+              rgb = [base[i] * k, base[i + 1] * k, base[i + 2] * k];
+            } else {
+              const hb = rgb2hsl(base[i], base[i + 1], base[i + 2]);
+              const hg = rgb2hsl(gen[i], gen[i + 1], gen[i + 2]);
+              /* hsl：色相+饱和取底图；hue：只换色相，饱和与亮度都保留生成图（不洗白） */
+              rgb = mode === 'hsl' ? hsl2rgb(hb[0], hb[1], hg[2]) : hsl2rgb(hb[0], hg[1], hg[2]);
+            }
+            od.data[i] = Math.min(255, Math.round(rgb[0]));
+            od.data[i + 1] = Math.min(255, Math.round(rgb[1]));
+            od.data[i + 2] = Math.min(255, Math.round(rgb[2]));
+            od.data[i + 3] = 255;
+          }
+          g.putImageData(od, 0, 0);
+          const name = tag + '_' + mode;
+          window.BUF[name] = c;
+          /* 白底版本：给度量用，口径与 CN 组一致 */
+          const wc = document.createElement('canvas');
+          wc.width = wc.height = S;
+          const wg = wc.getContext('2d');
+          wg.fillStyle = '#fff';
+          wg.fillRect(0, 0, S, S);
+          wg.drawImage(c, 0, 0);
+          window.BUF[name + '_w'] = wc;
+          outs[mode] = { name, flat: name + '_w', url: c.toDataURL('image/png'), flatUrl: wc.toDataURL('image/png') };
+        }
+
+        /* lab：逐岛 Lab 色度均值迁移。亮度通道完全不动（细节原样保留），
+         * 只把每个岛的 a/b 平移到语义底图的 a/b——底图是纯色块，所以这等于
+         * 「整岛换色相/饱和，不换明暗」。 */
+        const rgb2lab = (r, g, b) => {
+          let R = r / 255, G = g / 255, B = b / 255;
+          R = R > 0.04045 ? Math.pow((R + 0.055) / 1.055, 2.4) : R / 12.92;
+          G = G > 0.04045 ? Math.pow((G + 0.055) / 1.055, 2.4) : G / 12.92;
+          B = B > 0.04045 ? Math.pow((B + 0.055) / 1.055, 2.4) : B / 12.92;
+          let X = (R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047;
+          let Y = R * 0.2126 + G * 0.7152 + B * 0.0722;
+          let Z = (R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883;
+          const f = t => t > 0.008856 ? Math.cbrt(t) : (7.787 * t + 16 / 116);
+          X = f(X); Y = f(Y); Z = f(Z);
+          return [116 * Y - 16, 500 * (X - Y), 200 * (Y - Z)];
+        };
+        const lab2rgb = (L, A, B) => {
+          const fy = (L + 16) / 116, fx = fy + A / 500, fz = fy - B / 200;
+          const inv = t => t * t * t > 0.008856 ? t * t * t : (t - 16 / 116) / 7.787;
+          const X = 0.95047 * inv(fx), Y = inv(fy), Z = 1.08883 * inv(fz);
+          let R = X * 3.2406 + Y * -1.5372 + Z * -0.4986;
+          let G = X * -0.9689 + Y * 1.8758 + Z * 0.0415;
+          let Bl = X * 0.0557 + Y * -0.204 + Z * 1.057;
+          const gam = c => 255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(Math.max(c, 0), 1 / 2.4) - 0.055);
+          return [gam(R), gam(G), gam(Bl)];
+        };
+        const idm = mk(idName);
+        const st = {};
+        for (let i = 0; i < gen.length; i += 4) {
+          if (m[i] < 128) continue;
+          const id = idm[i] | (idm[i + 1] << 8);
+          if (!id) continue;
+          const e = st[id] || (st[id] = { n: 0, ga: 0, gb: 0, ba: 0, bb: 0 });
+          const gl = rgb2lab(gen[i], gen[i + 1], gen[i + 2]);
+          const bl = rgb2lab(base[i], base[i + 1], base[i + 2]);
+          e.n++; e.ga += gl[1]; e.gb += gl[2]; e.ba += bl[1]; e.bb += bl[2];
+        }
+        for (const id of Object.keys(st)) {
+          const e = st[id];
+          e.ga /= e.n; e.gb /= e.n; e.ba /= e.n; e.bb /= e.n;
+        }
+        {
+          const c = document.createElement('canvas');
+          c.width = c.height = S;
+          const g = c.getContext('2d');
+          const od = g.createImageData(S, S);
+          for (let i = 0; i < gen.length; i += 4) {
+            if (m[i] < 128) continue;
+            const id = idm[i] | (idm[i + 1] << 8);
+            const e = st[id];
+            let rgb;
+            if (!e) rgb = [gen[i], gen[i + 1], gen[i + 2]];
+            else {
+              const gl = rgb2lab(gen[i], gen[i + 1], gen[i + 2]);
+              const dA = Math.max(-45, Math.min(45, e.ba - e.ga));
+              const dB = Math.max(-45, Math.min(45, e.bb - e.gb));
+              rgb = lab2rgb(gl[0], gl[1] + dA, gl[2] + dB);
+            }
+            od.data[i] = Math.max(0, Math.min(255, Math.round(rgb[0])));
+            od.data[i + 1] = Math.max(0, Math.min(255, Math.round(rgb[1])));
+            od.data[i + 2] = Math.max(0, Math.min(255, Math.round(rgb[2])));
+            od.data[i + 3] = 255;
+          }
+          g.putImageData(od, 0, 0);
+          const name = tag + '_lab';
+          window.BUF[name] = c;
+          const wc = document.createElement('canvas');
+          wc.width = wc.height = S;
+          const wg = wc.getContext('2d');
+          wg.fillStyle = '#fff';
+          wg.fillRect(0, 0, S, S);
+          wg.drawImage(c, 0, 0);
+          window.BUF[name + '_w'] = wc;
+          outs.lab = { name, flat: name + '_w', url: c.toDataURL('image/png'), flatUrl: wc.toDataURL('image/png') };
+        }
+        return outs;
+      }, { srcName: cur, baseName: 'flat_' + v, maskName: 'in_' + v + '_mask', idName: 'im_' + v, tag: 'H_' + v });
+      Hraw[v] = saveUrl(path.join(genDir, 'H_' + v + '_recolor.png'), variants.mul.url);
+      Hsraw[v] = saveUrl(path.join(genDir, 'H_' + v + '_hsl.png'), variants.hsl.url);
+      Hhraw[v] = saveUrl(path.join(genDir, 'H_' + v + '_hue.png'), variants.hue.url);
+      Hlraw[v] = saveUrl(path.join(genDir, 'H_' + v + '_lab.png'), variants.lab.url);
+      for (const mode of ['mul', 'hsl', 'hue', 'lab']) {
+        const lockUrl = await ops.page.evaluate(({ srcName, maskName }) => {
+          const im = window.BUF[srcName];
+          const S = im.naturalWidth || im.width;
+          const c = document.createElement('canvas');
+          c.width = c.height = S;
+          const g = c.getContext('2d');
+          g.drawImage(im, 0, 0, S, S);
+          const ac = document.createElement('canvas');
+          ac.width = ac.height = S;
+          const ag = ac.getContext('2d');
+          ag.drawImage(window.BUF[maskName], 0, 0, S, S);
+          const id = ag.getImageData(0, 0, S, S);
+          for (let i = 0; i < id.data.length; i += 4) id.data[i + 3] = id.data[i];
+          ag.putImageData(id, 0, 0);
+          g.globalCompositeOperation = 'destination-in';
+          g.drawImage(ac, 0, 0);
+          return c.toDataURL('image/png');
+        }, { srcName: variants[mode].name, maskName: 'in_' + v + '_mask' });
+        const suffix = mode === 'mul' ? 'final' : mode + '_final';
+        const out = saveUrl(path.join(genDir, 'H_' + v + '_' + suffix + '.png'), lockUrl);
+        if (mode === 'mul') Hfiles[v] = out;
+        else if (mode === 'hsl') HsFiles[v] = out;
+        else if (mode === 'hue') HhFiles[v] = out;
+        else HlFiles[v] = out;
+      }
+    }
+
+    const mrect = { x: 0, y: 0, w: PX, h: PX };
+    recon.metrics.H = await ops.measure('H_front_mul_w', 'in_front_mask', mrect, manifest.tree.front);
+    recon.metrics.Hhsl = await ops.measure('H_front_hsl_w', 'in_front_mask', mrect, manifest.tree.front);
+    recon.metrics.Hhue = await ops.measure('H_front_hue_w', 'in_front_mask', mrect, manifest.tree.front);
+    recon.metrics.Hlab = await ops.measure('H_front_lab_w', 'in_front_mask', mrect, manifest.tree.front);
+    recon.conditions.H = {
+      file: 'gen/H_front_final.png', raw: 'gen/H_front_recolor.png',
+      desc: '解耦：depth 1.0 + 0.35 二段（只接躯干/腿/脚）+ 亮度比回灌 + 锁轮廓'
+    };
+    recon.conditions.Hhsl = {
+      file: 'gen/H_front_hsl_final.png', raw: 'gen/H_front_hsl.png',
+      desc: '同上，但回灌只取底图色相/饱和，亮度保留生成图（保留细节）'
+    };
+    recon.conditions.Hhue = {
+      file: 'gen/H_front_hue_final.png', raw: 'gen/H_front_hue.png',
+      desc: '同上，但只换色相，饱和与亮度全部保留生成图'
+    };
+    recon.conditions.Hlab = {
+      file: 'gen/H_front_lab_final.png', raw: 'gen/H_front_lab.png',
+      desc: '逐岛 Lab 色度均值迁移：亮度不动，a/b 平移到语义底图'
+    };
+
+    /* 跨视角色差：每个 UV 岛在可见视图里的均值色，取两两最大 Lab 距离再平均 */
+    const sets = { BL: {}, D: {}, H: {}, Hhsl: {}, Hhue: {}, Hlab: {} };
+    for (const v of VIEWS) {
+      const files = {
+        BL: v === 'front' ? BL.file : path.join(genDir, 'BL_' + v + '.png'),
+        D: path.join(genDir, 'D_' + v + '_recolor.png'),
+        H: Hraw[v],
+        Hhsl: Hsraw[v],
+        Hhue: Hhraw[v],
+        Hlab: Hlraw[v]
+      };
+      for (const k of Object.keys(files)) {
+        if (!fs.existsSync(files[k])) continue;
+        const nm = 'DE_' + k + '_' + v;
+        await ops.load([{ name: nm, url: 'data:image/png;base64,' + fs.readFileSync(files[k]).toString('base64') }]);
+        sets[k][v] = nm;
+      }
+    }
+    recon.de = await ops.page.evaluate(({ views, sets }) => {
+      const S = 512;
+      const grab = name => {
+        const c = document.createElement('canvas');
+        c.width = c.height = S;
+        const g = c.getContext('2d');
+        g.drawImage(window.BUF[name], 0, 0, S, S);
+        return g.getImageData(0, 0, S, S).data;
+      };
+      const lab = (r, g, b) => {
+        let R = r / 255, G = g / 255, B = b / 255;
+        R = R > 0.04045 ? Math.pow((R + 0.055) / 1.055, 2.4) : R / 12.92;
+        G = G > 0.04045 ? Math.pow((G + 0.055) / 1.055, 2.4) : G / 12.92;
+        B = B > 0.04045 ? Math.pow((B + 0.055) / 1.055, 2.4) : B / 12.92;
+        let X = (R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047;
+        let Y = R * 0.2126 + G * 0.7152 + B * 0.0722;
+        let Z = (R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883;
+        const f = t => t > 0.008856 ? Math.cbrt(t) : (7.787 * t + 16 / 116);
+        X = f(X); Y = f(Y); Z = f(Z);
+        return [116 * Y - 16, 500 * (X - Y), 200 * (Y - Z)];
+      };
+      const out = {};
+      for (const k of Object.keys(sets)) {
+        const per = {};
+        for (const v of views) {
+          if (!sets[k][v]) continue;
+          const d = grab(sets[k][v]), idm = grab('im_' + v);
+          const acc = {};
+          for (let i = 0; i < d.length; i += 4) {
+            if (d[i + 3] < 200) continue;
+            const id = idm[i] | (idm[i + 1] << 8);
+            if (!id) continue;
+            const e = acc[id] || (acc[id] = { r: 0, g: 0, b: 0, n: 0 });
+            e.r += d[i]; e.g += d[i + 1]; e.b += d[i + 2]; e.n++;
+          }
+          const m = {};
+          for (const id of Object.keys(acc)) {
+            const e = acc[id];
+            if (e.n < 40) continue;
+            m[id] = lab(e.r / e.n, e.g / e.n, e.b / e.n);
+          }
+          per[v] = m;
+        }
+        const ids = new Set();
+        for (const v of Object.keys(per)) for (const id of Object.keys(per[v])) ids.add(id);
+        let sum = 0, n = 0;
+        for (const id of ids) {
+          const pts = [];
+          for (const v of Object.keys(per)) if (per[v][id]) pts.push(per[v][id]);
+          if (pts.length < 2) continue;
+          let mx = 0;
+          for (let i = 0; i < pts.length; i++) {
+            for (let j = i + 1; j < pts.length; j++) {
+              const dE = Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1], pts[i][2] - pts[j][2]);
+              if (dE > mx) mx = dE;
+            }
+          }
+          sum += mx; n++;
+        }
+        out[k] = { deltaE: n ? +(sum / n).toFixed(2) : null, ids: n };
+      }
+      return out;
+    }, { views: VIEWS, sets });
+
+    recon.bake = recon.bake || {};
+    recon.bake.H = await bakeSheet('bake_H', Hfiles);
+    recon.bake.H2 = await bakeSheet('bake_H2', HsFiles);
+    recon.bake.H3 = await bakeSheet('bake_H3', HhFiles);
+    recon.bake.H4 = await bakeSheet('bake_H4', HlFiles);
+    console.log('[hybrid] H ' + JSON.stringify(recon.metrics.H));
+    console.log('[hybrid] Hhsl ' + JSON.stringify(recon.metrics.Hhsl));
+    console.log('[hybrid] Hhue ' + JSON.stringify(recon.metrics.Hhue));
+    console.log('[hybrid] Hlab ' + JSON.stringify(recon.metrics.Hlab));
+    console.log('[hybrid] ΔE ' + JSON.stringify(recon.de));
+  }
+
+  /* ---------- --hybrid-uv：把 CNUD 的第二路借给数字指标最好的两组 ----------
+   *   CNUD100：depth 1.0 + UV 0.5 单 pass（对应 d100 的强化版）
+   *   HU：CNUD100 + 0.35 二段 + 亮度比回灌 + 锁轮廓（对应 H 的强化版）
+   * 只做 mul 一种回灌，因为 §5.10 已排除 hsl/hue/lab。 */
+  if (HYBRID_UV) {
+    const Hufiles = {};
+    const Hurec = {};
+    const rect = { x: 0, y: 0, w: PX, h: PX };
+    for (const v of VIEWS) {
+      await flatBase(v);
+      const seam = await uvSeam(v);
+      const seamName = comfy.pushInput(seam.file, 'c3_' + runTag + '_huv_' + v + '.png');
+      const p1Path = path.join(genDir, 'HU_' + v + '_p1.png');
+      const p2Path = path.join(genDir, 'HU_' + v + '_p2.png');
+      const p1 = fs.existsSync(p1Path) ? { file: p1Path, ms: 0 } : await gen(comfy.controlnet({
+        positive: POS, negative: NEG, image: inputs[v].depth, cnet: CN_DEPTH, strength: 1.0,
+        image2: seamName, cnet2: CN_LINE, strength2: 0.5,
+        base: inputs[v].line, latent: true, denoise: 0.6, seed: SEED,
+        prefix: prefix + '_HU1_' + v, w: PX, h: PX
+      }), 'HU_' + v + '_p1');
+      const p1Name = comfy.pushInput(p1.file, 'c3_' + runTag + '_hu1_' + v + '.png');
+      const p2 = fs.existsSync(p2Path) ? { file: p2Path, ms: 0 } : await gen(comfy.controlnet({
+        positive: POS, negative: NEG, image: inputs[v].depth, cnet: CN_DEPTH, strength: 1.0,
+        image2: seamName, cnet2: CN_LINE, strength2: 0.5,
+        base: p1Name, latent: true, denoise: 0.35, seed: SEED,
+        prefix: prefix + '_HU2_' + v, w: PX, h: PX
+      }), 'HU_' + v + '_p2');
+      await ops.load([
+        { name: 'HU1_' + v, url: 'data:image/png;base64,' + fs.readFileSync(p1.file).toString('base64') },
+        { name: 'HU2_' + v, url: 'data:image/png;base64,' + fs.readFileSync(p2.file).toString('base64') }
+      ]);
+      let cur = 'HU1_' + v;
+      for (const b of ['torso', 'hip', 'legs', 'feet']) {
+        const out = 'HU_' + v + '_m_' + b;
+        await ops.compose(out, cur, 'HU2_' + v, rect, 'pm_' + v + '_' + b, 2);
+        cur = out;
+      }
+      const recUrl = await ops.page.evaluate(({ srcName, baseName, maskName, outName }) => {
+        const S = 512;
+        const mk = name => {
+          const c = document.createElement('canvas');
+          c.width = c.height = S;
+          const g = c.getContext('2d');
+          g.drawImage(window.BUF[name], 0, 0, S, S);
+          return g.getImageData(0, 0, S, S).data;
+        };
+        const gen = mk(srcName), base = mk(baseName), m = mk(maskName);
+        const c = document.createElement('canvas');
+        c.width = c.height = S;
+        const g = c.getContext('2d');
+        const od = g.createImageData(S, S);
+        for (let i = 0; i < gen.length; i += 4) {
+          if (m[i] < 128) continue;
+          const lb = 0.299 * base[i] + 0.587 * base[i + 1] + 0.114 * base[i + 2];
+          const lg = 0.299 * gen[i] + 0.587 * gen[i + 1] + 0.114 * gen[i + 2];
+          const k = Math.max(0.55, Math.min(1.9, (lg + 8) / (Math.max(lb, 20) + 8)));
+          for (let ch = 0; ch < 3; ch++) od.data[i + ch] = Math.min(255, Math.round(base[i + ch] * k));
+          od.data[i + 3] = 255;
+        }
+        g.putImageData(od, 0, 0);
+        const wc = document.createElement('canvas');
+        wc.width = wc.height = S;
+        const wg = wc.getContext('2d');
+        wg.fillStyle = '#fff';
+        wg.fillRect(0, 0, S, S);
+        wg.drawImage(c, 0, 0);
+        window.BUF[outName.replace(/_w$/, '')] = c;
+        window.BUF[outName] = wc;
+        return { url: c.toDataURL('image/png'), flatUrl: wc.toDataURL('image/png') };
+      }, { srcName: cur, baseName: 'flat_' + v, maskName: 'in_' + v + '_mask', outName: 'HU_' + v + '_mul_w' });
+      Hurec[v] = saveUrl(path.join(genDir, 'HU_' + v + '_recolor.png'), recUrl.url);
+      const lockUrl = await ops.page.evaluate(({ srcName, maskName }) => {
+        const im = window.BUF[srcName];
+        const S = im.naturalWidth || im.width;
+        const c = document.createElement('canvas');
+        c.width = c.height = S;
+        const g = c.getContext('2d');
+        g.drawImage(im, 0, 0, S, S);
+        const ac = document.createElement('canvas');
+        ac.width = ac.height = S;
+        const ag = ac.getContext('2d');
+        ag.drawImage(window.BUF[maskName], 0, 0, S, S);
+        const id = ag.getImageData(0, 0, S, S);
+        for (let i = 0; i < id.data.length; i += 4) id.data[i + 3] = id.data[i];
+        ag.putImageData(id, 0, 0);
+        g.globalCompositeOperation = 'destination-in';
+        g.drawImage(ac, 0, 0);
+        return c.toDataURL('image/png');
+      }, { srcName: 'HU_' + v + '_mul', maskName: 'in_' + v + '_mask' });
+      Hufiles[v] = saveUrl(path.join(genDir, 'HU_' + v + '_final.png'), lockUrl);
+    }
+
+    const mrect = { x: 0, y: 0, w: PX, h: PX };
+    recon.metrics.CNUD100 = await ops.measure('HU1_front', 'in_front_mask', mrect, manifest.tree.front);
+    recon.metrics.HU = await ops.measure('HU_front_mul_w', 'in_front_mask', mrect, manifest.tree.front);
+    recon.conditions.CNUD100 = {
+      file: 'gen/HU_front_p1.png',
+      desc: 'depth 1.0 + UV 语义硬轮廓 0.5，单 pass（d100 的 CNUD 化）'
+    };
+    recon.conditions.HU = {
+      file: 'gen/HU_front_final.png', raw: 'gen/HU_front_recolor.png',
+      desc: 'CNUD100 + 0.35 二段（只接躯干/腿/脚）+ 亮度比回灌 + 锁轮廓'
+    };
+
+    /* HU 的跨视角色差（其余组的 ΔE 已在 gen.json 里，直接对比） */
+    const usets = { HU: {} };
+    for (const v of VIEWS) {
+      const nm = 'DE_HU_' + v;
+      await ops.load([{ name: nm, url: 'data:image/png;base64,' + fs.readFileSync(Hurec[v]).toString('base64') }]);
+      usets.HU[v] = nm;
+    }
+    const deHU = await ops.page.evaluate(({ views, sets }) => {
+      const S = 512;
+      const grab = name => {
+        const c = document.createElement('canvas');
+        c.width = c.height = S;
+        const g = c.getContext('2d');
+        g.drawImage(window.BUF[name], 0, 0, S, S);
+        return g.getImageData(0, 0, S, S).data;
+      };
+      const lab = (r, g, b) => {
+        let R = r / 255, G = g / 255, B = b / 255;
+        R = R > 0.04045 ? Math.pow((R + 0.055) / 1.055, 2.4) : R / 12.92;
+        G = G > 0.04045 ? Math.pow((G + 0.055) / 1.055, 2.4) : G / 12.92;
+        B = B > 0.04045 ? Math.pow((B + 0.055) / 1.055, 2.4) : B / 12.92;
+        let X = (R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047;
+        let Y = R * 0.2126 + G * 0.7152 + B * 0.0722;
+        let Z = (R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883;
+        const f = t => t > 0.008856 ? Math.cbrt(t) : (7.787 * t + 16 / 116);
+        X = f(X); Y = f(Y); Z = f(Z);
+        return [116 * Y - 16, 500 * (X - Y), 200 * (Y - Z)];
+      };
+      const out = {};
+      for (const k of Object.keys(sets)) {
+        const per = {};
+        for (const v of views) {
+          if (!sets[k][v]) continue;
+          const d = grab(sets[k][v]), idm = grab('im_' + v);
+          const acc = {};
+          for (let i = 0; i < d.length; i += 4) {
+            if (d[i + 3] < 200) continue;
+            const id = idm[i] | (idm[i + 1] << 8);
+            if (!id) continue;
+            const e = acc[id] || (acc[id] = { r: 0, g: 0, b: 0, n: 0 });
+            e.r += d[i]; e.g += d[i + 1]; e.b += d[i + 2]; e.n++;
+          }
+          const m = {};
+          for (const id of Object.keys(acc)) {
+            const e = acc[id];
+            if (e.n < 40) continue;
+            m[id] = lab(e.r / e.n, e.g / e.n, e.b / e.n);
+          }
+          per[v] = m;
+        }
+        const ids = new Set();
+        for (const v of Object.keys(per)) for (const id of Object.keys(per[v])) ids.add(id);
+        let sum = 0, n = 0;
+        for (const id of ids) {
+          const pts = [];
+          for (const v of Object.keys(per)) if (per[v][id]) pts.push(per[v][id]);
+          if (pts.length < 2) continue;
+          let mx = 0;
+          for (let i = 0; i < pts.length; i++) {
+            for (let j = i + 1; j < pts.length; j++) {
+              const dE = Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1], pts[i][2] - pts[j][2]);
+              if (dE > mx) mx = dE;
+            }
+          }
+          sum += mx; n++;
+        }
+        out[k] = { deltaE: n ? +(sum / n).toFixed(2) : null, ids: n };
+      }
+      return out;
+    }, { views: VIEWS, sets: usets });
+    recon.de = Object.assign({}, recon.de || {}, deHU);
+    recon.bake = recon.bake || {};
+    recon.bake.HU = await bakeSheet('bake_HU', Hufiles);
+    console.log('[hybrid-uv] CNUD100 ' + JSON.stringify(recon.metrics.CNUD100));
+    console.log('[hybrid-uv] HU ' + JSON.stringify(recon.metrics.HU));
+    console.log('[hybrid-uv] ΔE ' + JSON.stringify(recon.de));
+  }
+
   const jsonFile = path.join(RUN_DIR, 'gen.json');
   if (ONLY_CN) {
     /* 只跑 CN 组时保留上一轮的对照组与反投结果，只替换度量与这两条条件 */
@@ -1325,6 +1904,31 @@ async function main() {
     fs.writeFileSync(jsonFile, JSON.stringify(old, null, 2));
     console.log('[metrics] P ' + JSON.stringify(metrics.P));
     console.log('[metrics] D ' + JSON.stringify(metrics.D));
+  } else if (HYBRID) {
+    /* 只补 H 组：保留旧指标、反投结果，追加 H 的条件 / 度量 / 跨视角色差 / 反投源 */
+    const old = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
+    old.metrics = recon.metrics;
+    old.conditions.H = recon.conditions.H;
+    old.conditions.Hhsl = recon.conditions.Hhsl;
+    old.conditions.Hhue = recon.conditions.Hhue;
+    old.conditions.Hlab = recon.conditions.Hlab;
+    if (recon.conditions.CNUD100) {
+      old.conditions.CNUD100 = recon.conditions.CNUD100;
+      old.conditions.HU = recon.conditions.HU;
+    }
+    old.de = recon.de;
+    const bakes = { H: recon.bake.H, H2: recon.bake.H2, H3: recon.bake.H3, H4: recon.bake.H4 };
+    if (recon.bake.HU) bakes.HU = recon.bake.HU;
+    old.bake = Object.assign(old.bake || {}, bakes);
+    fs.writeFileSync(jsonFile, JSON.stringify(old, null, 2));
+    console.log('[metrics] H ' + JSON.stringify(metrics.H));
+    console.log('[metrics] Hhsl ' + JSON.stringify(metrics.Hhsl));
+    console.log('[metrics] Hhue ' + JSON.stringify(metrics.Hhue));
+    console.log('[metrics] Hlab ' + JSON.stringify(metrics.Hlab));
+    if (metrics.CNUD100) {
+      console.log('[metrics] CNUD100 ' + JSON.stringify(metrics.CNUD100));
+      console.log('[metrics] HU ' + JSON.stringify(metrics.HU));
+    }
   } else {
     fs.writeFileSync(jsonFile, JSON.stringify(recon, null, 2));
     console.log('[metrics] ' + JSON.stringify(metrics));

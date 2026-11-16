@@ -112,6 +112,16 @@
         }
         polys.push(poly);
       }
+      /* UV 明显超出 0–1（平铺 / atlas）时岛多边形落在画布外，clip 会把整笔裁成空。
+       * 这种模型宁可不遮罩：先保证画得上，比「静默无反应」好。
+       * 容差 1%：接缝处的浮点误差仍按正常岛裁剪。 */
+      for (var q = 0; q < faces.length; q++) {
+        var f2 = faces[q], s2 = off[f2], e2 = off[f2 + 1];
+        for (var j = s2; j < e2; j++) {
+          var uu = uvs[j * 2], vv = uvs[j * 2 + 1];
+          if (uu < -0.01 || uu > 1.01 || vv < -0.01 || vv > 1.01) return [];
+        }
+      }
       return polys;
     }
 
@@ -158,7 +168,12 @@
     function paintEnsureTarget(slot) {
       var p = st.paint;
       paintClipRelease();
-      if (p.tex && p.doc === st.doc && p.slot === slot) return p.tex;
+      if (p.tex && p.doc === st.doc && p.slot === slot) {
+        /* 工作区还在，但材质上的 map 可能已经被别的路径换走（重建材质 / 混合模块
+         * 退回底座）。不重新挂一次，第二笔开始就会「画在没人看的画布上」。 */
+        if (ctx.applySlotTexture) p.applyMiss = !ctx.applySlotTexture(slot, p.tex);
+        return p.tex;
+      }
       paintCommit();
       var mats = (st.doc && st.doc.materials) || {};
       var url = (mats.slotMaps || [])[slot] || '';
@@ -168,26 +183,37 @@
        * 注意：无论取到哪张，它都是**未合成**的底座，笔迹写回 slotMaps 后
        * 混合层照旧叠在上面，不会双份。 */
       var img = null;
+      var baseImg = null, baseKey = '';
+      /* 底图统一问 TexSource（baked → slotMaps → 混合模块的解码缓存 → live）。
+       * baseImageFor 会带上混合模块解出来的缓存图；直接调 resolveBase 不传 cached 时，
+       * 只要 slotMaps 读不到就会返回 null —— 工作副本只剩槽底色，
+       * 视口先白一下、下一帧合成图再盖回来，就是用户看到的「绘制瞬间变白」。 */
+      if (ctx.baseImageFor) baseImg = ctx.baseImageFor(slot) || null;
+      if (baseImg) baseKey = 'cached';
+      if (!baseImg && global.TexSource) {
+        var r1 = global.TexSource.resolveBase(slot);
+        baseImg = r1.img || null;
+        if (baseImg) baseKey = r1.from + '|' + r1.url;
+      }
       /* 先看有没有编辑层（投射）：有的话底图必须是「已投射的样子」，
        * 否则用户画的时候看不到之前投上去的那几块，一落笔还会把它盖掉。 */
-      if (global.TexStack && global.TexStack.has(st.doc, slot)) {
-        if (global.TexSource) {
-          var r0 = global.TexSource.resolveBase(slot);
-          img = global.TexStack.edited(st.doc, slot, { base: r0.img, baseKey: r0.from + '|' + r0.url }) || null;
-        }
+      var hasStack = !!(global.TexStack && global.TexStack.has(st.doc, slot));
+      if (hasStack) {
+        img = global.TexStack.edited(st.doc, slot, { base: baseImg, baseKey: baseKey }) || null;
       }
-      if (!img && global.TexSource) {
-        img = global.TexSource.resolveBase(slot).img;
-      } else if (!global.TexSource) {
-        if (ctx.baseImageFor) img = ctx.baseImageFor(slot) || null;
-        if (!img && url) {
-          var t0 = sharedTexture(url);
-          if (t0 && t0.image && t0.image.width) img = t0.image;
-        }
-        if (!img && ctx.liveSlotImage) {
-          var lv = ctx.liveSlotImage(slot);
-          if (lv && (lv.width || lv.naturalWidth)) img = lv;
-        }
+      if (!img) img = baseImg;
+      /* 仍然没有底座：退回材质上正在显示的那张图（可能已经是合成图）。
+       * 它只当预览底 —— 提交的是独立的增量层，不会把合成图写回 slotMaps。
+       * 少这一步，工作副本会被槽底色填满，落笔瞬间就是一片白/灰。 */
+      if (!img && ctx.liveSlotImage) {
+        var lv0 = ctx.liveSlotImage(slot);
+        /* 跳过自己上一笔挂上去的工作副本（丢笔 / 撤销后材质上可能还挂着它），
+         * 否则预览会把已经不在栈里的旧笔迹再画一遍。 */
+        if (lv0 && lv0 !== p.lastCv && (lv0.width || lv0.naturalWidth)) img = lv0;
+      }
+      if (!img && url) {
+        var t9 = sharedTexture(url);
+        if (t9 && t9.image && t9.image.width) img = t9.image;
       }
       var w = PAINT_MAX, h = PAINT_MAX;
       if (img && img.width && img.height) {
@@ -210,11 +236,16 @@
       var ink = document.createElement('canvas');
       ink.width = w; ink.height = h;
       p.doc = st.doc; p.slot = slot; p.tex = tex; p.canvas = cv; p.ctx = c2;
+      p.lastCv = cv;
+      p.stampKey = ''; p.stampCv = null;
       p.ink = ink; p.inkCtx = ink.getContext('2d'); p.inkDirty = false; p.inkErase = false;
       /* 交给纹理混合模块决定材质上挂哪张图：
        * 有混合层就挂「基础画布 + 图层」的合成图，没有才直接挂这张画布。 */
       if (ctx.onPaintBase) ctx.onPaintBase(slot);
-      else if (ctx.applySlotTexture) ctx.applySlotTexture(slot, tex);
+      /* 合成是下一帧（rAF）才发生；没配置时甚至可能什么都不做。
+       * 这里同步把工作副本挂上去 —— 少这一下，有贴图的模型上落笔就是「画了没反应」。 */
+      var applied = ctx.applySlotTexture ? (ctx.applySlotTexture(slot, tex) | 0) : 0;
+      p.applyMiss = applied === 0;
       return tex;
     }
 
@@ -240,6 +271,7 @@
       var p = st.paint;
       p.tex = null; p.canvas = null; p.ctx = null;
       p.ink = null; p.inkCtx = null; p.inkDirty = false; p.inkErase = false;
+      p.lastCv = null; p.stampKey = ''; p.stampCv = null;
       p.slot = -1; p.doc = null;
     }
 
@@ -341,15 +373,68 @@
       if (ctx.onPaintReset) ctx.onPaintReset(patch.slot);
     }
 
-    function paintRgba(hex, a) {
-      var s = String(hex || '#d94f4f').replace('#', '');
-      if (s.length === 3) s = s[0] + s[0] + s[1] + s[1] + s[2] + s[2];
-      var n = parseInt(s, 16);
-      if (!isFinite(n)) n = 0xd94f4f;
-      return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+    /* 笔尖形状路径：圆 / 方 / 菱形 / 星形。自定义形状直接用图片的 alpha。 */
+    function paintShapePath(g, shape, cx, cy, rad) {
+      if (shape === 'square') { g.rect(cx - rad, cy - rad, rad * 2, rad * 2); return; }
+      if (shape === 'diamond') {
+        g.moveTo(cx, cy - rad); g.lineTo(cx + rad, cy);
+        g.lineTo(cx, cy + rad); g.lineTo(cx - rad, cy);
+        g.closePath(); return;
+      }
+      if (shape === 'star') {
+        var spikes = 5, inner = rad * 0.45;
+        for (var i = 0; i < spikes * 2; i++) {
+          var ang = -Math.PI / 2 + i * Math.PI / spikes;
+          var rr = (i % 2) ? inner : rad;
+          var X = cx + Math.cos(ang) * rr, Y = cy + Math.sin(ang) * rr;
+          if (i) g.lineTo(X, Y); else g.moveTo(X, Y);
+        }
+        g.closePath(); return;
+      }
+      g.arc(cx, cy, rad, 0, Math.PI * 2);
     }
 
-    /* 一笔 = 一串圆点：软笔用径向渐变，硬笔把渐变起点推到 88%，橡皮用 destination-out
+    /* 一次笔画内笔尖是常量：把「形状 + 软硬 + 尺寸 + 颜色 + 不透明度」烘成一张
+     * 小图章，落点只做 drawImage。比每个点重建径向渐变快，也是自定义笔刷
+     * （图片 alpha）能自然接进来的地方。 */
+    function paintStampFor(rad, a, erase) {
+      var p = st.paint;
+      var shape = p.shape || 'round';
+      var custom = shape === 'custom' ? p.customBrush : null;
+      var key = [p.brush, shape, rad.toFixed(2), a.toFixed(3), erase ? 'e' : p.color,
+        custom ? custom.rev : 0].join('|');
+      if (p.stampKey === key && p.stampCv) return p.stampCv;
+      var d = Math.ceil(rad * 2) + 2, c = d / 2;
+      var cv = document.createElement('canvas');
+      cv.width = d; cv.height = d;
+      var g = cv.getContext('2d');
+      var col = erase ? '0,0,0' : paintRgbaTriple(p.color);
+      if (custom && custom.img) {
+        g.globalAlpha = a;
+        g.drawImage(custom.img, c - rad, c - rad, rad * 2, rad * 2);
+        g.globalAlpha = 1;
+        if (!erase) {
+          /* source-in 把图片 alpha 染成当前笔刷色：保留轮廓与羽化，换色不换图 */
+          g.globalCompositeOperation = 'source-in';
+          g.fillStyle = 'rgb(' + col + ')';
+          g.fillRect(0, 0, d, d);
+        }
+      } else {
+        g.beginPath();
+        paintShapePath(g, shape, c, c, rad);
+        g.closePath();
+        var gd = g.createRadialGradient(c, c, p.brush === 'hard' ? rad * 0.9 : 0, c, c, rad);
+        gd.addColorStop(0, 'rgba(' + col + ',' + a + ')');
+        if (p.brush !== 'hard') gd.addColorStop(0.72, 'rgba(' + col + ',' + (a * 0.82) + ')');
+        gd.addColorStop(1, 'rgba(' + col + ',0)');
+        g.fillStyle = gd;
+        g.fill();
+      }
+      p.stampKey = key; p.stampCv = cv;
+      return cv;
+    }
+
+    /* 一笔 = 一串图章：软笔用径向渐变，硬笔边缘收窄，橡皮用 destination-out
      * 同一个点要落**两处**：
      *   p.ctx（预览画布）—— 立刻看得见，橡皮真的擦掉底座
      *   p.inkCtx（增量层）—— 透明底，橡皮画成黑印记、标记 mode:'erase'，
@@ -361,36 +446,19 @@
       var sc = Math.min(p.canvas.width, p.canvas.height) / PAINT_MAX;
       var rad = Math.max(1.5, p.size * 0.5 * sc);
       var erase = p.brush === 'erase';
-      var hard = p.brush === 'hard';
       var a = Math.max(0, Math.min(1, p.opacity / 100));
-      var g = c2.createRadialGradient(x, y, hard ? rad * 0.88 : 0, x, y, rad);
-      if (erase) {
-        g.addColorStop(0, 'rgba(0,0,0,' + a + ')');
-        g.addColorStop(1, 'rgba(0,0,0,0)');
-      } else {
-        g.addColorStop(0, paintRgba(p.color, a));
-        g.addColorStop(1, paintRgba(p.color, 0));
-      }
+      var stamp = paintStampFor(rad, a, erase);
+      var ox = x - stamp.width / 2, oy = y - stamp.height / 2;
       c2.save();
       c2.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
-      c2.fillStyle = g;
-      c2.beginPath();
-      c2.arc(x, y, rad, 0, Math.PI * 2);
-      c2.fill();
+      c2.drawImage(stamp, ox, oy);
       c2.restore();
-      /* 增量层：永远是 source-over（黑/本色都行，回放时只看 alpha） */
+      /* 增量层：同一张图章（颜色 / alpha 一致），回放时按 mode 选合成方式 */
       var ic = p.inkCtx;
       if (ic && p.inkDirty !== undefined) {
-        var g2 = ic.createRadialGradient(x, y, hard ? rad * 0.88 : 0, x, y, rad);
-        var col = erase ? '0,0,0' : paintRgbaTriple(p.color);
-        g2.addColorStop(0, 'rgba(' + col + ',' + a + ')');
-        g2.addColorStop(1, 'rgba(' + col + ',0)');
         ic.save();
         ic.globalCompositeOperation = 'source-over';
-        ic.fillStyle = g2;
-        ic.beginPath();
-        ic.arc(x, y, rad, 0, Math.PI * 2);
-        ic.fill();
+        ic.drawImage(stamp, ox, oy);
         ic.restore();
         p.inkDirty = true;
         if (erase) p.inkErase = true;
@@ -412,6 +480,10 @@
     function paintStampUV(u, v) {
       var p = st.paint;
       if (!p.canvas) return;
+      /* 导入模型的 UV 常超出 0–1（平铺 / atlas 偏移）。不折算的话笔刷落在画布外，
+       * 一个像素都写不进去，表现就是「有贴图的模型上画了没反应」。 */
+      u = u - Math.floor(u);
+      v = v - Math.floor(v);
       /* v 轴向上：UV v=0 对应画布底边（CanvasTexture 的 flipY 与文档贴图一致） */
       paintStampAt(u * p.canvas.width, (1 - v) * p.canvas.height);
     }
@@ -437,22 +509,56 @@
         setStatus('绘画：当前网格没有 UV，已自动生成默认展开');
       }
       var r = st.canvas.getBoundingClientRect();
-      var hit = paintRayHit(e.clientX - r.left, e.clientY - r.top);
+      var px = e.clientX - r.left, py = e.clientY - r.top;
+      var hit = paintRayHit(px, py);
+      /* 导入的多材质模型通常拆成多个节点，激活对象往往不是鼠标下那个：
+       * 这时射线只会打空、只提示「没点到模型」，看起来就是「有贴图模型上画了没反应」。
+       * 先问视口指针下面是哪个对象，命中别的对象就切过去再落笔。 */
+      if (!hit && ctx.nodeUnderPointer && ctx.activateNode) {
+        var nid = ctx.nodeUnderPointer(px, py);
+        if (nid && (!st.node || nid !== st.node.id) && ctx.activateNode(nid)) {
+          /* 换过去的对象可能还没 UV：先铺一层默认展开，再重算落点 */
+          if (st.mesh && (!st.mesh.uvs || !st.mesh.uvs.length)) {
+            SeedModel.Mesh.ensureUV(st.mesh);
+            SeedModel.Mesh.bump(st.mesh);
+            uvRefreshSolidGeometry();
+          }
+          hit = paintRayHit(px, py);
+        }
+      }
       if (!hit) { setStatus('绘画：这里没点到模型', true); return false; }
-      var tex = paintEnsureTarget(hit.slot);
+      /* 老资产里的 faceSlots 可能指向已经回收掉的槽（材质串通时代保存的文档）。
+       * 这类面在视口里没有材质，按原下标画会静默失败；夹回合法槽再落笔。 */
+      var slotN = Math.max(1, ((st.doc.materials && st.doc.materials.slotNames) || []).length);
+      /* 显式选定的材质槽优先：只写这一槽，跨到别的槽的面也不中断（见 move） */
+      var forced = ctx.forceSlot ? (ctx.forceSlot() | 0) : -1;
+      var slot = forced >= 0
+        ? Math.min(forced, slotN - 1)
+        : Math.max(0, Math.min(slotN - 1, hit.slot | 0));
+      var u0 = hit.u - Math.floor(hit.u), v0 = hit.v - Math.floor(hit.v);
+      var tex = paintEnsureTarget(slot);
       if (!tex) return false;
       /* 每一笔的增量图都是全新的：上一笔那张已经进栈了，不能复用 */
       var p = st.paint;
       paintEnsureInk(p.canvas.width, p.canvas.height);
       /* 工具箱的「纹理混合」跟着落笔的槽切换：用户画哪一槽就想调哪一槽 */
-      if (ctx.onPaintSlot) ctx.onPaintSlot(hit.slot);
+      if (ctx.onPaintSlot) ctx.onPaintSlot(slot);
       /* 岛遮罩：clip 在整笔期间有效，落笔的岛就是这一笔的可画范围 */
       paintClipBegin(hit.faceId);
       st.paint.stroke = {
-        slot: hit.slot, last: [hit.u, hit.v]
+        slot: slot, last: [u0, v0], forced: forced >= 0
       };
-      paintStampUV(hit.u, hit.v);
+      paintStampUV(u0, v0);
       st.pickDown = { x: e.clientX, y: e.clientY, paint: true };
+      /* 显式槽但当前对象根本没用这一槽 / 材质没挂上：先提示，
+       * 否则笔迹写进了看不见的地方，用户只会看到「画了没反应」。 */
+      if (forced >= 0 && ctx.slotFaceCount && !ctx.slotFaceCount(slot)) {
+        setStatus('绘画：当前对象没有用到「' + (ctx.slotName ? ctx.slotName(slot) : ('槽 ' + (slot + 1))) +
+          '」，笔迹不会显示在它身上', true);
+      } else if (p.applyMiss) {
+        setStatus('绘画：材质里找不到「' + (ctx.slotName ? ctx.slotName(slot) : ('槽 ' + (slot + 1))) +
+          '」这张贴图，笔迹暂不显示', true);
+      }
       return true;
     }
 
@@ -461,17 +567,27 @@
       if (!stroke || !st.mesh) return;
       var r = st.canvas.getBoundingClientRect();
       var hit = paintRayHit(e.clientX - r.left, e.clientY - r.top);
-      if (!hit || hit.slot !== stroke.slot) return;
+      /* 槽下标已经夹过（老资产的越界 faceSlots），续笔也按同一规则比 */
+      var slotN = Math.max(1, ((st.doc && st.doc.materials && st.doc.materials.slotNames) || []).length);
+      /* 显式槽：不管指头滑到哪一槽的面，都继续写进这一槽 */
+      var slot = stroke.forced
+        ? stroke.slot
+        : Math.max(0, Math.min(slotN - 1, hit ? (hit.slot | 0) : 0));
+      if (!hit || slot !== stroke.slot) return;
       var w = p.canvas.width, h = p.canvas.height;
-      var x0 = stroke.last[0] * w, y0 = (1 - stroke.last[1]) * h;
-      var x1 = hit.u * w, y1 = (1 - hit.v) * h;
-      var dist = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+      /* 在 UV 空间插值再逐点取模：UV 跨 0/1 接缝时，画布空间插值会绕整张贴图一圈。 */
+      var u0 = stroke.last[0], v0 = stroke.last[1];
+      var u1 = hit.u - Math.floor(hit.u), v1 = hit.v - Math.floor(hit.v);
+      var du = u1 - u0, dv = v1 - v0;
+      if (du > 0.5) du -= 1; else if (du < -0.5) du += 1;
+      if (dv > 0.5) dv -= 1; else if (dv < -0.5) dv += 1;
+      var dist = Math.sqrt(du * du * w * w + dv * dv * h * h);
       var step = Math.max(1.5, p.size * 0.22 * (Math.min(w, h) / PAINT_MAX));
       var n = Math.max(1, Math.min(400, Math.ceil(dist / step)));
       for (var i = 1; i <= n; i++) {
-        paintStampAt(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n);
+        paintStampUV(u0 + du * i / n, v0 + dv * i / n);
       }
-      stroke.last = [hit.u, hit.v];
+      stroke.last = [u1, v1];
     }
 
     function end() {
@@ -481,8 +597,10 @@
       paintClipRelease();
       /* paintCommit 内部记历史：一笔 = 一个 stroke 层 + 一条栈 diff */
       var recorded = paintCommit();
-      setStatus('绘画：笔画已写入贴图（保存后随 GLB 一起存' +
-        (recorded ? '，Ctrl+Z 可撤销这一笔' : '') + '）' +
+      var label = ctx.slotName ? ctx.slotName(stroke.slot) : ('槽 ' + (stroke.slot + 1));
+      setStatus('绘画：笔画已写入贴图「' + label + '」' +
+        (st.paint.applyMiss ? '（当前对象没有挂这个槽的材质，暂时看不到）' : '') +
+        (recorded ? '，Ctrl+Z 可撤销这一笔' : '') +
         (st.paint.mask ? '（UV 岛遮罩开）' : ''));
     }
 

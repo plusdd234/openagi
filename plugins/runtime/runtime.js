@@ -22,6 +22,9 @@ const TTS_DIR = process.env.TTS_DIR || '';
 /* Kokoro 共享模型与 sherpa 引擎的固定位置（由 electron/tts-store.js 落盘）。
  * 所有音色共用同一份模型，切换音色只改 --sid。 */
 const KOKORO_DIR = TTS_DIR ? path.join(TTS_DIR, 'kokoro') : '';
+const MELO_DIR = TTS_DIR ? path.join(TTS_DIR, 'melo') : '';
+const VITS_DIR = TTS_DIR ? path.join(TTS_DIR, 'vits-theresa') : '';
+const ZIPVOICE_DIR = TTS_DIR ? path.join(TTS_DIR, 'zipvoice') : '';
 const SHERPA_EXE = TTS_DIR ? path.join(TTS_DIR, 'sherpa', 'bin', 'sherpa-onnx-offline-tts.exe') : '';
 
 const CORS = {
@@ -123,11 +126,40 @@ function ttsStatus() {
     fs.existsSync(path.join(KOKORO_DIR, 'model.int8.onnx')) &&
     fs.existsSync(path.join(KOKORO_DIR, 'voices.bin')) &&
     fs.existsSync(path.join(KOKORO_DIR, 'tokens.txt')));
+  const meloReady = !!(SHERPA_EXE && fs.existsSync(SHERPA_EXE) &&
+    fs.existsSync(path.join(MELO_DIR, 'model.onnx')) &&
+    fs.existsSync(path.join(MELO_DIR, 'tokens.txt')) &&
+    fs.existsSync(path.join(MELO_DIR, 'lexicon.txt')));
+  /* 角色音色的 onnx 名字跟着模型走（theresa.onnx），只要有一个且词典齐就算就绪 */
+  let vitsReady = false;
+  try{
+    vitsReady = !!(SHERPA_EXE && fs.existsSync(SHERPA_EXE) &&
+      fs.readdirSync(VITS_DIR).some(f => /\.onnx$/i.test(f)) &&
+      fs.existsSync(path.join(VITS_DIR, 'tokens.txt')) &&
+      fs.existsSync(path.join(VITS_DIR, 'lexicon.txt')));
+  }catch(e){ vitsReady = false; }
+  const zipReady = !!(SHERPA_EXE && fs.existsSync(SHERPA_EXE) &&
+    fs.existsSync(path.join(ZIPVOICE_DIR, 'encoder.int8.onnx')) &&
+    fs.existsSync(path.join(ZIPVOICE_DIR, 'decoder.int8.onnx')) &&
+    fs.existsSync(path.join(ZIPVOICE_DIR, 'tokens.txt')) &&
+    fs.existsSync(path.join(ZIPVOICE_DIR, 'vocos_24khz.onnx')));
+  /* 克隆是否可用：模型之外还要有参考录音与参考文本，缺一样就明确告诉前端「还没录」 */
+  let cloneReady = false;
+  let refText = '';
+  try{
+    refText = fs.readFileSync(path.join(ZIPVOICE_DIR, 'ref.txt'), 'utf8').trim();
+    cloneReady = zipReady && fs.existsSync(path.join(ZIPVOICE_DIR, 'ref.wav')) && !!refText;
+  }catch(e){ cloneReady = false; }
   return {
     ok: !!(dir && fs.existsSync(exe)),
     engine: !!(dir && fs.existsSync(exe)),
     dir, voices,
-    kokoro: kokoroReady
+    kokoro: kokoroReady,
+    melo: meloReady,
+    vits: vitsReady,
+    zipvoice: zipReady,
+    clone: cloneReady,
+    refText: refText.slice(0, 200)
   };
 }
 
@@ -156,7 +188,11 @@ function speakTts(req, res) {
     const text = String(body.text || '').slice(0, 2000).trim();
     if (!text) { sendJson(res, 400, { error: '没有要朗读的文本' }); return; }
     /* engine 缺省按 piper：老版本前端只发 voice，不认这个字段 */
-    if (String(body.engine || 'piper') === 'kokoro') speakKokoro(res, body, text);
+    const engine = String(body.engine || 'piper');
+    if (engine === 'kokoro') speakKokoro(res, body, text);
+    else if (engine === 'melo') speakMelo(res, body, text);
+    else if (engine === 'vits') speakVits(res, body, text);
+    else if (engine === 'zipvoice') speakZipVoice(res, body, text);
     else speakPiper(res, body, text);
   });
 }
@@ -223,6 +259,129 @@ function speakKokoro(res, body, text) {
   /* cwd 必须是 exe 所在目录：sherpa 的 shared 包把 onnxruntime.dll 放在 exe 旁边，
    * 从别处启动会找不到 DLL。 */
   runTts(res, SHERPA_EXE, args, '', path.dirname(SHERPA_EXE), out, 60000);
+}
+
+/* MeloTTS zh_en（VITS）：单女声，中英混读更稳。
+ * 规则 fst 的命名各版本不完全一致（date.fst / date-zh.fst），所以按 *.fst 收集，
+ * 传空也不会让引擎报错。 */
+function speakMelo(res, body, text) {
+  if (!TTS_DIR || !SHERPA_EXE || !MELO_DIR) {
+    sendJson(res, 404, { error: 'MeloTTS 本地语音未启用：请用桌面端启动' });
+    return;
+  }
+  /* 官方包叫 model.onnx，量化包可能带 int8 后缀，两种都认 */
+  const model = ['model.onnx', 'model.int8.onnx']
+    .map(f => path.join(MELO_DIR, f)).filter(p => fs.existsSync(p))[0] || '';
+  const tokens = path.join(MELO_DIR, 'tokens.txt');
+  const lexicon = path.join(MELO_DIR, 'lexicon.txt');
+  if (!fs.existsSync(SHERPA_EXE)) { sendJson(res, 404, { error: 'MeloTTS 引擎未安装，请先在模型商店下载' }); return; }
+  if (!model || !fs.existsSync(tokens) || !fs.existsSync(lexicon)) {
+    sendJson(res, 404, { error: 'MeloTTS 模型不完整，请在模型商店重新下载' });
+    return;
+  }
+  const rate = Math.max(0.5, Math.min(2, Number(body.rate) || 1));
+  const scale = Math.round((1 / rate) * 100) / 100;
+  const out = path.join(os.tmpdir(), 'openagi-melo-' + process.pid + '-' + Date.now() + '.wav');
+  const threads = Math.max(1, Math.min(4, (os.cpus() || []).length || 2));
+  let fsts = '';
+  try{
+    fsts = fs.readdirSync(MELO_DIR).filter(f => /\.fst$/i.test(f)).sort()
+      .map(f => path.join(MELO_DIR, f)).join(',');
+  }catch(e){ fsts = ''; }
+  const args = [
+    '--vits-model=' + model,
+    '--vits-lexicon=' + lexicon,
+    '--vits-tokens=' + tokens,
+    '--vits-length-scale=' + scale,
+    '--num-threads=' + threads
+  ];
+  if (fsts) args.push('--tts-rule-fsts=' + fsts);
+  args.push('--output-filename=' + out, text);
+  runTts(res, SHERPA_EXE, args, '', path.dirname(SHERPA_EXE), out, 60000);
+}
+
+/* VITS 角色音色（社区模型）：onnx 文件名随模型变化，按目录里的 *.onnx 取；
+ * lexicon/tokens 必需，规则 fst（date/number/phone/heteronym）有则一起交给引擎。 */
+function speakVits(res, body, text) {
+  if (!TTS_DIR || !SHERPA_EXE || !VITS_DIR) {
+    sendJson(res, 404, { error: '角色音色未启用：请用桌面端启动' });
+    return;
+  }
+  if (!fs.existsSync(SHERPA_EXE)) { sendJson(res, 404, { error: '角色音色引擎未安装，请先在模型商店下载' }); return; }
+  let model = '';
+  try{
+    const f = fs.readdirSync(VITS_DIR).filter(n => /\.onnx$/i.test(n))[0];
+    model = f ? path.join(VITS_DIR, f) : '';
+  }catch(e){ model = ''; }
+  const tokens = path.join(VITS_DIR, 'tokens.txt');
+  const lexicon = path.join(VITS_DIR, 'lexicon.txt');
+  if (!model || !fs.existsSync(tokens) || !fs.existsSync(lexicon)) {
+    sendJson(res, 404, { error: '角色音色模型不完整，请在模型商店重新下载' });
+    return;
+  }
+  const rate = Math.max(0.5, Math.min(2, Number(body.rate) || 1));
+  const scale = Math.round((1 / rate) * 100) / 100;
+  const out = path.join(os.tmpdir(), 'openagi-vits-' + process.pid + '-' + Date.now() + '.wav');
+  const threads = Math.max(1, Math.min(4, (os.cpus() || []).length || 2));
+  let fsts = '';
+  try{
+    fsts = fs.readdirSync(VITS_DIR).filter(f => /\.fst$/i.test(f)).sort()
+      .map(f => path.join(VITS_DIR, f)).join(',');
+  }catch(e){ fsts = ''; }
+  const args = [
+    '--vits-model=' + model,
+    '--vits-lexicon=' + lexicon,
+    '--vits-tokens=' + tokens,
+    '--vits-length-scale=' + scale,
+    '--num-threads=' + threads
+  ];
+  if (fsts) args.push('--tts-rule-fsts=' + fsts);
+  args.push('--output-filename=' + out, text);
+  runTts(res, SHERPA_EXE, args, '', path.dirname(SHERPA_EXE), out, 60000);
+}
+
+/* ZipVoice 零样本克隆：参考音频与参考文本由设置页写入 zipvoice/ref.wav + ref.txt。
+ * num-steps 固定 4（distill 模型的推荐值），再大只是线性变慢。 */
+function speakZipVoice(res, body, text) {
+  if (!TTS_DIR || !SHERPA_EXE || !ZIPVOICE_DIR) {
+    sendJson(res, 404, { error: 'ZipVoice 声音克隆未启用：请用桌面端启动' });
+    return;
+  }
+  const enc = path.join(ZIPVOICE_DIR, 'encoder.int8.onnx');
+  const dec = path.join(ZIPVOICE_DIR, 'decoder.int8.onnx');
+  const tokens = path.join(ZIPVOICE_DIR, 'tokens.txt');
+  const vocoder = path.join(ZIPVOICE_DIR, 'vocos_24khz.onnx');
+  const ref = path.join(ZIPVOICE_DIR, 'ref.wav');
+  const refTxt = path.join(ZIPVOICE_DIR, 'ref.txt');
+  if (!fs.existsSync(SHERPA_EXE)) { sendJson(res, 404, { error: 'ZipVoice 引擎未安装，请先在模型商店下载' }); return; }
+  if (!fs.existsSync(enc) || !fs.existsSync(dec) || !fs.existsSync(tokens) || !fs.existsSync(vocoder)) {
+    sendJson(res, 404, { error: 'ZipVoice 模型不完整，请在模型商店重新下载' });
+    return;
+  }
+  let refText = '';
+  try{ refText = fs.readFileSync(refTxt, 'utf8').trim(); }catch(e){ refText = ''; }
+  if (!fs.existsSync(ref) || !refText) {
+    sendJson(res, 400, { error: '还没有参考录音：到「设置 → 语音合成 → 声音克隆」录一段 5-15 秒的 WAV，并填写录音里说的话' });
+    return;
+  }
+  const out = path.join(os.tmpdir(), 'openagi-zipvoice-' + process.pid + '-' + Date.now() + '.wav');
+  const threads = Math.max(1, Math.min(4, (os.cpus() || []).length || 2));
+  const lexicons = [path.join(ZIPVOICE_DIR, 'lexicon.txt'), path.join(ZIPVOICE_DIR, 'lexicon-en-us.txt')]
+    .filter(p => fs.existsSync(p)).join(',');
+  const args = [
+    '--zipvoice-encoder=' + enc,
+    '--zipvoice-decoder=' + dec,
+    '--zipvoice-tokens=' + tokens,
+    '--zipvoice-vocoder=' + vocoder,
+    '--zipvoice-lexicon=' + lexicons,
+    '--reference-audio=' + ref,
+    '--reference-text=' + refText,
+    '--num-steps=4',
+    '--num-threads=' + threads,
+    '--output-filename=' + out,
+    text
+  ];
+  runTts(res, SHERPA_EXE, args, '', path.dirname(SHERPA_EXE), out, 90000);
 }
 
 /* Piper / Kokoro 共用的子进程回收：超时、错误、非零退出都转成 JSON 错误，

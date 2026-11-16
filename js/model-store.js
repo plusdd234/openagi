@@ -27,7 +27,7 @@ const MS_KIND = {
   llm:    { label: '对话模型', hint: 'Ollama 本地推理 · 装完即用', ico: 'AI' },
   vision: { label: '识图 / 多模态', hint: '能读图片、截图、表格', ico: 'VL' },
   image:  { label: '生图模型', hint: 'ComfyUI 本地推理 · checkpoints', ico: 'IMG' },
-  tts:    { label: '语音合成', hint: '系统语音 + Piper / Kokoro 本地音色', ico: 'TTS' }
+  tts:    { label: '语音合成', hint: '系统语音 + Piper / Kokoro / MeloTTS / 角色音色 / 声音克隆', ico: 'TTS' }
 };
 
 const msState = {
@@ -38,12 +38,13 @@ const msState = {
   hw: null,
   ready: false,
   /* installed.llm 为 null 表示「还不知道」（引擎没跑），不能当成「没装」 */
-  /* kokoro 是共享模型：不按音色区分，装一次全部 Kokoro 音色可用 */
-  installed: { llm: null, image: null, tts: [], kokoro: false },
+  /* kokoro / melo / vits / zipvoice 都是共享模型：不按音色区分，装一次全部可用 */
+  installed: { llm: null, image: null, tts: [], kokoro: false, melo: false, vits: false, zipvoice: false, clone: false },
   progress: {},        // id -> { pct, msg, speed, etaMs, busy }
   error: {},           // id -> 文案
   notes: {},           // id -> 完成后的提示（如「下载中断，进度已保留」）
   previewId: '',       // 正在试听的语音条目
+  previewText: '',     // 语音测试的自定义文本（留空则用每张卡片的示例句）
   previewAudio: null,  // 本地语音试听的 Audio 实例（系统语音走 speechSynthesis）
   ttsItems: {},        // 本机语音生成的动态条目，id -> item
   voicesBound: false
@@ -147,9 +148,15 @@ function msTtsLocal(){
     ? catalogOf('tts').filter(m => m.engine !== 'system')
     : [];
 }
+/* 共享模型引擎：一份模型对应多只音色（或一份克隆能力），装一次全部可用 */
+function msSharedEngine(item){
+  return item && (item.engine === 'kokoro' || item.engine === 'melo' || item.engine === 'vits' || item.engine === 'zipvoice')
+    ? item.engine : '';
+}
 function msTtsLocalInstalled(item){
-  /* Kokoro 的「已安装」是共享模型的状态，不是单个音色文件 */
-  if(item.engine === 'kokoro') return !!msState.installed.kokoro;
+  /* 共享模型的「已安装」是模型本身的状态，不是单个音色文件 */
+  const shared = msSharedEngine(item);
+  if(shared) return !!msState.installed[shared];
   return Array.isArray(msState.installed.tts) && msState.installed.tts.indexOf(item.voiceFile) !== -1;
 }
 /* 动态系统音色的 id 与本地预设 id 都可能是 tts- 开头，启用值用前缀区分，
@@ -159,7 +166,13 @@ function msPiperChoice(item){ return item ? ('piper:' + item.id) : ''; }
  * 渲染层换目录文案时 sid 不变，数字人那侧也只需要一个整数。 */
 function msKokoroChoice(item){ return item ? ('kokoro:' + item.sid) : ''; }
 function msLocalChoice(item){
-  return item && item.engine === 'kokoro' ? msKokoroChoice(item) : msPiperChoice(item);
+  if(!item) return '';
+  if(item.engine === 'kokoro') return msKokoroChoice(item);
+  /* MeloTTS 是单音色、ZipVoice 只有一套参考录音，值固定即可 */
+  if(item.engine === 'melo') return 'melo:zh_en';
+  if(item.engine === 'vits') return 'vits:theresa';
+  if(item.engine === 'zipvoice') return 'zipvoice:clone';
+  return msPiperChoice(item);
 }
 
 /* 语音条目是按本机语音动态生成的，不在静态目录里：
@@ -222,6 +235,12 @@ function msStopPreview(){
   msState.previewAudio = null;
   msState.previewId = '';
 }
+/* 试听文本：商店顶部的输入框可以填任意一句话，留空才用卡片自带的示例。
+ * 上限 80 字——Kokoro 是 CPU 实时率 1.5 倍左右，再长会顶到本地桥的 60s 超时。 */
+function msPreviewText(item){
+  const custom = String(msState.previewText || '').trim();
+  return (custom || item.sample || ('你好，我是' + item.name + '。')).slice(0, 80);
+}
 /* 本地语音试听：文本发给本地引擎桥，桥调 piper.exe / sherpa 合成 WAV 再回传。
  * 不走 speechSynthesis —— 这只音色本来就不在系统语音列表里。 */
 async function msPreviewLocal(item){
@@ -230,8 +249,11 @@ async function msPreviewLocal(item){
   const AudioCtor = (typeof window !== 'undefined' && window && typeof window.Audio === 'function') ? window.Audio
     : (typeof Audio === 'function' ? Audio : null);
   if(!base || !hasFetch || !AudioCtor) throw new Error('当前环境不支持本地语音试听（需要桌面端）');
-  const payload = { text: item.sample || ('你好，我是' + item.name + '。'), rate: 1 };
+  const payload = { text: msPreviewText(item), rate: 1 };
   if(item.engine === 'kokoro'){ payload.engine = 'kokoro'; payload.sid = item.sid; }
+  else if(item.engine === 'melo'){ payload.engine = 'melo'; }
+  else if(item.engine === 'vits'){ payload.engine = 'vits'; }
+  else if(item.engine === 'zipvoice'){ payload.engine = 'zipvoice'; }
   else { payload.voice = item.voiceFile; }
   const res = await fetch(base + '/tts/speak', {
     method: 'POST',
@@ -280,7 +302,7 @@ async function msPreview(item){
   const voice = msVoiceMatch(item);
   if(!ss || typeof ss.speak !== 'function' || typeof Utter !== 'function' || !voice) return;
   try{
-    const u = new Utter(item.sample || ('你好，我是' + item.name + '。'));
+    const u = new Utter(msPreviewText(item));
     u.voice = voice;
     u.lang = voice.lang || item.lang || 'zh-CN';
     u.rate = 1;
@@ -317,6 +339,28 @@ async function msRefreshInstalled(){
     try{
       const r = await d.storeKokoroStatus();
       msState.installed.kokoro = !!(r && r.ok && r.installed);
+    }catch(e){}
+  }
+  // MeloTTS：同一套引擎，模型独立
+  if(d && typeof d.storeMeloStatus === 'function'){
+    try{
+      const r = await d.storeMeloStatus();
+      msState.installed.melo = !!(r && r.ok && r.installed);
+    }catch(e){}
+  }
+  // 角色音色：与 MeloTTS 同一套引擎，模型独立
+  if(d && typeof d.storeVitsStatus === 'function'){
+    try{
+      const r = await d.storeVitsStatus();
+      msState.installed.vits = !!(r && r.ok && r.installed);
+    }catch(e){}
+  }
+  // ZipVoice：模型是否就绪，以及参考录音是否齐（cloneReady 才代表能直接朗读）
+  if(d && typeof d.storeZipvoiceStatus === 'function'){
+    try{
+      const r = await d.storeZipvoiceStatus();
+      msState.installed.zipvoice = !!(r && r.ok && r.installed);
+      msState.installed.clone = !!(r && r.ok && r.clone);
     }catch(e){}
   }
   // 语言模型：只有引擎在跑才问得到，问不到就保留上一次的结果（null = 未知）
@@ -412,7 +456,31 @@ function msSetProg(id, patch){
   const clean = {};
   for(const k in (patch || {})) if(patch[k] !== undefined) clean[k] = patch[k];
   msState.progress[id] = Object.assign(cur, clean);
-  msPaintThrottled();
+  /* 进度只重画对应的那张卡：整壳重建会把 .ms-body 的 scrollTop 清成 0，
+   * 下载时每个进度事件都来一次，用户就被反复拽回顶部。 */
+  msPatchCard(id);
+}
+
+/* 单卡重绘：找到 data-ms-card=<id> 的节点，用最新的 msCard() 替换掉它。
+ * 找不到（被筛选掉 / 无头测试的假 DOM）时安静返回，不触发整壳刷新。 */
+function msPatchCard(id){
+  if(typeof document === 'undefined' || typeof document.createElement !== 'function') return false;
+  const box = $('mcStore');
+  if(!box || typeof box.querySelectorAll !== 'function') return false;
+  const item = msFindItem(id);
+  if(!item) return false;
+  let el = null;
+  const cards = box.querySelectorAll('[data-ms-card]');
+  for(let i = 0; i < cards.length; i++){
+    if(cards[i].getAttribute && cards[i].getAttribute('data-ms-card') === String(id)){ el = cards[i]; break; }
+  }
+  if(!el || !el.parentNode) return false;
+  const holder = document.createElement('div');
+  holder.innerHTML = msCard(item);
+  const next = holder.firstChild;
+  if(!next) return false;
+  el.parentNode.replaceChild(next, el);
+  return true;
 }
 function msThrottle(){
   const now = Date.now();
@@ -478,23 +546,53 @@ async function msInstallImage(item){
   return true;
 }
 
+/* 共享语音模型的安装入口与展示名：三者都是「装一次，全部音色可用」 */
+const MS_SHARED_INSTALL = {
+  kokoro: { fn: 'storeInstallKokoro', label: 'Kokoro', hint: '正在下载 Kokoro 共享模型（约 160 MB）…' },
+  melo: { fn: 'storeInstallMelo', label: 'MeloTTS', hint: '正在下载 MeloTTS 中英混读模型（约 160 MB）…' },
+  vits: { fn: 'storeInstallVits', label: '角色音色', hint: '正在下载二次元角色音色（约 115 MB）…' },
+  zipvoice: { fn: 'storeInstallZipvoice', label: 'ZipVoice', hint: '正在下载 ZipVoice 克隆模型（约 160 MB）…' }
+};
+
+/* 卸载共享模型：入口、启用值前缀与确认文案。
+ * 删掉其中一份不会影响其它共享模型——主进程只有在没人用时才删 sherpa 引擎。 */
+const MS_SHARED_REMOVE = {
+  kokoro: {
+    fn: 'storeRemoveKokoro', prefix: 'kokoro:', label: 'Kokoro',
+    confirm: '删除 Kokoro 超自然语音模型（约 160 MB）？所有 Kokoro 音色都会不可用，之后要用需重新下载。'
+  },
+  melo: {
+    fn: 'storeRemoveMelo', prefix: 'melo:', label: 'MeloTTS',
+    confirm: '删除 MeloTTS 中英混读模型（约 160 MB）？删除后这只音色不可用，之后要用需重新下载。'
+  },
+  vits: {
+    fn: 'storeRemoveVits', prefix: 'vits:', label: '角色音色',
+    confirm: '删除二次元角色音色模型（约 115 MB）？删除后这只音色不可用，之后要用需重新下载。'
+  },
+  zipvoice: {
+    fn: 'storeRemoveZipvoice', prefix: 'zipvoice:', label: 'ZipVoice',
+    confirm: '删除 ZipVoice 克隆模型（约 160 MB）？模型与已录的参考音频都会删除，之后要重新下载并重录。'
+  }
+};
+
 /* 下载 Piper 语音权重（.onnx + .onnx.json）。主进程负责把 piper 引擎也补齐，
  * 渲染进程只关心「下完没有」，不重复实现下载与解压。 */
 async function msInstallTts(item){
   const d = msDesk();
   if(!d) throw new Error('本地语音需要桌面端才能下载');
   let r;
-  if(item.engine === 'kokoro'){
-    if(typeof d.storeInstallKokoro !== 'function') throw new Error('当前版本不支持 Kokoro 超自然语音');
-    msSetProg(item.id, { busy: true, pct: 0, msg: '正在下载 Kokoro 共享模型（约 160 MB）…' });
-    /* 带上卡片 id：主进程用它发进度事件，任务 key 仍然固定为共享的 kokoro */
+  const shared = msSharedEngine(item) ? MS_SHARED_INSTALL[item.engine] : null;
+  if(shared){
+    if(typeof d[shared.fn] !== 'function') throw new Error('当前版本不支持 ' + shared.label + ' 本地语音');
+    msSetProg(item.id, { busy: true, pct: 0, msg: shared.hint });
+    /* 带上卡片 id：主进程用它发进度事件，任务 key 仍然固定为共享的引擎名 */
     try{
-      r = await d.storeInstallKokoro({ id: item.id });
+      r = await d[shared.fn]({ id: item.id });
     }catch(err){
       /* 内容包热更新只换渲染层，主进程还是旧版本时 IPC 根本不存在。
        * 这时直接显示 "No handler registered" 会让人以为下载坏了，换成可执行的提示。 */
       if(/No handler registered/i.test(String((err && err.message) || err))){
-        throw new Error('Kokoro 需要重启桌面端后生效：请完全退出应用再重新打开');
+        throw new Error(shared.label + ' 需要重启桌面端后生效：请完全退出应用再重新打开');
       }
       throw err;
     }
@@ -571,8 +669,8 @@ async function msCancel(item){
   if(!d || typeof d.storeCancel !== 'function') return;
   const p = msProg(item.id);
   if(p) msSetProg(item.id, { msg: '正在取消…' });
-  /* 主进程把 Kokoro 的下载任务固定记在 'kokoro' 这个 key 下（共享模型只下一份） */
-  const key = item.engine === 'kokoro' ? 'kokoro' : item.id;
+  /* 主进程把共享模型的下载任务记在引擎名 key 下（一份模型只下一次） */
+  const key = msSharedEngine(item) || item.id;
   try{ await d.storeCancel(key); }catch(e){}
 }
 
@@ -607,20 +705,21 @@ async function msRemove(item){
   if(item.kind === 'tts'){
     if(msState.previewId === item.id) msStopPreview();
     if(item.engine !== 'system'){
-      /* Kokoro 是共享模型：删的是整份模型，不是这一只音色，文案必须说清楚，
-       * 否则用户会以为只删了当前音色、其他 Kokoro 还能用。 */
-      if(item.engine === 'kokoro'){
-        if(!confirm('删除 Kokoro 超自然语音模型（约 160 MB）？所有 Kokoro 音色都会不可用，之后要用需重新下载。')) return;
+      /* 共享模型：删的是整份模型，不是这一只音色，文案必须说清楚，
+       * 否则用户会以为只删了当前音色、其他音色还能用。 */
+      const sharedRemove = msSharedEngine(item) ? MS_SHARED_REMOVE[item.engine] : null;
+      if(sharedRemove){
+        if(!confirm(sharedRemove.confirm)) return;
         delete msState.error[item.id];
         delete msState.notes[item.id];
         try{
           const d = msDesk();
-          if(!d || typeof d.storeRemoveKokoro !== 'function') throw new Error('需通过桌面端删除');
-          const r = await d.storeRemoveKokoro();
+          if(!d || typeof d[sharedRemove.fn] !== 'function') throw new Error('需通过桌面端删除');
+          const r = await d[sharedRemove.fn]();
           if(!r || !r.ok) throw new Error((r && r.message) || '删除失败');
-          if(/^kokoro:/.test(msTtsChoice())) msTtsSetVoice('');
+          if(msTtsChoice().indexOf(sharedRemove.prefix) === 0) msTtsSetVoice('');
           await msRefreshInstalled();
-          if(typeof bpToast === 'function') bpToast('已删除 Kokoro 超自然语音模型');
+          if(typeof bpToast === 'function') bpToast('已删除 ' + sharedRemove.label + ' 共享模型');
         }catch(e){
           msState.error[item.id] = String((e && e.message) || e);
         }
@@ -684,8 +783,8 @@ async function msRemove(item){
 /* ---------- 渲染 ---------- */
 function msSizeText(item){
   if(item.kind === 'tts' && item.engine === 'system') return '无需下载';
-  /* Kokoro 的体积是「共享模型」总量：所有音色共用，避免误读成每只都要下 */
-  if(item.kind === 'tts' && item.engine === 'kokoro') return '共享 ' + msFmtGB(item.sizeGB);
+  /* 共享模型的体积是「共用总量」：避免误读成每只都要下 */
+  if(msSharedEngine(item)) return '共享 ' + msFmtGB(item.sizeGB);
   return msFmtGB(item.sizeGB);
 }
 
@@ -704,7 +803,7 @@ function msActionHtml(item, prog, installed, active){
       ? '<button type="button" class="btn sm" data-ms-act="preview" data-ms-id="' +
         msEsc(item.id) + '">' + (msState.previewId === item.id ? '停止' : '试听') + '</button>'
       : '';
-    const removeLabel = item.engine === 'kokoro' ? '卸载共享模型' : '卸载';
+    const removeLabel = msSharedEngine(item) ? '卸载共享模型' : '卸载';
     if(active){
       return '<span class="ms-on">已启用</span>' + preview +
         '<button type="button" class="btn sm" data-ms-act="remove" data-ms-id="' + msEsc(item.id) + '">' +
@@ -720,7 +819,7 @@ function msActionHtml(item, prog, installed, active){
     }
     return '<button type="button" class="btn sm primary" data-ms-act="install" data-ms-id="' +
       msEsc(item.id) + '">下载并启用 · ' +
-      (item.engine === 'kokoro' ? '共享 ' : '') + msEsc(msFmtGB(item.sizeGB)) + '</button>';
+      (msSharedEngine(item) ? '共享 ' : '') + msEsc(msFmtGB(item.sizeGB)) + '</button>';
   }
   if(prog && prog.busy){
     /* 生图模型动辄 2-7 GB，必须有取消入口；语言模型走 Ollama 的 /api/pull，
@@ -741,6 +840,23 @@ function msActionHtml(item, prog, installed, active){
   }
   return '<button type="button" class="btn sm primary" data-ms-act="install" data-ms-id="' +
     msEsc(item.id) + '">安装</button>';
+}
+
+/* 共享模型未下载时的说明：告诉用户「只下一次」，而不是以为每只音色都要重下 */
+function msSharedTip(item){
+  if(item.engine === 'kokoro'){
+    return '所有 Kokoro 音色共用同一份模型：首次下载约 160 MB，之后切换音色不再重复下载。';
+  }
+  if(item.engine === 'melo'){
+    return 'MeloTTS 只有一份共享模型：首次下载约 160 MB，与 Kokoro 共用本地引擎，不会重复下载引擎。';
+  }
+  if(item.engine === 'vits'){
+    return '角色音色只有一份共享模型：首次下载约 115 MB，与 Kokoro / MeloTTS 共用本地引擎，不会重复下载引擎。';
+  }
+  if(item.engine === 'zipvoice'){
+    return 'ZipVoice 一套模型对应一份参考录音：下载后到「设置 → 语音合成 → 声音克隆」录一段 5-15 秒的 WAV 并填写录音里说的话。';
+  }
+  return '';
 }
 
 function msCard(item){
@@ -767,9 +883,11 @@ function msCard(item){
 
   const ttsTip = (item.kind === 'tts' && item.engine === 'system' && !msVoiceMatch(item))
     ? '<div class="ms-tip-line">系统里没有这只音色：到 Windows「设置 → 时间和语言 → 语音」添加语音包，再点右上角「刷新语音」。</div>'
-    : (item.kind === 'tts' && item.engine === 'kokoro' && !installed
-      ? '<div class="ms-tip-line">所有 Kokoro 音色共用同一份模型：首次下载约 160 MB，之后切换音色不再重复下载。</div>'
-      : '');
+    : (item.kind === 'tts' && msSharedEngine(item) && !installed
+      ? '<div class="ms-tip-line">' + msEsc(msSharedTip(item)) + '</div>'
+      : (item.kind === 'tts' && item.engine === 'zipvoice' && installed && !msState.installed.clone
+        ? '<div class="ms-tip-line">模型已下载，但还没有参考录音：到「设置 → 语音合成 → 声音克隆」选择一段 5-15 秒的 WAV 并填写录音里说的话。</div>'
+        : ''));
 
   let progHtml = '';
   if(prog && (prog.busy || prog.msg)){
@@ -849,9 +967,19 @@ function msSection(kind){
     extra = msImageEngineHint();
   } else if(kind === 'tts'){
     extra = '<div class="ms-tip">上半部分是本机已经装好的系统语音，检测到几只就列几只，零下载、立即可用；' +
-      '带「下载」标记的是本地高级音色：Piper 是几十 MB 的单个权重，Kokoro 是约 126 MB 的共享超自然模型，' +
-      '都由 CPU 在本地合成，断网也能朗读。' +
-      '想用晓晓 / 云希等神经音色，到 Windows「设置 → 时间和语言 → 语音」安装对应语音包后点「刷新语音」。</div>';
+      '带「下载」标记的是本地高级音色：Piper 是几十 MB 的单个权重，Kokoro 是共享超自然模型，' +
+      'MeloTTS 强在中英混读，ZipVoice 用你自己的录音做声音克隆，角色音色偏二次元少女声。它们都由 CPU 在本地合成，断网也能朗读。' +
+      '想用晓晓 / 云希等神经音色，到 Windows「设置 → 时间和语言 → 语音」安装对应语音包后点「刷新语音」。</div>' +
+      /* 试听文本放在类目顶部而不是每张卡里：九只音色共用一个输入框，
+       * 换一句话就能横向对比音色，不用逐卡重复输入。 */
+      '<div class="ms-tts-test">' +
+        '<span class="ms-tts-test-lab">试听文本</span>' +
+        '<input id="msTtsText" class="ms-tts-test-in" type="text" maxlength="80" data-ms-ttstext ' +
+          'value="' + msEsc(msState.previewText) + '" ' +
+          'placeholder="留空则朗读每张卡片的示例句（最多 80 字）">' +
+        '<button type="button" class="btn sm" data-ms-act="tts-text-clear">清空</button>' +
+      '</div>' +
+      '<div class="ms-tip-line">点任意音色的「试听」都会用这段文本；数字人聊天仍按人设里选定的音色朗读。</div>';
   }
   return '<section class="ms-sec" data-ms-kind="' + kind + '">' +
     '<div class="ms-sec-head">' +
@@ -955,6 +1083,10 @@ function msEnginesHtml(){
   const piperN = msTtsLocal().filter(m => m.engine === 'piper' && msTtsLocalInstalled(m)).length;
   const kokoroN = msTtsLocal().filter(m => m.engine === 'kokoro').length;
   const kokoroOk = !!msState.installed.kokoro;
+  const meloOk = !!msState.installed.melo;
+  const vitsOk = !!msState.installed.vits;
+  const zipOk = !!msState.installed.zipvoice;
+  const cloneOk = !!msState.installed.clone;
   function row(name, ok, text){
     return '<div class="ms-engine-row"><span class="ms-engine-dot ' + (ok ? 'ok' : 'bad') + '"></span>' +
       name + '<span class="ms-engine-txt">' + text + '</span></div>';
@@ -963,7 +1095,10 @@ function msEnginesHtml(){
     row('ComfyUI', comfyOk, comfyOk ? '运行中' : '未运行') +
     row('系统语音', voiceN > 0, voiceN > 0 ? voiceN + ' 个音色' : '未检测到') +
     row('Piper 本地语音', piperN > 0, piperN > 0 ? piperN + ' 个音色' : '未下载') +
-    row('Kokoro 超自然语音', kokoroOk, kokoroOk ? kokoroN + ' 个音色可用' : '未下载');
+    row('Kokoro 超自然语音', kokoroOk, kokoroOk ? kokoroN + ' 个音色可用' : '未下载') +
+    row('MeloTTS 中英混读', meloOk, meloOk ? '就绪' : '未下载') +
+    row('角色音色（二次元）', vitsOk, vitsOk ? '就绪' : '未下载') +
+    row('ZipVoice 声音克隆', zipOk, zipOk ? (cloneOk ? '就绪' : '缺参考录音') : '未下载');
 }
 
 function msInstalledItems(){
@@ -1107,6 +1242,13 @@ function msOnStoreClick(e){
   if(!act) return;
   if(act === 'refresh'){ msRefreshAll(); return; }
   if(act === 'refresh-voices'){ msRefreshVoices(true); return; }
+  if(act === 'tts-text-clear'){
+    /* 只重置试听文本，不动任何音色配置 */
+    msState.previewText = '';
+    msStopPreview();
+    msPaintStore();
+    return;
+  }
   const item = msFindItem(el.dataset.msId);
   if(!item) return;
   if(act === 'install') msInstall(item, el);
@@ -1134,7 +1276,13 @@ function msOnStoreChange(e){
 
 function msOnStoreInput(e){
   const t = e && e.target;
-  if(!t || !t.dataset || t.dataset.msSearch === undefined) return;
+  if(!t || !t.dataset) return;
+  /* 试听文本只记状态、不重绘：输入框正在聚焦，重绘会把光标和输入法候选打断 */
+  if(t.dataset.msTtstext !== undefined){
+    msState.previewText = String(t.value || '').slice(0, 80);
+    return;
+  }
+  if(t.dataset.msSearch === undefined) return;
   msState.q = String(t.value || '');
   msPaintResults();
 }
@@ -1162,7 +1310,16 @@ function msPaintStore(){
   if(!box) return;
   msBindVoices();
   msBindStoreEvents(box);
+  /* 整壳重建会丢掉滚动位置。这里先记下再还回去，避免「刷新一下就被拽回顶部」。 */
+  const oldBody = (typeof box.querySelector === 'function') ? box.querySelector('.ms-body') : null;
+  const top = oldBody ? oldBody.scrollTop : 0;
+  const left = oldBody ? oldBody.scrollLeft : 0;
   box.innerHTML = msShellHtml();
+  const newBody = (typeof box.querySelector === 'function') ? box.querySelector('.ms-body') : null;
+  if(newBody){
+    newBody.scrollTop = top;
+    newBody.scrollLeft = left;
+  }
 }
 
 let msProgBound = false;

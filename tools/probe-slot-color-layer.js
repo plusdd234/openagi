@@ -220,6 +220,12 @@ const check = (name, ok, info) => {
   await clickText('✎ 绘制颜色');
   await page.waitForTimeout(700);
   check('新层没有继承锁定', (await paintText()).indexOf('未锁定') >= 0);
+  /* 新会话的笔色会回到默认值，先记下来：等下「吸管」必须吸回它 */
+  const fullInk = await page.evaluate(() => {
+    const w = document.querySelector('[data-mask-paint]');
+    const ci = w && w.querySelector('input[type=color]');
+    return ci ? ci.value.toLowerCase() : '';
+  });
   await clickText('铺满颜色');
   await page.waitForTimeout(300);
   await clickText('完成');
@@ -231,6 +237,32 @@ const check = (name, ok, info) => {
   check('未锁定时铺满整张贴图', !!s2 && s2.pct >= 99, s2 ? '不透明 ' + s2.pct + '%' : 'no png');
   check('现在是两层，第一层仍带 3 个岛', c2.count === 2 && c2.all[0].islands && c2.all[0].islands.length === 3,
     JSON.stringify(c2.all.map(l => ({ kind: l.kind, islands: l.islands }))));
+
+  console.log('=== 4b. 吸管吸「视口里显示的颜色」（不是被盖住的底层贴图）===');
+  await clickText('✎ 绘制颜色');
+  await page.waitForTimeout(700);
+  await clickText('吸管');
+  await page.waitForTimeout(150);
+  const c2p = await canvasCenter();
+  check('拿到视口 canvas 中心（4b）', !!c2p, JSON.stringify(c2p));
+  if (c2p) {
+    await page.mouse.click(c2p.x, c2p.y);
+    await page.waitForTimeout(300);
+    const picked2 = await page.evaluate(() => {
+      const w = document.querySelector('[data-mask-paint]');
+      const ci = w && w.querySelector('input[type=color]');
+      const m = document.body.innerText.match(/已吸取\s+(#[0-9a-fA-F]{6})/);
+      return { hex: m ? m[1] : '', color: ci ? ci.value : '' };
+    });
+    /* 上面这层是整张铺满的 fullInk，视口里看到的就是它；吸管必须吸到它，
+     * 而不是它下面那张模型自带贴图 —— 否则吸完再画就对不上色 */
+    check('吸到的是当前显示的颜色（铺满那层的笔色）',
+      !!fullInk && picked2.hex.toLowerCase() === fullInk, 'expect ' + fullInk + ' got ' + JSON.stringify(picked2));
+    check('笔色回写成合成后的颜色',
+      !!fullInk && picked2.color.toLowerCase() === fullInk, 'expect ' + fullInk + ' got ' + JSON.stringify(picked2));
+  }
+  await clickText('完成');
+  await page.waitForTimeout(1200);
 
   console.log('=== 5. 刷新还原 ===');
   await page.reload({ waitUntil: 'load' });

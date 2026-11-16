@@ -80,9 +80,21 @@
   }
 
   /* 窗口 = 首条任务 + 最近 keep 轮的 assistant(tool_calls) 与该轮 tool 结果。
-     更早轮次只在账本里留一行，不再逐条重发。 */
-  function buildWindow(history, state, customFacts, keepRounds) {
-    const base = history[0];
+     更早轮次只在账本里留一行，不再逐条重发。
+     stripAfter：首条任务里的位图只发前 N 轮。每轮都重发同一张图，
+     输入费用会随轮次线性涨；模型在命名阶段看过图之后，后面靠语义名与坐标就够。 */
+  function dropImages(msg) {
+    if (!msg || !Array.isArray(msg.content)) return msg;
+    const content = msg.content.map(function (p) {
+      if (!p || p.type !== 'image_url') return p;
+      return { type: 'text', text: '（位图只在首轮提供，这里不再重复发送；后续按语义名与坐标工作）' };
+    });
+    return Object.assign({}, msg, { content: content });
+  }
+
+  function buildWindow(history, state, customFacts, keepRounds, stripAfter) {
+    const strip = Number(stripAfter) > 0 && state.round >= Number(stripAfter);
+    const base = strip ? dropImages(history[0]) : history[0];
     const keep = Math.max(1, Math.min(4, Number(keepRounds) || 1));
     const marks = [];
     for (let i = history.length - 1; i >= 1; i--) {
@@ -167,11 +179,17 @@
       if (o.onRound) o.onRound({ phase: finalRound ? 'final' : 'request', round: round });
 
       const sendMsgs = (memoryOn && round > 0)
-        ? buildWindow(history, state, o.facts, o.keepRounds)
+        ? buildWindow(history, state, o.facts, o.keepRounds, o.stripImagesAfterRound)
         : history.slice();
 
       const reqOpts = { conn: o.conn, signal: o.signal, app: o.app || 'code' };
       if (!finalRound && roundTools.length) reqOpts.tools = roundTools;
+
+      /* 记账：本轮实际发出去的上下文字符数（图片按 base64 原样计入）。
+         不解析 token —— 各家中转的计数口径不一致，字符数至少是可比的。 */
+      state.requests = (state.requests || 0) + 1;
+      state.ctxChars = (state.ctxChars || 0) + String(o.sys || '').length +
+        JSON.stringify(sendMsgs).length + (reqOpts.tools ? JSON.stringify(reqOpts.tools).length : 0);
 
       const res = await global.llmStreamRequest(o.sys || '', sendMsgs, o.onDelta, reqOpts);
       // 没带 tools 时 llmStreamRequest 返回字符串；带 tools 时返回 { text, toolCalls }
@@ -184,6 +202,8 @@
           text: (typeof res === 'string' ? res : (res && res.text) || ''),
           rounds: round,
           calls: callsLog,
+          requests: state.requests,
+          ctxChars: state.ctxChars,
           memory: { ledger: state.ledger.slice(), negatives: state.negatives.slice() }
         };
       }
@@ -217,6 +237,8 @@
       rounds: maxRounds,
       calls: callsLog,
       exhausted: true,
+      requests: state.requests,
+      ctxChars: state.ctxChars,
       memory: { ledger: state.ledger.slice(), negatives: state.negatives.slice() }
     };
   }

@@ -3,7 +3,7 @@
  * 桌面 App「图像工坊」的全部界面：菜单、工具箱、选项栏、图层面板、历史、导航器、状态栏。
  * 像素逻辑在 ps-core / ps-filters / ps-tools，视口在 ps-view，这里只做装配与交互。
  *
- * 第一次打开会生成一张 1600×1000 的演示稿（渐变 + 金色光斑 + 标题），
+ * 第一次打开是一张 1600×1000 的空白画布（白色背景层），
  * 方便直接试笔刷、选区、滤镜；之后的导入会按图片尺寸新建文档。
  */
 (function (global) {
@@ -177,7 +177,15 @@
     keyBound: false
   };
 
-  /* ---------------- 演示稿 ---------------- */
+  /* ---------------- 空白画布 / 演示内容 ---------------- */
+  function buildBlank() {
+    var doc = PS.createDoc(1600, 1000, '未命名-1', { fill: '#ffffff' });
+    /* 默认背景层锁定：和 PS 一样，移动工具拖不动它 */
+    if (doc.layers[0]) doc.layers[0].locked = true;
+    return doc;
+  }
+
+  /* 演示内容只给探针和手动演示用，首次打开不再自动生成 */
   function buildDemo() {
     var doc = PS.createDoc(1600, 1000, '演示作品 · 1600 × 1000', { fill: false });
 
@@ -235,8 +243,8 @@
   var UI_KEY = 'ps.workspace.v3';
   var uiState = {
     tools: true, options: true, side: true, status: true,
-    /* 历史记录默认收起，把高度让给图层面板 */
-    cards: { hist: true, layers: false, nav: false },
+    /* 默认布局对齐参考图：历史记录收成标题条，导航器收起，图层占满右侧 */
+    cards: { hist: true, layers: false, nav: true },
     sideW: 312
   };
 
@@ -317,7 +325,7 @@
 
   function resetWorkspace() {
     uiState.tools = uiState.options = uiState.side = uiState.status = true;
-    uiState.cards = { hist: true, layers: false, nav: false };
+    uiState.cards = { hist: true, layers: false, nav: true };
     uiState.sideW = 312;
     saveUiState();
     applyUiState();
@@ -444,6 +452,10 @@
             '<span class="ps-engine-dot"></span><span class="ps-engine-chip">本地引擎 · 瓦片渲染</span>' +
           '</div>' +
         '</div>' +
+        '<div class="ps-options">' +
+          '<div class="ps-options-main" id="psOptions"></div>' +
+          '<div class="ps-options-ph" id="psOptPh"></div>' +
+        '</div>' +
         '<div class="ps-body">' +
           '<aside class="ps-toolbar" id="psToolbar">' +
             '<div class="ps-tools-scroll">' +
@@ -464,13 +476,9 @@
             '</div>' +
           '</aside>' +
           '<div class="ps-center">' +
-            '<div class="ps-options">' +
-              '<div class="ps-options-main" id="psOptions"></div>' +
-              '<div class="ps-options-ph" id="psOptPh"></div>' +
-            '</div>' +
             '<div class="ps-doctabs">' +
               '<button type="button" class="ps-doctab is-on" id="psDocTab" title="当前文档">' +
-                '<span id="psDocTabName">演示作品.psd</span>' +
+                '<span id="psDocTabName">未命名-1.psd</span>' +
                 '<i class="ps-doctab-x" title="关闭标签（占位控件）">×</i>' +
               '</button>' +
             '</div>' +
@@ -501,11 +509,11 @@
                 '<div class="ps-layer-props" id="psLayerProps"></div>' +
                 '<div class="ps-layer-list" id="psLayerList"></div>' +
                 '<div class="ps-layer-acts">' +
-                  '<button type="button" class="ps-mini" data-lay="add" title="新建图层">＋</button>' +
-                  '<button type="button" class="ps-mini" data-lay="dup" title="复制图层">⧉</button>' +
-                  '<button type="button" class="ps-mini" data-lay="adj" title="新建调整层">◐</button>' +
-                  '<button type="button" class="ps-mini" data-lay="merge" title="向下合并">⤓</button>' +
-                  '<button type="button" class="ps-mini" data-lay="del" title="删除图层">×</button>' +
+                  '<button type="button" class="ps-mini" data-lay="add" title="新建图层">' + ico('<rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="M12 8.5v7M8.5 12h7"/>') + '</button>' +
+                  '<button type="button" class="ps-mini" data-lay="dup" title="复制图层">' + ico('<rect x="8" y="8" width="11.5" height="11.5" rx="1.8"/><path d="M5.5 16V6.6a1.1 1.1 0 0 1 1.1-1.1H16"/>') + '</button>' +
+                  '<button type="button" class="ps-mini" data-lay="adj" title="新建调整层">' + ico('<circle cx="12" cy="12" r="7.6"/><path d="M12 4.4a7.6 7.6 0 0 1 0 15.2z" fill="currentColor" stroke="none"/>') + '</button>' +
+                  '<button type="button" class="ps-mini" data-lay="merge" title="向下合并">' + ico('<path d="M12 4.5v10.4"/><path d="m8 11.4 4 4 4-4"/><path d="M5 19.5h14"/>') + '</button>' +
+                  '<button type="button" class="ps-mini" data-lay="del" title="删除图层">' + ico('<path d="M5 7.5h14"/><path d="M9.6 7.5V5.7h4.8v1.8"/><path d="m7.2 7.5.9 11.1h7.8l.9-11.1"/>') + '</button>' +
                 '</div>' +
               '</section>' +
               '<section class="ps-card ps-info" id="psNavCard">' +
@@ -1248,7 +1256,7 @@
         '<canvas class="ps-lay-thumb" width="34" height="34"></canvas>' +
         '<div class="ps-lay-meta"><div class="ps-lay-name">' + esc(layer.name) + '</div>' +
         '<div class="ps-lay-kind' + (layer.type === 'shape' ? ' is-vector' : '') + '">' + kindText + '</div></div>' +
-        '<span class="ps-lay-lock" title="图层锁定（占位控件）">' + LOCK_SVG + '</span>' +
+        '<span class="ps-lay-lock' + (layer.locked ? ' is-locked' : '') + '"' + (layer.locked ? ' title="图层已锁定"' : '') + '>' + (layer.locked ? LOCK_SVG : '') + '</span>' +
         '</div>';
     });
     list.innerHTML = rows;
@@ -1542,6 +1550,13 @@
     }
   }
 
+  function toggleLayerLock(layer) {
+    if (!app.doc || !layer) return;
+    layer.locked = !layer.locked;
+    setNote('「' + layer.name + '」' + (layer.locked ? '已锁定，移动工具拖不动' : '已解锁，可以移动'));
+    refreshAll();
+  }
+
   function renameLayer(layer) {
     if (!app.doc || !layer) return;
     var name = global.prompt('图层名称', layer.name);
@@ -1570,6 +1585,7 @@
     closeLayerMenu();
     var items = [
       { label: '重命名…', act: function () { renameLayer(layer); } },
+      { label: layer.locked ? '解锁图层' : '锁定图层', act: function () { toggleLayerLock(layer); } },
       { sep: true },
       { label: '新建图层', act: function () { layerAction('add'); } },
       { label: '复制图层', act: function () { layerAction('dup'); } },
@@ -2389,7 +2405,7 @@
     ensureUI();
     if (!app.ui) return;
     if (!app.doc) {
-      app.doc = buildDemo();
+      app.doc = buildBlank();
       app.view.setDoc(app.doc);
     } else {
       app.view.doc = app.doc;
@@ -2497,7 +2513,7 @@
       var h = PS.hitShapeLayer(app.doc, x, y, 8);
       return h ? { id: h.layer.id, anchor: h.anchor, kind: h.shape.kind } : null;
     },
-    activeLayer: function () { var l = PS.activeLayer(app.doc); return l ? { id: l.id, name: l.name, type: l.type, tiles: l.tiles.size, shapes: l.shapes ? l.shapes.length : 0, x: l.x, y: l.y } : null; },
+    activeLayer: function () { var l = PS.activeLayer(app.doc); return l ? { id: l.id, name: l.name, type: l.type, tiles: l.tiles.size, shapes: l.shapes ? l.shapes.length : 0, x: l.x, y: l.y, locked: !!l.locked } : null; },
     addAdjust: function (kind) {
       var l = PS.addAdjustLayer(app.doc, kind);
       refreshAll();
@@ -2513,6 +2529,12 @@
       return res ? { size: res.size, type: res.type, w: res.w, h: res.h, name: res.name } : null;
     },
     serialize: function () { return PS.serializeDoc(app.doc); },
+    loadDemo: function () {
+      app.doc = buildDemo();
+      app.view.setDoc(app.doc);
+      refreshAll();
+      return true;
+    },
     deserialize: async function (payload) {
       var doc = await PS.deserializeDoc(payload);
       app.doc = doc;

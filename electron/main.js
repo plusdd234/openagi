@@ -1462,9 +1462,9 @@ if(!gotLock){
     }
   });
 
-  /* 打开 ComfyUI 自带的网页界面。
-   * 它本身就是个 Web UI（8188），用系统浏览器打开最省事：
-   * 内嵌 BrowserWindow 会和主窗口抢 GPU、也没法用浏览器插件。 */
+  /* 在系统浏览器打开 ComfyUI 网页界面。
+   * 日常使用走「本地生图」App 里内嵌的 webview（不需要这一步）；
+   * 这里保留给需要浏览器插件 / 独立窗口的场景，属于备用入口。 */
   ipcMain.handle('comfy:open-ui', async () => {
     try{
       const st = await comfySetup.detect(comfyCfg());
@@ -1668,6 +1668,47 @@ if(!gotLock){
     if(r.canceled || !r.filePaths || !r.filePaths.length) return { ok: false, cancelled: true };
     const res = await ASSETS.exportTo(ids, r.filePaths[0]);
     return { ok: true, dir: r.filePaths[0], files: res.files };
+  });
+
+  /* 通用「导出到电脑」：不经过资产库，直接把渲染进程给的数据写到用户选的位置。
+   * 同名策略 = 自动顺延 (2)(3)…：允许重名，但绝不静默覆盖已有文件。 */
+  ipcMain.handle('file:save', async (e, req) => {
+    const r = req || {};
+    const dataURL = String(r.dataURL || '');
+    const m = /^data:([^;,]*)(;base64)?,/i.exec(dataURL);
+    if(!m) return { ok: false, message: '数据格式不对' };
+    const body = dataURL.slice(m[0].length);
+    let buf;
+    try{
+      buf = m[2] ? Buffer.from(body, 'base64') : Buffer.from(decodeURIComponent(body), 'utf8');
+    }catch(err){
+      return { ok: false, message: '数据解码失败' };
+    }
+    const ext = String(r.ext || 'bin').replace(/^\./, '').toLowerCase();
+    const rawName = String(r.name || 'model').replace(/[\\/:*?"<>|]/g, '_').trim() || 'model';
+    const stem = rawName.toLowerCase().endsWith('.' + ext) ? rawName.slice(0, -(ext.length + 1)) : rawName;
+    const picked = await dialog.showSaveDialog(mainWin || undefined, {
+      title: '导出到电脑',
+      defaultPath: stem + '.' + ext,
+      filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
+    });
+    if(picked.canceled || !picked.filePath) return { ok: false, cancelled: true };
+    try{
+      let out = picked.filePath;
+      if(fs.existsSync(out)){
+        const dir = path.dirname(out), suffix = path.extname(out);
+        const base = path.basename(out, suffix);
+        for(let i = 2; i < 1000; i++){
+          const cand = path.join(dir, base + ' (' + i + ')' + suffix);
+          if(!fs.existsSync(cand)) { out = cand; break; }
+        }
+      }
+      await fsp.mkdir(path.dirname(out), { recursive: true });
+      await fsp.writeFile(out, buf);
+      return { ok: true, path: out, bytes: buf.length };
+    }catch(err){
+      return { ok: false, message: String((err && err.message) || err) };
+    }
   });
 
   /* ---- 媒体库：播放器 App 的落点 ----
@@ -1932,61 +1973,98 @@ if(!gotLock){
     }
   });
 
-  /* ---- 模型商店：超自然语音（Kokoro 共享模型） ----
-   * 所有音色共用一份模型，所以任务 key 固定为 'kokoro'：
-   * 重复点击任意 Kokoro 音色都会被挡掉，而不是并发下三份 126 MB。 */
-  ipcMain.handle('store:kokoro-status', async () => {
-    try{ return ttsStore.kokoroStatus(app.getPath('userData')); }
-    catch(e){ return { ok: false, installed: false, message: String((e && e.message) || e) }; }
+  /* ---- 模型商店：共享语音模型（Kokoro / MeloTTS / ZipVoice） ----
+   * 三者都是「一份模型 + 多个音色（或克隆）」，任务 key 固定为引擎名：
+   * 重复点击任意卡片都会被挡掉，而不是并发下多份上百 MB 的权重。
+   * 进度 id 用发起下载的卡片 id，进度条才会画在用户点的那张卡上。 */
+  function registerSharedTts(kind, label, statusFn, installFn, removeFn){
+    ipcMain.handle('store:' + kind + '-status', async () => {
+      try{ return statusFn(app.getPath('userData')); }
+      catch(e){ return { ok: false, installed: false, message: String((e && e.message) || e) }; }
+    });
+
+    ipcMain.handle('store:' + kind + '-install', async (event, req) => {
+      const progressId = String((req && req.id) || kind);
+      if(storeJobs.has(kind)) return { ok: false, message: label + ' 模型正在下载中' };
+      const job = { cancel: false };
+      storeJobs.set(kind, job);
+      const send = info => {
+        try{ event.sender.send('store:progress', Object.assign({ id: progressId }, info || {})); }catch(e){}
+      };
+      try{
+        send({ stage: 'download', pct: 0, message: '正在准备 ' + label + '…' });
+        const res = await installFn(app.getPath('userData'), req || {}, {
+          httpGet: ollamaDl.makeElectronHttpGet(netmod_electron()),
+          isCancelled: () => job.cancel,
+          onLog: m => logLine('[store] ' + m),
+          onProgress: info => {
+            if(!info) return;
+            send({
+              stage: info.stage === 'done' ? 'done' : 'download',
+              pct: (typeof info.pct === 'number') ? info.pct : -1,
+              message: info.msg || '下载中…',
+              speed: info.speed, etaMs: info.etaMs
+            });
+          }
+        });
+        if(res && res.cancelled) return { ok: false, cancelled: true, message: '已取消下载，进度已保留' };
+        logLine('[store] ' + kind + ' installed');
+        return Object.assign({ ok: true }, res || {});
+      }catch(e){
+        const msg = String((e && e.message) || e);
+        logLine('[store] ' + kind + ' error: ' + msg);
+        return { ok: false, resumable: !!(e && e.resumable), message: msg };
+      }finally{
+        storeJobs.delete(kind);
+      }
+    });
+
+    ipcMain.handle('store:' + kind + '-remove', async () => {
+      try{
+        const r = await removeFn(app.getPath('userData'));
+        logLine('[store] ' + kind + ' removed');
+        return Object.assign({ ok: true }, r || {});
+      }catch(e){
+        return { ok: false, message: String((e && e.message) || e) };
+      }
+    });
+  }
+  registerSharedTts('kokoro', 'Kokoro', ttsStore.kokoroStatus, ttsStore.installKokoro, ttsStore.removeKokoro);
+  registerSharedTts('melo', 'MeloTTS', ttsStore.meloStatus, ttsStore.installMelo, ttsStore.removeMelo);
+  registerSharedTts('vits', '角色音色', ttsStore.vitsStatus, ttsStore.installVits, ttsStore.removeVits);
+  registerSharedTts('zipvoice', 'ZipVoice', ttsStore.zipvoiceStatus, ttsStore.installZipvoice, ttsStore.removeZipvoice);
+
+  /* ---- 声音克隆：参考录音由主进程选文件并复制，渲染层只拿到「成功/取消」 ---- */
+  ipcMain.handle('tts:clone-status', async () => {
+    try{ return ttsStore.zipvoiceStatus(app.getPath('userData')); }
+    catch(e){ return { ok: false, installed: false, clone: false, message: String((e && e.message) || e) }; }
   });
 
-  ipcMain.handle('store:kokoro-install', async (event, req) => {
-    /* 任务 key 固定 'kokoro'（共享模型只下一份），进度 id 用发起下载的卡片 id，
-     * 这样进度条才会画在用户点的那张卡上，而不是凭空出现在别处。 */
-    const id = 'kokoro';
-    const progressId = String((req && req.id) || id);
-    if(storeJobs.has(id)) return { ok: false, message: 'Kokoro 模型正在下载中' };
-    const job = { cancel: false };
-    storeJobs.set(id, job);
-    const send = info => {
-      try{ event.sender.send('store:progress', Object.assign({ id: progressId }, info || {})); }catch(e){}
-    };
+  ipcMain.handle('tts:clone-pick', async (event, req) => {
     try{
-      send({ stage: 'download', pct: 0, message: '正在准备 Kokoro 超自然语音…' });
-      const res = await ttsStore.installKokoro(app.getPath('userData'), req || {}, {
-        httpGet: ollamaDl.makeElectronHttpGet(netmod_electron()),
-        isCancelled: () => job.cancel,
-        onLog: m => logLine('[store] ' + m),
-        onProgress: info => {
-          if(!info) return;
-          send({
-            stage: info.stage === 'done' ? 'done' : 'download',
-            pct: (typeof info.pct === 'number') ? info.pct : -1,
-            message: info.msg || '下载中…',
-            speed: info.speed, etaMs: info.etaMs
-          });
-        }
+      const r = await dialog.showOpenDialog(mainWin || undefined, {
+        title: '选择 5-15 秒的参考录音（WAV）',
+        properties: ['openFile'],
+        filters: [{ name: 'WAV 音频', extensions: ['wav'] }]
       });
-      if(res && res.cancelled) return { ok: false, cancelled: true, message: '已取消下载，进度已保留' };
-      logLine('[store] kokoro installed');
-      return Object.assign({ ok: true }, res || {});
-    }catch(e){
-      const msg = String((e && e.message) || e);
-      logLine('[store] kokoro error: ' + msg);
-      return { ok: false, resumable: !!(e && e.resumable), message: msg };
-    }finally{
-      storeJobs.delete(id);
-    }
-  });
-
-  ipcMain.handle('store:kokoro-remove', async () => {
-    try{
-      const r = await ttsStore.removeKokoro(app.getPath('userData'));
-      logLine('[store] kokoro removed');
-      return Object.assign({ ok: true }, r || {});
+      if(r.canceled || !r.filePaths || !r.filePaths.length) return { ok: false, cancelled: true };
+      return await ttsStore.setReference(app.getPath('userData'), {
+        source: r.filePaths[0],
+        text: String((req && req.text) || '')
+      });
     }catch(e){
       return { ok: false, message: String((e && e.message) || e) };
     }
+  });
+
+  ipcMain.handle('tts:clone-text', async (event, req) => {
+    try{ return await ttsStore.setReferenceText(app.getPath('userData'), (req && req.text) || ''); }
+    catch(e){ return { ok: false, message: String((e && e.message) || e) }; }
+  });
+
+  ipcMain.handle('tts:clone-clear', async () => {
+    try{ return await ttsStore.removeReference(app.getPath('userData')); }
+    catch(e){ return { ok: false, message: String((e && e.message) || e) }; }
   });
 }
 

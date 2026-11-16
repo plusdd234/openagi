@@ -1,0 +1,14 @@
+[
+  {
+    "name": "mdn-promise",
+    "url": "https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Promise",
+    "status": 200,
+    "ct": "text/html",
+    "relayError": "",
+    "bytes": 216445,
+    "chars": 203712,
+    "cjk": 5794,
+    "replacement": 0,
+    "title": "Promise - JavaScript | MDN"
+  }
+]

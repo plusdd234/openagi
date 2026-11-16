@@ -126,6 +126,20 @@
     margin-bottom: 10px; padding: 8px 10px; font-size: 11px; line-height: 1.6; color: #4a5058;
     background: #fff; border: 1px solid #e6e9ee; border-radius: 8px;
   }
+  /* 语音测试的自定义文本：所有音色共用一个输入框，换一句就能横向对比 */
+  .ms-tts-test {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+    margin-bottom: 8px; padding: 8px 10px;
+    background: #fff; border: 1px solid #e6e9ee; border-radius: 8px;
+  }
+  .ms-tts-test-lab { flex: none; font-size: 11px; font-weight: 600; color: #4a5058; }
+  .ms-tts-test-in {
+    flex: 1 1 200px; min-width: 0; font-size: 12px; color: #1f2937;
+    background: #f7f9fc; border: 1px solid #e2e7ef; border-radius: 7px;
+    padding: 6px 9px; outline: none;
+  }
+  .ms-tts-test-in::placeholder { color: #9aa4b2; }
+  .ms-tts-test-in:focus { border-color: #b9cfee; background: #fff; box-shadow: 0 0 0 3px rgba(91, 143, 217, .12); }
   .ms-hint {
     display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; padding: 8px 10px;
     font-size: 11px; color: #8a5a00; background: #fff8ec; border: 1px solid #f0dcb8; border-radius: 8px;

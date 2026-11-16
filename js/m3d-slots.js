@@ -1067,25 +1067,25 @@
       if (controls) controls.enabled = false;
       canvas.style.cursor = 'crosshair';
 
-      /* ---------------- 吸管：从「对应的纹理槽贴图」里取色 ----------------
-       * 样本优先用该槽的基础贴图（模型自带 / 烘焙结果）；没有贴图时用
-       * 「除当前层外」的合成结果 —— 否则会吸到自己刚画上去的笔迹。
+      /* ---------------- 吸管：从「视口里此刻显示的那张图」里取色 ----------------
+       * 材质上的 map 才是屏幕上真正被采样的像素：没有图层时是基础贴图，
+       * 有图层时是合成图。以前固定读 slot.baseTex（被盖在下面的原图），
+       * 只要图层里有画过的颜色，吸到的就是底下那一层，画上去自然对不上色。
+       * 也不缓存：同一次绘制里先画几笔再吸，必须吸到刚画上去的笔迹。
        * UV → 画布像素的换算与 uvPx 完全一致，所以吸到的就是鼠标底下那一点。 */
-      var sampleCv = null;
       function sampleBase() {
-        if (sampleCv) return sampleCv;
-        var base = st.slot.baseTex && st.slot.baseTex.image;
-        if (base && base.width) {
-          sampleCv = document.createElement('canvas');
-          sampleCv.width = st.W; sampleCv.height = st.H;
-          sampleCv.getContext('2d').drawImage(base, 0, 0, st.W, st.H);
-        } else {
-          var ls = (st.slot.layers || []).filter(function (l) { return l !== st.layer; });
-          sampleCv = TB.compose({
-            w: st.W, h: st.H, baseImg: null, layers: ls, baseColor: '#ffffff'
-          });
+        var tex = st.slot.mat && st.slot.mat.map;
+        var img = tex && tex.image;
+        var cv = document.createElement('canvas');
+        cv.width = st.W; cv.height = st.H;
+        var c = cv.getContext('2d');
+        if (img && (img.width || img.naturalWidth)) c.drawImage(img, 0, 0, st.W, st.H);
+        else {
+          /* 还没有任何贴图：视口里显示的就是空白，按合成的同一口径取一张 */
+          var cp = composeSlot(st.slot);
+          c.drawImage(cp, 0, 0, st.W, st.H);
         }
-        return sampleCv;
+        return cv;
       }
       function pickInk(px) {
         if (!isColor || !setInk) return false;

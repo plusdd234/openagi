@@ -745,6 +745,10 @@ const PSTools = (function () {
           if (hooks.status) hooks.status('调整层不能移动，请选中像素或矢量图层', true);
           return;
         }
+        if (target.locked) {
+          if (hooks.status) hooks.status('「' + target.name + '」已锁定，不能移动（右键图层可解锁）', true);
+          return;
+        }
         st.drag = {
           kind: 'move', doc: doc, layer: target,
           sx: p.docX, sy: p.docY, ox: target.x, oy: target.y

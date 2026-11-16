@@ -42,17 +42,17 @@
             <div class="cd-stats" id="cdStats"></div>
 
             <section class="cd-sec">
-              <h2 class="cd-h2">关于我</h2>
+              <h2 class="cd-h2">关于我<span class="cd-h2-en">Profile</span></h2>
               <div class="cd-about" id="cdAbout"></div>
             </section>
 
             <section class="cd-sec">
-              <h2 class="cd-h2">在做的四条线</h2>
+              <h2 class="cd-h2">在做的四条线<span class="cd-h2-en">Tracks</span></h2>
               <div class="cd-tracks" id="cdTracks"></div>
             </section>
 
             <section class="cd-sec">
-              <h2 class="cd-h2">合集与代表作<span class="cd-h2-note">右侧为该集播放量</span></h2>
+              <h2 class="cd-h2">合集与代表作<span class="cd-h2-en">Selected Works</span><span class="cd-h2-note">右侧为该集播放量</span></h2>
               <div class="cd-works" id="cdWorks"></div>
             </section>
           </div>

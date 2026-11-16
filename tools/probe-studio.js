@@ -47,20 +47,24 @@ const check = (ok, name, extra) => {
 
     const boot = await page.evaluate(() => {
       const w = document.getElementById('studioWin');
+      const t = window.studioApp.__test;
+      const list = t.tracks();
       return {
-        api: !!(window.studioApp && window.studioApp.__test),
+        api: !!(window.studioApp && t),
         visible: !!w && !w.classList.contains('hidden'),
         cls: !!w && w.classList.contains('studio'),
         heads: document.querySelectorAll('#stHeads .st-th').length,
         videos: document.querySelectorAll('#stFrame video').length,
-        tabs: document.querySelectorAll('#stTabs .st-tab').length
+        tabs: document.querySelectorAll('#stTabs .st-tab').length,
+        tracks: list.length,
+        videoTracks: list.filter(x => x.kind === 'video').length
       };
     });
     check(boot.api, '探针 API 就绪');
     check(boot.visible && boot.cls, '窗口已打开且带 studio 类');
-    check(boot.heads === 4, '四条轨道齐全', boot.heads + ' 条');
+    check(boot.heads === boot.tracks && boot.tracks >= 3, '轨道头与项目轨道一致', boot.heads + ' 条');
     check(boot.tabs === 4, '素材面板四个 tab', boot.tabs + ' 个');
-    check(boot.videos === 2, '预览池按视频轨创建', boot.videos + ' 个 <video>');
+    check(boot.videos === boot.videoTracks, '预览池按视频轨创建', boot.videos + ' 个 <video>');
 
     /* 2. 新建项目：确认弹层 + 清空 */
     await page.click('#stNew');
@@ -73,6 +77,12 @@ const check = (ok, name, extra) => {
     check(confirmShown, '新建项目有确认弹层');
     check(st0.clips === 0 && st0.media === 0, '新建后时间线为空',
       st0.clips + ' 片段 / ' + st0.media + ' 素材');
+    const fresh = await page.evaluate(() => ({
+      tracks: window.studioApp.__test.tracks().map(x => x.id),
+      videos: document.querySelectorAll('#stFrame video').length
+    }));
+    check(fresh.tracks.length === 4 && fresh.videos === 2, '新建项目恢复默认四轨',
+      fresh.tracks.join(','));
 
     /* 3. 素材：页面内生成一张图，双击卡片追加片段 */
     const mediaId = await page.evaluate(() => {
@@ -674,6 +684,173 @@ const check = (ok, name, extra) => {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(150);
     check(await page.evaluate(() => !window.studioApp.__test.helpOpen()), 'Esc 关闭快捷键面板');
+
+    /* 27. 专业化界面：状态栏 / 检查器页签 / 素材类型筛选 */
+    const status = await page.evaluate(() => {
+      const t = window.studioApp.__test;
+      t.selectAll();
+      return {
+        clips: (document.getElementById('stStClips') || {}).textContent,
+        sel: (document.getElementById('stStSel') || {}).textContent,
+        tracks: (document.getElementById('stStTracks') || {}).textContent,
+        tool: (document.getElementById('stStTool') || {}).textContent,
+        zoom: (document.getElementById('stStZoom') || {}).textContent,
+        n: t.state().clips,
+        multi: t.state().multi.length
+      };
+    });
+    check(status.clips === status.n + ' 片段' && status.sel === '已选 ' + status.multi + ' 个' &&
+      /轨道$/.test(status.tracks) && /px\/s$/.test(status.zoom),
+      '底部状态栏同步片段 / 选中 / 轨道 / 缩放', JSON.stringify(status));
+
+    const tabTest = await page.evaluate(() => {
+      const t = window.studioApp.__test;
+      const clip = t.project().clips.find(c => c.kind === 'video');
+      if (!clip) return null;
+      t.select(clip.id);
+      const box = document.getElementById('stInspector');
+      const bar = box.querySelectorAll('[data-itab]');
+      const visualBtn = Array.from(bar).find(b => b.dataset.itab === 'visual');
+      visualBtn.click();
+      const basic = box.querySelector('.st-insp-sec[data-g="basic"]');
+      const visual = box.querySelector('.st-insp-sec[data-g="visual"]');
+      const out = {
+        n: bar.length,
+        tab: box.dataset.itab,
+        basicHidden: !!basic && getComputedStyle(basic).display === 'none',
+        visualShown: !!visual && getComputedStyle(visual).display !== 'none'
+      };
+      box.querySelector('[data-itab="basic"]').click();
+      out.back = box.dataset.itab === 'basic';
+      return out;
+    });
+    check(!!tabTest && tabTest.n >= 4 && tabTest.tab === 'visual' && tabTest.basicHidden &&
+      tabTest.visualShown && tabTest.back, '检查器页签切换分组显示', JSON.stringify(tabTest));
+
+    const chip = await page.evaluate(() => {
+      const t = window.studioApp.__test;
+      const before = document.querySelectorAll('#stMediaGrid .st-mcard').length;
+      document.querySelector('#stMediaFilter [data-fk="audio"]').click();
+      const audio = t.project().media.filter(m => m.kind === 'audio').length;
+      const shown = document.querySelectorAll('#stMediaGrid .st-mcard').length;
+      const on = document.querySelector('#stMediaFilter [data-fk="audio"]').classList.contains('on');
+      document.querySelector('#stMediaFilter [data-fk="all"]').click();
+      return { before, audio, shown, on, restored: document.querySelectorAll('#stMediaGrid .st-mcard').length };
+    });
+    check(chip.on && chip.shown === chip.audio && chip.restored === chip.before,
+      '素材类型筛选只显示对应素材', JSON.stringify(chip));
+
+    /* 28. P0：素材弹层「图库」来源 + 图库素材只存 assetId */
+    const assetId = 'probe-asset-1';
+    const tiny = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    await page.evaluate(({ id, url }) => {
+      window.assetBridge = {
+        available: () => true,
+        list: async () => [{ id, kind: 'image', name: '生成图', size: 2048 }],
+        read: async () => url,
+        thumb: async () => url
+      };
+    }, { id: assetId, url: tiny });
+    await page.click('#stTabs [data-panel="media"]');
+    await page.waitForTimeout(120);
+    await page.click('#stLibOpen');
+    await page.waitForTimeout(180);
+    await page.click('#stLibModal [data-libtab="asset"]');
+    await page.waitForTimeout(220);
+    const assetRows = await page.locator('#stLibList .st-librow[data-asset]').count();
+    check(assetRows === 1, '图库页签列出资产', assetRows + ' 条');
+    await page.click('#stLibList .st-librow[data-asset]');
+    await page.click('#stLibAdd');
+    await page.waitForTimeout(260);
+    const assetAdded = await page.evaluate(id => {
+      const t = window.studioApp.__test;
+      const m = t.project().media.find(x => x.assetId === id);
+      return { has: !!m, source: m && m.source, name: m && m.name, dur: m && m.dur };
+    }, assetId);
+    check(assetAdded.has && assetAdded.source === 'asset' && assetAdded.name === '生成图' && assetAdded.dur === 5,
+      '图库素材以 assetId 加入素材池', JSON.stringify(assetAdded));
+    const assetJson = await page.evaluate(() =>
+      JSON.stringify(window.studioApp.__test.clean(window.studioApp.__test.project())));
+    check(typeof assetJson === 'string' && assetJson.indexOf('probe-asset-1') >= 0 &&
+      assetJson.indexOf('data:image') < 0, '项目存档保留 assetId、不写 dataURL',
+      'len=' + String(assetJson || '').length);
+
+    const studioRefs = await page.evaluate(id => {
+      let hit = null;
+      try {
+        hit = typeof libStudioRefs === 'function'
+          ? libStudioRefs([id], [{ media: [{ assetId: id }] }, { media: [{ assetId: id }] }])
+          : null;
+      } catch (e) { hit = null; }
+      return hit;
+    }, assetId);
+    check(!!studioRefs && studioRefs[assetId] === 2, '删除前能统计剪辑台项目引用',
+      JSON.stringify(studioRefs));
+
+    /* 29. 文字转语音：文字片段经 ttsBridge 合成配音并落到音频轨 */
+    const ttsTextId = await page.evaluate(() => {
+      const t = window.studioApp.__test;
+      const c = t.project().clips.find(x => x.kind === 'text');
+      return c ? c.id : '';
+    });
+    await page.evaluate(() => {
+      const sr = 8000;
+      const n = sr;
+      const buf = new ArrayBuffer(44 + n * 2);
+      const v = new DataView(buf);
+      const w = (p, s) => { for (let i = 0; i < s.length; i++) v.setUint8(p + i, s.charCodeAt(i)); };
+      w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+      v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+      w(36, 'data'); v.setUint32(40, n * 2, true);
+      let bin = '';
+      const u = new Uint8Array(buf);
+      for (let i = 0; i < u.length; i++) bin += String.fromCharCode(u[i]);
+      const url = 'data:audio/wav;base64,' + btoa(bin);
+      window.ttsBridge = {
+        defaultVoice: () => 'piper:probe',
+        defaultRate: () => 1,
+        isLocal: () => true,
+        speak: async () => ({ url, voice: 'piper:probe', rate: 1 })
+      };
+    });
+    check(!!ttsTextId, '存在可配音的文字片段');
+    if (ttsTextId) {
+      await page.evaluate(id => window.studioApp.__test.select(id), ttsTextId);
+      await page.click('#stInspector [data-act="voice"]');
+      await page.waitForTimeout(700);
+      const tts = await page.evaluate(() => {
+        const t = window.studioApp.__test;
+        const p = t.project();
+        const m = p.media.find(x => x.source === 'tts');
+        const clip = m ? p.clips.find(c => c.mediaId === m.id) : null;
+        return {
+          media: !!m,
+          text: m && m.tts && m.tts.text,
+          voice: m && m.tts && m.tts.voice,
+          kind: clip && clip.kind,
+          track: clip && clip.track,
+          dur: clip && clip.dur
+        };
+      });
+      check(tts.media && !!tts.text && tts.voice === 'piper:probe' && tts.kind === 'audio' && tts.dur > 0.3,
+        '文字转语音生成音频片段', JSON.stringify(tts));
+      const ttsClean = await page.evaluate(() => {
+        const t = window.studioApp.__test;
+        const s = JSON.stringify(t.clean(t.project()));
+        return { keep: s.indexOf('"source":"tts"') >= 0, noUrl: s.indexOf('data:audio') < 0 };
+      });
+      check(ttsClean.keep && ttsClean.noUrl, '配音存档只留文本与音色', JSON.stringify(ttsClean));
+      const voiceMenu = await page.evaluate(id => {
+        const t = window.studioApp.__test;
+        t.openCtx(id, 30, 30);
+        const items = t.ctxMenu() || [];
+        const has = items.some(x => x.id === 'voice');
+        t.closeCtx();
+        return has;
+      }, ttsTextId);
+      check(voiceMenu, '文字片段右键有「生成配音」');
+    }
 
     check(errors.length === 0, '无 pageerror', errors.join(' | '));
   } catch (e) {

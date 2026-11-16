@@ -70,6 +70,8 @@ contextBridge.exposeInMainWorld('openagiDesktop', {
   assetExport: ids => ipcRenderer.invoke('asset:export', ids),
   assetThumb: id => ipcRenderer.invoke('asset:thumb', id),
   assetThumbSave: (id, dataURL) => ipcRenderer.invoke('asset:thumb-save', { id, dataURL }),
+  /* 导出到电脑：渲染进程给 dataURL，主进程弹保存对话框并写盘（允许重名，同名自动加序号） */
+  fileSave: req => ipcRenderer.invoke('file:save', req || {}),
   onComfyProgress: cb => {
     if(typeof cb !== 'function') return;
     ipcRenderer.on('comfy:progress', (_e, info) => cb(info));
@@ -86,6 +88,22 @@ contextBridge.exposeInMainWorld('openagiDesktop', {
   storeKokoroStatus: () => ipcRenderer.invoke('store:kokoro-status'),
   storeInstallKokoro: req => ipcRenderer.invoke('store:kokoro-install', req || {}),
   storeRemoveKokoro: () => ipcRenderer.invoke('store:kokoro-remove'),
+  /* MeloTTS：与 Kokoro 共用 sherpa 引擎，但模型独立 */
+  storeMeloStatus: () => ipcRenderer.invoke('store:melo-status'),
+  storeInstallMelo: req => ipcRenderer.invoke('store:melo-install', req || {}),
+  storeRemoveMelo: () => ipcRenderer.invoke('store:melo-remove'),
+  /* 角色音色（VITS 社区模型）：与 MeloTTS 同一套引擎，模型独立 */
+  storeVitsStatus: () => ipcRenderer.invoke('store:vits-status'),
+  storeInstallVits: req => ipcRenderer.invoke('store:vits-install', req || {}),
+  storeRemoveVits: () => ipcRenderer.invoke('store:vits-remove'),
+  /* ZipVoice 声音克隆：模型之外还需要一段参考录音 + 参考文本 */
+  storeZipvoiceStatus: () => ipcRenderer.invoke('store:zipvoice-status'),
+  storeInstallZipvoice: req => ipcRenderer.invoke('store:zipvoice-install', req || {}),
+  storeRemoveZipvoice: () => ipcRenderer.invoke('store:zipvoice-remove'),
+  ttsCloneStatus: () => ipcRenderer.invoke('tts:clone-status'),
+  ttsClonePick: text => ipcRenderer.invoke('tts:clone-pick', { text: String(text || '') }),
+  ttsCloneText: text => ipcRenderer.invoke('tts:clone-text', { text: String(text || '') }),
+  ttsCloneClear: () => ipcRenderer.invoke('tts:clone-clear'),
   storeCancel: id => ipcRenderer.invoke('store:cancel', id),
   onStoreProgress: cb => {
     if(typeof cb !== 'function') return;

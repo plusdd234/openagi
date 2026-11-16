@@ -291,6 +291,42 @@ const MODEL_CATALOG = [
     desc: '英文男声，音色厚实、语速平稳，适合英文文档朗读与双语音色搭配。'
   },
 
+  /* ---------------- 更强的中英混读（MeloTTS，共享模型） ----------------
+   * 只有一只女声，但中英混排与多音字比 Kokoro 稳：技术名词、缩写、数字夹杂时
+   * 不会突然切回逐字发音。和 Kokoro 共用同一份 sherpa 引擎，模型独立。 */
+  {
+    id: 'melo-zh-en', kind: 'tts', engine: 'melo',
+    name: 'MeloTTS · 中英混读女声', org: 'MeloTTS / sherpa-onnx',
+    params: 'VITS · CPU', sizeGB: 0.16, vramGB: 0, ramGB: 4, lang: 'zh-CN', shared: 'melo',
+    sample: '你好，我是 MeloTTS。中英混读也很自然，比如 GPU、Python 和 API 都能读得顺。',
+    tags: ['中文', '英文', '女声', '中英混读', '共享'],
+    desc: 'MeloTTS 的中英混读模型：同一句话里穿插英文单词、缩写和数字时，语调过渡比 Kokoro 更连贯，适合技术讲解与数字人闲聊。单女声，下载一次即可使用；与 Kokoro 共用本地引擎，切换音色不重复下载。'
+  },
+
+  /* ---------------- 二次元角色音色（VITS，共享模型） ----------------
+   * DeepSeek App 的「海星（俏皮甜美）」是云端私有音色，模型没有公开；
+   * 本地用同为俏皮少女音的德丽莎声线做近似，音色接近但不是逐采样复刻。 */
+  {
+    id: 'vits-theresa', kind: 'tts', engine: 'vits',
+    name: '海星 · 俏皮甜美（近似）', org: 'VITS / sherpa-onnx',
+    params: 'VITS · CPU', sizeGB: 0.11, vramGB: 0, ramGB: 4, lang: 'zh-CN', shared: 'vits',
+    sample: '诶嘿，我是海星。今天也一起把问题解决掉吧，交给我就好啦！',
+    tags: ['二次元', '女声', '俏皮', 'DeepSeek 风格', '共享'],
+    desc: 'DeepSeek App 里的「海星」是云端私有音色，模型未公开。这只社区 VITS 用同为俏皮少女音的德丽莎声线做本地近似：语调轻快、尾音上扬，适合二次元数字人与轻松闲聊。与 Kokoro / MeloTTS 共用本地引擎，下载一次即可使用。'
+  },
+
+  /* ---------------- 声音克隆（ZipVoice，共享模型） ----------------
+   * 零样本克隆：用户提供 5-15 秒参考录音 + 那段话的文本，就能用同一个音色朗读任意内容。
+   * 音色本身不写死在目录里，条目代表「这份克隆能力」。 */
+  {
+    id: 'zipvoice-clone', kind: 'tts', engine: 'zipvoice',
+    name: 'ZipVoice · 我的声音克隆', org: 'ZipVoice / sherpa-onnx',
+    params: 'distill · int8', sizeGB: 0.16, vramGB: 0, ramGB: 6, lang: 'zh-CN', shared: 'zipvoice', clone: true,
+    sample: '你好，这是我的克隆声音。只要十几秒参考录音，就能用我的音色朗读任意文字。',
+    tags: ['声音克隆', '零样本', '中英', '共享'],
+    desc: 'ZipVoice 零样本克隆：录一段 5-15 秒的清晰人声并填写录音里说的话，之后就能用你的音色朗读任意文字，中英文都支持。模型约 160 MB（含声码器），纯 CPU 推理；参考录音只存在本机，不会上传。'
+  },
+
   /* ---------------- 生图模型（ComfyUI checkpoints） ----------------
    * tune 是该模型的推荐采样参数：不给的话一律 20 步 / cfg 7，
    * SDXL-Turbo 那样必须 cfg=1、6 步的模型会直接糊掉，用户会以为「本地生图不能用」。 */

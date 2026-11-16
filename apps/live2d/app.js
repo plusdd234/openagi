@@ -8,9 +8,9 @@
  *   · 视线：鼠标位置喂给 focusController，头和眼珠会跟着走；
  *   · 口型：模型流式输出时按字符切音节，逐字驱动 ParamMouthOpenY。
  *
- * ⚠ file:// 下 XHR 读不了本地文件，所以 moc3 与全部 json 由 model/pack.js
- *   预打包（moc3 转 base64、json 直接是对象），再用 Live2DLoader 中间件喂给
- *   运行时装加载器；纹理仍按相对路径走 Image，file:// 下正常。
+ * ⚠ file:// 下 XHR 读不了本地文件，所以每个皮套由 tools/pack-live2d.js
+ *   预打包成 model/<id>/pack.js（moc3 转 base64、json 直接是对象），
+ *   model/models.js 是皮套清单，运行时按需加载并可在角色面板里换装。
  *
  * 2.0 在皮套之上补了语音与记忆：朗读的音色/语速/音调可调，口型优先吃引擎的
  * 词边界事件；长期记忆摘要可以手动整理，也会在每 12 条消息后自动更新。
@@ -38,13 +38,13 @@
     tts: { voice: '', rate: 1.04, pitch: 1.12 }
   };
 
-  /* 皮套与运行时都在 App 目录下，全部相对本页解析 */
-  var RIG_DIR = 'apps/live2d/model/';
+  /* 皮套与运行时都在 App 目录下，全部相对本页解析；皮套按 model/<id>/ 一套一个目录 */
+  var MODEL_DIR = 'apps/live2d/model/';
+  var MODELS_SRC = MODEL_DIR + 'models.js';
   var RIG_SCRIPTS = [
     'apps/live2d/vendor/pixi.min.js',
     'apps/live2d/vendor/live2dcubismcore.min.js',
-    'apps/live2d/vendor/cubism4.min.js',
-    'apps/live2d/model/pack.js'
+    'apps/live2d/vendor/cubism4.min.js'
   ];
   /* 皮套在舞台上占的高度比例；1 刚好不裁切 */
   var RIG_FIT = 0.97;
@@ -72,6 +72,8 @@
 
   var STORE_KEY = 'hf_live2d_state';
   var STORE_VER = 2;
+  /* 衣柜里的「当前搭配」：启动时按它换皮套、隐藏部件 */
+  var WARDROBE_KEY = 'hf_wardrobe_state';
   var MAX_MSGS = 60;
   var MAX_HISTORY = 12;
   /* 每累计这么多条新消息，后台自动整理一次长期记忆 */
@@ -104,7 +106,8 @@
       persona: JSON.parse(JSON.stringify(DEFAULT_PERSONA)),
       msgs: [],
       mem: { summary: '', at: 0, count: 0 },
-      aff: 12
+      aff: 12,
+      modelId: ''
     };
     var raw = null;
     try { raw = localStorage.getItem(STORE_KEY); } catch (e) { raw = null; }
@@ -133,6 +136,7 @@
       }).slice(-MAX_MSGS);
     }
     out.aff = clamp(Number(d.aff) || 12, 0, 100);
+    out.modelId = typeof d.modelId === 'string' ? d.modelId : '';
     if (d.mem && typeof d.mem === 'object') {
       out.mem.summary = String(d.mem.summary || '').slice(0, MEM_MAX);
       out.mem.at = Number(d.mem.at) || 0;
@@ -148,11 +152,28 @@
       persona: S.persona,
       mem: { summary: S.mem.summary, at: S.mem.at, count: S.mem.count },
       aff: S.aff,
+      modelId: S.modelId || '',
       msgs: S.msgs.slice(-MAX_MSGS).map(function (m) {
         return { r: m.r, t: m.t, ts: m.ts, emo: m.emo || '' };
       })
     };
     try { localStorage.setItem(STORE_KEY, JSON.stringify(payload)); } catch (e) { /* 配额满就只留在内存里 */ }
+  }
+
+  /* 读衣柜存下的当前搭配；没配过衣柜就返回 null */
+  function readWardrobeWear() {
+    var raw = null;
+    try { raw = localStorage.getItem(WARDROBE_KEY); } catch (e) { return null; }
+    if (!raw) return null;
+    var d = null;
+    try { d = JSON.parse(raw); } catch (e) { return null; }
+    if (!d || d.v !== 1 || !d.draft || typeof d.draft !== 'object') return null;
+    return {
+      modelId: typeof d.draft.modelId === 'string' ? d.draft.modelId : '',
+      hidden: Array.isArray(d.draft.hidden) ? d.draft.hidden.filter(function (x) {
+        return typeof x === 'string' && x;
+      }).slice(0, 300) : []
+    };
   }
 
   function affLevel() {
@@ -174,12 +195,17 @@
       persona: loaded.persona,
       msgs: loaded.msgs,
       aff: loaded.aff,
+      models: [],
+      modelId: loaded.modelId,
+      /* 衣柜当前搭配里隐藏的部件（Cubism 部件 id）；换装时按它压透明度 */
+      hiddenParts: [],
       emo: 'neutral',
       busy: false,
       abort: null,
       streamEl: null,
       streamTxt: '',
       voiceOn: loaded.persona.voice,
+      voiceProbed: false,
       mem: loaded.mem,
       memBusy: false,
       tab: 'chat',
@@ -189,7 +215,7 @@
       sayUntil: 0,
       rig: {
         ready: false, loading: false, error: '',
-        app: null, model: null,
+        app: null, model: null, gen: 0,
         t: 0, last: 0,
         focusX: 0, focusY: 0, focusTX: 0, focusTY: 0, lastPointerAt: 0,
         anchorX: 0, anchorY: 0,
@@ -203,6 +229,14 @@
     };
 
     cacheRefs();
+
+    /* 衣柜里保存的搭配优先：换皮套 + 隐藏部件，进门就是上次穿好的样子 */
+    var wear = readWardrobeWear();
+    if (wear) {
+      if (wear.modelId) S.modelId = wear.modelId;
+      S.hiddenParts = wear.hidden;
+    }
+
     applyPersonaUI();
     bindEvents();
     renderLog();
@@ -249,10 +283,21 @@
       fPersona: b.querySelector('#l2dFPersona'),
       exprs: b.querySelector('#l2dExprs'),
       exprsExtra: b.querySelector('#l2dExprsExtra'),
+      modelSel: b.querySelector('#l2dModelSel'),
+      creditName: b.querySelector('#l2dCreditName'),
+      creditAuthor: b.querySelector('#l2dCreditAuthor'),
+      creditLicense: b.querySelector('#l2dCreditLicense'),
       voiceSel: b.querySelector('#l2dVoiceSel'),
+      voiceRefresh: b.querySelector('#l2dVoiceRefresh'),
+      voiceEngine: b.querySelector('#l2dVoiceEngine'),
+      voiceStatus: b.querySelector('#l2dVoiceStatus'),
+      voiceOpen: b.querySelector('#l2dVoiceOpen'),
+      voiceHint: b.querySelector('#l2dVoiceHint'),
       rate: b.querySelector('#l2dRate'),
+      rateRow: b.querySelector('#l2dRateRow'),
       rateVal: b.querySelector('#l2dRateVal'),
       pitch: b.querySelector('#l2dPitch'),
+      pitchRow: b.querySelector('#l2dPitchRow'),
       pitchVal: b.querySelector('#l2dPitchVal'),
       voiceTest: b.querySelector('#l2dVoiceTest'),
       memText: b.querySelector('#l2dMemText'),
@@ -308,14 +353,19 @@
     });
     if (r.voiceSel) r.voiceSel.addEventListener('change', applyTtsForm);
     if (r.voiceTest) r.voiceTest.addEventListener('click', testSpeak);
+    if (r.voiceRefresh) r.voiceRefresh.addEventListener('click', function () { refreshVoices(true); });
+    if (r.voiceOpen) r.voiceOpen.addEventListener('click', openVoiceSettings);
     if (r.memNow) r.memNow.addEventListener('click', function () { summarizeNow(true); });
     if (r.memClear) r.memClear.addEventListener('click', clearMemory);
     if (r.exportBtn) r.exportBtn.addEventListener('click', exportChat);
     if (window.speechSynthesis) {
-      try { window.speechSynthesis.addEventListener('voiceschanged', renderVoiceOptions); } catch (e) { /* 老引擎没有该事件 */ }
+      try {
+        window.speechSynthesis.addEventListener('voiceschanged', function () { renderVoiceOptions(); });
+      } catch (e) { /* 老引擎没有该事件 */ }
     }
-    /* 模型商店里「设为默认语音」后即时同步下拉框，不用重开 App */
-    window.addEventListener('hf-tts-changed', renderVoiceOptions);
+    /* 设置页 / 模型商店改过默认音色，或本地引擎刚探测完：即时同步下拉框 */
+    window.addEventListener('hf-tts-changed', function () { renderVoiceOptions(); });
+    window.addEventListener('hf-tts-status', function () { renderVoiceOptions(); });
 
     id('l2dClear').addEventListener('click', function () {
       S.msgs = [];
@@ -362,6 +412,10 @@
       S.refs.mood.textContent = b.textContent;
       toast('表情：' + b.textContent);
     });
+
+    if (r.modelSel) {
+      r.modelSel.addEventListener('change', function () { switchModel(r.modelSel.value); });
+    }
 
     S.body.querySelectorAll('.l2d-field input, .l2d-field textarea').forEach(function (el) {
       el.addEventListener('input', function () {
@@ -412,6 +466,8 @@
     if (S.tab === 'persona') {
       var inp = S.refs.fName;
       if (inp && !inp.value) fillPersonaForm();
+      /* 首次进角色页时探测一次本地引擎，之后就沿用缓存，避免每次切页都发请求 */
+      if (!S.voiceProbed) { S.voiceProbed = true; refreshVoices(true); }
     }
   }
 
@@ -462,7 +518,8 @@
     if (fromUser) toast('表情：' + EXPR[key].mood);
   }
 
-  /* 表情名对应 model3.json 里的 exp3 文件名；空串 = 回到默认表情 */
+  /* 表情名对应 model3.json 里的 exp3 文件名；空串 = 回到默认表情。
+     换皮套后旧表情名可能不存在，缺就静默跳过，不影响换模型。 */
   function setRigExpression(name) {
     var st = S.rig;
     if (!st.ready || !st.model) { st.expr = name || ''; return; }
@@ -470,15 +527,20 @@
     var im = st.model.internalModel;
     var em = im && im.motionManager && im.motionManager.expressionManager;
     if (!em) return;
-    if (!st.expr) { em.resetExpression(); return; }
-    em.setExpression(st.expr);
+    try {
+      if (!st.expr) { if (em.resetExpression) em.resetExpression(); return; }
+      em.setExpression(st.expr);
+    } catch (e) { /* 该皮套没有这张表情 */ }
   }
 
   function playMotion(group) {
     var st = S.rig;
     if (!st.ready || !st.model || !group) return;
     st.lastMotion = group;
-    try { st.model.motion(group); } catch (e) { /* 动作缺失就只换表情 */ }
+    try {
+      var p = st.model.motion(group);
+      if (p && p.catch) p.catch(function () { /* 动作组缺失就当没点 */ });
+    } catch (e) { /* 动作缺失就只换表情 */ }
   }
 
   /* 探针只读钩子：无头测试读模型参数用，不参与任何业务逻辑 */
@@ -502,7 +564,8 @@
         headTop: S.rig.headTop || 0,
         breath: s.breath || 0,
         eyeL: s.eyeL === undefined ? 1 : s.eyeL,
-        browL: s.browL || 0
+        browL: s.browL || 0,
+        hidden: (S.hiddenParts || []).slice()
       };
     };
 
@@ -519,6 +582,8 @@
       };
     };
     window.__l2dExportText = function () { return S ? buildExport() : ''; };
+    /* 衣柜「穿上」的入口：同一个页面时即时换装 */
+    window.__l2dApplyOutfit = function (outfit) { return applyOutfit(outfit); };
   }
 
   function doAction(act) {
@@ -867,23 +932,35 @@
   /* ---------- 语音 ---------- */
   var voiceCache = null;
 
+  /* 语音桥由 js/settings-tts.js 提供：音色清单、本地引擎状态、克隆入口都在那边探测。
+   * 拿不到时退回本文件里的系统语音实现，保证 App 单独跑也不哑。 */
+  function ttsApi() {
+    var b = window.ttsBridge;
+    return (b && typeof b.catalog === 'function') ? b : null;
+  }
+
   function voiceList() {
     if (!window.speechSynthesis) return [];
     try { return window.speechSynthesis.getVoices() || []; } catch (e) { return []; }
   }
 
-  /* 模型商店的「设为默认」写在 hf_ttsVoice；人设没显式选音色时用它，
+  /* 模型商店 / 设置页的「默认音色」写在 hf_ttsVoice；人设没显式选音色时用它，
    * 这样在商店里挑的音色才能真的影响朗读。 */
   function storeVoice() {
     try { return String(localStorage.getItem('hf_ttsVoice') || ''); } catch (e) { return ''; }
+  }
+
+  /* 实际会用的音色：人设优先，没选就跟随全局默认 */
+  function effectiveVoice() {
+    var own = (S && S.persona && S.persona.tts) ? S.persona.tts.voice : '';
+    return own || storeVoice();
   }
 
   /* 选中的音色优先；没选就挑中文女声，再退回第一个中文 */
   function pickVoice() {
     var list = voiceList();
     if (!list.length) return null;
-    var want = (S && S.persona.tts) ? S.persona.tts.voice : '';
-    if (!want) want = storeVoice();
+    var want = effectiveVoice();
     if (want) {
       var hit = list.filter(function (v) { return v.name === want || v.voiceURI === want; })[0];
       if (hit) return hit;
@@ -898,14 +975,28 @@
     return voiceCache;
   }
 
-  /* 商店里的本地音色有两种启用值：piper:<目录 id> 与 kokoro:<sid>。
-   * 返回给朗读链路的结构要能直接变成 /tts/speak 的请求体。 */
+  /* 商店里的本地音色有五种启用值：piper:<目录 id>、kokoro:<sid>、
+   * melo:zh_en、vits:theresa、zipvoice:clone。返回给朗读链路的结构要能直接变成 /tts/speak 的请求体。 */
   function localVoiceSpec() {
-    var want = (S && S.persona.tts && S.persona.tts.voice) ? S.persona.tts.voice : storeVoice();
+    var want = effectiveVoice();
     if (!want) return null;
+    var api = ttsApi();
+    if (api && typeof api.spec === 'function') {
+      var spy = api.spec(want);
+      if (!spy) return null;
+      spy.label = api.label ? api.label(want) : want;
+      return spy;
+    }
     var s = String(want);
-    var head = s.indexOf('piper:') === 0 ? 'piper' : (s.indexOf('kokoro:') === 0 ? 'kokoro' : '');
+    var head = s.indexOf('piper:') === 0 ? 'piper'
+      : (s.indexOf('kokoro:') === 0 ? 'kokoro'
+        : (s.indexOf('melo:') === 0 ? 'melo'
+          : (s.indexOf('vits:') === 0 ? 'vits' : (s.indexOf('zipvoice:') === 0 ? 'zipvoice' : ''))));
     if (!head) return null;
+    /* melo / vits / zipvoice 是单一份共享模型，启用值里没有可查的目录 id */
+    if (head === 'melo') return { engine: 'melo', label: 'MeloTTS · 中英混读女声' };
+    if (head === 'vits') return { engine: 'vits', label: 'VITS · 海星 · 俏皮甜美（近似）' };
+    if (head === 'zipvoice') return { engine: 'zipvoice', label: 'ZipVoice · 我的克隆声音' };
     var item = (typeof catalogGet === 'function') ? catalogGet(s.slice(head.length + 1)) : null;
     if (!item) return null;
     if (item.engine === 'kokoro' && typeof item.sid === 'number') return { engine: 'kokoro', sid: item.sid, label: item.name };
@@ -913,39 +1004,162 @@
     return null;
   }
 
-  function renderVoiceOptions() {
+  /* 音色下拉：系统语音全量 + 本地模型（未就绪的带后缀），与设置页同一份清单 */
+  function renderVoiceOptions(snapshot) {
     var sel = S && S.refs.voiceSel;
     if (!sel) return;
-    var list = voiceList().filter(function (v) {
-      return /zh|chinese|中文|普通话/i.test((v.lang || '') + ' ' + (v.name || ''));
-    });
-    var saved = S.persona.tts.voice || '';
-    var cur = saved || storeVoice();
+    var api = ttsApi();
+    var snap = snapshot || (api ? api.catalog() : null);
+    var cur = effectiveVoice();
+    var system = [];
+    var local = [];
+    if (snap) {
+      system = snap.system || [];
+      local = snap.local || [];
+    } else {
+      system = voiceList().map(function (v) {
+        return { value: v.name, name: v.name, lang: v.lang || '' };
+      });
+    }
+
     sel.innerHTML = '';
     var def = document.createElement('option');
     def.value = '';
-    def.textContent = list.length ? '系统默认' : '系统默认（未检测到中文语音）';
+    def.textContent = system.length ? '系统默认（自动挑中文音色）' : '系统默认（未检测到系统语音）';
     sel.appendChild(def);
-    list.forEach(function (v) {
-      var o = document.createElement('option');
-      o.value = v.name;
-      o.textContent = v.name + (v.lang ? ' · ' + v.lang : '');
-      sel.appendChild(o);
-    });
-    /* 商店里选的本地音色（Piper / Kokoro）不在系统语音列表里，
-     * 单独补一项，否则下拉会显示成「系统默认」。 */
-    var local = String(cur).indexOf('piper:') === 0 || String(cur).indexOf('kokoro:') === 0;
-    if (local) {
-      var po = document.createElement('option');
-      po.value = cur;
-      var spec = localVoiceSpec();
-      po.textContent = spec ? ('本地语音 · ' + spec.label) : '本地语音（模型商店）';
-      sel.appendChild(po);
+
+    if (system.length) {
+      var g1 = document.createElement('optgroup');
+      g1.label = '系统语音';
+      system.forEach(function (v) {
+        var o = document.createElement('option');
+        o.value = v.value;
+        o.textContent = v.name + (v.lang ? ' · ' + v.lang : '');
+        g1.appendChild(o);
+      });
+      sel.appendChild(g1);
     }
+
+    if (local.length) {
+      var g2 = document.createElement('optgroup');
+      g2.label = '本地模型';
+      local.forEach(function (v) {
+        var o = document.createElement('option');
+        o.value = v.value;
+        o.textContent = v.name + (v.ready ? '' : (v.needRef ? '（缺参考录音）' : '（未就绪）'));
+        g2.appendChild(o);
+      });
+      sel.appendChild(g2);
+    }
+
+    /* 已存音色不在清单里（模型刚卸载 / 引擎还没探测到）也补一项，别让下拉悄悄退回系统默认 */
+    var listed = system.some(function (v) { return v.value === cur; }) ||
+      local.some(function (v) { return v.value === cur; });
+    if (cur && !listed) {
+      var keep = document.createElement('option');
+      keep.value = cur;
+      keep.textContent = (api ? api.label(cur) : cur) + '（未就绪）';
+      sel.appendChild(keep);
+    }
+
     sel.value = cur;
-    /* 商店里选的可能是英文音色，下拉只列中文音色时选中会落空，退回人设值 */
-    if (sel.value !== cur) sel.value = saved;
-    sel.disabled = !list.length && !local;
+    if (sel.value !== cur) sel.value = '';
+    sel.disabled = !system.length && !local.length;
+    paintVoiceMeta(snap);
+  }
+
+  /* 引擎标签、音调可用性与状态行 */
+  function paintVoiceMeta(snapshot) {
+    var r = S && S.refs;
+    if (!r) return;
+    var api = ttsApi();
+    var isLocal = !!(api ? api.spec(effectiveVoice()) : localVoiceSpec());
+    if (r.voiceEngine) {
+      r.voiceEngine.textContent = isLocal ? '本地模型' : '系统语音';
+      r.voiceEngine.classList.toggle('is-local', isLocal);
+    }
+    if (r.pitch) r.pitch.disabled = isLocal;
+    if (r.pitchRow) {
+      r.pitchRow.classList.toggle('is-off', isLocal);
+      var lab = r.pitchRow.querySelector('span');
+      if (lab) lab.textContent = isLocal ? '音调 · 仅系统语音' : '音调';
+    }
+    paintVoiceStatus(snapshot);
+    paintVoiceHint(snapshot);
+  }
+
+  function paintVoiceStatus(snapshot) {
+    var el = S && S.refs && S.refs.voiceStatus;
+    if (!el) return;
+    var api = ttsApi();
+    var snap = snapshot || (api ? api.catalog() : null);
+    var sys = snap ? (snap.system || []).length : voiceList().length;
+    var st = snap ? snap.status : null;
+    var parts = ['系统语音 ' + sys + ' 个'];
+    if (st) {
+      parts.push('Piper ' + (st.piper ? '就绪' : '未装'));
+      parts.push('Kokoro ' + (st.kokoro ? '就绪' : '未装'));
+      parts.push('MeloTTS ' + (st.melo ? '就绪' : '未装'));
+      parts.push('角色音色 ' + (st.vits ? '就绪' : '未装'));
+      parts.push('ZipVoice ' + (st.zipvoice ? (st.clone ? '就绪' : '缺参考录音') : '未装'));
+    } else {
+      parts.push('本地模型需桌面端');
+    }
+    el.textContent = parts.join(' · ');
+    el.classList.toggle('is-err', !!(st && !st.probed));
+  }
+
+  function paintVoiceHint(snapshot) {
+    var el = S && S.refs && S.refs.voiceHint;
+    if (!el) return;
+    var api = ttsApi();
+    var own = (S && S.persona && S.persona.tts) ? S.persona.tts.voice : '';
+    var cur = effectiveVoice();
+    var spec = api ? api.spec(cur) : localVoiceSpec();
+    var snap = snapshot || (api ? api.catalog() : null);
+    var st = snap ? snap.status : null;
+    var text;
+    if (spec) {
+      if (spec.engine === 'zipvoice' && st && !st.clone) {
+        text = 'ZipVoice 还缺参考录音：到「语音设置 → 声音克隆」录一段 5-15 秒清晰人声，在此之前会退回系统语音；本地模型音调不生效。';
+      } else if (st && !st.probed) {
+        text = '本地引擎状态未知：确认桌面端与运行时已启动，再点「检测」；本地模型音调不生效。';
+      } else {
+        text = '本地模型按自身音色朗读，只有语速生效，音调已停用。';
+      }
+    } else if (!own && cur) {
+      text = '未单独选择，跟随默认音色：' + (api ? api.label(cur) : cur) + '。';
+    } else if (!snap || !(snap.system || []).length) {
+      text = '没有检测到系统语音：可在「语音设置 / 模型商店」下载本地模型，或安装系统语音包。';
+    } else {
+      text = '系统语音可调语速与音调；本地模型下载后会自动出现在这里。';
+    }
+    el.textContent = text;
+  }
+
+  /* force=true 时重新探测本地引擎（按钮 / 首次进角色页）；否则只按现有状态重画 */
+  function refreshVoices(force) {
+    var api = ttsApi();
+    var r = S && S.refs;
+    if (!api || !force) {
+      renderVoiceOptions();
+      return Promise.resolve();
+    }
+    if (r && r.voiceRefresh) r.voiceRefresh.disabled = true;
+    if (r && r.voiceStatus) r.voiceStatus.textContent = '正在检测本地引擎…';
+    return api.catalog({ refresh: true }).then(function (snap) {
+      if (r && r.voiceRefresh) r.voiceRefresh.disabled = false;
+      if (S) renderVoiceOptions(snap);
+    }, function () {
+      if (r && r.voiceRefresh) r.voiceRefresh.disabled = false;
+      if (S) renderVoiceOptions();
+    });
+  }
+
+  function openVoiceSettings() {
+    var api = ttsApi();
+    if (api && typeof api.openSettings === 'function') { api.openSettings(); return; }
+    if (typeof window.openSettings === 'function') window.openSettings('tts');
   }
 
   function syncTtsLabels() {
@@ -971,6 +1185,7 @@
     S.persona.tts.pitch = clamp(Number(r.pitch.value) || 1.12, 0.7, 1.5);
     S.persona.tts.voice = r.voiceSel ? r.voiceSel.value : '';
     syncTtsLabels();
+    paintVoiceMeta();
     saveState();
   }
 
@@ -1024,7 +1239,7 @@
     } catch (e) { S.rig.speaking = false; }
   }
 
-  /* 商店里下载的本地音色（Piper / Kokoro）不在系统语音列表里：交给本地引擎桥合成 WAV 再播。
+  /* 商店里下载的本地音色（Piper / Kokoro / MeloTTS / 角色音色 / ZipVoice）不在系统语音列表里：交给本地引擎桥合成 WAV 再播。
    * 引擎没起来（浏览器模式 / 被卸载）时退回系统语音，不让数字人整段静音。 */
   function speakLocal(clean, spec) {
     if (!spec || typeof fetch !== 'function' || typeof rtBase !== 'function' || typeof Audio !== 'function') return false;
@@ -1034,7 +1249,7 @@
     var rate = clamp(Number(tts.rate) || 1.04, 0.7, 1.4);
     var payload = { text: clean, engine: spec.engine, rate: rate };
     if (spec.engine === 'kokoro') payload.sid = spec.sid;
-    else payload.voice = spec.voice;
+    else if (spec.engine === 'piper') payload.voice = spec.voice;
     S.rig.speaking = true;
     S.rig.ttsUntil = S.rig.t + Math.min(30, Math.max(1.4, clean.length / (5.4 * rate)));
     fetch(base + '/tts/speak', {
@@ -1242,6 +1457,13 @@
     syncAff();
     renderLog();
     setEmotion('neutral');
+    /* 皮套也回到清单里的第一个 */
+    if (S.models.length && S.modelId !== S.models[0].id) {
+      S.modelId = S.models[0].id;
+      syncModelUI();
+      disposeRig();
+      loadRig();
+    }
     saveState();
     toast('已恢复默认角色');
   }
@@ -1275,14 +1497,18 @@
   }
 
   /* ---------- 皮套加载 ---------- */
+  /* 脚本只注入一次；缓存挂在 window 上，衣柜 App 复用同一套 pixi / Cubism 运行时 */
+  var scriptCache = window.__L2D_SCRIPT_CACHE || (window.__L2D_SCRIPT_CACHE = {});
   function injectScript(src) {
-    return new Promise(function (resolve, reject) {
+    if (scriptCache[src]) return scriptCache[src];
+    scriptCache[src] = new Promise(function (resolve, reject) {
       var el = document.createElement('script');
       el.src = src;
       el.onload = function () { resolve(); };
       el.onerror = function () { reject(new Error('脚本加载失败：' + src)); };
       document.head.appendChild(el);
     });
+    return scriptCache[src];
   }
 
   function b64ToBuffer(b64) {
@@ -1293,27 +1519,32 @@
     return buf.buffer;
   }
 
-  /* 模型加载器中间件：pack.js 里已有的文件不再走 XHR（file:// 下 XHR 读不到本地文件）。
-     moc3 是 base64 → ArrayBuffer，其余 json 已经是对象。 */
-  function serveFromPack(pack) {
-    var mocUrl = pack.settings.FileReferences.Moc;
-    var mocBuf = null;
-    return function (ctx, next) {
+  /* 模型加载器中间件：只回答「settings 上挂了 __l2dPack」的请求。
+     衣柜 App 也装了自己的中间件，两边按 settings 归属分流 ——
+     不再用全局「当前包」，两个 App 同时开着换皮套也不会串包。 */
+  function ensurePackHook() {
+    var loader = window.PIXI.live2d.Live2DLoader;
+    if (!loader || loader.__l2dPackHook) return;
+    loader.__l2dPackHook = true;
+    loader.middlewares.unshift(function (ctx, next) {
+      var p = ctx.settings && ctx.settings.__l2dPack;
+      if (!p) return next();
+      var mocUrl = p.settings.FileReferences.Moc;
       if (ctx.type === 'arraybuffer' && ctx.url === mocUrl) {
-        if (!mocBuf) mocBuf = b64ToBuffer(pack.moc);
-        ctx.result = mocBuf;
+        ctx.result = b64ToBuffer(p.moc);
         return;
       }
-      var data = pack.json[ctx.url];
+      var data = p.json[ctx.url];
       if (data) { ctx.result = data; return; }
       return next();
-    };
+    });
   }
 
   function loadRig() {
     var st = S.rig;
     if (st.loading || st.ready) return;
     st.loading = true;
+    var gen = ++st.gen;
     if (S.refs.rigErr) S.refs.rigErr.hidden = true;
 
     var chain = Promise.resolve();
@@ -1322,76 +1553,27 @@
     });
 
     chain.then(function () {
-      var pack = window.L2D_PACK;
-      if (!pack || !window.PIXI || !window.PIXI.live2d) throw new Error('运行时未就绪');
-      if (window.PIXI.live2d.Live2DLoader) {
-        window.PIXI.live2d.Live2DLoader.middlewares.unshift(serveFromPack(pack));
-      }
-      /* 构造时就要求 url 是字符串；纹理换成 data: URL，避免 file:// 下 CORS 拦图 */
-      var refs = Object.assign({}, pack.settings.FileReferences, { Textures: pack.textures });
-      var json = Object.assign({}, pack.settings, {
-        FileReferences: refs,
-        url: new URL(RIG_DIR, location.href).href
+      if (window.L2D_MODELS) return null;
+      return injectScript(MODELS_SRC);
+    }).then(function () {
+      if (!window.PIXI || !window.PIXI.live2d) throw new Error('运行时未就绪');
+      var models = (window.L2D_MODELS || []).filter(function (m) { return m && m.id && m.pack; });
+      if (!models.length) throw new Error('没有可用的皮套：model/models.js 为空');
+      S.models = models;
+
+      var def = null;
+      models.forEach(function (m) { if (m.id === S.modelId) def = m; });
+      if (!def) { def = models[0]; S.modelId = def.id; }
+      renderModels();
+
+      return injectScript(def.pack).then(function () {
+        if (st.gen !== gen) return;
+        var pack = window.L2D_PACKS && window.L2D_PACKS[def.id];
+        if (!pack) throw new Error('皮套数据包缺失：' + def.pack);
+        return mountModel(def, pack, gen);
       });
-      var settings = new window.PIXI.live2d.Cubism4ModelSettings(json);
-
-      var host = S.refs.canvas;
-      var app = new window.PIXI.Application({
-        transparent: true,
-        antialias: true,
-        autoStart: true,
-        resolution: Math.min(2, window.devicePixelRatio || 1),
-        autoDensity: true,
-        backgroundAlpha: 0
-      });
-      app.view.className = 'l2d-cvs';
-      host.appendChild(app.view);
-
-      return window.PIXI.live2d.Live2DModel.from(settings, { autoUpdate: false, autoInteract: false })
-        .then(function (model) {
-          app.stage.addChild(model);
-          st.app = app;
-          st.model = model;
-
-          /* 口型与嘴形在模型参数更新前写进去，表情/物理算完之后才不会被覆盖；
-             顺手留一份参数快照，探针要读「本帧真实参与绘制的值」 */
-          model.internalModel.on('beforeModelUpdate', function () {
-            var cm = model.internalModel.coreModel;
-            cm.setParameterValueById('ParamMouthOpenY', clamp(st.mouth, 0, 1));
-            cm.setParameterValueById('ParamMouthForm', clamp(st.mouthForm, -1, 1));
-            /* 说话时轻轻点头：叠加在模型自己算出的头部角度上 */
-            if (Math.abs(st.nod) > 0.01) {
-              var z = cm.getParameterValueById('ParamAngleZ') || 0;
-              cm.setParameterValueById('ParamAngleZ', z + st.nod);
-            }
-            st.snap = {
-              mouth: cm.getParameterValueById('ParamMouthOpenY'),
-              mouthForm: cm.getParameterValueById('ParamMouthForm'),
-              angleX: cm.getParameterValueById('ParamAngleX'),
-              angleY: cm.getParameterValueById('ParamAngleY'),
-              angleZ: cm.getParameterValueById('ParamAngleZ'),
-              breath: cm.getParameterValueById('ParamBreath'),
-              eyeL: cm.getParameterValueById('ParamEyeLOpen'),
-              browL: cm.getParameterValueById('ParamBrowLForm')
-            };
-          });
-
-          /* 模型自带的 idle 组名是 Idle，这里换成本项目注册的 idle */
-          if (model.internalModel.motionManager) {
-            model.internalModel.motionManager.groups.idle = 'idle';
-          }
-
-          st.ready = true;
-          st.loading = false;
-          if (S.refs.rigLoading) S.refs.rigLoading.hidden = true;
-          fitRig();
-          if (window.ResizeObserver) {
-            st.ro = new ResizeObserver(function () { fitRig(); });
-            st.ro.observe(host);
-          }
-          if (st.expr) setRigExpression(st.expr);
-        });
     }).catch(function (err) {
+      if (st.gen !== gen) return;
       st.loading = false;
       st.error = (err && err.message) || String(err);
       if (S.refs.rigLoading) S.refs.rigLoading.hidden = true;
@@ -1401,6 +1583,172 @@
         if (span) span.textContent = st.error;
       }
     });
+  }
+
+  /* 把一份 pack 挂到舞台上；换皮套时先 disposeRig() 再调这里 */
+  function mountModel(def, pack, gen) {
+    var st = S.rig;
+    ensurePackHook();
+
+    /* 构造时就要求 url 是字符串；纹理换成 data: URL，避免 file:// 下 CORS 拦图 */
+    var refs = Object.assign({}, pack.settings.FileReferences, { Textures: pack.textures });
+    var json = Object.assign({}, pack.settings, {
+      FileReferences: refs,
+      url: new URL(def.dir, location.href).href
+    });
+    var settings = new window.PIXI.live2d.Cubism4ModelSettings(json);
+    /* 中间件靠这个标记认领本模型的 moc / json */
+    settings.__l2dPack = pack;
+
+    var host = S.refs.canvas;
+    var app = new window.PIXI.Application({
+      transparent: true,
+      antialias: true,
+      autoStart: true,
+      resolution: Math.min(2, window.devicePixelRatio || 1),
+      autoDensity: true,
+      backgroundAlpha: 0
+    });
+    app.view.className = 'l2d-cvs';
+    host.appendChild(app.view);
+
+    return window.PIXI.live2d.Live2DModel.from(settings, { autoUpdate: false, autoInteract: false })
+      .then(function (model) {
+        /* 加载途中被换皮套 / 重置顶掉：丢掉这次结果，别往舞台上叠第二个模型 */
+        if (st.gen !== gen) {
+          try { app.destroy(true); } catch (e) { /* 已销毁 */ }
+          return;
+        }
+        app.stage.addChild(model);
+        st.app = app;
+        st.model = model;
+
+        /* 口型与嘴形在模型参数更新前写进去，表情/物理算完之后才不会被覆盖；
+           顺手留一份参数快照，探针要读「本帧真实参与绘制的值」 */
+        model.internalModel.on('beforeModelUpdate', function () {
+          var cm = model.internalModel.coreModel;
+          cm.setParameterValueById('ParamMouthOpenY', clamp(st.mouth, 0, 1));
+          cm.setParameterValueById('ParamMouthForm', clamp(st.mouthForm, -1, 1));
+          /* 衣柜里隐藏的部件：每帧压回 0，动作 / pose 把它拉起来也盖得住 */
+          if (S.hiddenParts && S.hiddenParts.length) {
+            for (var hi = 0; hi < S.hiddenParts.length; hi++) {
+              cm.setPartOpacityById(S.hiddenParts[hi], 0);
+            }
+          }
+          /* 说话时轻轻点头：叠加在模型自己算出的头部角度上 */
+          if (Math.abs(st.nod) > 0.01) {
+            var z = cm.getParameterValueById('ParamAngleZ') || 0;
+            cm.setParameterValueById('ParamAngleZ', z + st.nod);
+          }
+          st.snap = {
+            mouth: cm.getParameterValueById('ParamMouthOpenY'),
+            mouthForm: cm.getParameterValueById('ParamMouthForm'),
+            angleX: cm.getParameterValueById('ParamAngleX'),
+            angleY: cm.getParameterValueById('ParamAngleY'),
+            angleZ: cm.getParameterValueById('ParamAngleZ'),
+            breath: cm.getParameterValueById('ParamBreath'),
+            eyeL: cm.getParameterValueById('ParamEyeLOpen'),
+            browL: cm.getParameterValueById('ParamBrowLForm')
+          };
+        });
+
+        /* idle 组一般叫 Idle；本项目皮套注册成 idle，有就优先用 */
+        var mm = model.internalModel.motionManager;
+        if (mm && mm.definitions && mm.definitions.idle) mm.groups.idle = 'idle';
+
+        st.ready = true;
+        st.loading = false;
+        if (S.refs.rigLoading) S.refs.rigLoading.hidden = true;
+        fitRig();
+        if (window.ResizeObserver) {
+          st.ro = new ResizeObserver(function () { fitRig(); });
+          st.ro.observe(host);
+        }
+        if (st.expr) setRigExpression(st.expr);
+      });
+  }
+
+  /* 卸载当前皮套：销毁 PIXI 应用、断开尺寸监听，保留表情/口型等瞬时状态 */
+  function disposeRig() {
+    var st = S.rig;
+    st.gen++;
+    if (st.ro) { st.ro.disconnect(); st.ro = null; }
+    if (st.app) {
+      try { st.app.destroy(true, { children: true, texture: false }); }
+      catch (e) { try { st.app.destroy(true); } catch (e2) { /* 已销毁 */ } }
+    }
+    if (S.refs.canvas) S.refs.canvas.innerHTML = '';
+    st.app = null;
+    st.model = null;
+    st.snap = null;
+    st.ready = false;
+    st.loading = false;
+    st.error = '';
+    st.anchorX = 0;
+    st.anchorY = 0;
+    st.headTop = 0;
+    if (S.refs.rigLoading) S.refs.rigLoading.hidden = false;
+    if (S.refs.rigErr) S.refs.rigErr.hidden = true;
+  }
+
+  function renderModels() {
+    var sel = S.refs.modelSel;
+    if (!sel) return;
+    sel.innerHTML = '';
+    S.models.forEach(function (m) {
+      var o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = m.name || m.id;
+      sel.appendChild(o);
+    });
+    syncModelUI();
+  }
+
+  /* 皮套名字与版权跟着当前模型走 */
+  function syncModelUI() {
+    var sel = S.refs.modelSel;
+    var def = null;
+    S.models.forEach(function (m) { if (m.id === S.modelId) def = m; });
+    if (sel && def && sel.value !== def.id) sel.value = def.id;
+    if (!def) return;
+    if (S.refs.creditName) S.refs.creditName.textContent = def.name + ' · ' + def.id;
+    if (S.refs.creditAuthor) S.refs.creditAuthor.textContent = def.author || '';
+    if (S.refs.creditLicense) S.refs.creditLicense.textContent = def.license || '';
+  }
+
+  function switchModel(id) {
+    if (!id || id === S.modelId) return;
+    var hit = null;
+    S.models.forEach(function (m) { if (m.id === id) hit = m; });
+    if (!hit || !S.rig.ready) { syncModelUI(); return; }
+    S.modelId = id;
+    /* 手动换皮套：上一条搭配的部件 id 不再适用 */
+    S.hiddenParts = [];
+    saveState();
+    syncModelUI();
+    hideSay();
+    disposeRig();
+    loadRig();
+    toast('已换上皮套：' + (hit.name || hit.id));
+  }
+
+  /* 衣柜点「穿上」时调用：换皮套 + 隐藏部件，数字人开着就即时生效 */
+  function applyOutfit(outfit) {
+    if (!S || !outfit) return false;
+    S.hiddenParts = Array.isArray(outfit.hidden) ? outfit.hidden.filter(function (x) {
+      return typeof x === 'string' && x;
+    }).slice(0, 300) : [];
+    var mid = typeof outfit.modelId === 'string' && outfit.modelId ? outfit.modelId : S.modelId;
+    if (mid !== S.modelId) {
+      S.modelId = mid;
+      saveState();
+      syncModelUI();
+      hideSay();
+      disposeRig();
+      loadRig();
+    }
+    toast('已穿上：' + (outfit.name || '新套装'));
+    return true;
   }
 
   function fitRig() {

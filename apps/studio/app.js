@@ -89,7 +89,8 @@
     kfX: '<path d="M4 12h16"/><path d="m7.4 8.4-3.4 3.6 3.4 3.6M16.6 8.4l3.4 3.6-3.4 3.6"/>',
     kfY: '<path d="M12 4v16"/><path d="m8.4 7.4 3.6-3.4 3.6 3.4M8.4 16.6l3.6 3.4 3.6-3.4"/>',
     kfRot: '<path d="M19 12a7 7 0 1 1-2.6-5.4"/><path d="M19.4 4.6v4.6h-4.6"/>',
-    kfVolume: '<path d="M4 9.4h3.2L11 6.2v11.6L7.2 14.6H4z"/><path d="M14.6 9.4a4 4 0 0 1 0 5.2M17.2 7.2a7.4 7.4 0 0 1 0 9.6"/>'
+    kfVolume: '<path d="M4 9.4h3.2L11 6.2v11.6L7.2 14.6H4z"/><path d="M14.6 9.4a4 4 0 0 1 0 5.2M17.2 7.2a7.4 7.4 0 0 1 0 9.6"/>',
+    mic: '<rect x="9.2" y="3.4" width="5.6" height="10.4" rx="2.8"/><path d="M5.6 11.6a6.4 6.4 0 0 0 12.8 0"/><path d="M12 18v2.6M9 20.6h6"/>'
   };
   const ico = (name) => svgWrap(ICON[name] || '');
 
@@ -292,8 +293,14 @@
         kind: m.kind,
         url: String(m.url || ''),
         dur: Math.max(0, Number(m.dur) || 0),
-        source: m.source === 'library' ? 'library' : 'file',
-        libId: m.libId ? String(m.libId) : ''
+        source: m.source === 'library' || m.source === 'asset' || m.source === 'tts' ? m.source : 'file',
+        libId: m.libId ? String(m.libId) : '',
+        assetId: m.assetId ? String(m.assetId) : '',
+        tts: m.tts && m.tts.text ? {
+          text: String(m.tts.text),
+          voice: String(m.tts.voice || ''),
+          rate: Number(m.tts.rate) || 1
+        } : null
       };
     });
     const ids = new Set(p.media.map(function (m) { return m.id; }));
@@ -364,6 +371,8 @@
     snap: true,
     tool: 'select',
     loop: false,
+    mediaKind: 'all',
+    inspTab: 'basic',
     panel: 'media',
     hist: [],
     future: [],
@@ -379,6 +388,9 @@
     saveTimer: 0,
     libFiles: [],
     libPick: new Set(),
+    libTab: 'media',
+    libAssets: [],
+    assetThumbs: {},
     libTimer: 0,
     frameW: 0,
     frameH: 0,
@@ -438,11 +450,54 @@
   /* ---------------- 本地存档 / 快照 ---------------- */
   function cleanForStore(p) {
     const copy = JSON.parse(JSON.stringify(p));
-    /* 只存视频库素材：文件素材的 objectURL 在下次启动必定失效 */
-    copy.media = copy.media.filter(function (m) { return m.source === 'library'; });
+    /* 只存视频库 / 图库素材：文件素材的 objectURL 在下次启动必定失效。
+       图库素材只留 assetId，dataURL 启动时从资产库重新水合，避免撑爆 localStorage。 */
+    copy.media = copy.media.filter(function (m) {
+      return m.source === 'library' || m.source === 'asset' || m.source === 'tts';
+    }).map(function (m) {
+      return (m.source === 'asset' || m.source === 'tts') ? Object.assign({}, m, { url: '' }) : m;
+    });
     const keep = new Set(copy.media.map(function (m) { return m.id; }));
     copy.clips = copy.clips.filter(function (c) { return c.kind === 'text' || keep.has(c.mediaId); });
     return copy;
+  }
+
+  /* 图库素材的 dataURL 不进存档：启动 / 恢复快照 / 导入项目后按 assetId 重新读回。 */
+  async function hydrateAssetMedia() {
+    const bridge = window.assetBridge;
+    if (!bridge || typeof bridge.read !== 'function') return;
+    const need = S.project.media.filter(function (m) { return m.assetId && !m.url; });
+    if (!need.length) return;
+    let changed = false;
+    for (const m of need) {
+      let url = '';
+      try { url = await bridge.read(m.assetId); } catch (e) { url = ''; }
+      if (url) { m.url = url; changed = true; }
+    }
+    if (changed) { renderAll(); applyTime(); }
+  }
+
+  /* 配音素材同理：只存文本 + 音色，启动后按需重新合成。 */
+  async function hydrateTtsMedia() {
+    const bridge = window.ttsBridge;
+    if (!bridge || typeof bridge.speak !== 'function') return;
+    const need = S.project.media.filter(function (m) {
+      return m.source === 'tts' && m.tts && !m.url;
+    });
+    if (!need.length) return;
+    let changed = false;
+    for (const m of need) {
+      try {
+        const r = await bridge.speak(m.tts.text, { voice: m.tts.voice, rate: m.tts.rate });
+        if (r && r.url) { m.url = r.url; changed = true; }
+      } catch (e) { /* 引擎没装好就先留空，下一次启动再试 */ }
+    }
+    if (changed) { renderAll(); applyTime(); }
+  }
+
+  async function hydrateMedia() {
+    await hydrateAssetMedia();
+    await hydrateTtsMedia();
   }
 
   function readSnaps() {
@@ -454,8 +509,13 @@
 
   function snapshotProject() {
     /* 快照保留完整项目（含本会话的 blob/objectURL），用于崩溃后当场恢复；
-       跨会话读取时 loadSaved 仍会剔除失效的文件素材。 */
-    return { at: Date.now(), time: S.time, name: S.project.name, project: JSON.parse(JSON.stringify(S.project)) };
+       跨会话读取时 loadSaved 仍会剔除失效的文件素材。
+       图库素材剥掉 dataURL，避免五份快照把配额吃满。 */
+    const p = JSON.parse(JSON.stringify(S.project));
+    p.media.forEach(function (m) {
+      if (m.source === 'asset' || m.source === 'tts') m.url = '';
+    });
+    return { at: Date.now(), time: S.time, name: S.project.name, project: p };
   }
 
   function saveSnapshot() {
@@ -482,6 +542,7 @@
     S.hist = [];
     S.future = [];
     afterRestore();
+    hydrateMedia();
     toast('已恢复快照：' + (s.name || '未命名项目'));
     return true;
   }
@@ -636,6 +697,7 @@
     applyTime();
     paintUndo();
     saveNow();
+    hydrateMedia();
 
     /* 首次打开时，如果本地存档被过滤空了素材，给一句说明 */
     if (saved && !saved.project.media.length && saved.project.clips.length === 0) {
@@ -1732,11 +1794,59 @@
     return a;
   }
 
+  /* 文字转语音：把文字片段念成音频，落到音频轨，作为普通片段参与播放与导出。 */
+  async function generateVoice(id) {
+    const c = clipOf(id);
+    if (!c || c.kind !== 'text') return null;
+    const text = String((c.text && c.text.content) || '').trim();
+    if (!text) { toast('文字片段是空的'); return null; }
+    const bridge = window.ttsBridge;
+    if (!bridge || typeof bridge.speak !== 'function') { toast('当前环境没有语音合成模块'); return null; }
+    if (!bridge.isLocal()) {
+      toast('当前音色是系统语音，去模型商店下载本地音色后才能生成配音');
+      return null;
+    }
+    toast('正在合成配音…');
+    let r = null;
+    try {
+      r = await bridge.speak(text, { rate: bridge.defaultRate ? bridge.defaultRate() : 1 });
+    } catch (e) {
+      toast('配音失败：' + ((e && e.message) || e));
+      return null;
+    }
+    if (!r || !r.url) { toast('配音失败：没有返回音频'); return null; }
+    const dur = Math.max(MIN_CLIP, (await probeDuration(r.url, 'audio')) || 5);
+    pushHistory();
+    const media = {
+      id: 'tts:' + uid('m'),
+      name: '配音 · ' + (c.name || '文字'),
+      kind: 'audio',
+      url: r.url,
+      dur: round2(dur),
+      source: 'tts',
+      libId: '',
+      assetId: '',
+      tts: { text: text, voice: String(r.voice || ''), rate: Number(r.rate) || 1 }
+    };
+    S.project.media.push(media);
+    const trackId = ensureTrackOfKind('audio');
+    const clip = makeClip({
+      track: trackId, kind: 'audio', mediaId: media.id, name: media.name,
+      start: c.start, dur: round2(dur), in: 0, volume: 1, kf: {}
+    });
+    S.project.clips.push(clip);
+    S.sel = clip.id;
+    S.multi.clear();
+    rebuildTracks();
+    toast('已生成 ' + fmtDur(dur) + ' 配音到「' + trackOf(trackId).name + '」');
+    return clip;
+  }
+
   function clipMenuItems(c) {
     const lock = trackLocked(c.track);
     const inClip = S.time > c.start + 0.04 && S.time < c.start + c.dur - 0.04;
     const detached = audioDetachedFor(c);
-    return [
+    const items = [
       {
         id: 'split', label: '在播放头处分割', hint: 'S', disabled: !inClip || lock,
         run: function () { splitAt(S.time); }
@@ -1755,6 +1865,14 @@
       { id: 'del', label: '删除', hint: 'Del', run: function () { deleteSelected(false); } },
       { id: 'rdel', label: '波纹删除', hint: 'Shift+Del', run: function () { deleteSelected(true); } }
     ];
+    if (c.kind === 'text') {
+      items.splice(2, 0, {
+        id: 'voice', label: '生成配音（文字转语音）',
+        disabled: lock || !String((c.text && c.text.content) || '').trim(),
+        run: function () { generateVoice(c.id); }
+      });
+    }
+    return items;
   }
 
   function closeClipMenu() {
@@ -2131,7 +2249,7 @@
       '<button type="button" class="st-madd" data-add="' + m.id + '" title="加入时间线">＋</button></div>' +
       '<div class="st-mname">' + escHtml(m.name) + '</div>' +
       '<div class="st-mmeta">' + (m.kind === 'image' ? '图片 · 默认 5 秒' : fmtDur(m.dur)) +
-      (m.source === 'library' ? ' · 视频库' : '') + '</div></div>';
+      (m.source === 'library' ? ' · 视频库' : m.source === 'asset' ? ' · 图库' : '') + '</div></div>';
   }
 
   function renderMedia() {
@@ -2139,11 +2257,19 @@
     const empty = $('stMediaEmpty');
     if (!grid) return;
     const q = ($('stMediaSearch') && $('stMediaSearch').value || '').trim().toLowerCase();
+    const kind = S.mediaKind || 'all';
     const list = S.project.media.filter(function (m) {
-      return !q || m.name.toLowerCase().indexOf(q) >= 0;
+      return (kind === 'all' || m.kind === kind) && (!q || m.name.toLowerCase().indexOf(q) >= 0);
     });
     grid.innerHTML = list.map(mediaCard).join('');
-    if (empty) empty.classList.toggle('hidden', list.length > 0);
+    if (empty) {
+      empty.classList.toggle('hidden', list.length > 0);
+      const b = empty.querySelector('b');
+      const s = empty.querySelector('span');
+      const has = S.project.media.length > 0;
+      if (b) b.textContent = has ? '没有匹配的素材' : '还没有素材';
+      if (s) s.textContent = has ? '换个关键词或素材类型试试' : '导入本机视频 / 音频，或从「视频库」挑一条';
+    }
     grid.querySelectorAll('video').forEach(function (v) {
       v.addEventListener('loadedmetadata', function () {
         try { v.currentTime = Math.min(0.8, Math.max(0.1, v.duration * 0.15)); } catch (e) {}
@@ -2218,14 +2344,39 @@
     return out;
   }
 
-  /* ---------------- 视频库 ---------------- */
+  /* ---------------- 素材弹层：视频库 / 图库 ---------------- */
   async function openLibrary() {
     const modal = $('stLibModal');
-    const list = $('stLibList');
-    if (!modal || !list) return;
-    S.libPick = new Set();
+    if (!modal) return;
     modal.classList.remove('hidden');
-    list.innerHTML = '<div class="st-modal-empty">正在读取视频库…</div>';
+    await setLibTab(S.libTab || 'media');
+  }
+
+  async function setLibTab(tab) {
+    S.libTab = tab === 'asset' ? 'asset' : 'media';
+    document.querySelectorAll('#stLibModal [data-libtab]').forEach(function (b) {
+      const on = b.dataset.libtab === S.libTab;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    const s = $('stLibSearch');
+    if (s) {
+      s.value = '';
+      s.placeholder = S.libTab === 'asset' ? '搜索图库…' : '搜索视频库…';
+    }
+    S.libPick = new Set();
+    updateLibAdd();
+    const list = $('stLibList');
+    if (list) {
+      list.innerHTML = '<div class="st-modal-empty">正在读取' + (S.libTab === 'asset' ? '图库' : '视频库') + '…</div>';
+    }
+    if (S.libTab === 'asset') await loadAssetTab();
+    else await loadMediaTab();
+  }
+
+  async function loadMediaTab() {
+    const list = $('stLibList');
+    if (!list) return;
     const pa = window.playerApp;
     let files = [];
     if (!pa) {
@@ -2246,6 +2397,26 @@
     renderLibList('');
   }
 
+  /* 图库走 js/library.js 暴露的 window.assetBridge：
+     App 不直接摸 window.openagiDesktop（AGENTS.md 2 节硬规则）。 */
+  async function loadAssetTab() {
+    const list = $('stLibList');
+    if (!list) return;
+    const bridge = window.assetBridge;
+    if (!bridge || typeof bridge.available !== 'function' || !bridge.available()) {
+      S.libAssets = [];
+      list.innerHTML = '<div class="st-modal-empty">图库需要桌面版。<br>浏览器环境读不到资产库，请直接「导入文件」。</div>';
+      updateLibAdd();
+      return;
+    }
+    let assets = [];
+    try { assets = await bridge.list('image'); } catch (e) { assets = []; }
+    S.libAssets = (assets || []).filter(function (a) {
+      return a && a.id && (a.kind || 'image') === 'image' && !a.missing;
+    });
+    renderLibList('');
+  }
+
   function libUrl(f) {
     const pa = window.playerApp;
     if (pa && typeof pa._urlOf === 'function') return pa._urlOf(f);
@@ -2256,6 +2427,7 @@
     const list = $('stLibList');
     if (!list) return;
     const query = String(q || '').trim().toLowerCase();
+    if (S.libTab === 'asset') { renderAssetList(list, query); return; }
     const files = S.libFiles.filter(function (f) {
       return !query || String(f.name || '').toLowerCase().indexOf(query) >= 0;
     });
@@ -2272,9 +2444,47 @@
       return '<div class="st-librow' + (on ? ' on' : '') + (added ? ' added' : '') + '" data-lib="' + escHtml(String(f.id)) + '">' +
         '<span class="st-libico">' + (f.kind === 'video' ? 'VID' : f.kind === 'audio' ? 'AUD' : 'IMG') + '</span>' +
         '<span class="st-libname">' + escHtml(f.name || '素材') + '</span>' +
-        '<span class="st-libmeta">' + (added ? '已在素材库' : '点击选择') + '</span></div>';
+        '<span class="st-libmeta">' + (added ? '已在素材库' : (f.kind === 'image' ? '图片' : fmtDur(f.dur || 0))) + '</span></div>';
     }).join('');
     updateLibAdd();
+  }
+
+  function renderAssetList(list, query) {
+    const assets = S.libAssets.filter(function (a) {
+      return !query || String(a.name || '').toLowerCase().indexOf(query) >= 0;
+    });
+    const cnt = $('stLibCount');
+    if (cnt) cnt.textContent = '共 ' + assets.length + ' 张';
+    if (!assets.length) {
+      list.innerHTML = '<div class="st-modal-empty">图库里还没有图片。<br>先在生成流程里出图，或用图库的「导入」收图。</div>';
+      updateLibAdd();
+      return;
+    }
+    list.innerHTML = assets.map(function (a) {
+      const id = String(a.id);
+      const added = S.project.media.some(function (m) { return m.assetId === id; });
+      const on = S.libPick.has(id);
+      return '<div class="st-librow' + (on ? ' on' : '') + (added ? ' added' : '') + '" data-asset="' + escHtml(id) + '">' +
+        '<span class="st-libico" data-thumb="' + escHtml(id) + '">IMG</span>' +
+        '<span class="st-libname">' + escHtml(a.name || '图库素材') + '</span>' +
+        '<span class="st-libmeta">' + (added ? '已在素材库' : fmtBytes(a.size)) + '</span></div>';
+    }).join('');
+    updateLibAdd();
+    const bridge = window.assetBridge;
+    if (!bridge || typeof bridge.thumb !== 'function') return;
+    list.querySelectorAll('[data-thumb]').forEach(function (el) {
+      const id = el.dataset.thumb;
+      const paint = function (url) {
+        if (!url) return;
+        el.innerHTML = '<img class="st-libthumb" src="' + url + '" alt="">';
+      };
+      if (S.assetThumbs[id]) { paint(S.assetThumbs[id]); return; }
+      bridge.thumb(id).then(function (url) {
+        if (!url) return;
+        S.assetThumbs[id] = url;
+        paint(url);
+      }).catch(function () {});
+    });
   }
 
   function updateLibAdd() {
@@ -2287,6 +2497,7 @@
 
   async function addFromLibrary() {
     if (!S.libPick.size) return;
+    if (S.libTab === 'asset') { await addAssetsFromLibrary(); return; }
     const pa = window.playerApp;
     const picks = S.libFiles.filter(function (f) { return S.libPick.has(String(f.id)); });
     toast('正在加入 ' + picks.length + ' 个素材…');
@@ -2305,7 +2516,8 @@
         url: url,
         dur: round2(dur),
         source: 'library',
-        libId: libId
+        libId: libId,
+        assetId: ''
       });
     }
     if (newMedia.length) {
@@ -2316,6 +2528,39 @@
     $('stLibModal').classList.add('hidden');
     toast(newMedia.length ? ('已加入 ' + newMedia.length + ' 个视频库素材') : '这些素材已经在素材库里了');
     void pa;
+  }
+
+  /* 图库素材：只把 assetId 写进项目，dataURL 在内存里用，启动时重新水合。 */
+  async function addAssetsFromLibrary() {
+    const bridge = window.assetBridge;
+    const picks = S.libAssets.filter(function (a) { return S.libPick.has(String(a.id)); });
+    if (!bridge || typeof bridge.read !== 'function' || !picks.length) return;
+    toast('正在加入 ' + picks.length + ' 张图库素材…');
+    const out = [];
+    for (const a of picks) {
+      const assetId = String(a.id);
+      if (S.project.media.some(function (m) { return m.assetId === assetId; })) continue;
+      let url = '';
+      try { url = await bridge.read(assetId); } catch (e) { url = ''; }
+      if (!url) continue;
+      out.push({
+        id: 'ast:' + assetId,
+        name: String(a.name || '图库素材'),
+        kind: 'image',
+        url: url,
+        dur: 5,
+        source: 'asset',
+        libId: '',
+        assetId: assetId
+      });
+    }
+    if (out.length) {
+      S.project.media = S.project.media.concat(out);
+      renderAll();
+      scheduleSave();
+    }
+    $('stLibModal').classList.add('hidden');
+    toast(out.length ? ('已加入 ' + out.length + ' 张图库素材') : '这些图已经在素材库里了');
   }
 
   /* ---------------- 检查器 ---------------- */
@@ -2396,7 +2641,7 @@
     const props = KF_PROPS.filter(function (p) { return c.kind !== 'text' || p !== 'volume'; });
     const sum = props.filter(function (p) { return c.kf && c.kf[p] && c.kf[p].length; })
       .map(function (p) { return labels[p] + ' ' + c.kf[p].length; }).join(' · ');
-    return '<div class="st-insp-sec"><h4>关键帧</h4>' +
+    return '<div class="st-insp-sec" data-g="kf"><h4>关键帧</h4>' +
       '<div class="st-kfrow">' + props.map(function (p) {
         const icon = { opacity: 'kfOpacity', scale: 'kfScale', x: 'kfX', y: 'kfY', rot: 'kfRot', volume: 'kfVolume' }[p];
         return '<button type="button" class="st-kfbtn" data-kf="' + p +
@@ -2410,12 +2655,22 @@
     const box = $('stInspector');
     if (!box) return;
     const c = selected();
-    if (!c) { box.innerHTML = projectPanel(); return; }
+    if (!c) { box.innerHTML = projectPanel(); paintStatus(); return; }
     const isText = c.kind === 'text';
     const isVisual = c.kind === 'video' || c.kind === 'image';
     const m = c.mediaId ? mediaOf(c.mediaId) : null;
     const multiN = S.multi.size;
-    let html = '<div class="st-insp-sec"><h4>片段<em>' + kindLabel(c.kind) + (m ? ' · ' + escHtml(m.name) : '') +
+    const tabs = [['basic', '基础'], ['visual', '画面']];
+    if (!isText) tabs.push(['audio', '声音']);
+    tabs.push(['motion', '动画'], ['kf', '关键帧']);
+    const active = tabs.some(function (t) { return t[0] === S.inspTab; }) ? S.inspTab : 'basic';
+    S.inspTab = active;
+    box.dataset.itab = active;
+    let html = '<div class="st-insp-tabs" role="tablist">' + tabs.map(function (t) {
+      return '<button type="button" class="st-insp-tab' + (t[0] === active ? ' on' : '') +
+        '" data-itab="' + t[0] + '" role="tab" aria-selected="' + (t[0] === active ? 'true' : 'false') + '">' + t[1] + '</button>';
+    }).join('') + '</div>';
+    html += '<div class="st-insp-sec" data-g="basic"><h4>片段<em>' + kindLabel(c.kind) + (m ? ' · ' + escHtml(m.name) : '') +
       (multiN > 1 ? ' · 已选 ' + multiN + ' 个' : '') + '</em></h4>' +
       '<label class="st-field wide"><span>名称</span><input type="text" data-prop="name" value="' + escHtml(c.name) + '"></label>' +
       num('起点', 'start', c.start.toFixed(2), 0, 3600, 0.1, 's') +
@@ -2424,7 +2679,7 @@
     html += '</div>';
 
     if (isText) {
-      html += '<div class="st-insp-sec"><h4>文字</h4>' +
+      html += '<div class="st-insp-sec" data-g="basic"><h4>文字</h4>' +
         '<textarea data-prop="textContent" placeholder="输入文字…">' + escHtml(c.text.content) + '</textarea>' +
         '<label class="st-field"><span>字号</span><input type="range" data-prop="textSize" min="10" max="220" step="1" value="' + c.text.size + '"><i class="st-fval" data-fval="textSize">' + c.text.size + 'px</i></label>' +
         '<div class="st-colorfield"><input type="color" data-prop="textColor" value="' + (/^#[0-9a-f]{6}$/i.test(c.text.color) ? c.text.color : '#ffffff') + '"><input type="text" data-prop="textColor" value="' + escHtml(c.text.color) + '"></div>' +
@@ -2438,11 +2693,12 @@
           return '<option value="' + a[0] + '"' + (a[0] === c.text.align ? ' selected' : '') + '>' + a[1] + '</option>';
         }).join('') + '</select></label>' +
         '<label class="st-checkrow"><input type="checkbox" data-prop="textBold"' + (c.text.bold ? ' checked' : '') + '> 加粗</label>' +
+        '<button type="button" class="st-ghost st-wide st-voice-btn" data-act="voice">' + ico('mic') + ' 生成配音</button>' +
         '</div>';
     }
 
     if (isVisual || isText) {
-      html += '<div class="st-insp-sec"><h4>画面</h4>' +
+      html += '<div class="st-insp-sec" data-g="visual"><h4>画面</h4>' +
         rng('缩放', 'scalePct', Math.round(c.scale * 100), 20, 300, 1, Math.round(c.scale * 100) + '%') +
         rng('水平', 'x', Math.round(c.x), -50, 50, 1, Math.round(c.x) + '%') +
         rng('垂直', 'y', Math.round(c.y), -50, 50, 1, Math.round(c.y) + '%') +
@@ -2458,14 +2714,14 @@
     }
 
     if (!isText) {
-      html += '<div class="st-insp-sec"><h4>声音与速度</h4>' +
+      html += '<div class="st-insp-sec" data-g="audio"><h4>声音与速度</h4>' +
         rng('音量', 'volumePct', Math.round(c.volume * 100), 0, 100, 1, Math.round(c.volume * 100) + '%') +
         '<label class="st-checkrow"><input type="checkbox" data-prop="muted"' + (c.muted ? ' checked' : '') + '> 静音本片段</label>' +
         rng('速度', 'speed', c.speed, 0.25, 4, 0.05, c.speed.toFixed(2) + 'x') +
         '</div>';
     }
 
-    html += '<div class="st-insp-sec"><h4>动画</h4>' +
+    html += '<div class="st-insp-sec" data-g="motion"><h4>动画</h4>' +
       rng('淡入', 'fadeIn', c.fadeIn, 0, 5, 0.1, c.fadeIn.toFixed(1) + 's') +
       rng('淡出', 'fadeOut', c.fadeOut, 0, 5, 0.1, c.fadeOut.toFixed(1) + 's') +
       '</div>';
@@ -2477,6 +2733,7 @@
       '<button type="button" class="st-ghost st-icobtn" data-act="rdel" title="波纹删除" aria-label="波纹删除">' + ico('rippleDel') + '</button></div>';
     box.innerHTML = html;
     paintFxSel();
+    paintStatus();
   }
 
   function paintFxSel() {
@@ -2602,6 +2859,7 @@
     renderInspector();
     paintUndo();
     paintTc();
+    paintStatus();
     updateEmpty();
   }
 
@@ -2617,6 +2875,7 @@
     renderTimeline();
     if (sc) sc.scrollLeft = Math.max(0, center * S.pps - sc.clientWidth / 2);
     applyTime();
+    paintStatus();
   }
 
   /* 适配时间线：把整条片子的时长铺满时间线可视宽度。 */
@@ -2636,6 +2895,7 @@
     if (b) b.classList.toggle('on', S.tool === 'blade');
     const rows = $('stRows');
     if (rows) rows.classList.toggle('blade', S.tool === 'blade');
+    paintStatus();
   }
 
   function selectAllClips() {
@@ -2660,6 +2920,47 @@
       b.setAttribute('aria-pressed', S.loop ? 'true' : 'false');
     }
     toast(S.loop ? '循环播放已开启' : '循环播放已关闭');
+  }
+
+  function setMediaKind(kind) {
+    S.mediaKind = ['all', 'video', 'image', 'audio'].indexOf(kind) >= 0 ? kind : 'all';
+    document.querySelectorAll('#stMediaFilter .st-fchip').forEach(function (b) {
+      const on = b.dataset.fk === S.mediaKind;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    renderMedia();
+  }
+
+  function setInspTab(name) {
+    S.inspTab = name || 'basic';
+    const box = $('stInspector');
+    if (!box) return;
+    box.dataset.itab = S.inspTab;
+    box.querySelectorAll('[data-itab]').forEach(function (b) {
+      const on = b.dataset.itab === S.inspTab;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+  }
+
+  /* 底部状态栏：片段 / 选中 / 轨道 / 工具 / 缩放 / 总时长 */
+  function paintStatus() {
+    const n = S.project.clips.length;
+    const sc = $('stStClips');
+    if (!sc) return;
+    sc.textContent = n + ' 片段';
+    const selN = S.multi.size || (S.sel ? 1 : 0);
+    const sel = $('stStSel');
+    if (sel) sel.textContent = selN ? '已选 ' + selN + ' 个' : '未选中';
+    const tr = $('stStTracks');
+    if (tr) tr.textContent = tracks().length + ' 轨道';
+    const tool = $('stStTool');
+    if (tool) tool.textContent = S.tool === 'blade' ? '剃刀工具' : '选择工具';
+    const z = $('stStZoom');
+    if (z) z.textContent = Math.round(S.pps) + ' px/s';
+    const d = $('stStDur2');
+    if (d) d.textContent = fmtMmss(projectDuration(S.project));
   }
 
   function setTab(name) {
@@ -2978,6 +3279,16 @@
       if (b) setTab(b.dataset.panel);
     });
 
+    $('stMediaFilter').addEventListener('click', function (e) {
+      const b = e.target.closest('[data-fk]');
+      if (b) setMediaKind(b.dataset.fk);
+    });
+
+    $('stInspector').addEventListener('click', function (e) {
+      const b = e.target.closest('[data-itab]');
+      if (b) setInspTab(b.dataset.itab);
+    });
+
     const search = $('stMediaSearch');
     if (search) search.addEventListener('input', renderMedia);
 
@@ -3120,6 +3431,7 @@
       else if (b.dataset.act === 'del') deleteSelected(false);
       else if (b.dataset.act === 'rdel') deleteSelected(true);
       else if (b.dataset.act === 'kfclear' && S.sel) clearKeyframes(S.sel);
+      else if (b.dataset.act === 'voice' && S.sel) generateVoice(S.sel);
     });
 
     document.querySelectorAll('[data-close]').forEach(function (b) {
@@ -3133,11 +3445,16 @@
     });
 
     $('stLibOpen').addEventListener('click', openLibrary);
+    $('stLibModal').addEventListener('click', function (e) {
+      const b = e.target.closest('[data-libtab]');
+      if (b) setLibTab(b.dataset.libtab);
+    });
     $('stLibSearch').addEventListener('input', function (e) { renderLibList(e.target.value); });
     $('stLibList').addEventListener('click', function (e) {
       const row = e.target.closest('.st-librow');
       if (!row || row.classList.contains('added')) return;
-      const id = row.dataset.lib;
+      const id = row.dataset.asset || row.dataset.lib;
+      if (!id) return;
       if (S.libPick.has(id)) S.libPick.delete(id);
       else S.libPick.add(id);
       row.classList.toggle('on', S.libPick.has(id));
@@ -3205,8 +3522,10 @@
     try { raw = JSON.parse(String(text || '')); }
     catch (e) { toast('项目文件不是合法 JSON'); return false; }
     const p = normalizeProject(raw);
-    /* 文件素材的 blob: 地址跨会话必失效，导入时只保留视频库素材与文字 */
-    p.media = p.media.filter(function (m) { return m.source === 'library'; });
+    /* 文件素材的 blob: 地址跨会话必失效，导入时只保留视频库 / 图库 / 配音素材与文字 */
+    p.media = p.media.filter(function (m) {
+      return m.source === 'library' || m.source === 'asset' || m.source === 'tts';
+    });
     const keep = new Set(p.media.map(function (m) { return m.id; }));
     p.clips = p.clips.filter(function (c) { return c.kind === 'text' || keep.has(c.mediaId); });
     if (fileName && (!raw.name || p.name === '未命名项目')) p.name = String(fileName).replace(/\.(hfstudio|json)$/i, '');
@@ -3221,6 +3540,7 @@
     renderAll();
     applyTime();
     saveNow();
+    hydrateMedia();
     toast('已导入项目：' + p.name);
     return true;
   }
@@ -3629,6 +3949,7 @@
         };
       },
       project: function () { return JSON.parse(JSON.stringify(S.project)); },
+      clean: function (p) { return cleanForStore(p || S.project); },
       tracks: function () { return JSON.parse(JSON.stringify(S.project.tracks)); },
       addMedia: function (m) {
         const item = {

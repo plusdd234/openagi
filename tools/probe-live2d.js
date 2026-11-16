@@ -46,7 +46,8 @@ const rig = (page) => page.evaluate(() => (window.__l2dRig ? window.__l2dRig() :
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e && e.message)));
   page.on('console', (m) => {
-    if (m.type() === 'error' && !/speech|voice|audio/i.test(m.text())) {
+    /* 无头环境没有本地模型网关，连接被拒是预期噪声；资源缺失会报 ERR_FILE_NOT_FOUND */
+    if (m.type() === 'error' && !/speech|voice|audio|ERR_CONNECTION_REFUSED/i.test(m.text())) {
       errors.push('console: ' + m.text());
     }
   });
@@ -150,6 +151,70 @@ const rig = (page) => page.evaluate(() => (window.__l2dRig ? window.__l2dRig() :
   await page.waitForTimeout(180);
 
   check(await visible(page, '#live2dWin #l2dVoiceSel'), '角色面板出现朗读音色下拉');
+
+  /* 语音面板对齐系统语音合成能力：音色清单、引擎状态、检测 / 设置入口 */
+  const voicePanel = await page.evaluate(() => {
+    const sel = document.getElementById('l2dVoiceSel');
+    const st = document.getElementById('l2dVoiceStatus');
+    return {
+      count: sel ? sel.options.length : 0,
+      groups: sel ? sel.querySelectorAll('optgroup').length : 0,
+      status: st ? st.textContent.trim() : ''
+    };
+  });
+  check(voicePanel.count > 1, '音色下拉列出可用音色', voicePanel.count + ' 项 / ' + voicePanel.groups + ' 组');
+  check(/系统语音\s*\d+/.test(voicePanel.status), '引擎状态行显示系统语音数量', voicePanel.status.slice(0, 46));
+  check(await visible(page, '#live2dWin #l2dVoiceRefresh') && await visible(page, '#live2dWin #l2dVoiceOpen'),
+    '有「检测」与「语音设置」入口');
+
+  /* 选第一项系统语音：引擎标签回到系统语音，音调可用 */
+  const sysPick = await page.evaluate(() => {
+    const sel = document.getElementById('l2dVoiceSel');
+    const opt = sel.querySelector('optgroup[label="系统语音"] option');
+    if (opt) {
+      sel.value = opt.value;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    return {
+      picked: !!opt,
+      engine: document.getElementById('l2dVoiceEngine').textContent.trim(),
+      pitchDisabled: document.getElementById('l2dPitch').disabled
+    };
+  });
+  check(!sysPick.picked || (sysPick.engine === '系统语音' && !sysPick.pitchDisabled),
+    '选系统语音后引擎标签与音调同步', sysPick.picked ? sysPick.engine : '无系统语音，跳过');
+
+  /* 本地音色不接收音调：音调滑块应禁用并给出说明 */
+  const localPitch = await page.evaluate(() => {
+    const sel = document.getElementById('l2dVoiceSel');
+    const o = document.createElement('option');
+    o.value = 'melo:zh_en';
+    o.textContent = 'MeloTTS · probe';
+    sel.appendChild(o);
+    sel.value = 'melo:zh_en';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    return {
+      disabled: document.getElementById('l2dPitch').disabled,
+      off: document.getElementById('l2dPitchRow').classList.contains('is-off'),
+      engine: document.getElementById('l2dVoiceEngine').textContent.trim(),
+      hint: document.getElementById('l2dVoiceHint').textContent.trim()
+    };
+  });
+  check(localPitch.disabled && localPitch.off && localPitch.engine === '本地模型',
+    '本地音色时音调禁用并切换引擎标签',
+    localPitch.engine + ' / disabled ' + localPitch.disabled);
+  check(/音调/.test(localPitch.hint), '本地音色提示音调不生效', localPitch.hint.slice(0, 32));
+
+  /* 切回系统语音：后面的试听要走 SpeechSynthesisUtterance 那条链路 */
+  await page.evaluate(() => {
+    const sel = document.getElementById('l2dVoiceSel');
+    const opt = sel.querySelector('optgroup[label="系统语音"] option');
+    sel.value = opt ? opt.value : '';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(120);
+  check(!sysPick.picked || await page.evaluate(() => !document.getElementById('l2dPitch').disabled),
+    '切回系统语音后音调恢复可用');
 
   /* range 不支持 fill：直接设 value 再派发 input */
   await page.$eval('#live2dWin #l2dRate', (el) => {
@@ -344,6 +409,18 @@ const rig = (page) => page.evaluate(() => (window.__l2dRig ? window.__l2dRig() :
   await page.waitForTimeout(220);
   check(await visible(page, '#live2dWin .l2d-pane-persona'), '角色面板可切换');
   check(await visible(page, '#live2dWin .l2d-credit'), '角色面板带皮套署名');
+  const modelSel = await page.evaluate(() => {
+    const sel = document.getElementById('l2dModelSel');
+    return {
+      shown: !!sel && !!(sel.offsetWidth || sel.getClientRects().length),
+      ids: sel ? Array.from(sel.options).map(o => o.value) : [],
+      value: sel ? sel.value : '',
+      credit: (document.getElementById('l2dCreditName') || {}).textContent || ''
+    };
+  });
+  check(modelSel.shown && modelSel.ids.indexOf('c_0120') >= 0 && modelSel.value === 'c_0120',
+    '皮套清单可切换且选中当前模型', modelSel.ids.join(',') + ' / ' + modelSel.value);
+  check(modelSel.credit.indexOf('鲸鱼娘') >= 0, '皮套署名跟随模型', modelSel.credit.trim());
   await page.fill('#live2dWin #l2dFName', '小汐');
   await page.click('#live2dWin #l2dSave');
   await page.waitForTimeout(260);

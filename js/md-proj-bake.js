@@ -3195,8 +3195,8 @@
       S.camDirty = true;
       S.bakeCv = null; S.bakeSlot = -1; S.bakeDoc = null; S.bakeUrl = null;
       /* 槽号先夹到合法范围再铺下拉框，否则 select.value 会落在一个不存在的项上 */
-      var names0 = (st.doc.materials && st.doc.materials.slotNames) || [''];
-      S.slot = Math.max(0, Math.min(S.slot || 0, names0.length - 1));
+      var list0 = slotList();
+      S.slot = list0.indexOf(S.slot) >= 0 ? S.slot : (list0[0] || 0);
       fillSlotSelect();
       /* 先把「只在材质上」的底座领养进文档，再铺底图 —— 顺序反了的话，
        * 撤销 / 重建材质会把这张图丢掉（见 adoptLiveBase 的说明）。 */
@@ -3218,13 +3218,28 @@
       return true;
     }
 
+    /* 只列当前对象自己的槽：场景里并排摆着多个模型时，
+     * 不该把别人模型的材质也列进来，更不该把烘焙写进别人的槽。 */
+    function slotList() {
+      var names = (st.doc && st.doc.materials && st.doc.materials.slotNames) || [];
+      var list = [];
+      try {
+        var S = global.SeedModel && global.SeedModel.Scene;
+        if (S && S.slotsOf) list = S.slotsOf(st.doc, st.node);
+      } catch (e) { list = []; }
+      if (!list.length) list = names.map(function (_, i) { return i; });
+      return list;
+    }
+
     function fillSlotSelect() {
       var sel = $('mdPbSlot');
       if (!sel) return;
       var names = (st.doc && st.doc.materials && st.doc.materials.slotNames) || [];
-      if (!names.length) names = ['插槽 1'];
-      sel.innerHTML = names.map(function (n, i) {
-        return '<option value="' + i + '">' + esc(n || ('插槽 ' + (i + 1))) + '</option>';
+      var list = slotList();
+      if (!list.length) list = [0];
+      if (list.indexOf(S.slot) < 0) S.slot = list[0];
+      sel.innerHTML = list.map(function (i) {
+        return '<option value="' + i + '">' + esc(names[i] || ('插槽 ' + (i + 1))) + '</option>';
       }).join('');
       sel.value = String(S.slot);
       sel.onchange = function () {

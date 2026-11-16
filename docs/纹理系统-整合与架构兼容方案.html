@@ -138,12 +138,12 @@
   <tr>
     <td><code>doc.materials</code></td>
     <td>随 seedModel 进 GLB / IndexedDB</td>
-    <td><code>slotNames</code> / <code>slotColors</code> / <code>slotMaps</code>（贴图 dataURL）/ <code>textureConfigKey</code></td>
+    <td><code>slotNames</code> / <code>slotColors</code> / <code>slotMaps</code>（贴图 dataURL）/ <code>slotIds</code>（材质稳定 id）/ <code>textureConfigKey</code>；每个网格的材质归属在 <code>doc.meshSlots</code></td>
     <td>绘画、投射烘焙、材质槽面板</td>
   </tr>
   <tr>
     <td><code>openagi_model_tex_v1</code></td>
-    <td>localStorage，按「资产 key + 槽名」索引</td>
+    <td>localStorage，按「资产 key + slotId」索引（老配置打开时按槽名迁移）</td>
     <td><code>v3 = { layers:[{id,blend,opacity,mask}], baked:{id} }</code>；只存 id/参数，图在资产库</td>
     <td>纹理混合（建模 App 与模型库<b>共用</b>）</td>
   </tr>

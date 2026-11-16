@@ -347,6 +347,7 @@
       <div class="k">证据</div><div class="v"><a href="../js/seed-model-scene.js">materialsOf</a>（L108）只归一化 <code>slotNames / slotColors / slotMaps</code>；<code>slotMaps[slot]</code> 是文档级共享，没有“对象材质实例”。</div>
       <div class="k">影响</div><div class="v">做 PBR、粗糙度/法线绘制、把两个对象贴不同外观、UDIM、材质复制都受限；专业用户会立刻感到“只能涂色”。</div>
       <div class="k">建议</div><div class="v">升级为材质 datablock（id + 通道）+ 节点引用 <code>materialSlots</code>（字段已存在，只是语义单薄）。先补 baseColor / normal / roughness 三通道，再谈节点。</div>
+      <div class="k">进展 2026-11-16</div><div class="v"><b>已实现</b>（多模型同看时材质串通的根治）：材质库新增稳定 <code>slotIds</code>（老文档按 <code>slot-&lt;i&gt;</code> 补齐）；每个网格有独立归属 <code>doc.meshSlots</code>，面槽位仍存库下标；追加资产走 <code>adoptMaterials</code> 整体后移 + <code>remapSlotIndices</code> 重映射 + <code>MIX.adoptSlot</code> 搬运纹理栈；材质面板 / 纹理混合 / 投射烘焙只列当前对象归属槽；撤销快照与材质补丁覆盖新字段。<br><b>仍未做</b>：材质还不是跨文档可复用的 datablock（无复制 / 实例 / 对象级独立库），通道仍只有 baseColor + 贴图；对象级独立材质库仍是计划目标。</div>
     </div>
   </div>
 </div>
@@ -407,8 +408,8 @@
 </div>
 
 <!-- ============================================================ -->
-<h2><span class="no">04</span>已经在收利息：三个近期缺陷的归因</h2>
-<p class="lead">债务不是理论。过去这段时间修的三个问题，全是 D4 / D3 / D2 的直接产物。</p>
+<h2><span class="no">04</span>已经在收利息：四个近期缺陷的归因</h2>
+<p class="lead">债务不是理论。过去这段时间修的四个问题，全是 D4 / D3 / D2 的直接产物。</p>
 
 <table>
   <thead><tr><th>缺陷</th><th>表象</th><th>真实根因</th><th>对应债务</th></tr></thead>
@@ -430,6 +431,12 @@
       <td>画完无法回退，历史里没有这一笔</td>
       <td>历史只识别“文档差异”，贴图写入不在快照差分范围内</td>
       <td class="tag t-p1">D2</td>
+    </tr>
+    <tr>
+      <td>有贴图的模型上绘画无反应</td>
+      <td>落笔没有任何像素写入，状态栏也不报错</td>
+      <td>隐式假设“UV 一定在 0–1”与“faceSlots 一定合法”：平铺 / atlas 的 UV 让笔刷落在画布外、UV 岛遮罩把整笔裁成空；老资产的越界面槽命中后拿不到材质，两处都静默失败。现已在 <code>md-paint.js</code> 对 UV 取模、越界时跳过岛裁剪，并在 <code>seed-model-scene.js</code> 的 <code>validate</code> 里把越界面槽夹回槽 0</td>
+      <td class="tag t-p1">D4</td>
     </tr>
   </tbody>
 </table>

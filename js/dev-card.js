@@ -5,7 +5,7 @@
  * 名片这种东西改字比改代码勤，散在 render 函数里就等于每次改都要读一遍 HTML 拼接。
  *
  * 数据来源：B 站公开主页与公开接口（space.bilibili.com/641892012），
- * 2026-10-29 取。粉丝/播放这类数字会变，改的时候只动 CD 即可。
+ * 2026-11-15 取。粉丝/播放这类数字会变，改的时候只动 CD 即可。
  */
 (function(){
   'use strict';
@@ -21,8 +21,8 @@
     avatar: 'img/avatar.jpg',
     avatarFallback: '虚',
     stats: [
-      { k: 'B 站粉丝', v: '7,890' },
-      { k: 'B 站投稿', v: '103'   },
+      { k: 'B 站粉丝', v: '8,247' },
+      { k: 'B 站投稿', v: '105'   },
       { k: '合集',     v: '7'     },
       { k: '充电',     v: '29 人' }
     ],
@@ -43,18 +43,18 @@
         d: 'actor 类内节点、12 种 get 与 6 种 set 变换函数，按笔记节奏一期一期推' },
       { n: '虚幻 C++', c: '19 集', g: 'code',
         d: 'UE_LOG / DEFINE_LOG / FString / 蓝图继承 C++，每期压到 10 分钟内' },
-      { n: 'AI 建模工作流', c: '22 集', g: 'spark',
-        d: 'GPT Image 出原画、Meshy 与混元出模，再到消除纹理幻觉的收尾' },
+      { n: 'AI 建模工作流', c: '24 集', g: 'spark',
+        d: 'GPT Image 出原画、Meshy 与混元出模，覆盖角色、道具、风景与模块化建筑' },
       { n: 'UE5 独立游戏', c: '6 集', g: 'game',
         d: '轮盘、摇杆、骨架重绘蒙皮、仿崩坏3的攻速与后摇，边做边记' }
     ],
     works: [
       { t: '虚幻引擎蓝图系统学习笔记（1）',                    col: '蓝图笔记（重置版）',   n: 19, play: '1.1 万' },
-      { t: '第二课：GPT image2 生成原画总参考',                col: 'ai 建模免费教程',      n: 7,  play: '7689'   },
-      { t: 'AI 二次元人物模型贴图工作流',                      col: 'AI 工作流迭代合集',    n: 15, play: '6038'   },
-      { t: 'UE 虚幻引擎零基础 2D 游戏制作教程（主角移动）',     col: '蓝图新手入门',         n: 6,  play: '6051'   },
-      { t: '虚幻引擎动效材质零基础入门教程',                    col: '材质动效教程',         n: 4,  play: '4677'   },
-      { t: '虚幻引擎 5 uc++ 入土指南第零期：萌新必看及避雷',    col: 'C++ 入门系列',         n: 19, play: '3796'   },
+      { t: '第二课：GPT image2 生成原画总参考',                col: 'ai 建模免费教程',      n: 7,  play: '7763'   },
+      { t: 'AI 二次元人物模型贴图工作流',                      col: 'AI 工作流迭代合集',    n: 17, play: '6505'   },
+      { t: 'UE 虚幻引擎零基础 2D 游戏制作教程（主角移动）',     col: '蓝图新手入门',         n: 6,  play: '6054'   },
+      { t: '虚幻引擎动效材质零基础入门教程',                    col: '材质动效教程',         n: 4,  play: '4680'   },
+      { t: '虚幻引擎 5 uc++ 入土指南第零期：萌新必看及避雷',    col: 'C++ 入门系列',         n: 19, play: '3797'   },
       { t: '仿英雄联盟手游轮盘及其实现思路',                    col: 'UE5 独立游戏开发日志', n: 6,  play: '1337'   }
     ],
     /* 「技术交流群」不在这里再列一遍——下面有整张群卡（码 + 群号 + 复制），
@@ -70,7 +70,7 @@
       img: 'img/qq-group.png',
       missing: '把 QQ 群二维码放到 img/qq-group.png'
     },
-    foot: '数据取自 B 站公开主页 · 2026-10-29'
+    foot: '数据取自 B 站公开接口 · 2026-11-15'
   };
 
   /* 小图标：全部 24×24 线框，跟桌面 App 图标同一套语言（stroke 1.7、圆头圆角） */
@@ -174,14 +174,16 @@
     if(!box) return;
     /* 两列：7 个合集单列排要 280px，窗口装不下就会把最后两条推到滚动区外——
      * 那两条恰好是 C++ 和独立游戏，等于把「他还会这些」藏起来了。两列省一半高度。 */
-    box.innerHTML = CD.works.map(w =>
+    box.innerHTML = CD.works.map((w, i) =>
       '<button type="button" class="cd-work" data-url="https://space.bilibili.com/' + esc(CD.uid) + '/video" '
       + 'title="' + esc(w.t) + ' · 去 B 站看这个系列">'
-      + svg('play', 'cd-work-ico')
+      /* 序号是名片的「目录感」：一眼能数出几个系列，不靠圆点或色块凑视觉 */
+      + '<span class="cd-work-i">' + String(i + 1).padStart(2, '0') + '</span>'
       + '<span class="cd-work-main">'
       + '<span class="cd-work-t">' + esc(w.t) + '</span>'
       + '<span class="cd-work-m">' + esc(w.col) + ' · ' + w.n + ' 集</span>'
       + '</span>'
+      + svg('play', 'cd-work-ico')
       + '<span class="cd-work-p">' + esc(w.play) + '</span>'
       + '</button>'
     ).join('');
