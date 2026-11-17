@@ -186,6 +186,18 @@
     });
     return out;
   }
+  /* 中文问句里的概念词翻成英文检索词：中文索引很难把油管 / 主播这类页面顶上来，
+     英文检索式才是这类任务真正出结果的那条路。 */
+  function englishQuery(q) {
+    var out = [];
+    function add(w) { if (w && out.indexOf(w) < 0) out.push(w); }
+    CONTACT_WORDS.forEach(function (p) { if (p[0].test(q)) add(p[1]); });
+    GH_WORDS.forEach(function (p) { if (p[0].test(q)) add(p[1]); });
+    (String(q).match(/[a-z][a-z0-9.+#-]{1,}/gi) || []).forEach(function (w) {
+      add(w.toLowerCase());
+    });
+    return out.slice(0, 3).join(' ');
+  }
   /* 联系方式任务的排序标志：频道页、榜单页、含联系方式的页面优先。 */
   var CONTACT_HINT = /(youtube|youtu\.be|频道|主播|博主|up主|邮箱|邮件|contact|business|合作|联系)/i;
   /* 判「是否真的答上」要严得多：只有出现联系方式、邮箱或真正的频道页才算，
@@ -669,6 +681,7 @@
     pageCache: Object.create(null),
     emails: [],
     intentKind: '',
+    autoTried: false,
     answer: '',
     error: '',
     note: '',
@@ -1835,8 +1848,12 @@
         : '');
   }
 
-  function userPrompt(q, sources) {
+  function userPrompt(q, sources, local) {
     var usable = sources.filter(function (s) { return s.text; });
+    /* 本机模型（Ollama 等）多跑在 CPU / 小显存上，6000 字上下文要等十几分钟，
+       所以本地连接只喂最靠前的 3 篇、每篇 1200 字；邮箱清单不受影响，仍然完整附上。 */
+    var perSource = local ? 1200 : PROMPT_PER_SOURCE;
+    if (local) usable = usable.slice(0, 3);
     var kw = (S.skim && S.skim.keywords) || [];
     var list = usable.map(function (s) {
       var head = '[' + s.idx + '] ' + s.title + '\n';
@@ -1844,10 +1861,10 @@
         var site = mediaSite(s.host);
         head += '平台：' + (site ? site.name : s.host) + '｜页面判定：' + MEDIA_STATUS[s.media || 'unknown'] + '\n';
       }
-      var base = pickRelevant(s.text, q, PROMPT_PER_SOURCE,
+      var base = pickRelevant(s.text, q, perSource,
         S.intentKind === 'contact' ? relevantTokens(q) : []);
       /* 补充精读：粗读捞到的关键词再做一遍段落检索，把「同义但没出现问题词」的部分补上。 */
-      var extra = kw.length ? supplementText(s.text, base, kw, PROMPT_EXTRA) : '';
+      var extra = (!local && kw.length) ? supplementText(s.text, base, kw, PROMPT_EXTRA) : '';
       return head + s.url + '\n' + base + (extra ? '\n（补充摘录）\n' + extra : '');
     }).join('\n\n');
     return '用户问题：' + q + '\n\n资料（共 ' + usable.length + ' 篇，已去除广告与导航）：\n' + list + (S.intentKind === 'contact' ? emailBlock() : '');
@@ -1877,6 +1894,11 @@
       if (typeof llmConn === 'function') return llmConn();
     } catch (e) { /* 未配置 */ }
     return null;
+  }
+
+  /* 本机模型判定：只认回环地址，别把内网自建的推理服务误当成「慢机器」。 */
+  function isLocalBase(base) {
+    return /^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0)(:\d+)?(\/|$)/i.test(String(base || ''));
   }
 
   /* ---------------- 邮箱抽取 ----------------
@@ -1985,11 +2007,14 @@
     [/赛车|racing/i, 'racing game'],
     [/游戏|game/i, 'game']
   ];
-  function contactQueries(q) {
-    var subj = '';
+  function contactSubject(q) {
     for (var i = 0; i < CONTACT_SUBJECT.length; i++) {
-      if (CONTACT_SUBJECT[i][0].test(q)) { subj = CONTACT_SUBJECT[i][1]; break; }
+      if (CONTACT_SUBJECT[i][0].test(q)) return CONTACT_SUBJECT[i][1];
     }
+    return '';
+  }
+  function contactQueries(q) {
+    var subj = contactSubject(q);
     if (!subj) return [];
     var role = /(主播|博主|up主|youtuber|streamer|创作者|creator)/i.test(q) ? 'youtuber' : 'creator';
     return [
@@ -2119,6 +2144,7 @@
     S.folded = false;
     S.trailTried = Object.create(null);
     S.deepExhausted = false;
+    S.autoTried = false;
 
     syncInputs(q);
     showResult(true);
@@ -2250,7 +2276,11 @@
          ① 按意图换说法（工具 / 推荐 / 解决…）；② 拆掉虚词、补英文关键词；③ 换 360 索引。
          每轮只要判定命中就停，整轮最多花 60 秒，避免在限流时空转。 */
       var tried = Object.create(null);
-      [base, alt].forEach(function (x) { if (x) tried[String(x).toLowerCase()] = 1; });
+      [base, alt].forEach(function (x) {
+        if (!x) return;
+        tried[String(x).toLowerCase()] = 1;
+        S.trailTried[String(x).toLowerCase()] = 1;
+      });
       var smartDeadline = Date.now() + 60000;
 
       function coreWords(qq) {
@@ -2259,14 +2289,7 @@
           .replace(/\s+/g, ' ').trim();
         return s || String(qq).trim();
       }
-      function englishWords(qq) {
-        var out = [];
-        GH_WORDS.forEach(function (p) { if (p[0].test(qq) && out.indexOf(p[1]) < 0) out.push(p[1]); });
-        (String(qq).match(/[a-z][a-z0-9.+#-]{1,}/gi) || []).forEach(function (w) {
-          if (out.indexOf(w.toLowerCase()) < 0) out.push(w.toLowerCase());
-        });
-        return out.slice(0, 3).join(' ');
-      }
+
       /* 每一轮给出不同的检索式组合；同一轮里最多问 2 条。 */
       function roundQueries(round) {
         var list = [];
@@ -2282,7 +2305,7 @@
           (intent.adds || []).forEach(function (w) { list.push((base + ' ' + w).trim()); });
         } else if (round === 1) {
           list.push(coreWords(base));
-          var en = englishWords(q);
+          var en = intent.kind === 'contact' ? '' : englishQuery(q);
           if (en) list.push(en);
         } else {
           list.push(coreWords(base));
@@ -2317,6 +2340,8 @@
 
         function step(i) {
           if (i >= qs.length || ctrl.signal.aborted) return Promise.resolve(got || []);
+          /* 记下这轮真问过的检索式：自动补搜 / 手动深挖都靠它避开重复搜索。 */
+          S.trailTried[String(qs[i]).toLowerCase()] = 1;
           return askRound(qs[i], round).catch(function () { return []; }).then(function (list) {
             got = (got || []).concat(list || []);
             var j = judge(web.concat(got), q);
@@ -2508,6 +2533,8 @@
       S.phase = 'done';
       setPhase('done');
       renderAnswer();
+      /* 资料读完仍没答上：自动按「可执行建议」再补搜一轮，不用等用户点按钮。 */
+      autoFollowUp();
     }).catch(function (e) {
       if (ctrl.signal.aborted) return;
       S.busy = false;
@@ -2644,14 +2671,69 @@
     return out.slice(0, 4);
   }
 
+  /* 答不上来的判定：找人任务只看有没有抽到邮箱；其他任务看模型是否自己说
+     「资料不足 / 无法确定」。 */
+  function answerWeak() {
+    if (S.intentKind === 'contact') return !S.emails.length;
+    return /(无法(可靠)?(找|确定|得出|判断|回答)|资料(不足|中没有|里没有)|没有(找到|给出)|未能找到|缺少(足够|相关))/i
+      .test(String(S.answer || ''));
+  }
+
+  /* 把答案末尾的「可执行建议」落成真正能执行的检索式：
+     不去解析模型那段自由文本，而是按任务类型给出等价、可执行的下一步。 */
+  function nextQueries(q) {
+    var out = [];
+    function add(s) {
+      s = String(s || '').replace(/\s+/g, ' ').trim();
+      if (s && out.indexOf(s) < 0) out.push(s);
+    }
+    if (S.intentKind === 'contact') {
+      var sub = contactSubject(q) || 'game';
+      add(sub + ' youtube channels');
+      add('best ' + sub + ' streamers');
+      contactSyn(q).forEach(function (w) { add(w + ' youtuber'); });
+      add(sub + ' youtuber contact email');
+    } else {
+      add(retryQuery(q));
+      var en = englishQuery(q);
+      /* 英文检索词排在线索前面：中文索引对「油管 / 主播」这类词几乎不命中，
+         实测英文检索式才回得到能用的页面。线索只用前两条，且不再拼整条中文长问句。 */
+      if (en) add(en);
+      collectClues(q).slice(0, 2).forEach(function (k) {
+        add(en ? k + ' ' + en : k);
+      });
+      if (!out.length) out.push(primaryQuery(q));
+    }
+    return out.slice(0, 4);
+  }
+
+  /* 10 篇资料读完仍没答上时，不等用户点按钮：自动按上面的建议补搜一轮。
+     每题只补一次，避免模型一直说「资料不足」时无限重试。 */
+  function autoFollowUp() {
+    if (S.autoTried || S.busy || S.mode !== 'web' || S.phase !== 'done' || !S.results.length) return;
+    if (!answerWeak()) return;
+    var qs = nextQueries(S.q);
+    if (!qs.length) return;
+    S.autoTried = true;
+    trace({
+      kind: '自动补搜',
+      text: '资料没答上 → 按建议再搜：' + qs[0],
+      res: qs.length + ' 条建议检索式',
+      ok: true
+    });
+    S.note = '现有 ' + S.sources.length + ' 篇资料没答上，正在自动按建议补搜…';
+    renderAnswer();
+    deepenSearch(qs);
+  }
+
   /* 进一步搜索：把这一轮里「稳定重复出现的新词」当线索，再搜一轮。
    * 线索来自粗读关键词、已读正文与结果标题，不是让模型空想；
    * 新结果先过三道筛：未出现过、不在黑名单、与问题或线索真的相关。
    * 剩下的才并进列表并重新精读，最后基于新旧资料重写答案。 */
-  function deepenSearch() {
+  function deepenSearch(extra) {
     var p;
     try {
-      p = deepenRun();
+      p = deepenRun(extra);
     } catch (e) {
       deepenStop(e);
       return;
@@ -2672,7 +2754,7 @@
     setTools();
   }
 
-  function deepenRun() {
+  function deepenRun(extra) {
     if (S.busy || S.phase !== 'done' || !S.results.length || S.mode !== 'web') return;
     var q0 = S.q;
     var clues = collectClues(q0);
@@ -2680,6 +2762,10 @@
     /* 没有新词时退一步：换一种问法再搜一轮，同样按「是否见过 / 是否相关」筛选。
        这样做至少能验证「确实没有更好的结果」，而不是什么都不做。 */
     var queries = [];
+    (extra || []).forEach(function (qq) {
+      qq = String(qq || '').replace(/\s+/g, ' ').trim();
+      if (qq && queries.indexOf(qq) < 0) queries.push(qq);
+    });
     if (clues.length) {
       /* 前两条线索常常搜索源也查不出东西，这里把 4 条线索都排进去，
          轮到哪条用哪条，不必因为前两条失效就整轮放弃。 */
@@ -2687,11 +2773,12 @@
         var qq = (k + ' ' + core).replace(/\s+/g, ' ').trim();
         if (queries.indexOf(qq) < 0) queries.push(qq);
       });
-    } else {
+    } else if (!queries.length) {
       queries = [retryQuery(q0) || primaryQuery(q0)];
     }
     queries = queries.slice(0, 4);
-    var label = clues.length ? clues.slice(0, 2).join(' / ') : queries[0];
+    var label = (extra && extra.length) ? extra[0]
+      : (clues.length ? clues.slice(0, 2).join(' / ') : queries[0]);
 
     /* 同一条线索不重复搜：重复跑同一句只会把同一批结果再筛一遍，白等两轮。 */
     S.trailTried = S.trailTried || Object.create(null);
@@ -2705,21 +2792,26 @@
       S.deepExhausted = true;
       S.phase = 'done';
       S.busy = false;
-      S.note = '线索「' + label + '」都搜过了，这一轮没有更多可挖的内容。换个更具体的问法能继续。';
+      S.note = (extra && extra.length)
+        ? '按建议要搜的几组检索式，这一轮都已经搜过了；换一个更具体的问法能继续。'
+        : '线索「' + label + '」都搜过了，这一轮没有更多可挖的内容。换个更具体的问法能继续。';
       renderAnswer();
       setTools();
       return;
     }
     queries = fresh;
+    /* 建议里的前几条可能这一轮已经搜过，被筛掉后剩下来的那条才是真正要搜的。 */
+    if (extra && extra.length) label = fresh[0];
 
     S.busy = true;
     S.error = '';
     S.note = '';
     S.llmOff = false;
     S.phase = 'reading';
-    S.startedAt = Date.now();
+    /* 自动补搜是同一题的续跑，用时继续累计；手动深挖才重新计时。 */
+    if (!(extra && extra.length)) S.startedAt = Date.now();
     setPhase('reading');
-    note('用线索继续搜索：' + label);
+    note((extra && extra.length ? '按建议补搜：' : '用线索继续搜索：') + label);
     setTools();
     renderAnswer();
     var ctrl = new AbortController();
@@ -2733,9 +2825,16 @@
     function grab(qq) {
       return window.deskSearch.run(qq, { cfg: { count: 10 } }).then(function (r) {
         var list = (r && r.ok && r.results) || [];
-        if (list.length) return list;
-        return rssSearch(qq, ctrl.signal).then(function (l) {
-          return l.length ? l : soSearch(qq, ctrl.signal);
+        var chain = list.length ? Promise.resolve(list)
+          : rssSearch(qq, ctrl.signal).then(function (l) {
+              return l.length ? l : soSearch(qq, ctrl.signal);
+            });
+        return chain.then(function (base) {
+          /* 找人任务：真正的答案在 YouTube 频道页，补搜也必须再问一次频道检索。 */
+          if (S.intentKind !== 'contact') return base;
+          return youtubeChannels(qq, ctrl.signal).then(function (yt) {
+            return (base || []).concat(yt);
+          });
         });
       }).catch(function () { return []; });
     }
@@ -2748,7 +2847,8 @@
           if (blockedReason({ url: u, title: r.title })) { dropped++; return; }
           var text = (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + u).toLowerCase();
           var hit = tokens.some(function (t) { return t && text.indexOf(t) >= 0; });
-          if (!hit) { dropped++; return; }
+          /* 找人任务里频道页本身就是目标，不能按字面词命中把它筛掉。 */
+          if (!hit && !(S.intentKind === 'contact' && YT_CHANNEL.test(u))) { dropped++; return; }
           known[u] = 1;
           r.url = u;
           r.host = r.host || hostOf(u);
@@ -2765,9 +2865,11 @@
         S.busy = false;
         S.phase = 'done';
         setPhase('done');
-        S.note = '用「' + label + '」又搜了一轮，没有新的相关结果'
-          + (dropped ? '（去掉 ' + dropped + ' 条重复 / 无关）' : '') + '。';
-        trace({ kind: '深挖', text: '线索「' + label + '」', res: '无新增 · 去掉 ' + dropped + ' 条', ok: false });
+        S.note = (extra && extra.length)
+          ? '已按建议自动补搜一轮（' + label + '），没有新的相关结果；现有答案仍缺少直接依据，建议换更具体的问法。'
+          : '用「' + label + '」又搜了一轮，没有新的相关结果'
+            + (dropped ? '（去掉 ' + dropped + ' 条重复 / 无关）' : '') + '。';
+        trace({ kind: (extra && extra.length) ? '自动补搜' : '深挖', text: '检索「' + label + '」', res: '无新增 · 去掉 ' + dropped + ' 条', ok: false });
         renderAnswer();
         setTools();
         return;
@@ -2779,14 +2881,15 @@
       });
       S.results = ranked;
       trace({
-        kind: '深挖',
-        text: '线索「' + label + '」',
+        kind: (extra && extra.length) ? '自动补搜' : '深挖',
+        text: '检索「' + label + '」',
         res: '新增 ' + added.length + ' 条 · 去掉 ' + dropped + ' 条无关',
         ok: true
       });
 
-      /* 只精读新增里最靠前的两条：线索用来补缺口，不重读一遍全部资料。 */
-      var more = added.slice(0, 2).map(function (item, i) {
+      /* 只精读新增里最靠前的几条：线索用来补缺口，不重读一遍全部资料。
+         找人任务多读两页：邮箱只在少数频道页上，读两页很容易刚好错过。 */
+      var more = added.slice(0, S.intentKind === 'contact' ? 4 : 2).map(function (item, i) {
         return {
           idx: S.sources.length + i + 1, title: item.title, url: item.url, host: item.host,
           snippet: item.snippet, text: '', chars: 0, status: 'pending', err: ''
@@ -2803,6 +2906,10 @@
         S.busy = false;
         S.phase = 'done';
         setPhase('done');
+        /* 自动补搜只有一次预算：补完仍然没答上就明确收尾，不再偷偷重试。 */
+        if (extra && extra.length && answerWeak()) {
+          S.note = '已按建议自动补搜一轮，仍未找到直接答案；可以换更具体的问法继续。';
+        }
         renderAnswer();
         renderResults();
         setTools();
@@ -2842,15 +2949,19 @@
     S.answer = '';
     renderAnswer();
 
+    /* 本机模型（Ollama / LM Studio）出字慢得多：上下文减半、超时放宽，
+       否则 180 秒必然被掐断，用户只看到「生成中断」而拿不到任何答案。 */
+    var local = isLocalBase(conn.base);
+
     return window.LLMRouter.complete({
       app: APP,
       sys: systemPrompt(),
-      messages: [{ role: 'user', content: userPrompt(S.q, S.sources) }],
+      messages: [{ role: 'user', content: userPrompt(S.q, S.sources, local) }],
       onDelta: function (acc) {
         S.answer = String(acc == null ? '' : acc);
         scheduleAnswer();
       },
-      opts: { signal: signal, temperature: 0.3, timeoutMs: 180000 }
+      opts: { signal: signal, temperature: 0.3, timeoutMs: local ? 600000 : 180000 }
     }).then(function (out) {
       if (!S.answer && out) S.answer = String(out);
     }).catch(function (e) {

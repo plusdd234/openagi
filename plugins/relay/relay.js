@@ -11,7 +11,7 @@ const path = require('path');
 const zlib = require('zlib');
 const { execFileSync } = require('child_process');
 const { URL } = require('url');
-const { imapFetch } = require('./mail');
+const { imapFetch, getAccessToken, tokenScopes } = require('./mail');
 const { smtpSend } = require('./smtp');
 
 const PORT = Number(process.env.PORT || 8787);
@@ -538,6 +538,46 @@ const server = http.createServer((req, res) => {
         sendJson(res, 200, { ok: true, count: out.count, messages: out.messages });
       }).catch(e => {
         sendJson(res, 502, { ok: false, error: (e && e.message) || 'IMAP 收信失败' });
+      });
+    });
+    return;
+  }
+
+  if (req.url === '/mail/oauth/check') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: '只支持 POST' });
+      return;
+    }
+    const chunks = [];
+    let size = 0;
+    let aborted = false;
+    req.on('data', c => {
+      if (aborted) return;
+      size += c.length;
+      if (size > 16 * 1024) {
+        aborted = true;
+        sendJson(res, 413, { ok: false, error: '请求体过大' });
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      if (aborted) return;
+      let payload = null;
+      try {
+        payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: '请求体不是合法 JSON' });
+        return;
+      }
+      getAccessToken({
+        clientId: payload.clientId,
+        refreshToken: payload.refreshToken,
+        scope: payload.scope
+      }).then(token => {
+        sendJson(res, 200, { ok: true, scopes: tokenScopes(token) });
+      }).catch(e => {
+        sendJson(res, 200, { ok: false, error: (e && e.message) || '令牌校验失败' });
       });
     });
     return;

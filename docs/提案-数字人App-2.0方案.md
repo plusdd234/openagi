@@ -136,8 +136,15 @@
 之后由 LLM 的语速 / 停顿 / 音调 / 重音参数直接驱动波形，适合数字人短问答。
 
 - 离线蒸馏：`tools/distill-voice.js` 用已安装的 VITS Theresa 作为老师，从 `lexicon.txt`
-  取「单字 → 带调音节」，每个音节合成一次，裁静音、估基频、统一成 16 kHz 单声道 PCM，
-  写 `<TTS_DIR>/param/{bank.json,units.bin}`（断点续传，`--limit` / `--dry-run` / `--force`）。
+  取「单字 → 带调音节」，每个音节合成一次，裁静音、估基频、统一成 16 kHz 单声道 PCM。
+- 内置音库：产物已随仓库放在 `plugins/runtime/param-bank/{bank.json,units.bin}`
+  （1220 个带调音节 / 20649 个单字 / PCM 14 MB），不装老师模型也能直接用「快速合成」。
+  运行时按「用户目录 `<TTS_DIR>/param` → 内置目录」的顺序取音库；重新蒸馏可用
+  `node tools/distill-voice.js --out plugins/runtime/param-bank --force` 覆盖内置音库。
+- 蒸馏细节：`lexicon.txt` 里同一音节的字按「生僻 → 常用」排，且 sherpa 会把**单字**输入
+  误判成 GB2312，所以每个音节收集最多 40 个候选字并补一个句号（强制 UTF-8 分支）逐个重试；
+  支持 `--jobs N` 并发与 `--out <dir>`。实测覆盖 1220/1379 个音节、20649/20901 个单字，
+  剩余缺失集中在只有生僻字可用的轻声音节。
 - 运行时：`plugins/runtime/tts-param.js` 纯 JS 合成，不启动子进程、不加载 onnx：
   - 文字按「单字 → 音节」查音库，TD-PSOLA 同时控制时长与音调；
   - 标点自带基础停顿，段落按 LLM 标记叠加 `[[r]]/[[p]]/[[t]]`，并支持 `[[f]]` 音调、`[[e]]` 重音；
@@ -149,8 +156,9 @@
   设置页第二页签与数字人快照都改为「快速合成」（`param:fast`），音库未蒸馏时显示引导文案。
   数字人的 AI 控制开关改用中性命名 `l2dAiCtrl` / `data-l2d-ai`，状态键统一为 `hf_ttsAiMode`。
 - 验证：`tools/tts-param.js` 21/21（状态、拼接、语速、停顿、PSOLA 变调、重音、缓存、坏索引）、
-  `tools/tts-prosody.js` 45/45。本机未安装 VITS，`distill-voice.js` 只做了缺少模型时的报错路径验证，
-  真实音库需在桌面端装好角色音色后运行一次再试听。
+  `tools/tts-prosody.js` 45/45。本机已用 VITS Theresa 全量蒸馏出内置音库；
+  另在本机用空的 `TTS_DIR` 起 runtime 验证：`/tts/status` 返回 `param:true`（1220 单元 / 20649 字），
+  `/tts/speak`（`engine=param`）返回合法 WAV，证明内置回退生效。
 
 ## 3. 多 AI 分工（文件所有权）
 
@@ -213,3 +221,4 @@
 - 2026-11-17：AI 语音控制从机械音扩展到全部可韵律本地音色（S8）——数字人角色音色也显示「AI 控制 / 直接朗读」，系统提示按音色能力注入；桥接层韵律分段支持 Piper / Kokoro / MeloTTS / VITS，语速换算统一为 `ttsRateScale()`；探针补 4 项（共 65 项）。
 - 2026-11-17：参数合成 · 快问快答（S9）——`tools/distill-voice.js` 离线蒸馏带调音节音库，`plugins/runtime/tts-param.js` 纯 JS PSOLA 拼接，`/tts/speak` 增 `engine=param`，数字人音色清单自动出现该音色；`[[f]]/[[e]]` 扩展到 LLM 可控制的音调与重音；`tools/tts-param.js` 21/21、`tools/tts-prosody.js` 45/45。
 - 2026-11-17：下线深海机娘机械音（S7），第二个音色页签改为「快速合成」——删除 `vits-mecha` 目录项、`vits:mecha` 启用值、`plugins/runtime/tts-mecha.js` 与 `tools/tts-mecha.js`；数字人 AI 控制行改为 `l2dAiCtrl`，状态键统一 `hf_ttsAiMode`；`tools/model-store.js` 增加「机械音已下线」断言。
+- 2026-11-17：快速合成音库转为内置模型（S9）——用 VITS Theresa 全量蒸馏出 `plugins/runtime/param-bank/`（1220 音节 / 20649 字 / 14 MB），runtime 按「用户音库 → 内置音库」回退，不装老师模型也能直接用；`distill-voice.js` 增加候选字重试（最多 40 个）、单字补句号绕过 sherpa 的 GB2312 误判、`--jobs N` 并发与 `--out <dir>`。

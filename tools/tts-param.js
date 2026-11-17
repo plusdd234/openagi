@@ -141,6 +141,14 @@ let threw = false;
 try { synth('你好', { dir: DIR }); } catch (e) { threw = true; }
 ok(threw, '坏索引合成时抛错');
 
+console.log('\n=== 内置音库 ===');
+const builtin = paramStatus(path.join(__dirname, '..', 'plugins', 'runtime', 'param-bank'));
+ok(builtin.ready, '内置音库随仓库存在且就绪', JSON.stringify({ ready: builtin.ready, units: builtin.units, error: builtin.error }));
+ok(builtin.units >= 1000, '内置音库音节数 >= 1000', String(builtin.units));
+ok(builtin.chars >= 18000, '内置音库单字数 >= 18000', String(builtin.chars));
+const demo = synth('你好，今天天气不错。', { dir: path.join(__dirname, '..', 'plugins', 'runtime', 'param-bank') });
+ok(Buffer.isBuffer(demo) && demo.length > 1000, '内置音库能合成整句 WAV', demo ? String(demo.length) : 'null');
+
 fs.rmSync(DIR, { recursive: true, force: true });
 console.log('\n结果：' + pass + ' / ' + (pass + fail) + ' 通过');
 process.exit(fail ? 1 : 0);

@@ -188,6 +188,27 @@
       throw e;
     }
 
+    /* 建模 App 导出时把材质槽身份写进 GLB 的 asset.extras.seedModel.materials
+     * （slotIds / slotNames）。材质插槽面板要按同一套键读贴图配置，
+     * 否则同一个槽会在两边各存一条记录：建模 App 画好的贴图，模型库读的是旧那条。 */
+    var slotPlan = null;
+    try {
+      /* 先只看头部 8 字节的 GLB 魔数，避免对 OBJ / STL 的 dataURL 白解一遍 */
+      var dm = typeof src === 'string' ? /^data:[^,;]*;base64,/.exec(src) : null;
+      var head = dm ? atob(src.slice(dm[0].length, dm[0].length + 12)) : '';
+      var isGlb = head.slice(0, 4) === 'glTF';
+      if (global.SeedGLB && isGlb) {
+        var sm = global.SeedGLB.readSeedModel(global.SeedGLB.fromDataURL(src));
+        var smm = sm && sm.materials;
+        if (smm) {
+          slotPlan = {
+            ids: (smm.slotIds || []).map(String),
+            names: (smm.slotNames || []).map(String)
+          };
+        }
+      }
+    } catch (e) { slotPlan = null; }
+
     var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: false });
     renderer.debug.checkShaderErrors = false;
     renderer.setPixelRatio(Math.min(global.devicePixelRatio || 1, 2));
@@ -602,6 +623,8 @@
     /* 材质插槽面板：模型库「设置贴图」的入口（插槽列表 / 选图 / 导出 GLB） */
     var slotUI = setupSlotPanel({
       model: model, stage: stage, bar: bar, mkBtn: mkBtn, hint: hint, title: opts.title, assetId: opts.assetId,
+      /* 与建模 App 对齐的槽身份（来自 GLB 的 seedModel extras） */
+      slotPlan: slotPlan,
       /* 面板挂进右侧 dock，工具条里的入口也塞进「素材」组 */
       dock: dockEl, barAsset: grpAsset,
       /* 手绘遮罩要往模型上打射线：相机 / 操控器 / 画布都交出去，渲染循环仍归这里管 */

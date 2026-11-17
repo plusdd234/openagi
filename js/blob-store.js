@@ -19,6 +19,7 @@ let _opening = null;
 let _broken = false;               // IndexedDB 不可用
 let _loaded = false;
 let _loadP = null;
+let _rootsDirty = false;           // 载入过程中又有模块注册了根，需要补读
 
 /* 用内容本身做 id（内容寻址）：同一张图多次保存不会产生新副本，
  * 也就不会每次保存都往 IndexedDB 里堆一份垃圾。 */
@@ -109,6 +110,13 @@ function blobPut(id, val){
 function blobDel(id){
   BLOB_CACHE.delete(id);
   BLOB_UNSAVED.delete(id);
+  /* 桌面端的大块数据是写在资产库里的：只删 IndexedDB 会留下磁盘副本，
+   * 图库里的「孤立大文件」只会越积越多。asset:remove 是**移进回收站**，
+   * 误删还能捞回来，所以这里可以放心跟着删。 */
+  const d = deskAssets();
+  if(d && typeof d.assetRemove === 'function'){
+    try{ Promise.resolve(d.assetRemove([id])).catch(() => null); }catch(e){}
+  }
   return blobTx('readwrite', s => s.delete(id));
 }
 
@@ -132,6 +140,16 @@ function blobLoadAllIdb(){
   }).catch(() => 0);
 }
 
+/* 桌面壁纸的图不挂在 FLOWS 里，加载和 GC 都要单独把它算进来：
+ * 少了这一步，一次工作流保存触发的 GC 就会把壁纸当垃圾删掉（桌面变白）。 */
+function blobWallpaperId(){
+  try{
+    const w = JSON.parse(localStorage.getItem('hf_desk_wallpaper') || 'null');
+    if(w && typeof w.image === 'string' && blobIsStub(w.image)) return w.image.slice(BLOB_STUB.length);
+  }catch(e){}
+  return null;
+}
+
 /* 从磁盘资产库读回「流程真的引用到」的那些 id。
  * 不能全量读：图库里可能躺着几百张图，逐个读成 dataURL 会吃掉几百 MB 内存，
  * 而启动时真正需要的只有当前流程用到的几张。 */
@@ -143,12 +161,10 @@ function blobLoadFromDisk(){
   try{ if(typeof bp !== 'undefined' && bp) blobCollectIds(bp, want, new WeakSet()); }catch(e){}
   /* 桌面壁纸的图不挂在 FLOWS 里，单独补一条：否则重启后存根解析不出来，
    * 桌面直接变白——用户看到的就是「设过的壁纸没了」。 */
-  try{
-    const w = JSON.parse(localStorage.getItem('hf_desk_wallpaper') || 'null');
-    if(w && typeof w.image === 'string' && w.image.indexOf(BLOB_STUB) === 0){
-      want.add(w.image.slice(BLOB_STUB.length));
-    }
-  }catch(e){}
+  const wall = blobWallpaperId();
+  if(wall) want.add(wall);
+  /* 不属于流程的配置（建模 App 的贴图 ops 等）由各自模块注册提供者交出来 */
+  blobCollectRootIds(want);
   if(!want.size) return Promise.resolve(0);
   let n = 0;
   return Promise.all(Array.from(want).map(id => {
@@ -166,9 +182,20 @@ function blobLoadAll(){
 
 /* 全量载入一次；之后解析存根就是同步的 */
 function blobEnsure(){
-  if(_loaded) return Promise.resolve(true);
-  if(!_loadP) _loadP = blobLoadAll().then(() => { _loaded = true; return true; });
-  return _loadP;
+  if(_loaded && !_rootsDirty) return Promise.resolve(true);
+  if(_loadP) return _loadP;
+  const p = (_loaded ? Promise.resolve(0) : blobLoadAll()).then(() => {
+    _loaded = true;
+    if(!_rootsDirty) return true;
+    /* 载入途中又有模块注册了根：补读一次再交付，否则它的存根这轮仍然解不开 */
+    _rootsDirty = false;
+    return blobLoadFromDisk().then(() => true);
+  }).catch(() => false).then(ok => {
+    if(_loadP === p) _loadP = null;
+    return ok;
+  });
+  _loadP = p;
+  return p;
 }
 
 /* ---- 存根的写入 / 解析 ---- */
@@ -236,6 +263,45 @@ function blobResolveFlowsAsync(list){
   return blobEnsure().then(() => { blobResolveFlows(list); return true; });
 }
 
+/* 从 IndexedDB 单条取回（桌面端也有历史数据可能留在 IDB 里）。 */
+function blobGetIdb(id){
+  return blobOpen().then(db => {
+    if(!db) return null;
+    return new Promise(res => {
+      try{
+        const t = db.transaction(BLOB_STORE_NAME, 'readonly');
+        const r = t.objectStore(BLOB_STORE_NAME).get(id);
+        r.onsuccess = () => res(typeof r.result === 'string' ? r.result : null);
+        r.onerror = () => res(null);
+      }catch(e){ res(null); }
+    });
+  }).catch(() => null);
+}
+
+/* 单条存根的异步兜底：缓存里没有时（启动收集根没覆盖到 / 配置是后来才写的），
+ * 直接问一次资产库，再不行问 IndexedDB。异步路径（如贴图 ops 还原）用它，
+ * 不必为了一个 id 触发全量重载。 */
+function blobFetch(id){
+  id = String(id || '');
+  if(!id) return Promise.resolve(null);
+  const hit = BLOB_CACHE.get(id);
+  if(typeof hit === 'string') return Promise.resolve(hit);
+  const d = deskAssets();
+  const fromDisk = (d && typeof d.assetRead === 'function')
+    ? Promise.resolve(d.assetRead(id)).then(r => (r && r.ok && r.dataURL) ? r.dataURL : null).catch(() => null)
+    : Promise.resolve(null);
+  return fromDisk.then(v => v || blobGetIdb(id)).then(val => {
+    if(typeof val === 'string'){ BLOB_CACHE.set(id, val); return val; }
+    return null;
+  });
+}
+
+/* 同步失效时返回原存根（调用方据此知道「这层图确实丢了」），异步能取到就返回原文。 */
+function blobResolveAsync(v){
+  if(typeof v !== 'string' || !blobIsStub(v)) return Promise.resolve(v);
+  return blobFetch(v.slice(BLOB_STUB.length)).then(val => val || v);
+}
+
 // 统计还有多少存根没解析出来（用于判断是否需要等载入完成）
 function blobMissing(list){
   let n = 0;
@@ -258,14 +324,55 @@ function blobCollectIds(v, out, guard){
   Object.keys(v).forEach(k => blobCollectIds(v[k], out, guard));
 }
 
+/* ---- 额外根提供者 ----
+ * 以前只认 FLOWS / bp / 桌面壁纸三个根：启动时按它们收集存根 id 去资产库读图，
+ * GC 也按它们决定保留谁。建模 App 的贴图配置（openagi_model_tex_v1 的 v4 ops）
+ * 不属于任何流程 —— 重启后笔迹层一层都解不出像素，用户看到的就是「画好的贴图没了」。
+ * 让持有这类配置的模块注册一条「返回存根所在对象」的提供者，blob-store 只负责汇总，
+ * 不反过来认识业务 key（否则每加一种配置就得改这里一次）。 */
+const BLOB_ROOTS = [];
+function blobRegisterRoot(fn){
+  if(typeof fn !== 'function' || BLOB_ROOTS.indexOf(fn) >= 0) return false;
+  BLOB_ROOTS.push(fn);
+  _rootsDirty = true;
+  /* 模块脚本晚于 blob-store 初始化时，已经载入过的缓存不会自动补读 —— 这里补一次 */
+  if(_loaded && !_broken){ try{ blobLoadFromDisk(); }catch(e){} }
+  return true;
+}
+function blobUnregisterRoot(fn){
+  const i = BLOB_ROOTS.indexOf(fn);
+  if(i >= 0) BLOB_ROOTS.splice(i, 1);
+}
+function blobCollectRootIds(out){
+  const guard = new WeakSet();
+  for(let i = 0; i < BLOB_ROOTS.length; i++){
+    try{ const v = BLOB_ROOTS[i](); if(v) blobCollectIds(v, out, guard); }catch(e){}
+  }
+}
+
 /* ---- 垃圾回收：删掉工作流后，它引用的大块数据也该清掉 ---- */
 let _gcBusy = false;
 async function blobGC(root){
   if(_gcBusy || _broken) return 0;
+  /* 启动阶段的 GC 必须等所有模块注册完「额外存活根」再跑。脚本顺序决定了
+   * 建模 App 的贴图配置晚于 blueprint-core 的自动保存 —— 提前跑会把
+   * openagi_model_tex_v1 引用的笔迹块当垃圾删掉，用户看到的就是「贴图丢了」。
+   * 延迟到 load 之后再回收，代价只是回收晚一拍。 */
+  if(typeof document !== 'undefined' && document.readyState !== 'complete'){
+    return new Promise(res => {
+      const run = () => setTimeout(() => { blobGC(root).then(res); }, 0);
+      if(typeof addEventListener === 'function') addEventListener('load', run, { once: true });
+      else run();
+    });
+  }
   _gcBusy = true;
   try{
     const keep = new Set();
     blobCollectIds(root, keep, new WeakSet());
+    /* 流程之外还有配置在引用大块数据（建模 App 的贴图 ops 等），一并算存活根 */
+    blobCollectRootIds(keep);
+    const wall = blobWallpaperId();
+    if(wall) keep.add(wall);
     BLOB_UNSAVED.forEach(id => keep.add(id));    // 还没落库的绝不能当垃圾清掉
     const db = await blobOpen();
     if(!db) return 0;
@@ -330,6 +437,8 @@ function blobRepair(){
   const roots = [];
   if(typeof FLOWS !== 'undefined' && Array.isArray(FLOWS)) roots.push(FLOWS);
   if(typeof bp !== 'undefined' && bp) roots.push(bp);
+  /* 额外根是各模块解析出来的副本，就地替换写不回去；
+   * 它们只参与「读回」与「GC 存活」，不参与内联回补。 */
   roots.forEach(r => walk(r));
   BLOB_UNSAVED.clear();
   if(n){

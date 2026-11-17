@@ -162,6 +162,7 @@
       { label: '排除重叠', act: 'shapeOp:exclude' },
       { sep: true },
       { label: '栅格化形状', act: 'rasterizeShape' },
+      { label: '轮廓化布尔结果（写入锚点）', act: 'outlineShapes' },
       { label: '切换到图像编辑器', hint: 'F2', act: 'mode:raster' }
     ] },
     { id: 'help', name: '帮助', items: [
@@ -1937,6 +1938,18 @@
       else setNote('请先选中一个形状图层', true);
       return;
     }
+    if (act === 'outlineShapes') {
+      var lo = PS.activeLayer(doc);
+      if (!lo || lo.type !== 'shape') { setNote('请先选中一个形状图层', true); return; }
+      var outlined = PS.outlineShapeLayer(doc, lo);
+      if (outlined) {
+        refreshAll();
+        setNote('布尔结果已写入锚点 · ' + outlined.subpaths.length + ' 条轮廓，可继续用路径选择编辑');
+      } else {
+        setNote('该图层没有可轮廓化的布尔组合（至少两个形状且含减去 / 相交 / 排除）', true);
+      }
+      return;
+    }
     if (act === 'focusMode') return toggleFocusMode();
     if (act === 'resetWorkspace') return resetWorkspace();
     if (act === 'toggleTools') return toggleWorkspace('tools');
@@ -3166,8 +3179,23 @@
       var l = PS.activeLayer(app.doc);
       if (!l || l.type !== 'shape' || !l.shapes) return [];
       return l.shapes.map(function (s, i) {
-        return { index: i, kind: s.kind, op: PS.shapeOp(s), closed: !!s.closed };
+        return {
+          index: i, kind: s.kind, op: PS.shapeOp(s), closed: !!s.closed,
+          subpaths: s.subpaths ? s.subpaths.length : 0,
+          pts: s.pts ? s.pts.length : 0
+        };
       });
+    },
+    outlineShapes: function () {
+      var l = PS.activeLayer(app.doc);
+      var shape = PS.outlineShapeLayer(app.doc, l);
+      refreshAll();
+      if (!shape) return null;
+      return {
+        subpaths: shape.subpaths.length,
+        points: shape.subpaths.map(function (sp) { return sp.pts.length; }),
+        kind: shape.kind
+      };
     },
     setShapeOp: function (op, index) {
       var l = PS.activeLayer(app.doc);

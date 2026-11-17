@@ -29,6 +29,27 @@
   var LIMIT = 8;            /* 单槽最多几层：滑杆再多也调不动 */
   var TB = global.TexBlend;
 
+  /* v4 的 ops 像素是外置在资产库 / IndexedDB 里的 blob 存根，配置本身在 localStorage。
+   * blob-store 启动时只按「工作流 / 蓝图」收集要读回的 id，不认识这份配置 ——
+   * 不注册的话，重启后笔迹层一层都解不出来，用户看到的就是「画好的贴图没了」。
+   * 脚本顺序上 blob-store 可能晚于本文件，所以注册要能重试。 */
+  var blobRootOn = false;
+  function ensureBlobRoot() {
+    if (blobRootOn) return true;
+    if (typeof global.blobRegisterRoot !== 'function') return false;
+    blobRootOn = global.blobRegisterRoot(function () {
+      try { return JSON.parse(global.localStorage.getItem(TEX_KEY) || '{}'); }
+      catch (e) { return null; }
+    });
+    return blobRootOn;
+  }
+  /* 本文件的 MIX 是在别的脚本解析时创建的（早于 blob-store），create() 里那次注册
+   * 必然落空。DOM 就绪后再注册一次：之后无论谁触发 GC / 启动读回，根都已就位。 */
+  if (global.addEventListener) {
+    global.addEventListener('DOMContentLoaded', ensureBlobRoot);
+    global.addEventListener('load', ensureBlobRoot);
+  }
+
   /* 层归一化放在 create() 外面：它只依赖 TexBlend，是能直接测的纯函数。
    * 「模型库写进层里的字段必须原样带回」这条兼容规则挂在这里，
    * 探针可以直接断言，不必为了测它去开一整个建模 App。
@@ -78,6 +99,7 @@
   }
 
   function create(ctx) {
+    ensureBlobRoot();
     var st = ctx.st, THREE = ctx.THREE;
     var setStatus = ctx.setStatus, updateChrome = ctx.updateChrome;
     var sharedTexture = ctx.sharedTexture;
@@ -291,15 +313,20 @@
       var all = readStore();
       var bag = all[assetKey];
       if (!bag || typeof bag !== 'object') return 0;
-      var mem = sessionCfg.get(doc), moved = 0;
+      var mem = sessionCfg.get(doc), moved = 0, dropped = 0;
       for (var i = 0; i < names.length; i++) {
         var id = ids[i], nm = names[i];
         if (!id || !nm || id === nm) continue;
         if (!bag[id] && bag[nm]) { bag[id] = bag[nm]; moved++; }
         if (mem && !mem[id] && mem[nm]) mem[id] = mem[nm];
+        /* 双键收口：id 键已经有了，名字键就是历史上那份「旧图」。
+         * 两个模块现在都先读 id，但把旧键留在库里，别的入口迟早再把它翻出来
+         * （这正是「建模 App 里画好了、模型库看到旧图」的根因）。删掉才能收口。 */
+        if (bag[id] && bag[nm]) { delete bag[nm]; dropped++; }
+        if (mem && mem[id] && mem[nm]) delete mem[nm];
       }
-      if (moved) writeStore(all);
-      return moved;
+      if (moved || dropped) writeStore(all);
+      return moved + dropped;
     }
     /* 追加资产时把源材质的整份纹理配置搬到目标槽上：
      * 源 key 下可能还是「槽名」旧键，所以候选键由调用方按 id → 名字依次给。 */
@@ -481,14 +508,19 @@
       var list0 = (cfg && cfg.ops) || [];
       if (!list0.length) { rdy[slot] = 1; return; }
       rdy[slot] = 2;
+      ensureBlobRoot();
       /* 存根（'blob:<id>'）要靠 blob-store 的内存缓存才能同步还原，先等它载完 */
       if (typeof blobEnsure === 'function') { try { await blobEnsure(); } catch (e) {} }
       var list = [];
       for (var i = 0; i < list0.length; i++) {
         var d = list0[i];
         if (!d || !d.src) continue;
-        var src = (typeof blobResolve === 'function') ? blobResolve(d.src) : d.src;
-        if (!src) continue;
+        /* 启动收集根可能没覆盖到这条（配置是后来写的 / 根注册得晚）：
+         * 单条再去资产库要一次，别因为一个存根放弃整槽笔迹。 */
+        var src = (typeof blobResolveAsync === 'function')
+          ? await blobResolveAsync(d.src)
+          : ((typeof blobResolve === 'function') ? blobResolve(d.src) : d.src);
+        if (!src || (typeof blobIsStub === 'function' && blobIsStub(src))) continue;
         try {
           var im = await urlImg(src);
           var op = global.TexStack.fromDesc(d, im);
@@ -684,6 +716,9 @@
 
       var cv = TB.compose({
         w: sz.w, h: sz.h, baseImg: baseImg, layers: eff || [], canvas: rec.canvas,
+        /* 建模 App 的画布是 v=0 在下（贴图 flipY=true），层也都按这个约定画。
+         * 配置里若有按 glTF 约定（flipY=false）存的层，TB.compose 会先翻一次再叠。 */
+        baseFlipY: true,
         /* 没有底座时用材质槽色打底，别用 TB 默认的白 —— 否则「没贴图的模型」
          * 一进合成就变白，和材质本色对不上 */
         baseColor: ((doc.materials && doc.materials.slotColors) || [])[slot] || '#c9ccd4'
@@ -1272,6 +1307,8 @@
       var sz = TB.mixSize({ baseImg: baseImg, layers: eff }, MAX_SIDE);
       var cv = TB.compose({
         w: sz.w, h: sz.h, baseImg: baseImg, layers: eff,
+        /* 同 composeOnto：产物按建模 App 的 v-up 约定（flipY=true）当贴图 */
+        baseFlipY: true,
         baseColor: ((doc.materials && doc.materials.slotColors) || [])[slot] || '#c9ccd4'
       });
       var url = cv.toDataURL('image/png');
@@ -2026,6 +2063,9 @@
       /* 单槽刷新（投射改了编辑层栈之后调它）：会重新解码层再合成 */
       refreshSlot: refreshSlot,
       baseImageFor: baseImageFor, bakedImageFor: bakedImageFor, texFor: texFor, applyPatch: applyPatch,
+      /* 导出时判断「这一槽的底座还有没有别的来源」：有混合层就不能把 slotMaps 清成空，
+       * 否则重开时 GLB 里的合成图会被当成底座、混合层再叠一遍。 */
+      hasLayers: function (slot) { return readCfg(docOf(), slot).layers.length > 0; },
       rekey: rekey, selectSlot: selectSlot, adoptSlot: adoptSlot, listSlots: listSlots,
       migrateLegacy: migrateLegacy,
       /* 性能基准：整图重算次数（增量合成不计） */

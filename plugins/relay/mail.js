@@ -296,26 +296,35 @@ async function getAccessToken(opts) {
   } else {
     urls.push(TOKEN_URLS[0], TOKEN_URLS[1]);
   }
-  const form = 'grant_type=refresh_token' +
+  const baseForm = 'grant_type=refresh_token' +
     '&client_id=' + encodeURIComponent(clientId) +
-    '&refresh_token=' + encodeURIComponent(refreshToken) +
-    '&scope=' + encodeURIComponent(String((opts && opts.scope) || OAUTH_SCOPE));
+    '&refresh_token=' + encodeURIComponent(refreshToken);
+  /* 卡密里的 refresh_token 可能只授权了别的 scope（例如 REST 而不是 IMAP），
+   * 此时带 scope 申请会 invalid_scope；去掉 scope 再试一次，微软会按原授权范围签发。 */
+  const scopes = [String((opts && opts.scope) || OAUTH_SCOPE), ''];
   let last = null;
-  for (let i = 0; i < urls.length; i++) {
-    let out;
-    try {
-      out = await postForm(urls[i], form, TOKEN_TIMEOUT);
-    } catch (e) {
-      last = e;
-      continue;
+  for (let s = 0; s < scopes.length; s++) {
+    const form = baseForm + (scopes[s] ? '&scope=' + encodeURIComponent(scopes[s]) : '');
+    let retryScope = false;
+    for (let i = 0; i < urls.length; i++) {
+      let out;
+      try {
+        out = await postForm(urls[i], form, TOKEN_TIMEOUT);
+      } catch (e) {
+        last = e;
+        continue;
+      }
+      const data = out.data || {};
+      if (out.status >= 200 && out.status < 300 && data.access_token) {
+        return String(data.access_token);
+      }
+      last = tokenError(out.status, data);
+      const code = String(data.error || '');
+      if (code === 'invalid_scope' && scopes[s]) { retryScope = true; break; }
+      /* 授权类错误换端点也没用，直接报中文原因 */
+      if (/invalid_grant|invalid_client|unauthorized_client/.test(code)) break;
     }
-    const data = out.data || {};
-    if (out.status >= 200 && out.status < 300 && data.access_token) {
-      return String(data.access_token);
-    }
-    last = tokenError(out.status, data);
-    // 授权类错误换端点也没用，直接报中文原因
-    if (/invalid_grant|invalid_client|unauthorized_client|invalid_scope/.test(String(data.error || ''))) break;
+    if (!retryScope) break;
   }
   throw last || new Error('获取 OAuth2 访问令牌失败');
 }
@@ -615,9 +624,24 @@ async function imapFetch(opts) {
   }
 }
 
+/* 从 access_token（JWT）里读出授权范围，只用于展示，不返回令牌本身。 */
+function tokenScopes(token) {
+  const parts = String(token || '').split('.');
+  if (parts.length < 2) return [];
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+    const scp = String(payload.scp || payload.roles || '');
+    return scp ? scp.split(/[\s,]+/).filter(Boolean) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 module.exports = {
   imapFetch,
   getAccessToken,
+  tokenScopes,
   parseMail,
   parseHeaders,
   decodeWords,

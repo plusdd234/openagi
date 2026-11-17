@@ -25,6 +25,15 @@ const KOKORO_DIR = TTS_DIR ? path.join(TTS_DIR, 'kokoro') : '';
 const MELO_DIR = TTS_DIR ? path.join(TTS_DIR, 'melo') : '';
 const VITS_DIR = TTS_DIR ? path.join(TTS_DIR, 'vits-theresa') : '';
 const ZIPVOICE_DIR = TTS_DIR ? path.join(TTS_DIR, 'zipvoice') : '';
+/* 内置参数音库：随项目分发，用户没蒸馏过也能直接用「快速合成」。
+ * 用户目录里蒸馏出音库时优先用用户的。 */
+const PARAM_BUILTIN_DIR = path.join(__dirname, 'param-bank');
+function paramBankDir() {
+  const user = TTS_DIR ? path.join(TTS_DIR, 'param') : '';
+  try { if (user && fs.statSync(path.join(user, 'bank.json')).isFile()) return user; } catch (e) {}
+  try { if (fs.statSync(path.join(PARAM_BUILTIN_DIR, 'bank.json')).isFile()) return PARAM_BUILTIN_DIR; } catch (e) {}
+  return user || PARAM_BUILTIN_DIR;
+}
 const SHERPA_EXE = TTS_DIR ? path.join(TTS_DIR, 'sherpa', 'bin', 'sherpa-onnx-offline-tts.exe') : '';
 
 const CORS = {
@@ -152,7 +161,7 @@ function ttsStatus() {
   }catch(e){ cloneReady = false; }
   /* 参数合成音库：离线蒸馏产物，运行时只做拼接，不加载任何模型 */
   let param = { ready: false, units: 0, chars: 0, rate: 0, source: '' };
-  try { param = paramStatus(dir ? path.join(dir, 'param') : ''); } catch (e) { /* 索引损坏时保持未就绪 */ }
+  try { param = paramStatus(paramBankDir()); } catch (e) { /* 索引损坏时保持未就绪 */ }
   return {
     ok: !!(dir && fs.existsSync(exe)),
     engine: !!(dir && fs.existsSync(exe)),
@@ -435,10 +444,10 @@ function speakProsody(res, body, plan, engine) {
 }
 
 /* 参数合成：运行时不碰神经网络，直接查蒸馏音库并用 PSOLA 拼 WAV。
- * 音库由 tools/distill-voice.js 离线生成；没有音库时明确告诉前端去蒸馏，
+ * 音库优先用用户蒸馏的，其次用随包内置的；两者都没有时明确告诉前端去蒸馏，
  * 不要静默退回别的引擎（音色会变，快问快答的预期也就断了）。 */
 function speakParam(res, body, text) {
-  const dir = TTS_DIR ? path.join(TTS_DIR, 'param') : '';
+  const dir = paramBankDir();
   let wav = null;
   try {
     wav = synthParam(text, {
@@ -453,7 +462,7 @@ function speakParam(res, body, text) {
   }
   if (!wav) {
     sendJson(res, 404, {
-      error: '参数音库还没生成：在模型商店装好角色音色后，运行 node tools/distill-voice.js 蒸馏一次'
+      error: '参数音库不可用：内置音库缺失，可运行 node tools/distill-voice.js 重新蒸馏'
     });
     return;
   }

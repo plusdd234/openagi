@@ -173,45 +173,89 @@
       return polys;
     }
 
-    /* 笔画期间给绘制上下文加岛剪裁。必须成对 restore：否则剪裁会一直留着，
+    /* 指定面的 UV 多边形（画布像素坐标）。组件隔离与对象隔离的绘制范围都从这里来。
+     * UV 明显超出 0–1（平铺 / atlas）时返回空：裁剪会把整笔裁成空，
+     * 这种模型宁可不裁（与岛遮罩同一条兜底规则）。 */
+    function paintFacePolys(faces, w, h) {
+      var m = st.mesh, off = m.faceOffsets, uvs = m.uvs;
+      var polys = [], q, j;
+      for (q = 0; q < faces.length; q++) {
+        var f = faces[q], s = off[f], e = off[f + 1];
+        if (e - s < 3) continue;
+        for (j = s; j < e; j++) {
+          var uu = uvs[j * 2], vv = uvs[j * 2 + 1];
+          if (uu < -0.01 || uu > 1.01 || vv < -0.01 || vv > 1.01) return [];
+        }
+        var poly = [];
+        for (j = s; j < e; j++) {
+          /* v 轴向上：UV v=0 在画布底边（与 CanvasTexture 的 flipY 一致） */
+          poly.push([uvs[j * 2] * w, (1 - uvs[j * 2 + 1]) * h]);
+        }
+        polys.push(poly);
+      }
+      return polys;
+    }
+
+    /* 笔画期间给绘制上下文加剪裁。必须成对 restore：否则剪裁会一直留着，
      * 换岛后整片贴图都画不上颜色。
-     * 参数是 faceId（不是下标）：落笔用的是可见替身网格，岛却要在整份网格上查。 */
-    function paintClipBegin(faceId) {
+     * faceId（不是下标）：落笔用的是可见替身网格，岛却要在整份网格上查。
+     * scope = MDIsolate.paintScope()：隔离状态下只允许写到可见面，null 表示不隔离。
+     * 两重剪裁（岛遮罩 ∩ 隔离范围）分别 clip，画布会按交集生效。 */
+    function paintClipBegin(faceId, scope) {
       paintClipRelease();
       var p = st.paint;
-      if (!p.mask || !p.canvas || !p.ctx || !st.mesh || !st.mesh.uvs) return 0;
-      /* 魔棒锁定了岛就按锁定的岛裁：选完岛之后从哪落笔都只写这一岛 */
-      var useId = (p.lockIsland != null && p.lockIsland >= 0) ? p.lockIsland : faceId;
-      var faceIndex = st.mesh.faceIds ? st.mesh.faceIds.indexOf(useId) : -1;
-      /* 换过文档 / 重新生成网格后，旧 faceId 已经不存在：退回落笔面并清掉锁 */
-      if (faceIndex < 0 && useId !== faceId) {
-        p.lockIsland = -1;
-        faceIndex = st.mesh.faceIds ? st.mesh.faceIds.indexOf(faceId) : -1;
+      if (!p.mask && !scope) return 0;
+      if (!p.canvas || !p.ctx || !st.mesh || !st.mesh.uvs) return 0;
+      var parts = [], polys;
+      if (p.mask) {
+        /* 魔棒锁定了岛就按锁定的岛裁：选完岛之后从哪落笔都只写这一岛 */
+        var useId = (p.lockIsland != null && p.lockIsland >= 0) ? p.lockIsland : faceId;
+        var faceIndex = st.mesh.faceIds ? st.mesh.faceIds.indexOf(useId) : -1;
+        /* 换过文档 / 重新生成网格后，旧 faceId 已经不存在：退回落笔面并清掉锁 */
+        if (faceIndex < 0 && useId !== faceId) {
+          p.lockIsland = -1;
+          faceIndex = st.mesh.faceIds ? st.mesh.faceIds.indexOf(faceId) : -1;
+        }
+        if (faceIndex >= 0) {
+          polys = paintIslandPolys(faceIndex, p.canvas.width, p.canvas.height);
+          if (polys.length) parts.push(polys);
+        }
       }
-      if (faceIndex < 0) return 0;
-      var polys = paintIslandPolys(faceIndex, p.canvas.width, p.canvas.height);
-      if (!polys.length) return 0;
+      if (scope) {
+        var faces = scope;
+        if (scope === 'object') {
+          faces = [];
+          for (var fi = 0; fi < st.mesh.faceIds.length; fi++) faces.push(fi);
+        }
+        polys = paintFacePolys(faces, p.canvas.width, p.canvas.height);
+        if (polys.length) parts.push(polys);
+      }
+      if (!parts.length) return 0;
       /* 两张画布都要裁：p.ctx 是即时预览，p.inkCtx 是抬笔后进层栈的增量图。
-       * 只裁预览的话，笔刷在岛外的溢色会随增量层一起进合成 ——
-       * 画面预览时看着被裁住了，一抬笔就溢出到相邻岛（遮罩「失效」）。 */
+       * 只裁预览的话，笔刷在范围外的溢色会随增量层一起进合成 ——
+       * 画面预览时看着被裁住了，一抬笔就溢到隔壁（遮罩 / 隔离「失效」）。 */
       var ctxs = [p.ctx];
       if (p.inkCtx) ctxs.push(p.inkCtx);
+      var total = 0;
       ctxs.forEach(function (c2) {
         c2.save();
-        c2.beginPath();
-        polys.forEach(function (poly) {
-          poly.forEach(function (pt, i) {
-            if (i) c2.lineTo(pt[0], pt[1]);
-            else c2.moveTo(pt[0], pt[1]);
+        parts.forEach(function (list) {
+          c2.beginPath();
+          list.forEach(function (poly) {
+            poly.forEach(function (pt, i) {
+              if (i) c2.lineTo(pt[0], pt[1]);
+              else c2.moveTo(pt[0], pt[1]);
+            });
+            c2.closePath();
           });
-          c2.closePath();
+          c2.clip();
         });
-        c2.clip();
       });
+      parts.forEach(function (list) { total += list.length; });
       p.clipCtxs = ctxs;
       p.clipped = true;
-      p.clipPolys = polys.length;
-      return polys.length;
+      p.clipPolys = total;
+      return total;
     }
 
     function paintClipRelease() {
@@ -406,7 +450,7 @@
      *   ② 底座为空也能画 → 不会把贴图洗成「槽位灰 + 几个岛」
      *   ③ 历史里存的是一张增量图，不是前后两张 2048² PNG
      * 只有没有 TexStack（老页面 / 脚本单测）时才退回老的写回路径。 */
-    function paintCommit() {
+    function paintCommit(title) {
       var p = st.paint;
       if (!p.canvas || p.slot < 0 || !st.doc) return false;
       if (!p.inkDirty || !p.ink || !p.ink.width) return false;
@@ -420,7 +464,8 @@
        * 它下面那一层的内容（有混合层时会糊出一块没有混合层内容的斑）。 */
       var blur = !!p.inkBlur;
       var smudge = !!p.inkSmudge;
-      var label = blur ? '模糊' : smudge ? '涂抹' : '画笔';
+      /* 调用方可以给这一层起名（例如岛填充），历史面板里就能区分「画的一笔」与「填的一岛」 */
+      var label = title || (blur ? '模糊' : smudge ? '涂抹' : '画笔');
       TStack.push(doc, slot, {
         type: blur ? 'blur' : 'stroke', label: label,
         canvas: p.ink, w: inkW, h: inkH,
@@ -439,6 +484,134 @@
        * 同时混合层也要按新的层栈重算一次。 */
       if (ctx.onPaintInk) ctx.onPaintInk(slot);
       return ok;
+    }
+
+    /* 选中 UV 岛的整岛纯色填充（绘制工具栏的「岛填充」）。
+     *
+     * 落盘链路与一笔笔刷完全一致：每个材质槽生成一张增量图 → 作为 stroke 层推进 TexStack。
+     * 所以填充天然可撤销、可持久化，也不需要重编码整张贴图。
+     *
+     * 三条必须守住的约束：
+     *   ① 只填选中的岛：路径取自选中面的 UV 多边形并集，岛外一个像素都不碰；
+     *   ② 只填视口里看得见的部分：单独显示（面 / 岛级）时按 paintScope 收窄，
+     *      与笔刷的裁剪口径同源，否则会涂到被隐藏的面上；
+     *   ③ 按材质槽分组：一张贴图一个层，跨槽的岛不会被写进错误的槽。
+     * 相邻面共用一条边时若逐面 fill，抗锯齿会在岛内留下发丝缝；
+     * 把所有面多边形放进同一个 Path2D 再一次 fill，得到的是真正的并集。
+     */
+    function fillIslands() {
+      var p = st.paint, m = st.mesh, doc = st.doc;
+      if (!doc || !m) { setStatus('岛填充：先打开一个模型', true); return 0; }
+      if (st.selMode !== 'island') {
+        setStatus('岛填充：先在建模模式按 F12 选中 UV 岛，再回到绘制模式填充', true);
+        return 0;
+      }
+      var ids = (st.sel && st.sel.faceIds) ? st.sel.faceIds.slice() : [];
+      if (!ids.length) { setStatus('岛填充：没有选中 UV 岛（在建模模式按 F12 点模型选岛）', true); return 0; }
+      if (!m.uvs || m.uvs.length !== m.faceIndices.length * 2) {
+        setStatus('岛填充：当前网格没有 UV，先展开 UV 再填充', true);
+        return 0;
+      }
+      if (typeof Path2D === 'undefined') {
+        setStatus('岛填充：当前环境不支持 Canvas 路径填充', true);
+        return 0;
+      }
+      /* 与绘画共用同一条可见性口径：看不见的对象 / 面不接收填充 */
+      if (!visibleMesh(st.node ? st.node.id : '')) {
+        setStatus('岛填充：当前对象在视口里不可见，先退出单独显示', true);
+        return 0;
+      }
+      var scope = ctx.paintScope ? ctx.paintScope(m) : null;
+      if (scope && scope !== 'object' && !scope.length) {
+        setStatus('岛填充：当前对象不在单独显示的范围内', true);
+        return 0;
+      }
+      var allow = null;
+      if (scope && scope !== 'object') {
+        allow = Object.create(null);
+        for (var a = 0; a < scope.length; a++) allow[scope[a]] = 1;
+      }
+      /* faceId → 面下标，同时按材质槽分组；越界槽夹回合法范围（与 begin 同一规则） */
+      var slotN = Math.max(1, ((doc.materials && doc.materials.slotNames) || []).length);
+      var bySlot = Object.create(null), picked = 0, q, j;
+      for (var i = 0; i < ids.length; i++) {
+        var fi = m.faceIds ? m.faceIds.indexOf(ids[i]) : -1;
+        if (fi < 0) continue;
+        if (allow && !allow[fi]) continue;
+        var s0 = m.faceOffsets[fi], e0 = m.faceOffsets[fi + 1], bad = false;
+        for (j = s0; j < e0; j++) {
+          var uu = m.uvs[j * 2], vv = m.uvs[j * 2 + 1];
+          if (uu < -0.01 || uu > 1.01 || vv < -0.01 || vv > 1.01) { bad = true; break; }
+        }
+        /* UV 落在 0–1 之外（平铺 / 图集偏移）时不能像笔刷那样取模：
+         * 一个岛可能横跨接缝，取模会把多边形拆成两段，整片填充会填错区域。
+         * 宁可明确拒绝，也不静默填到错误的地方。 */
+        if (bad) {
+          setStatus('岛填充：选中的岛 UV 超出 0–1（平铺 / 图集），暂不支持整岛填充', true);
+          return 0;
+        }
+        var slot = Math.max(0, Math.min(slotN - 1, m.faceSlots[fi] | 0));
+        (bySlot[slot] || (bySlot[slot] = [])).push(fi);
+        picked++;
+      }
+      if (!picked) { setStatus('岛填充：选中的面都不在当前可见范围内', true); return 0; }
+      var slots = Object.keys(bySlot), filled = 0, missed = 0;
+      for (var k = 0; k < slots.length; k++) {
+        var slotId = Number(slots[k]);
+        var tex = paintEnsureTarget(slotId);
+        if (!tex) continue;
+        paintEnsureInk(p.canvas.width, p.canvas.height);
+        p.previewBox = null; p.inkFrameBox = null;
+        var polys = paintFacePolys(bySlot[slots[k]], p.canvas.width, p.canvas.height);
+        if (!polys.length) { missed++; continue; }
+        var path = new Path2D();
+        var bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+        for (q = 0; q < polys.length; q++) {
+          var poly = polys[q];
+          if (!poly.length) continue;
+          path.moveTo(poly[0][0], poly[0][1]);
+          if (poly[0][0] < bx0) bx0 = poly[0][0];
+          if (poly[0][0] > bx1) bx1 = poly[0][0];
+          if (poly[0][1] < by0) by0 = poly[0][1];
+          if (poly[0][1] > by1) by1 = poly[0][1];
+          for (j = 1; j < poly.length; j++) {
+            path.lineTo(poly[j][0], poly[j][1]);
+            if (poly[j][0] < bx0) bx0 = poly[j][0];
+            if (poly[j][0] > bx1) bx1 = poly[j][0];
+            if (poly[j][1] < by0) by0 = poly[j][1];
+            if (poly[j][1] > by1) by1 = poly[j][1];
+          }
+          path.closePath();
+        }
+        if (!(bx1 > bx0 && by1 > by0)) { missed++; continue; }
+        /* 纯色 = 所选颜色本身，按 100% 不透明度铺满；浓度混合留给笔刷。
+         * 预览与增量图必须画同一份路径，否则抬笔后入栈的像素和看到的不一致。 */
+        var ctxs = [p.ctx];
+        if (p.inkCtx) ctxs.push(p.inkCtx);
+        for (q = 0; q < ctxs.length; q++) {
+          var c2 = ctxs[q];
+          c2.save();
+          c2.globalCompositeOperation = 'source-over';
+          c2.fillStyle = p.color;
+          c2.fill(path);
+          c2.restore();
+        }
+        p.inkDirty = true;
+        p.inkErase = false; p.inkBlur = false; p.inkSmudge = false;
+        paintMarkDirty(bx0, by0, bx1 - bx0 + 1, by1 - by0 + 1);
+        if (paintCommit('填充')) filled++;
+      }
+      if (!filled) {
+        setStatus('岛填充：没有写入任何材质槽，检查对象是否挂有这些槽的贴图', true);
+        return 0;
+      }
+      setStatus('岛填充：已用 ' + String(p.color).toUpperCase() + ' 填满' +
+        (picked === ids.length ? '选中的岛' : picked + ' 个面') +
+        (slots.length > 1 ? '（' + slots.length + ' 个材质槽）' : '') +
+        '，Ctrl+Z 可撤销' +
+        (missed ? '（' + missed + ' 个槽未写入）' : '') +
+        (p.applyMiss ? '（材质里找不到对应贴图，暂时看不到）' : ''));
+      return filled;
     }
 
     /* 一笔 = 一条历史。存的是「栈 diff」（两个 ops 数组引用），不是两张贴图：
@@ -496,6 +669,38 @@
           if (i) g.lineTo(X, Y); else g.moveTo(X, Y);
         }
         g.closePath(); return;
+      }
+      if (shape === 'triangle') {
+        g.moveTo(cx, cy - rad);
+        g.lineTo(cx + rad * 0.866, cy + rad * 0.5);
+        g.lineTo(cx - rad * 0.866, cy + rad * 0.5);
+        g.closePath(); return;
+      }
+      if (shape === 'pentagon' || shape === 'cross') {
+        if (shape === 'pentagon') {
+          for (var p5 = 0; p5 < 5; p5++) {
+            var a5 = -Math.PI / 2 + p5 * Math.PI * 2 / 5;
+            var x5 = cx + Math.cos(a5) * rad, y5 = cy + Math.sin(a5) * rad;
+            if (p5) g.lineTo(x5, y5); else g.moveTo(x5, y5);
+          }
+        } else {
+          var t = rad * 0.34;
+          g.moveTo(cx - t, cy - rad); g.lineTo(cx + t, cy - rad);
+          g.lineTo(cx + t, cy - t); g.lineTo(cx + rad, cy - t);
+          g.lineTo(cx + rad, cy + t); g.lineTo(cx + t, cy + t);
+          g.lineTo(cx + t, cy + rad); g.lineTo(cx - t, cy + rad);
+          g.lineTo(cx - t, cy + t); g.lineTo(cx - rad, cy + t);
+          g.lineTo(cx - rad, cy - t); g.lineTo(cx - t, cy - t);
+        }
+        g.closePath(); return;
+      }
+      if (shape === 'ring') {
+        /* 两圈反向绕行 = 中间真的挖空；nonzero 填充下外圈 - 内圈 */
+        var ir = rad * 0.55;
+        g.arc(cx, cy, rad, 0, Math.PI * 2, false);
+        g.moveTo(cx + ir, cy);
+        g.arc(cx, cy, ir, 0, Math.PI * 2, true);
+        return;
       }
       g.arc(cx, cy, rad, 0, Math.PI * 2);
     }
@@ -674,8 +879,9 @@
     function paintStampAt(x, y) {
       var p = st.paint, c2 = p.ctx;
       if (!c2 || !p.canvas) return;
-      var rad = PS.radius(p.size, p.canvas.width, p.canvas.height, PAINT_MAX);
       var stroke = p.stroke || {};
+      /* 落笔时已把屏幕尺寸换算成贴图尺寸；没有笔（例如直接调用）才退回设置值 */
+      var rad = PS.radius(stroke.sizeTex || p.size, p.canvas.width, p.canvas.height, PAINT_MAX);
       var erase = !!stroke.erase || p.brush === 'erase';
       var hard = !!stroke.pencil || p.brush === 'hard';
       var a = Math.max(0, Math.min(1, p.opacity / 100));
@@ -784,6 +990,13 @@
         }
       }
       if (!hit) { setStatus('绘画：这里没点到模型', true); return false; }
+      /* 单独显示 = 绘制域过滤：只允许写进隔离里的那部分可见面。
+       * 没隔离时返回 null，完全按老规则走；返回空数组说明当前对象不在隔离里，直接拒绝。 */
+      var paintScope = ctx.paintScope ? ctx.paintScope(st.mesh) : null;
+      if (paintScope && paintScope !== 'object' && !paintScope.length) {
+        setStatus('绘画：当前对象不在单独显示的范围内', true);
+        return false;
+      }
       /* 老资产里的 faceSlots 可能指向已经回收掉的槽（材质串通时代保存的文档）。
        * 这类面在视口里没有材质，按原下标画会静默失败；夹回合法槽再落笔。 */
       var slotN = Math.max(1, ((st.doc.materials && st.doc.materials.slotNames) || []).length);
@@ -825,13 +1038,15 @@
       p.inkFrameBox = null;
       /* 工具箱的「纹理混合」跟着落笔的槽切换：用户画哪一槽就想调哪一槽 */
       if (ctx.onPaintSlot) ctx.onPaintSlot(slot);
-      /* 岛遮罩：clip 在整笔期间有效，落笔的岛就是这一笔的可画范围 */
-      paintClipBegin(hit.faceId);
+      /* 岛遮罩 + 隔离范围：clip 在整笔期间有效，落笔的岛 / 可见面就是这一笔的可写范围 */
+      paintClipBegin(hit.faceId, paintScope);
       /* Shift = 模糊的旧习惯保留；但选了涂抹 / 吸管 / 魔棒时不能被 Shift 改语义 */
       var shiftBlur = !!e.shiftKey && tool !== 'eraser' && tool !== 'smudge' &&
         tool !== 'picker' && tool !== 'wand';
       st.paint.stroke = {
         slot: slot, last: [u0, v0], forced: forced >= 0,
+        /* 屏幕像素尺寸 → 贴图等效尺寸；整笔固定，笔尖缓存不会每个点重建 */
+        sizeTex: paintScreenSize(px, py),
         /* 上一落点在屏幕上的位置：用来判断「屏幕几乎没动、UV 却跳了很远」的跨接缝情况 */
         lastPx: [px, py],
         /* 当前落点所在面：涂抹按它查 UV 岛，把取样裁在本岛内 */
@@ -910,7 +1125,7 @@
         stroke.lastPx = [px, py];
         return;
       }
-      var sp = PS.samples(u0, v0, u1, v1, w, h, p.size, PAINT_MAX);
+      var sp = PS.samples(u0, v0, u1, v1, w, h, stroke.sizeTex || p.size, PAINT_MAX);
       for (var i = 1; i <= sp.n; i++) {
         paintStampUV(u0 + sp.du * i / sp.n, v0 + sp.dv * i / sp.n);
       }
@@ -1000,8 +1215,21 @@
       return Math.min(rad, Math.max(r0.width, r0.height));
     }
 
+    /* 把「笔刷大小 = 屏幕像素」换算成贴图里的等效尺寸：
+     * 先在落点算 size 当前能在屏幕上覆盖多大，再按比例反推。
+     * 只在落笔瞬间算一次，整笔保持同一尺寸 —— 图章缓存稳定，来回换面也不会忽大忽小。 */
+    function paintScreenSize(px, py) {
+      var p = st.paint;
+      var rad = paintCursorRadius(px, py);
+      if (!(rad > 0.3)) return p.size;
+      var eff = p.size * (p.size * 0.5) / rad;
+      return Math.max(0.5, Math.min(1024, eff));
+    }
+
     return {
       begin: begin, move: move, end: end, cancel: cancel, applyPatch: applyPaintPatch,
+      /* 整岛纯色填充：读当前选择（F12 UV 岛模式），按材质槽分组写入 */
+      fillIslands: fillIslands,
       rayHit: paintRayHit, cursorRadius: paintCursorRadius,
       /* 预览纹理的脏块上传：外壳在 renderer.render 之前调一次；
        * hasPendingUpload 给按需渲染判断「这一帧有没有新像素要上屏」。 */

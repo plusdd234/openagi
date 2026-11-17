@@ -148,6 +148,27 @@
       return faces ? subMesh(mesh, faces) : mesh;
     }
 
+    /* 绘画的可写范围（隔离是绘制域过滤，不只是渲染过滤）：
+     *   没隔离        → null   调用方按原规则画；
+     *   []            → 当前对象不在隔离里，这一笔必须拒绝；
+     *   [面下标...]    → 组件隔离：只允许写进这些面；
+     *   'object'      → 对象隔离：整只对象都可见。
+     * 专业软件同口径：Maya 3D Paint 默认 Paint at depth 关（只画可见表面）、
+     * Blender Local View 下纹理绘制受 Face Selection Masking / Occlude 约束、
+     * Substance 隔离后投影只落在可见网格上。隔离之外的面一律不接收笔迹。 */
+    function paintScope(mesh) {
+      if (!st.isolate || !mesh) return null;
+      var cur = st.node;
+      if (!cur || !nodeVisible(cur.id)) return [];
+      if (iso.nodeIds.indexOf(cur.id) < 0) return [];
+      if (meshOf(cur) !== mesh) return [];
+      if (cur.id === iso.nodeId) {
+        var faces = faceSet(mesh);
+        if (faces) return faces;
+      }
+      return 'object';
+    }
+
     /* 替身是自己建的，几何与材质都要销毁；共享贴图由材质 dispose 内部按 disposeMap 规则放过 */
     function disposeGroup(pv) {
       if (!pv || !pv.userData || !pv.userData.mdIsoMesh) return;
@@ -232,7 +253,7 @@
       return st.isolate;
     }
 
-    return { apply: apply, refresh: refresh, toggle: toggle, nodeVisible: nodeVisible, visibleMesh: visibleMesh };
+    return { apply: apply, refresh: refresh, toggle: toggle, nodeVisible: nodeVisible, visibleMesh: visibleMesh, paintScope: paintScope };
   }
 
   global.MDIsolate = { create: create };

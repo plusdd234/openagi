@@ -745,6 +745,101 @@ node tools/css-links.js                 <span class="c"># 样式表链接守卫<
   要么原尺寸抽样，要么直接用带容差的逐点差（<code>mean &lt; 2</code>）。
 </div>
 
+<h2><span class="no">§10 落地状态</span>2026-11-17 资源生命周期修复</h2>
+<p class="lead">以下为已生效的代码事实，验收命令附在每一组末尾。历史「提案」段落保留原文，不回改。</p>
+<ul>
+  <li><b>笔迹层像素的存活根</b>：<code>js/blob-store.js</code> 新增 <code>blobRegisterRoot()</code> 提供者注册表；
+    <code>openagi_model_tex_v1</code> 由 <code>js/md-texmix.js</code> 注册为额外根，启动读回与 <code>blobGC</code> 都并入。
+    此前 GC 只认 FLOWS / bp / 桌面壁纸，会把只被贴图配置引用的笔迹块当垃圾删掉 —— 这正是「画好的贴图重启后没了 / 保存出来是旧的」的根因。
+    桌面壁纸的 id 也补进了 GC 的存活集合。</li>
+  <li><b>启动阶段不再抢跑 GC</b>：<code>blobGC</code> 在 <code>document.readyState !== 'complete'</code> 时延迟到 load 之后执行，
+    避免自动保存触发的回收早于模块注册存活根。</li>
+  <li><b>单条兜底</b>：<code>blobFetch(id)</code> / <code>blobResolveAsync(v)</code> 从资产库或 IndexedDB 单条取回存根；
+    <code>hydrateOps</code> 用它补读启动收集漏掉的笔迹块。</li>
+  <li><b>GLB extras 的 slotMaps 口径</b>：<code>js/model-desk.js</code> 的 <code>save()</code> / 导出改为「先还原、再序列化」，
+    extras 里存底座而不是 <code>glbTexSwap</code> 的临时合成图；未叠过混合层 / 笔迹的槽不再重复存一份，
+    叠过的槽保留底座并写 <code>slotPainted</code> 标记，重开时 <code>backfillMaterials</code> 不会拿合成图当底座重复叠加。</li>
+  <li><b>导出取图顺序</b>：<code>prepareExportMaps</code> 改为「视口当前显示的 map → slotMaps → 留空」。
+    混合层此前不会进入 GLB（底座优先），现在与视口一致。</li>
+  <li><b>配置收口</b>：<code>migrateLegacy</code> 在把「材质名键」迁移到稳定 id 键后删除旧键，
+    <code>openagi_model_tex_v1</code> 不再长期保留同一槽的两份记录。</li>
+  <li><b>资源删除的可恢复性</b>：<code>blobDel</code> 同步调用 <code>assetRemove</code>（资产库的 remove 是移入回收站），
+    磁盘副本不会在 IDB 回收后成为永久孤立文件。</li>
+</ul>
+<div class="box">
+  <b>仍未自动化的部分（有意保留）：</b>资产库中「只增不减」的历史大文件不做自动清理 ——
+  blob 与图库共用同一套存储，且用户可能把工作流外置图当作图库素材；
+  自动按引用删除会误删用户内容。引用完整性由「存活根 + 回收站」保证，容量治理需要产品级确认，不在代码里静默执行。
+</div>
+<pre><code><span class="c"># 本次新增的回归守卫</span>
+node tools/probe-md-texpersist.js       <span class="c"># 7 项：根注册 / 重载解析 / GC 存活 / 单条兜底</span>
+node tools/probe-md-texmix.js           <span class="c"># 22 项</span>
+node tools/probe-slot-color-layer.js    <span class="c"># 29 项</span>
+node tools/test-headless.js modeldesk   <span class="c"># 5/5</span></code></pre>
+
+<h2><span class="no">§11 落地状态</span>2026-11-17 单独显示 = 绘制域过滤</h2>
+<p class="lead">以下为已生效的代码事实。历史「提案」段落保留原文，不回改。</p>
+<ul>
+  <li><b>问题</b>：单独显示（隔离）此前只切 <code>pivot.visible</code> 与拾取，绘制仍在整张 UV 画布上按 2D 圆形盖章。
+    于是隔离某张面后，大笔刷照样写进被隐藏面所属的 UV 岛 —— 视口看不见，但贴图已经脏了。</li>
+  <li><b>专业软件口径</b>：Maya 3D Paint Tool 默认 <i>Paint at depth</i> 关闭，只画相机能看到的表面；
+    Blender 的 Local View 配 <i>Occlude</i> / Face Selection Masking，被遮挡与未选中的面不接收笔迹；
+    ZBrush 隔离 SubTool 后笔刷只作用于可见 SubTool；Substance Painter 的投影绘制只落在可见网格上。
+    共同原则是「隔离是绘制域的过滤，不只是渲染的过滤」。</li>
+  <li><b>契约收口</b>：<code>js/md-isolate.js</code> 新增 <code>paintScope(mesh)</code>，成为「这一笔能写哪」的单一真源：
+    <code>null</code> = 未隔离，按原规则；<code>[]</code> = 对象不在隔离范围，拒绝落笔；<code>[面下标…]</code> = 组件隔离，只允许写这些面；
+    <code>'object'</code> = 对象隔离，整只对象可见。</li>
+  <li><b>裁剪执行</b>：<code>js/md-paint.js</code> 的 <code>paintClipBegin(faceId, scope)</code> 把「UV 岛遮罩」与「隔离范围」作为两重
+    <code>clip()</code> 求交集，并同时作用于预览画布 <code>p.ctx</code> 与笔迹画布 <code>p.inkCtx</code>；
+    <code>begin()</code> 在 <code>[]</code> 时直接拒绝并在状态行说明。UV 超出 <code>[-0.01, 1.01]</code> 时宁可不裁，避免裁错。</li>
+  <li><b>基础体 UV</b>：<code>THREE.BoxGeometry</code> 六个面各自铺满 0–1，UV 上完全重叠，隔离也拦不住「画一张面 = 六面一起上色」。
+    <code>js/model-desk.js</code> 新增 <code>boxUnwrapUV()</code>，仅对基础立方体（新建文档 / 基础体面板创建）丢弃拷贝来的 UV，
+    交给 <code>SeedModel.Mesh.ensureUV</code> 生成盒式展开；导入资产自带的 UV 一律不碰。</li>
+</ul>
+<div class="box">
+  <b>测试语义：</b>canvas 的 <code>clip()</code> 是亚像素抗锯齿的，紧贴裁剪边的一行像素会被算上半覆盖，
+  像素中心落在多边形外 0.x px 属于正常。回归断言对边给 1.5px 容差，只抓真正跑到范围外的像素。
+</div>
+<pre><code><span class="c"># 本次新增的回归守卫（tools/probe-modeldesk.js）</span>
+<span class="c"># 1. 默认立方体单面 UV 面积在 0.05–0.25（盒式展开，不再六面共用 0–1）</span>
+<span class="c"># 2. 单独显示下大笔刷落笔：笔中 clipPolys ≥ 1，抬笔后笔刷色像素落在定格面 UV 外的数量为 0</span>
+node tools/test-headless.js modeldesk   <span class="c"># 5/5</span></code></pre>
+
+<h2><span class="no">§12 落地状态</span>2026-11-17 UV 岛整岛纯色填充</h2>
+<p class="lead">以下为已生效的代码事实。这是「绘制工具箱」里的一次动作，不是新的手势工具模式。</p>
+<ul>
+  <li><b>入口</b>：右侧绘画工具箱的左侧竖条新增「岛填充」（<code>data-md-pfill</code>，桶形图标），只在绘制模式下显示。
+    点击即用当前笔刷颜色填满选择集里的 UV 岛；执行完不切换当前手势工具，可以接着画。</li>
+  <li><b>选择口径</b>：读取 <code>st.selMode === 'island'</code> 时的 <code>st.sel.faceIds</code>（F12 选岛后的整岛面集）。
+    选岛在建模模式完成，切到绘制模式后选择集保留；绘制模式下点模型是落笔，不做选岛。
+    其他选择模式、空选、网格无 UV、对象不在隔离范围时明确拒绝并在状态行说明，不做隐式降级。</li>
+  <li><b>填充执行</b>：<code>js/md-paint.js</code> 新增 <code>fillIslands()</code>。选中面按 <code>faceSlots</code> 分组，
+    每个槽各自复用 <code>paintEnsureTarget</code> 的工作副本；所有面多边形放进同一个 <code>Path2D</code> 后一次
+    <code>fill()</code> —— 逐面填充会在共享边留下抗锯齿发丝缝。预览画布与增量图画同一份路径，
+    随后 <code>paintCommit('填充')</code> 把增量图作为 stroke 层推进 TexStack：一个槽一层，撤销 / 持久化沿用笔迹层链路。</li>
+  <li><b>可见性契约</b>：沿用 <code>MDIsolate.paintScope()</code>。对象不可见直接拒绝；组件隔离时只填定格面覆盖的部分。
+    与笔刷同为「隔离 = 绘制域过滤」，整岛填充不会写进被隐藏的面。</li>
+  <li><b>纯色口径</b>：颜色取当前笔刷色，固定 100% 不透明度；浓度混合仍交给笔刷，填充不做二次混合。
+    UV 超出 <code>[-0.01, 1.01]</code>（平铺 / 图集）时明确拒绝：取模会把跨接缝的岛拆成两段，填错区域比不填更糟。</li>
+</ul>
+<pre><code><span class="c"># 回归守卫（tools/probe-modeldesk.js 末尾）</span>
+<span class="c"># 1. F12 点选把整块 UV 岛加入选择集</span>
+<span class="c"># 2. 岛填充后目标色像素全部落在岛多边形内，岛外（1.5px 容差外）为 0</span>
+<span class="c"># 3. 一次填充只产生一条历史，Ctrl+Z 撤销后工作副本按栈作废</span>
+node tools/test-headless.js modeldesk   <span class="c"># 5/5</span></code></pre>
+
+<h2><span class="no">§13 界面约定</span>绘制工具名称与快捷键常显</h2>
+<p class="lead">绘制工具栏是可读的工具面板，不是只能靠悬停猜的图标条。</p>
+<ul>
+  <li><b>结构</b>：每个绘制工具按钮内部固定「图标 + 名称 + 键位」两层；名称与快捷键写在 DOM 里，
+    不依赖 <code>title</code>，窗口尺寸变化也始终可见。</li>
+  <li><b>键位</b>：B 画笔 / P 铅笔 / E 橡皮 / R 模糊 / T 涂抹 / I 吸管 / W 魔棒 / G 岛填充（动作）。
+    与主流绘画软件的习惯对齐；按键后状态行显示当前工具，选中态同步。</li>
+  <li><b>作用域</b>：只在 <code>st.editor === 'paint'</code> 时拦截。切回建模模式后 W / E / R 仍是变换手柄、
+    F 仍是框显，不存在两套键位同时生效；Ctrl 组合键始终优先。</li>
+  <li><b>尺寸</b>：工具条 56px、按钮 48×40px；窗口变矮时纵向滚动并隐藏滚动条，不再把底部色块裁掉。</li>
+</ul>
+
 <footer>
   调研对象为当前工作树（md-texmix 1514 行 / md-paint 367 / md-proj-bake 3084 / md-uv-editor 1660）。
   文中标「实测」的结论均可用 <code>tools/_diag-tex-arch.js</code> 复现；标「代码路径」的为静态分析，未构造运行态。

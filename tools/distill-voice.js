@@ -6,9 +6,12 @@
  *   node tools/distill-voice.js --limit 200     # 先做一小批试听
  *   node tools/distill-voice.js --dry-run       # 只打印会生成多少单元
  *   node tools/distill-voice.js --force         # 清空重来
+ *   node tools/distill-voice.js --jobs 4        # 并发进程数
+ *   node tools/distill-voice.js --out plugins/runtime/param-bank
+ *                                               # 直接产出仓库内置音库
  *
  * 依赖：模型商店里已装好「角色音色（VITS）」——sherpa 引擎 + vits-theresa 权重。
- * 产物只进 TTS_DIR，不入库；运行时由 plugins/runtime/tts-param.js 直接读取。
+ * 默认产物进 <TTS_DIR>/param；加 --out 可写到仓库内置目录随包分发。
  */
 'use strict';
 
@@ -74,7 +77,11 @@ function resolveEngine(root) {
   };
 }
 
-/* 从 lexicon 抽「单字 → 带调音节」。多字词条、标点、英文条目都跳过。 */
+/* 从 lexicon 抽「单字 → 带调音节」。
+ * 这份 VITS 词典不是拼音，而是音素串 + 箭头声调，例如：
+ *   你 n i ↓ ↑
+ *   星 ʃ i N g →
+ * 所以音节 key 用音素串本身，声调用 # 后缀区分（同音不同调不能共用单元）。 */
 function readLexicon(file) {
   const map = new Map();
   let lines = [];
@@ -86,8 +93,12 @@ function readLexicon(file) {
     if (m.length < 2) continue;
     const ch = m[0];
     if (!/^[\u3400-\u9fff]$/.test(ch)) continue;
-    const syl = m[1].toLowerCase();
-    if (!/^[a-zü:]+[1-5]?$/.test(syl)) continue;
+    const rest = m.slice(1).filter(Boolean);
+    if (!rest.length) continue;
+    const tone = rest.filter(t => /^[→↑↓↗↘]+$/.test(t)).join('');
+    const base = rest.filter(t => !/^[→↑↓↗↘]+$/.test(t));
+    if (!base.length) continue;
+    const syl = base.join(' ') + (tone ? '#' + tone : '');
     if (!map.has(ch)) map.set(ch, syl);
   }
   return map;
@@ -210,7 +221,8 @@ function writeBank(file, data) {
 
 async function main() {
   const root = String(arg('tts-dir', ttsDir()));
-  const outDir = path.join(root, 'param');
+  const outArg = arg('out', '');
+  const outDir = outArg && outArg !== true ? path.resolve(String(outArg)) : path.join(root, 'param');
   const bankFile = path.join(outDir, 'bank.json');
   const pcmFile = path.join(outDir, 'units.bin');
   const limit = Math.max(0, Number(arg('limit', 0)) || 0);
@@ -224,9 +236,17 @@ async function main() {
     process.exit(2);
   }
 
-  /* 每个带调音节只蒸馏一次：选 lexicon 里第一次出现的字作为发音示例。 */
+  /* 每个带调音节只蒸馏一次。lexicon 里同一个音节的字按「生僻 → 常用」排，
+   * 前几个往往是 GBK 里没有的生僻字；而且 sherpa 对**单字**会误判成 GB2312
+   * （把 UTF-8 字节按 GBK 再转一次），所以每个音节要准备多个候选字，
+   * 并且给字后面补一个句号强制走 UTF-8 分支，逐个重试。 */
+  const MAX_CANDIDATES = 40;
   const examples = new Map();
-  charMap.forEach((syl, ch) => { if (!examples.has(syl)) examples.set(syl, ch); });
+  charMap.forEach((syl, ch) => {
+    let list = examples.get(syl);
+    if (!list) { list = []; examples.set(syl, list); }
+    if (list.length < MAX_CANDIDATES && list.indexOf(ch) < 0) list.push(ch);
+  });
   let syllables = Array.from(examples.keys()).sort();
   if (limit) syllables = syllables.slice(0, limit);
 
@@ -259,51 +279,79 @@ async function main() {
   if (!fs.existsSync(pcmFile)) fs.writeFileSync(pcmFile, Buffer.alloc(0));
   if (force) fs.writeFileSync(pcmFile, Buffer.alloc(0));
 
-  const threads = Math.max(1, Math.min(4, (os.cpus() || []).length || 2));
+  const cpus = (os.cpus() || []).length || 2;
+  const jobs = Math.max(1, Math.min(6, Number(arg('jobs', 0)) || Math.min(4, cpus - 1) || 1));
+  /* 并发时每个进程只给 1 个线程，避免 jobs × threads 把 CPU 抢爆；
+   * 单进程时用满多线程，单个音节明显更快。 */
+  const threads = jobs > 1 ? 1 : Math.max(1, Math.min(4, cpus));
   let done = 0;
   let added = 0;
   const todo = syllables.filter(s => !bank.units[s]);
-  console.log('待合成 ' + todo.length + ' 个音节；每个约 0.3 秒音频。\n');
+  console.log('待合成 ' + todo.length + ' 个音节；并发 ' + jobs + '，每进程 ' + threads + ' 线程。\n');
 
-  for (let i = 0; i < todo.length; i++) {
-    const syl = todo[i];
-    const ch = examples.get(syl);
-    const tmp = path.join(os.tmpdir(), 'openagi-distill-' + process.pid + '-' + i + '.wav');
-    const args = [
-      '--vits-model=' + eng.model,
-      '--vits-lexicon=' + eng.lexicon,
-      '--vits-tokens=' + eng.tokens,
-      '--vits-length-scale=1.0',
-      '--num-threads=' + threads,
-      '--output-filename=' + tmp,
-      ch
-    ];
-    if (eng.fsts) args.splice(4, 0, '--tts-rule-fsts=' + eng.fsts);
-    try {
-      await run(eng.exe, args, eng.cwd, 60000);
-      const raw = toMono16(fs.readFileSync(tmp));
-      let pcm = resampleTo(raw.samples, raw.rate, TARGET_RATE);
-      pcm = trim(pcm, TARGET_RATE);
-      const cap = Math.round(TARGET_RATE * MAX_UNIT_SECONDS);
-      if (pcm.length > cap) pcm = pcm.subarray(0, cap);
-      if (pcm.length < Math.round(TARGET_RATE * 0.05)) throw new Error('合成结果太短');
-      const f0 = estimateF0(pcm, TARGET_RATE);
-      const fade = Math.min(Math.round(TARGET_RATE * FADE_SECONDS), pcm.length >> 1);
-      for (let j = 0; j < fade; j++) {
-        const g = j / fade;
-        pcm[j] *= g;
-        pcm[pcm.length - 1 - j] *= g;
+  /* 一个音节的合成：候选字逐个尝试，第一个成功的就是这个音节的声音。
+   * 生僻字没有词典条目时 sherpa 会直接失败，换下一个候选即可。 */
+  async function synthOne(syl, tag) {
+    const candidates = examples.get(syl) || [];
+    let lastErr = null;
+    for (let c = 0; c < candidates.length; c++) {
+      const ch = candidates[c];
+      const tmp = path.join(os.tmpdir(), 'openagi-distill-' + process.pid + '-' + tag + '-' + c + '.wav');
+      const args = [
+        '--vits-model=' + eng.model,
+        '--vits-lexicon=' + eng.lexicon,
+        '--vits-tokens=' + eng.tokens,
+        '--vits-length-scale=1.0',
+        '--num-threads=' + threads,
+        '--output-filename=' + tmp
+      ];
+      if (eng.fsts) args.splice(4, 0, '--tts-rule-fsts=' + eng.fsts);
+      /* 补句号不是标点需求，而是逼 sherpa 走 UTF-8 分支：单字输入会被它
+       * 误认成 GB2312，常见字（说 / 时 / 每）因此直接 OOV。句尾静音会被 trim 掉。 */
+      args.push(ch + '。');
+      try {
+        await run(eng.exe, args, eng.cwd, 60000);
+        const raw = toMono16(fs.readFileSync(tmp));
+        let pcm = resampleTo(raw.samples, raw.rate, TARGET_RATE);
+        pcm = trim(pcm, TARGET_RATE);
+        const cap = Math.round(TARGET_RATE * MAX_UNIT_SECONDS);
+        if (pcm.length > cap) pcm = pcm.subarray(0, cap);
+        if (pcm.length < Math.round(TARGET_RATE * 0.05)) throw new Error('合成结果太短');
+        const f0 = estimateF0(pcm, TARGET_RATE);
+        const fade = Math.min(Math.round(TARGET_RATE * FADE_SECONDS), pcm.length >> 1);
+        for (let j = 0; j < fade; j++) {
+          const g = j / fade;
+          pcm[j] *= g;
+          pcm[pcm.length - 1 - j] *= g;
+        }
+        return { pcm: pcm, f0: f0, ch: ch };
+      } catch (e) {
+        lastErr = e;
+      } finally {
+        try { fs.unlinkSync(tmp); } catch (e) { /* 已删 */ }
+      }
+    }
+    return { error: (lastErr && lastErr.message) || '没有可用的候选字', chars: candidates.join('') };
+  }
+
+  /* 按批次并发；PCM 追加与索引写入只在主线程做，避免并发写同一个文件。 */
+  let tagSeq = 0;
+  for (let start = 0; start < todo.length; start += jobs) {
+    const batch = todo.slice(start, start + jobs);
+    const results = await Promise.all(batch.map(syl => synthOne(syl, String(tagSeq++))));
+    for (let k = 0; k < batch.length; k++) {
+      const syl = batch[k];
+      const r = results[k];
+      done++;
+      if (r.error) {
+        console.error('  ✗ ' + syl + '（' + r.chars + '）：' + r.error);
+        continue;
       }
       const offset = fs.statSync(pcmFile).size / 2;
-      const n = appendPcm(pcmFile, pcm);
-      bank.units[syl] = { o: offset, n: n, f0: f0 };
+      const n = appendPcm(pcmFile, r.pcm);
+      bank.units[syl] = { o: offset, n: n, f0: r.f0 };
       added++;
-    } catch (e) {
-      console.error('  ✗ ' + syl + '（' + ch + '）：' + e.message);
-    } finally {
-      try { fs.unlinkSync(tmp); } catch (e) { /* 已删 */ }
     }
-    done++;
     if (done % 20 === 0 || done === todo.length) {
       console.log('  ' + done + ' / ' + todo.length + '，新增 ' + added + ' 个单元');
       writeBank(bankFile, bank);

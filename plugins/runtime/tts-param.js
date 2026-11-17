@@ -7,7 +7,7 @@
  *     LLM 的 [[r]]/[[p]]/[[f]]/[[e]]/[[t]] 参数拼成 WAV；
  *   · 不启动子进程、不加载 onnx，短句合成只有几毫秒，适合快问快答。
  *
- * 音库目录（默认 <TTS_DIR>/param）：
+ * 音库目录（runtime 解析：用户 <TTS_DIR>/param 优先，其次随包内置的 runtime/param-bank）：
  *   bank.json  { v:1, rate:16000, source:"vits-theresa", units:{ ni3:{o,n,f0} }, chars:{ 你:"ni3" } }
  *   units.bin  所有单元首尾相接的 int16 LE 单声道 PCM；o/n 是采样点偏移与长度。
  *

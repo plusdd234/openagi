@@ -266,7 +266,7 @@
         <tr><td class="num">11</td><td>属性编辑器</td><td>变换、形状、材质、UV、历史节点页签</td><td>精确参数与节点属性</td><td>属性编辑器页：名称 / 统计 / 变换 / 材质槽 / M1 边界</td></tr>
         <tr><td class="num">12</td><td>通道盒</td><td>平移/旋转/缩放数值、输入节点、层覆盖</td><td>快速数值修改</td><td>通道盒页：变换九通道 + 节点统计 + 文档版本</td></tr>
         <tr><td class="num">13</td><td>底部时间轴</td><td>播放、关键帧、范围</td><td>动画</td><td><b>不做</b>，该区域留给命令行</td></tr>
-        <tr><td class="num">14</td><td>命令行 / 反馈行</td><td>单行命令输入 + 状态/错误输出</td><td>高级用户入口、错误可见</td><td>底部 26px：命令行输入 + 右对齐状态/错误回显</td></tr>
+        <tr><td class="num">14</td><td>命令行 / 反馈行</td><td>单行命令输入 + 状态/错误输出 + 常驻快捷键提示</td><td>高级用户入口、错误可见、键位可查</td><td>底部 26px：命令行输入 + 右对齐状态/错误回显；其下 24px 快捷键提示条（随当前工具 / 选择模式高亮，绘制模式换成笔刷手势）</td></tr>
         <tr><td class="num">15</td><td>浮动 HUD</td><td>变换时的数值输入框</td><td>边拖边精确输入</td><td>视口左下角：revision / 网格版本 / 点面边 / 位置缩放</td></tr>
         <tr><td class="num">16</td><td>覆盖层</td><td>四视图、材质槽、打开列表、贴图查看器</td><td>不打断主布局的临时浮层</td><td>视口内覆盖层：四视图 / 材质槽 / 打开资产列表</td></tr>
       </tbody>
@@ -651,7 +651,7 @@
         <tr class="p2"><td class="num">P2-1</td><td>倒角、环切、桥接、细分、溶解</td><td>M6</td><td>倒角分段可调；环切悬停预览、点击落刀；桥接两组边界生成过渡面；全部可撤销</td><td><span class="st" data-id="P2-1" data-default="doing">进行中 · 环切已完成</span></td></tr>
         <tr class="p2"><td class="num">P2-1b</td><td>环切 + 循环边（X6）：四边环识别 / 条数 / 滑移 / 双击选整圈</td><td>M6</td><td>选中边所在全四边环可切 1–8 条并滑移 −1..1，实时预览、Enter 一条历史；三角 / n 边环明确拒绝；边模式双击选中循环边</td><td><span class="st" data-id="P2-1b" data-default="done">已完成</span></td></tr>
         <tr class="p2"><td class="num">P2-1c</td><td>三角转四边（X7）：成对三角并四边 + UV 接缝保护</td><td>M6</td><td>同材质、凸四边形、共面 ≤40° 或 UV 2×2 才并；UV 接缝 / 单三角拒绝；Shelf / 工具箱 / 热盒 / 命令同源</td><td><span class="st" data-id="P2-1c" data-default="done">已完成</span></td></tr>
-        <tr class="p2"><td class="num">P2-2</td><td>软选择：半径、衰减曲线、热力显示、按权重变换</td><td>M4</td><td>权重随距离平滑衰减；热力颜色与权重一致；软选择下撤销仍是一条记录</td><td><span class="st" data-id="P2-2">待开发</span></td></tr>
+        <tr class="p2"><td class="num">P2-2</td><td>软选择：体积 / 表面距离、半径、衰减曲线、热力显示、按权重变换</td><td>M4</td><td>体积 = 欧氏最近距离，表面 = 沿网格边 Dijkstra 测地距离；边缘权重归零；蓝→红热力颜色与权重一致；软选择下撤销仍是一条记录</td><td><span class="st" data-id="P2-2" data-default="done">已完成</span></td></tr>
         <tr class="p2"><td class="num">P2-3</td><td>镜像、阵列、对称建模</td><td>M6</td><td>镜像轴/合并阈值可调；阵列数量与偏移实时预览；对称修改后两侧一致</td><td><span class="st" data-id="P2-3">待开发</span></td></tr>
         <tr class="p2"><td class="num">P2-4</td><td>右键标记菜单、空格热盒、自定义快捷键</td><td>M7</td><td>径向菜单可配置；快捷键冲突检测；热盒不遮挡视口操作</td><td><span class="st" data-id="P2-4">待开发</span></td></tr>
         <tr class="p2"><td class="num">P2-5</td><td>显示优化：面数上限提示、大模型分块缓存、拾取性能</td><td>M2、M8</td><td>1 万面连续操作不掉帧到不可用；超限拒绝并给出面数；拾取无漏选</td><td><span class="st" data-id="P2-5">待开发</span></td></tr>

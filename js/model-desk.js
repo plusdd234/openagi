@@ -88,9 +88,10 @@
     selMode: 'object',
     sel: { vertexIds: [], edgeIds: [], faceIds: [] },
     nodeIds: [],                 /* 大纲多选（结合/布尔用） */
-    /* 软选择：开关 + 衰减半径（百分比）+ 曲面类型 + 自定义曲线点 */
-    soft: { on: false, falloff: 'smooth', size: 65, custom: null },
-    softDrag: -1,
+    /* 软选择：开关 + 距离口径（体积 = 欧氏 / 表面 = 沿网格测地）+ 衰减半径（米）
+     * + 曲面类型 + 自定义曲线点 + 热力图开关 */
+    soft: { on: false, mode: 'volume', falloff: 'smooth', size: 0.65, custom: null, heatmap: true },
+    softDrag: -1, softInfo: { mode: 'volume', radius: 0.65, count: 0 },
     selGroup: null, pickDown: null,
     /* 对象选择的 12 棱包围盒高亮（挂在 scene 上，多选跨 pivot） + 组件预选幽灵 */
     objSelGroup: null, hoverPick: null, hoverAt: 0,
@@ -127,6 +128,25 @@
    * 而 ctx 每次 begin 都是新对象。drag/hover 虽是瞬时的，但和 gizmo 共用同一组命中测试，
    * 拆两处反而更容易不同步。 */
   var EXGZ = { gizmo: null, drag: null, hover: null };
+
+  /* 3×3 笔刷形状槽：8 个内置 + 1 个自定义（空槽点击载入图片）。
+   * 顺序直接决定面板里的排列，改顺序前先想想用户肌肉记忆。 */
+  var PAINT_SHAPES = ['round', 'square', 'diamond', 'star', 'triangle', 'pentagon', 'ring', 'cross', 'custom'];
+  var PAINT_SHAPE_NAME = {
+    round: '圆形', square: '方形', diamond: '菱形', star: '星形',
+    triangle: '三角形', pentagon: '五边形', ring: '环形', cross: '十字', custom: '自定义'
+  };
+
+  function paintShapeSlotsHtml() {
+    var out = '';
+    for (var i = 0; i < PAINT_SHAPES.length; i++) {
+      var sh = PAINT_SHAPES[i];
+      out += '<button type="button" class="md-brush-slot" data-md-brushshape="' + sh + '"' +
+        ' title="' + PAINT_SHAPE_NAME[sh] + (sh === 'custom' ? '：点击载入图片' : '') + '">' +
+        '<i class="md-brush-slot-ic"></i><em>' + PAINT_SHAPE_NAME[sh] + '</em></button>';
+    }
+    return out;
+  }
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -325,7 +345,14 @@
       '<option value="sharp">锐利</option><option value="sphere">球体</option>',
       '<option value="constant">常量</option><option value="custom">自定义</option>',
       '</select>',
-      '<input id="mdSoftSize" class="md-soft-num" type="number" min="0" max="500" step="0.01" value="65.00" title="衰减半径（百分比）">',
+      '<input id="mdSoftSize" class="md-soft-num" type="number" min="0" max="5" step="0.01" value="0.65" title="衰减半径（米）">',
+      '</div>',
+      '<div class="md-soft-row">',
+      '<span class="md-soft-lb">距离</span>',
+      '<select id="mdSoftMode" class="md-soft-sel" title="体积 = 空间直线距离；表面 = 沿网格边走的测地距离">',
+      '<option value="volume">体积（欧氏）</option><option value="surface">表面（测地）</option>',
+      '</select>',
+      '<label class="md-soft-ck" title="用蓝→红热力图在视口显示权重"><input type="checkbox" id="mdSoftHeat" checked><span>热力图</span></label>',
       '</div>',
       '<div class="md-curve-wrap"><canvas id="mdSoftCurve" width="520" height="128"></canvas></div>',
       '<button type="button" class="md-soft-reset" data-md-softreset="1">重置曲线</button>',
@@ -483,21 +510,26 @@
        * 每个按钮都对应一条真实手势（见 md-paint.js 的 tool 分派），不是占位。 */
       '    <div class="md-paintrail" id="mdPaintRail" hidden role="toolbar" aria-label="绘制工具">',
       '      <button type="button" class="md-prbtn on" data-md-ptool="brush" title="画笔：按右侧笔刷设置上色">' +
-      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15.2 3.6l5.2 5.2-8.4 8.4-5.2-5.2z" fill="currentColor" stroke="none"/><path d="M5.4 12.8l5.8 5.8c-1.2 2.2-3.1 3-6.2 3 .9-1 .9-2.3.9-3.6 0-1.9-.5-3.5-.5-5.2z"/></svg></button>',
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15.2 3.6l5.2 5.2-8.4 8.4-5.2-5.2z" fill="currentColor" stroke="none"/><path d="M5.4 12.8l5.8 5.8c-1.2 2.2-3.1 3-6.2 3 .9-1 .9-2.3.9-3.6 0-1.9-.5-3.5-.5-5.2z"/></svg><span class="md-prname">画笔<kbd>B</kbd></span></button>',
       '      <button type="button" class="md-prbtn" data-md-ptool="pencil" title="铅笔：硬边笔尖，边缘不收窄">' +
-      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20l3.2-.6L20 6.6 17.4 4 4.6 16.8z"/><path d="M14.8 6.6l2.6 2.6M4.6 16.8L4 20l3.2-.6z" fill="currentColor" stroke="none"/></svg></button>',
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20l3.2-.6L20 6.6 17.4 4 4.6 16.8z"/><path d="M14.8 6.6l2.6 2.6M4.6 16.8L4 20l3.2-.6z" fill="currentColor" stroke="none"/></svg><span class="md-prname">铅笔<kbd>P</kbd></span></button>',
       '      <button type="button" class="md-prbtn" data-md-ptool="eraser" title="橡皮：按笔刷形状擦回透明">' +
-      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8.4 19.6 3.8 15l8.6-8.6 4.6 4.6-6.8 6.8z" fill="currentColor" stroke="none"/><path d="M7.2 19.8h12.4"/><path d="M10.4 8.4l4.6 4.6"/></svg></button>',
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8.4 19.6 3.8 15l8.6-8.6 4.6 4.6-6.8 6.8z" fill="currentColor" stroke="none"/><path d="M7.2 19.8h12.4"/><path d="M10.4 8.4l4.6 4.6"/></svg><span class="md-prname">橡皮<kbd>E</kbd></span></button>',
       '      <span class="md-prsep"></span>',
       '      <button type="button" class="md-prbtn" data-md-ptool="blur" title="模糊工具：糊开笔刷覆盖到的贴图纹素">' +
-      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3.2c3 3.6 5.2 6.4 5.2 9a5.2 5.2 0 0 1-10.4 0c0-2.6 2.2-5.4 5.2-9z" fill="currentColor" stroke="none" opacity=".85"/><path d="M6.2 18.8c1 .6 2 .9 3 .9M15 19.4c1-.2 1.9-.6 2.7-1.2" stroke-linecap="round"/></svg></button>',
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3.2c3 3.6 5.2 6.4 5.2 9a5.2 5.2 0 0 1-10.4 0c0-2.6 2.2-5.4 5.2-9z" fill="currentColor" stroke="none" opacity=".85"/><path d="M6.2 18.8c1 .6 2 .9 3 .9M15 19.4c1-.2 1.9-.6 2.7-1.2" stroke-linecap="round"/></svg><span class="md-prname">模糊<kbd>R</kbd></span></button>',
       '      <button type="button" class="md-prbtn" data-md-ptool="smudge" title="涂抹工具：把落笔处的贴图往笔尖方向带">' +
-      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4.2 16.6c3.4 0 5.2-1.6 7.6-3.4 2-1.5 4-2.8 6.4-2.8 1.4 0 2.4.5 3 1.2"/><path d="M4.4 20c3.8 0 5.6-1.8 8-3.6" stroke-dasharray="2.4 2.2"/><circle cx="17.4" cy="7.2" r="2.6" fill="currentColor" stroke="none"/></svg></button>',
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4.2 16.6c3.4 0 5.2-1.6 7.6-3.4 2-1.5 4-2.8 6.4-2.8 1.4 0 2.4.5 3 1.2"/><path d="M4.4 20c3.8 0 5.6-1.8 8-3.6" stroke-dasharray="2.4 2.2"/><circle cx="17.4" cy="7.2" r="2.6" fill="currentColor" stroke="none"/></svg><span class="md-prname">涂抹<kbd>T</kbd></span></button>',
       '      <span class="md-prsep"></span>',
       '      <button type="button" class="md-prbtn" data-md-ptool="picker" title="吸管：从贴图上取颜色作为笔刷色">' +
-      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15.8 3.8l4.4 4.4-2.2 2.2-4.4-4.4z" fill="currentColor" stroke="none"/><path d="M13 7.4l3.6 3.6-7.8 7.8-4.2 1.2 1.2-4.2z"/><path d="M8.2 15.8l-1.6 1.6"/></svg></button>',
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15.8 3.8l4.4 4.4-2.2 2.2-4.4-4.4z" fill="currentColor" stroke="none"/><path d="M13 7.4l3.6 3.6-7.8 7.8-4.2 1.2 1.2-4.2z"/><path d="M8.2 15.8l-1.6 1.6"/></svg><span class="md-prname">吸管<kbd>I</kbd></span></button>',
       '      <button type="button" class="md-prbtn" data-md-ptool="wand" title="魔棒：点模型锁定一整块 UV 岛，笔画只写进这一岛；再点一次解除">' +
-      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4.4 19.6 14 10l-1.8-1.8L2.6 17.8z" fill="currentColor" stroke="none"/><path d="M17 2.6l.9 2.5 2.5.9-2.5.9-.9 2.5-.9-2.5-2.5-.9 2.5-.9zM19.8 13.4l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z"/></svg></button>',
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4.4 19.6 14 10l-1.8-1.8L2.6 17.8z" fill="currentColor" stroke="none"/><path d="M17 2.6l.9 2.5 2.5.9-2.5.9-.9 2.5-.9-2.5-2.5-.9 2.5-.9zM19.8 13.4l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z"/></svg><span class="md-prname">魔棒<kbd>W</kbd></span></button>',
+      '      <span class="md-prsep"></span>',
+      /* 岛填充是**动作**不是手势工具：点一下立刻把当前选中的 UV 岛填成笔刷色，
+       * 之后仍停留在原来的工具上，不会把笔刷语义改掉。 */
+      '      <button type="button" class="md-prbtn" data-md-pfill title="岛填充：用当前颜色铺满选中的 UV 岛（F12 选岛；按材质槽写入，Ctrl+Z 可撤销）">' +
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M9.6 3.8 19.4 13.6l-6.2 6.2a1.7 1.7 0 0 1-2.4 0L3.1 12.1a1.7 1.7 0 0 1 0-2.4z" fill="currentColor" stroke="none" opacity=".9"/><path d="M3.4 12.2h16.2"/><path d="M8.4 5.2 6.6 3.4"/><path d="M17.4 16.6c0 1.2-.9 2.1-2.1 2.1s-2.1-.9-2.1-2.1c0-1.4 2.1-3.7 2.1-3.7s2.1 2.3 2.1 3.7z" fill="currentColor" stroke="none"/></svg><span class="md-prname">岛填充<kbd>G</kbd></span></button>',
       '      <span class="md-prspacer"></span>',
       '      <span class="md-prsw" id="mdPaintRailSw" title="当前笔刷颜色"></span>',
       '    </div>',
@@ -606,10 +638,10 @@
       '            <div class="md-paint-row"><span>笔刷</span><select id="mdBrushSel">' +
       '              <option value="soft">软边</option><option value="hard">硬边</option>' +
       '              <option value="erase">橡皮擦</option></select></div>',
-      '            <div class="md-paint-row"><span>形状</span><select id="mdBrushShape" title="笔尖形状；自定义 = 载入一张图片，用它的 alpha 当笔尖">' +
-      '              <option value="round">圆形</option><option value="square">方形</option>' +
-      '              <option value="diamond">菱形</option><option value="star">星形</option>' +
-      '              <option value="custom">自定义图片…</option></select></div>',
+      '            <div class="md-paint-row md-paint-row-shapes"><span>形状</span>' +
+      '              <div class="md-brush-grid" id="mdBrushGrid" role="group" aria-label="笔刷形状">' +
+      paintShapeSlotsHtml() +
+      '              </div></div>',
       /* 自定义笔尖：只在形状 = 自定义时出现，图片只放内存，不写进文档 / 资产库 */
       '            <div class="md-paint-row md-paint-custom" id="mdBrushCustomRow" hidden>' +
       '              <span>笔尖图</span>' +
@@ -669,6 +701,7 @@
       '    <input id="mdCmd" class="md-cmd" type="text" autocomplete="off" spellcheck="false" placeholder="输入命令：camera front / shading wire / display grid off / tone aces / exposure 1.2 / mesh.extrude">',
       '    <div class="md-status" id="mdStatus"></div>',
       '  </div>',
+      '  <div class="md-keybar" id="mdKeyBar" role="note" aria-label="工具快捷键"></div>',
       '</div>'
     ].join('\n');
 
@@ -757,7 +790,54 @@
     }, 4200);
   }
 
+  /* ---------------- 底部快捷键提示条 ----------------
+   * 常驻窗底，显示当前可用的工具快捷键；当前工具 / 选择模式对应的那一项高亮。
+   * 键位只写 onKeyLayer 里真实存在的，两边必须同源 —— 提示里出现按了没反应的键，
+   * 比不提示更糟。换了编辑器（建模 / 绘制）就整条换内容，不显示用不上的键。 */
+  function kbChip(key, label, on, tip) {
+    return '<span class="md-kb-chip' + (on ? ' on' : '') + '"' +
+      (tip ? ' title="' + esc(tip) + '"' : '') + '>' +
+      '<kbd>' + esc(key) + '</kbd><i>' + esc(label) + '</i></span>';
+  }
+  function paintKeyBar() {
+    var bar = $('mdKeyBar');
+    if (!bar) return;
+    var sig = st.editor + '|' + st.tool + '|' + st.selMode;
+    if (bar.dataset.sig === sig) return;
+    bar.dataset.sig = sig;
+    var html = '<span class="md-kb-l">快捷键</span>';
+    if (st.editor === 'paint') {
+      html += kbChip('左键', '上色') +
+        kbChip('Shift', '模糊笔') +
+        '<i class="md-kb-sep"></i>' +
+        kbChip('Alt+左键', '环绕') +
+        kbChip('Alt+中键', '平移') +
+        kbChip('滚轮', '推拉') +
+        '<i class="md-kb-sep"></i>' +
+        kbChip('Ctrl+Z', '撤销') +
+        kbChip('Ctrl+S', '保存');
+    } else {
+      html += kbChip('Q', '选择', st.tool === 'select') +
+        kbChip('W', '移动', st.tool === 'move') +
+        kbChip('E', '旋转', st.tool === 'rotate') +
+        kbChip('R', '缩放', st.tool === 'scale') +
+        '<i class="md-kb-sep"></i>' +
+        kbChip('F8', '对象', st.selMode === 'object') +
+        kbChip('F9', '顶点', st.selMode === 'vertex') +
+        kbChip('F10', '边', st.selMode === 'edge') +
+        kbChip('F11', '面', st.selMode === 'face') +
+        kbChip('F12', '岛', st.selMode === 'island') +
+        '<i class="md-kb-sep"></i>' +
+        kbChip('空格', '热盒') +
+        kbChip('K', '多切割', st.tool === 'knife') +
+        kbChip('Ctrl+Z', '撤销') +
+        kbChip('Ctrl+S', '保存');
+    }
+    bar.innerHTML = html;
+  }
+
   function updateChrome() {
+    paintKeyBar();
     if (!st.doc) return;
     var nameEl = $('mdName');
     if (nameEl) nameEl.textContent = st.doc.name;
@@ -1580,6 +1660,8 @@
     var mm = mesh || st.mesh;
     if (!st.pivot || !mm) return;
     pruneSelection();
+    /* 选择一变，软选择热力图的「种点」就变了：按新选择重算 / 隐藏 */
+    refreshSoftHeat();
     var g = new THREE.Group();
     g.name = 'selection';
     g.userData.mdPart = 'sel';
@@ -1882,6 +1964,22 @@
      * 必须按 geo.userData.mdOrig 映射回写，否则拖面时整块网格会炸开 */
     if (st.pivot) {
       st.pivot.traverse(function (o) {
+        /* 热力图是三角面展开的独立层：顶点被拖动时按 mdSoftPick 回写坐标，
+         * 权重不重算（和 Blender 一样，一次拖动的衰减在按下时就定住）。 */
+        if (o.userData && o.userData.mdSoftPick && o.geometry) {
+          var sg = o.geometry.attributes.position;
+          if (sg) {
+            var sp = o.userData.mdSoftPick, sa = sg.array;
+            for (var q = 0; q < sp.length; q++) {
+              var so = sp[q] * 3, sr = q * 3;
+              sa[sr] = st.mesh.positions[so];
+              sa[sr + 1] = st.mesh.positions[so + 1];
+              sa[sr + 2] = st.mesh.positions[so + 2];
+            }
+            sg.needsUpdate = true;
+            o.geometry.computeBoundingSphere();
+          }
+        }
         if (!o.userData || o.userData.mdPart !== 'solid') return;
         var geo = o.geometry;
         if (!geo || !geo.attributes.position) return;
@@ -2109,27 +2207,9 @@
     var p = canvasPoint(e);
     var R = 22;
     if (st.tbKind === 'paint') {
+      /* 光圈 = 笔刷设置的屏幕直径：固定屏幕空间尺寸，不随落点深度 / texel 密度忽大忽小。
+       * 落笔时 md-paint 会把同一屏幕尺寸换算成贴图尺寸，所以圈和笔迹仍然对得上。 */
       R = Math.max(3, st.paint.size * 0.5);
-      /* 光圈要跟着「模型上的真实覆盖」走：面板里的圆点只是相对大小，
-       * 实际落笔范围取决于落笔面的 texel 密度（同一个笔在 256² 底座上
-       * 能盖住半张脸）。拖动中不再每帧重新求交 —— 网格射线本来就不便宜，
-       * 沿用落笔时算出的半径。 */
-      var cr = 0;
-      if (!st.paint.stroke && PAINT && PAINT.cursorRadius) {
-        /* 求交是整份网格的线性扫描，跟着每个 pointermove 跑会把悬停拖卡。
-         * 光圈大小随面变化很慢，50ms 更新一次足够，中间沿用上次结果。 */
-        var now = performance.now();
-        if (st.paint.ringSize !== st.paint.size || now - (st.paint.ringAt || 0) > 50) {
-          var c1 = PAINT.cursorRadius(p.x, p.y);
-          st.paint.ringAt = now;
-          st.paint.ringSize = st.paint.size;
-          st.paint.ringR = c1 > 0 ? c1 : 0;
-        }
-        cr = st.paint.ringR || 0;
-      }
-      if (cr > 0) R = cr;
-      else if (st.paint.stroke && st.paint.ringR > 0) R = st.paint.ringR;
-      if (R < 1) R = 1;
     }
     n.brush.style.display = 'block';
     n.brush.style.width = n.brush.style.height = (R * 2) + 'px';
@@ -2220,6 +2300,7 @@
     nodeModsActive: nodeModsActive,
     /* 绘画和拾取共用同一条可见性口径：面级隔离时画到的就是视口里那份替身网格 */
     visibleMesh: function (id) { return ISO.visibleMesh(id); },
+    paintScope: function (mesh) { return ISO.paintScope(mesh); },
     totalBytes: totalBytes, syncBytes: syncBytes, historyBudget: HISTORY_BUDGET,
     /* 材质落点与纹理混合：笔迹画在基础画布上，材质上挂的是「合成结果」 */
     applySlotTexture: applySlotTexture,
@@ -2528,6 +2609,11 @@
     brush: '画笔', pencil: '铅笔', eraser: '橡皮',
     blur: '模糊工具', smudge: '涂抹工具', picker: '吸管', wand: '魔棒'
   };
+  /* 绘制工具快捷键：键位对齐主流绘画软件（B 画笔 / P 铅笔 / E 橡皮 / I 吸管 /
+   * W 魔棒 / G 填充）。W / E / R 在建模模式是变换手柄，所以只在绘制模式下接管。 */
+  var PAINT_KEYS = {
+    b: 'brush', p: 'pencil', e: 'eraser', r: 'blur', t: 'smudge', i: 'picker', w: 'wand'
+  };
   function setPaintTool(tool) {
     var v = Object.prototype.hasOwnProperty.call(PAINT_TOOL_NAME, tool) ? tool : 'brush';
     st.paint.tool = v;
@@ -2571,14 +2657,74 @@
       : 'UV 岛遮罩关：笔刷可画到整张贴图');
   }
 
+  /* 把「形状 + 颜色」画到一个 DOM 元素上：主预览和 9 个槽位共用同一套口径，
+   * 色块、热力色、橡皮灰都用同一条路径，避免两处预览长得不一样。 */
+  function paintShapeStyle(el, shape, colorCss, ringW, opacity, center, customUrl) {
+    if (!el) return;
+    var s = el.style;
+    s.background = 'none';
+    s.backgroundColor = 'transparent';
+    s.backgroundImage = 'none';
+    s.backgroundRepeat = 'no-repeat';
+    s.backgroundPosition = 'center';
+    s.border = '0';
+    s.borderRadius = '0';
+    s.boxSizing = 'border-box';
+    s.transform = center ? 'translate(-50%, -50%)' : 'none';
+    s.clipPath = 'none';
+    s.webkitMaskImage = ''; s.maskImage = '';
+    s.webkitMaskSize = ''; s.maskSize = '';
+    s.webkitMaskRepeat = ''; s.maskRepeat = '';
+    s.webkitMaskPosition = ''; s.maskPosition = '';
+    s.opacity = (opacity == null) ? '' : String(opacity);
+    s.backgroundColor = colorCss;
+    if (shape === 'round') {
+      s.borderRadius = '50%';
+    } else if (shape === 'square') {
+      s.borderRadius = '2px';
+    } else if (shape === 'diamond') {
+      s.transform = (center ? 'translate(-50%, -50%) ' : '') + 'rotate(45deg)';
+    } else if (shape === 'star') {
+      s.clipPath = 'polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)';
+    } else if (shape === 'triangle') {
+      s.clipPath = 'polygon(50% 2%,100% 98%,0% 98%)';
+    } else if (shape === 'pentagon') {
+      s.clipPath = 'polygon(50% 0%,100% 38%,82% 100%,18% 100%,0% 38%)';
+    } else if (shape === 'cross') {
+      s.clipPath = 'polygon(36% 0%,64% 0%,64% 36%,100% 36%,100% 64%,64% 64%,64% 100%,36% 100%,36% 64%,0% 64%,0% 36%,36% 36%)';
+    } else if (shape === 'ring') {
+      s.backgroundColor = 'transparent';
+      s.borderRadius = '50%';
+      s.border = (ringW || 3) + 'px solid ' + colorCss;
+    } else if (shape === 'custom') {
+      if (customUrl) {
+        s.backgroundColor = colorCss;
+        s.webkitMaskImage = 'url("' + customUrl + '")';
+        s.maskImage = 'url("' + customUrl + '")';
+        s.webkitMaskSize = 'contain'; s.maskSize = 'contain';
+        s.webkitMaskRepeat = 'no-repeat'; s.maskRepeat = 'no-repeat';
+        s.webkitMaskPosition = 'center'; s.maskPosition = 'center';
+      } else {
+        s.backgroundColor = 'transparent';
+        s.border = '1px dashed rgba(120,130,145,.55)';
+        s.borderRadius = '4px';
+      }
+    }
+  }
+
+  function setPaintShape(sh) {
+    if (PAINT_SHAPES.indexOf(sh) < 0) return;
+    st.paint.shape = sh;
+    updatePaintUi();
+    setStatus('笔刷形状：' + (PAINT_SHAPE_NAME[sh] || sh));
+  }
+
   function updatePaintUi() {
     var p = st.paint;
     /* 绘制条与右侧面板共用同一份状态：这里把控件值拉回状态，
      * 从任一侧改动都不会让另一侧显示成旧值。 */
     var brushSel = $('mdBrushSel');
     if (brushSel && brushSel.value !== p.brush) brushSel.value = p.brush;
-    var shapeSel = $('mdBrushShape');
-    if (shapeSel && shapeSel.value !== p.shape) shapeSel.value = p.shape;
     var sizeIn = $('mdBrushSize');
     if (sizeIn && Number(sizeIn.value) !== p.size) sizeIn.value = String(p.size);
     var sizeVal = $('mdBrushSizeVal');
@@ -2623,24 +2769,30 @@
       /* 6–180 px 映射到 6–40 的预览直径：小笔也能看见，大笔不撑破 52px 的框 */
       var dia = Math.round(6 + (Math.max(6, Math.min(180, p.size)) - 6) / 174 * 34);
       var shape = p.shape || 'round';
+      var customUrl = (p.customBrush && p.customBrush.url) ? p.customBrush.url : '';
+      var prevColor = (p.brush === 'erase')
+        ? 'rgba(154,160,166,0.24)'
+        : hexToRgba(p.color, Math.max(0.15, p.opacity / 100));
       dot.style.width = dia + 'px';
       dot.style.height = dia + 'px';
-      dot.classList.toggle('is-erase', p.brush === 'erase');
-      /* 先铺颜色，再按形状覆盖轮廓：顺序反了 background 简写会把图片/渐变清掉 */
-      dot.style.background = p.brush === 'erase' ? 'transparent' : hexToRgba(p.color, p.opacity / 100);
-      dot.style.borderRadius = shape === 'round' ? '50%' : (shape === 'square' ? '2px' : '0');
-      dot.style.transform = 'translate(-50%, -50%)';
-      dot.style.clipPath = 'none';
-      dot.style.backgroundImage = 'none';
-      dot.style.backgroundRepeat = 'no-repeat';
-      dot.style.backgroundPosition = 'center';
-      if (shape === 'diamond') dot.style.transform = 'translate(-50%, -50%) rotate(45deg)';
-      else if (shape === 'star') dot.style.clipPath = 'polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)';
-      else if (shape === 'custom' && p.customBrush && p.customBrush.url) {
-        dot.style.backgroundImage = 'url("' + p.customBrush.url + '")';
-        dot.style.backgroundSize = 'contain';
-        dot.style.backgroundColor = 'transparent';
-      }
+      paintShapeStyle(dot, shape, prevColor, Math.max(2, Math.round(dia * 0.12)), null, true, customUrl);
+    }
+
+    /* 3×3 形状槽：选中态 + 每个槽用自己的形状和当前颜色做小预览；
+     * 自定义槽没载入图片时显示成可点的空槽（+）。 */
+    var slots = document.querySelectorAll('[data-md-brushshape]');
+    for (var si = 0; si < slots.length; si++) {
+      var sb = slots[si];
+      var sh = sb.dataset.mdBrushshape;
+      var hasCustom = !!(p.customBrush && p.customBrush.url);
+      var emptyCustom = sh === 'custom' && !hasCustom;
+      sb.classList.toggle('on', sh === (p.shape || 'round'));
+      sb.classList.toggle('is-empty', emptyCustom);
+      var ic = sb.querySelector('.md-brush-slot-ic');
+      if (!ic) continue;
+      ic.textContent = emptyCustom ? '+' : '';
+      paintShapeStyle(ic, sh, emptyCustom ? 'transparent' : hexToRgba(p.color, 0.95),
+        3, null, false, hasCustom ? p.customBrush.url : '');
     }
     var nameEl = $('mdPaintPrevName');
     if (nameEl) {
@@ -2663,7 +2815,7 @@
     var metaEl = $('mdPaintPrevMeta');
     if (metaEl) {
       var slotText = p.userSlot >= 0 ? slotNameAt(p.userSlot) : '自动槽';
-      metaEl.textContent = p.size + ' px · ' + p.opacity + '% · ' + slotText;
+      metaEl.textContent = p.size + ' px · ' + p.opacity + '% · ' + p.color + ' · ' + slotText;
     }
     var sws = document.querySelectorAll('.md-paint-sw');
     for (var i = 0; i < sws.length; i++) {
@@ -2705,8 +2857,6 @@
         st.paint.customBrush = { img: img, url: url, name: file.name, rev: Date.now() };
         st.paint.shape = 'custom';
         st.paint.stampKey = ''; st.paint.stampCv = null;
-        var sel = $('mdBrushShape');
-        if (sel) sel.value = 'custom';
         updatePaintUi();
         setStatus('笔尖图：' + file.name + '（' + img.naturalWidth + '×' + img.naturalHeight + '，透明区域不落色）');
       };
@@ -2755,6 +2905,10 @@
     if (bar) bar.hidden = st.editor !== 'paint';
     var rail = $('mdPaintRail');
     if (rail) rail.hidden = st.editor !== 'paint';
+    /* 两种编辑器可用的键位不同：切模式时重画底部提示条 */
+    paintKeyBar();
+    /* 热力图只属于建模视口：切到绘制模式立刻收掉，切回来按当前选择重建 */
+    refreshSoftHeat();
   }
 
   /* 从模式开关进入：绘制模式强制右侧显示绘画工具箱；
@@ -3659,7 +3813,10 @@
    * holdMs = 需要持续渲染多久（悬停 / 拖拽反馈），0 = 只画下一帧。 */
   function requestRender(holdMs) {
     var now = global.performance ? global.performance.now() : Date.now();
-    var t = now + (holdMs || 0);
+    /* 至少要覆盖下一帧：只记 now 的话，tick 真正跑到时已经「过期」，
+     * 又会被签名判断挡掉（requestRender(0) 等于没请求）。
+     * 2 帧的余量给 30fps 的 UV 降频路径也留了位置。 */
+    var t = now + Math.max(holdMs || 0, 34);
     if (t > st.holdUntil) st.holdUntil = t;
   }
 
@@ -3687,6 +3844,10 @@
     s += '|v' + st.shading + (st.showGrid ? 1 : 0) + (st.isolate ? 1 : 0) +
       (st.quad ? 1 : 0) + (st.quadMax || '') + (st.hoverPick ? 1 : 0);
     s += '|e' + ((st.edgeLines && st.edgeLines.material && st.edgeLines.material.opacity) || 0).toFixed(2);
+    /* 软选择：开关 / 距离口径 / 半径 / 曲面 / 热力图 任一变化都要重画一帧 */
+    s += '|so' + (st.soft.on ? 1 : 0) + (st.soft.heatmap ? 1 : 0) + st.soft.mode +
+      Number(st.soft.size).toFixed(2) + st.soft.falloff +
+      (st.pivot && st.pivot.userData.mdSoftSig ? '1' : '0');
     return s;
   }
 
@@ -3766,7 +3927,10 @@
   function sharedTexture(url) {
     var tex = TEX_CACHE[url];
     if (tex) return tex;
-    tex = new THREE.TextureLoader().load(url);
+    /* 解码是异步的：首帧渲染时 image 还是空的，材质会被画成黑片。
+     * 之前解码完成后没有请求重绘，要等用户碰一下视口才恢复（「进入就乱面」）。
+     * 按需渲染下必须显式补一帧。 */
+    tex = new THREE.TextureLoader().load(url, function () { requestRender(0); });
     if ('encoding' in tex && THREE.sRGBEncoding != null) tex.encoding = THREE.sRGBEncoding;
     tex.anisotropy = 4;
     tex.userData.mdShared = true;
@@ -4206,6 +4370,117 @@
     return layer;
   }
 
+  /* ---------------- 软选择热力图 ----------------
+   * 权重内核在 js/md-soft.js；这里只负责把权重画成视口叠加层。
+   * 用「三角面 + 顶点色」单独一层：实体材质保持原样，关掉热力图立刻恢复；
+   * 只在建模模式的表面（非线框）且当前有组件选择时显示；绘制模式 / 线框 /
+   * 隔离替身不叠加（绘制模式要让位给贴图，替身只画选中面）。 */
+  function softHeatWanted() {
+    return !!(st.soft.on && st.soft.heatmap && st.mesh && st.pivot &&
+      st.editor !== 'paint' && st.selMode !== 'object' && !st.isoComp &&
+      st.shading !== 'wire' && global.MDSoft);
+  }
+
+  function softMapSig() {
+    if (!softHeatWanted()) return '';
+    var idx = selVertexIndices();
+    if (!idx.length) return '';
+    var cs = (st.soft.falloff === 'custom' && st.soft.custom) ? st.soft.custom.join(',') : '';
+    return [
+      st.mesh.version, st.soft.mode, Number(st.soft.size).toFixed(3),
+      st.soft.falloff, cs, global.MDSoft.hashIndices(idx)
+    ].join('|');
+  }
+
+  function buildSoftHeatmap(sig) {
+    var idx = selVertexIndices();
+    var res = global.MDSoft.weights(st.mesh, idx, {
+      mode: st.soft.mode,
+      radius: Math.max(1e-5, Number(st.soft.size) || 0),
+      falloff: st.soft.falloff,
+      custom: st.soft.custom
+    });
+    st.softInfo = { mode: res.mode, radius: res.radius, count: res.count };
+    var w = res.w, p = st.mesh.positions;
+    var pos = [], col = [], pick = [], rgb = [0, 0, 0];
+    for (var f = 0; f < st.mesh.faceIds.length; f++) {
+      var s = st.mesh.faceOffsets[f], e = st.mesh.faceOffsets[f + 1];
+      for (var t = s + 1; t < e - 1; t++) {
+        var ia = st.mesh.faceIndices[s], ib = st.mesh.faceIndices[t], ic = st.mesh.faceIndices[t + 1];
+        var wa = w[ia], wb = w[ib], wc = w[ic];
+        if (wa <= 1e-4 && wb <= 1e-4 && wc <= 1e-4) continue;
+        var tri = [ia, ib, ic], tw = [wa, wb, wc];
+        for (var k = 0; k < 3; k++) {
+          var vi = tri[k];
+          pos.push(p[vi * 3], p[vi * 3 + 1], p[vi * 3 + 2]);
+          global.MDSoft.heatColor(tw[k], rgb);
+          col.push(rgb[0], rgb[1], rgb[2]);
+          pick.push(vi);
+        }
+      }
+    }
+    if (!pos.length) return null;
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.computeBoundingSphere();
+    var mat = new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.72,
+      depthWrite: false, side: vfOn('backface') ? THREE.DoubleSide : THREE.FrontSide,
+      toneMapped: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
+    });
+    var obj = new THREE.Mesh(geo, mat);
+    obj.name = 'soft-heatmap';
+    obj.userData.mdPart = 'softmap';
+    obj.userData.mdSoftPick = pick;
+    obj.userData.mdSoftSig = sig;
+    obj.renderOrder = 2;
+    obj.frustumCulled = false;
+    return obj;
+  }
+
+  function disposeSoftLayer(pv) {
+    var layer = pv && pv.userData && pv.userData.mdSoftLayer;
+    if (layer) {
+      if (layer.parent) layer.parent.remove(layer);
+      if (layer.geometry) { try { layer.geometry.dispose(); } catch (e) {} }
+      if (layer.material) { try { layer.material.dispose(); } catch (e2) {} }
+    }
+    if (pv && pv.userData) {
+      pv.userData.mdSoftLayer = null;
+      pv.userData.mdSoftSig = '';
+    }
+  }
+
+  /* 只给激活对象画：选择集属于它；其他 pivot 上残留的旧层一律清掉。 */
+  function ensureSoftHeatmap(pv) {
+    if (!pv) return null;
+    var wanted = (pv === st.pivot) ? softMapSig() : '';
+    var have = pv.userData && pv.userData.mdSoftLayer;
+    if (!wanted) {
+      if (have) disposeSoftLayer(pv);
+      return null;
+    }
+    if (have && pv.userData.mdSoftSig === wanted) {
+      if (have.material) have.material.side = vfOn('backface') ? THREE.DoubleSide : THREE.FrontSide;
+      return have;
+    }
+    if (have) disposeSoftLayer(pv);
+    var layer = buildSoftHeatmap(wanted);
+    if (!layer) return null;
+    pv.add(layer);
+    pv.userData.mdSoftLayer = layer;
+    pv.userData.mdSoftSig = wanted;
+    requestRender(0);
+    return layer;
+  }
+
+  function refreshSoftHeat() {
+    if (!st.pivot) return;
+    ensureSoftHeatmap(st.pivot);
+    requestRender(0);
+  }
+
   function applyShading() {
     if (!st.pivot) return;
     var p = st.prefs || prefs();
@@ -4225,6 +4500,8 @@
     eachViewPivot(function (pv) {
       /* UV 岛着色是按每个对象自己的网格算的：多对象场景里不能只画激活那个 */
       var layer = islands ? ensureIslandOverlay(pv, side) : pv.userData.mdIslandLayer;
+      /* 热力图只叠激活对象；ensureSoftHeatmap 会顺手清掉其他 pivot 上的旧层 */
+      var heat = ensureSoftHeatmap(pv);
       pv.traverse(function (o) {
         var part = o.userData && o.userData.mdPart;
         var off = !!(o.userData && o.userData.mdPreviewOff);
@@ -4235,8 +4512,10 @@
           o.visible = showEdges && !off && (!isoComp || !!o.userData.mdIsolate);
         } else if (part === 'verts') o.visible = showVerts && !isoComp;
         else if (part === 'uvisland') o.visible = islands;
+        else if (part === 'softmap') o.visible = showFaces && !isoComp;
       });
       if (layer && layer.material) layer.material.side = side;
+      if (heat && heat.material) heat.material.side = side;
     });
     /* 预览和正式模型一样吃着色开关（线框模式下实体收、边线亮） */
     if (st.previewHost) {
@@ -5411,37 +5690,27 @@
         minv: new THREE.Matrix4().copy(st.pivot.matrixWorld).invert(),
         before: snap()
       };
-      /* 软选择：给半径内的非选中顶点算权重（离选中点越远越接近 0） */
-      if (st.soft.on) {
-        var radius = Math.max(0.0001, Number(st.soft.size) / 100);
-        var rr = radius * radius;
-        var p = st.mesh.positions;
-        var picked = Object.create(null);
-        var centers = [];
-        for (var s = 0; s < idx.length; s++) picked[idx[s]] = 1;
-        for (var s2 = 0; s2 < idx.length; s2++) {
-          var si = idx[s2] * 3;
-          centers.push(p[si], p[si + 1], p[si + 2]);
-        }
+      /* 软选择：交给 md-soft.js 统一算权重（体积 / 表面两种距离口径）。
+       * 选中点自身权重恒 1，不放进 softIdx；周围顶点按曲线衰减。 */
+      if (st.soft.on && global.MDSoft) {
+        var res = global.MDSoft.weights(st.mesh, idx, {
+          mode: st.soft.mode,
+          radius: Math.max(1e-5, Number(st.soft.size) || 0),
+          falloff: st.soft.falloff,
+          custom: st.soft.custom
+        });
         var softIdx = [], softW = [], softBase = [];
-        for (var v = 0; v < st.mesh.vertexIds.length; v++) {
-          if (picked[v]) continue;
-          var vx = p[v * 3], vy = p[v * 3 + 1], vz = p[v * 3 + 2];
-          var best = Infinity;
-          for (var c = 0; c < centers.length; c += 3) {
-            var dx = vx - centers[c], dy = vy - centers[c + 1], dz = vz - centers[c + 2];
-            var dd = dx * dx + dy * dy + dz * dz;
-            if (dd < best) best = dd;
-          }
-          if (best > rr) continue;
-          var w = softWeightAt(Math.sqrt(best) / radius);
-          if (w <= 0.001) continue;
-          softIdx.push(v); softW.push(w);
-          softBase.push(vx, vy, vz);
+        var pp = st.mesh.positions;
+        for (var a = 0; a < res.affected.length; a++) {
+          var svi = res.affected[a];
+          softIdx.push(svi);
+          softW.push(res.w[svi]);
+          softBase.push(pp[svi * 3], pp[svi * 3 + 1], pp[svi * 3 + 2]);
         }
         st.compDrag.softIdx = softIdx;
         st.compDrag.softW = softW;
         st.compDrag.softBase = softBase;
+        st.compDrag.softMode = res.mode;
       }
       st.txBefore = st.compDrag.before;
       return;
@@ -5479,7 +5748,9 @@
       rebuildModel(true);
       syncGizmo();
       setStatus('已变换 ' + d.idx.length + ' 个顶点' +
-        (d.softIdx && d.softIdx.length ? '，软选择影响 ' + d.softIdx.length + ' 个' : ''));
+        (d.softIdx && d.softIdx.length
+          ? '，软选择（' + (d.softMode === 'surface' ? '表面' : '体积') + '）影响 ' + d.softIdx.length + ' 个'
+          : ''));
       return;
     }
 
@@ -5525,10 +5796,14 @@
     if (el.id === 'mdSoftSize') {
       var sv = Number(el.value);
       if (isFinite(sv)) {
-        st.soft.size = Math.max(0, Math.min(500, sv));
-        if (st.soft.on) setStatus('软选择半径：' + st.soft.size.toFixed(2) + '（×1m）');
+        st.soft.size = Math.max(0, Math.min(5, sv));
+        if (st.soft.on) {
+          setStatus('软选择半径：' + st.soft.size.toFixed(2) + ' m · ' +
+            (st.soft.mode === 'surface' ? '表面（测地）' : '体积（欧氏）'));
+        }
       }
       drawSoftCurve();
+      refreshSoftHeat();
       return;
     }
     if (el.id === 'mdBrushSize' || el.id === 'mdBrushSizeBar') {
@@ -5707,6 +5982,22 @@
       return;
     }
 
+    /* 绘制模式：工具快捷键先于建模键位生效（B / P / E / R / T / I / W，G = 岛填充）。
+     * 这些键在建模模式另有含义（W / E / R = 变换、F = 框显），只在这里接管，
+     * 切回建模模式立刻恢复原语义，不存在两套同时生效的键位。 */
+    if (st.editor === 'paint') {
+      if (k === 'g') {
+        if (PAINT && PAINT.fillIslands) PAINT.fillIslands();
+        e.preventDefault();
+        return;
+      }
+      if (PAINT_KEYS[k]) {
+        setPaintTool(PAINT_KEYS[k]);
+        e.preventDefault();
+        return;
+      }
+    }
+
     switch (k) {
       case 'f8': setSelMode('object'); break;
       case 'f9': setSelMode('vertex'); break;
@@ -5790,15 +6081,6 @@
       setPaintBrush(el.value);
       return;
     }
-    if (el.id === 'mdBrushShape') {
-      var sh = ['round', 'square', 'diamond', 'star', 'custom'].indexOf(el.value) >= 0 ? el.value : 'round';
-      st.paint.shape = sh;
-      st.paint.stampKey = ''; st.paint.stampCv = null;
-      updatePaintUi();
-      setStatus('笔尖形状：' + (PAINT_SHAPE_NAME[sh] || '圆形') +
-        (sh === 'custom' && !st.paint.customBrush ? '（先在下方载入一张图片）' : ''));
-      return;
-    }
     if (el.id === 'mdBrushFile') {
       setCustomBrushFile(el.files && el.files[0]);
       return;
@@ -5831,6 +6113,19 @@
       if (el.value === 'custom') ensureSoftCustom();
       paintSoftPanel();
       setStatus('软选择曲面：' + (SOFT_LABEL[el.value] || el.value));
+      return;
+    }
+    if (el.tagName === 'SELECT' && el.id === 'mdSoftMode') {
+      st.soft.mode = el.value === 'surface' ? 'surface' : 'volume';
+      paintSoftPanel();
+      setStatus('软选择距离：' + (st.soft.mode === 'surface'
+        ? '表面（沿网格边的测地距离）' : '体积（空间欧氏距离）'));
+      return;
+    }
+    if (el.id === 'mdSoftHeat') {
+      st.soft.heatmap = !!el.checked;
+      paintSoftPanel();
+      setStatus(st.soft.heatmap ? '软选择热力图：开（蓝→红表示权重）' : '软选择热力图：关');
       return;
     }
     if (el.tagName === 'SELECT' && el.id === 'mdShadeSel') {
@@ -5898,7 +6193,8 @@
   }
 
   /* ---------------- 软选择面板 ----------------
-   * 衰减半径 = size% × 1m；曲线横轴 = 到选中点的距离（0~半径），纵轴 = 权重。
+   * 衰减半径按米（场景单位）；曲线横轴 = 到选中点的距离（0~半径），纵轴 = 权重。
+   * 距离口径与权重计算在 js/md-soft.js：体积 = 欧氏，表面 = 沿网格边测地。
    * 曲线编辑只改权重形状；真正生效在组件手柄拖动时（见 applyCompDelta）。 */
   var SOFT_LABEL = { smooth: '平滑', linear: '线性', sharp: '锐利', sphere: '球体', constant: '常量', custom: '自定义' };
 
@@ -5990,14 +6286,18 @@
     var on = $('mdSoftOn');
     if (!on) return;
     var sel = $('mdSoftFalloff'), num = $('mdSoftSize'), badge = $('mdSoftState');
+    var mode = $('mdSoftMode'), heat = $('mdSoftHeat');
     on.checked = !!st.soft.on;
     if (sel && sel.value !== st.soft.falloff) sel.value = st.soft.falloff;
+    if (mode && mode.value !== st.soft.mode) mode.value = st.soft.mode;
+    if (heat) heat.checked = !!st.soft.heatmap;
     if (num && document.activeElement !== num) num.value = Number(st.soft.size).toFixed(2);
     if (badge) {
       badge.textContent = st.soft.on ? '开' : '关';
       badge.classList.toggle('on', !!st.soft.on);
     }
     drawSoftCurve();
+    refreshSoftHeat();
   }
 
   function resetSoftCurve() {
@@ -6050,6 +6350,8 @@
     if (st.softDrag < 0) return;
     st.softDrag = -1;
     drawSoftCurve();
+    /* 曲线拖动过程中只重画曲线；松手后一次重算热力图，避免每个 pointermove 重建几何 */
+    refreshSoftHeat();
   }
 
   function toggleSection(id) {
@@ -6639,6 +6941,11 @@
       togglePaintMask();
       return;
     }
+    if (t.dataset.mdPfill !== undefined) {
+      /* 动作按钮：执行完不切换当前手势工具，用户可以继续画 */
+      if (PAINT && PAINT.fillIslands) PAINT.fillIslands();
+      return;
+    }
     if (t.dataset.mdcmd) {
       mdRun(t.dataset.mdcmd);
       return;
@@ -6676,6 +6983,19 @@
       return;
     }
     var act = t.dataset.mdAct;
+    if (t.dataset.mdBrushshape) {
+      var bsh = t.dataset.mdBrushshape;
+      /* 空的自定义槽：点它就是选文件；载入后点它只是切回该形状，
+       * 想换图用下面那行「载入图片…」 */
+      if (bsh === 'custom' && !(st.paint.customBrush && st.paint.customBrush.url)) {
+        var bf = $('mdBrushFile');
+        if (bf) bf.click();
+        return;
+      }
+      st.paint.stampKey = ''; st.paint.stampCv = null;
+      setPaintShape(bsh);
+      return;
+    }
     if (t.dataset.mdBrushfile != null) {
       var fi = $('mdBrushFile');
       if (fi) fi.click();
@@ -6938,11 +7258,11 @@
     },
     soft: function () {
       return hbPanelSpec('软选择', [
-        { key: 'size', label: '半径 (%)', value: st.soft.size, min: 0, max: 500, step: 0.01 }
+        { key: 'size', label: '半径 (m)', value: st.soft.size, min: 0, max: 5, step: 0.01 }
       ], function (v) {
         st.soft.size = v.size;
         paintSoftPanel();
-      }, '开 / 关在右侧工具箱「软选择」里；拖组件手柄时按衰减曲线带动周围顶点。');
+      }, '开 / 关、体积 / 表面距离和热力图在右侧工具箱「软选择」里；拖组件手柄时按衰减曲线带动周围顶点。');
     },
     uv: function (title, a, b) {
       return hbPanelSpec(title, [
@@ -7267,12 +7587,24 @@
   }
 
   /* ---------------- 新建 / 打开 ---------------- */  /* ---------------- 新建 / 打开 ---------------- */
+  /* Three.js 的 BoxGeometry 给每个面各铺满 0–1 —— 六个面在 UV 上完全重叠。
+   * 结果是一张面落笔等于六张面一起上色，面级隔离也挡不住（贴图上根本没有区分）。
+   * 专业软件的默认立方体是盒式展开（六块互不重叠的岛），这里丢掉拷贝来的 uv，
+   * 交给 ensureUV 重新摊开。只用于基础体，导入资产自己的 UV 一律不碰。 */
+  function boxUnwrapUV(mesh) {
+    if (!mesh) return mesh;
+    mesh.uvs = [];
+    SeedModel.Mesh.ensureUV(mesh);
+    SeedModel.Mesh.bump(mesh);
+    return mesh;
+  }
+
   /* M1 新建资产 = 一个立方体（通用建模软件的默认起点），
    * 不经过参数化 spec：Mesh.fromBufferGeometry 焊接后就是一张连通的 8 点 / 12 面网格。 */
   function newDocument() {
     var id = genId();
     var geo = new THREE.BoxGeometry(1, 1, 1, 1, 1, 1);
-    var mesh = SeedModel.Mesh.fromBufferGeometry(geo, { slot: 0, weld: true });
+    var mesh = boxUnwrapUV(SeedModel.Mesh.fromBufferGeometry(geo, { slot: 0, weld: true }));
     geo.dispose();
 
     releaseView();
@@ -7392,6 +7724,8 @@
     try {
       geo = global.Modeler.geometryOf(p.shape, p.size, p.seg);
       mesh = SeedModel.Mesh.fromBufferGeometry(geo, { slot: 0, weld: true });
+      /* 立方体走盒式展开：BoxGeometry 的面 UV 全重叠，绘制时分不清是哪一面 */
+      if (String(p.shape).toLowerCase() === 'box') boxUnwrapUV(mesh);
     } catch (e) {
       setStatus('生成失败：' + ((e && e.message) || e), true);
       btns.forEach(function (b) { b.disabled = false; b.textContent = '创建' + meta.name; });
@@ -7653,7 +7987,7 @@
   /* 老资产补色：v2.0 的 seedModel 只存了槽名，没存 slotColors（打开后整只模型都是默认灰）。
    * 这里从 GLB 自己的材质把显示色 / 基础色贴图补回来：先按材质名配，配不上按槽顺序。
    * fillFrom = 文档里已有的有效槽色数量，只补它后面的，别覆盖用户改过的颜色。 */
-  async function backfillMaterials(doc, dataURL, fillFrom) {
+  async function backfillMaterials(doc, dataURL, fillFrom, skipMaps) {
     var mats = doc && doc.materials;
     var names = (mats && mats.slotNames) || [];
     if (!names.length) return false;
@@ -7717,8 +8051,10 @@
       }
       if (at >= 0) used[at] = 1;
       picks.push(pick);
-      /* 槽色已经有的不覆盖；贴图缺的仍然补（老文档根本没写过 slotMaps） */
-      if (pick && !maps[i]) jobs.push(i);
+      /* 槽色已经有的不覆盖；贴图缺的仍然补（老文档根本没写过 slotMaps）。
+       * skipMaps 里的槽是「笔迹底座本来就是空」的——GLB 里那张是合成图，
+       * 拿它当底座会让下次打开把笔迹再叠一遍，所以宁可这一槽没有底图。 */
+      if (pick && !maps[i] && !(skipMaps && skipMaps[i])) jobs.push(i);
     }
     /* 贴图抽成 data URL 是异步的，先并发编码再统一写回，避免逐张 await 拖慢打开 */
     var extracted = await Promise.all(jobs.map(function (j) {
@@ -7789,8 +8125,14 @@
       var rawMats = raw.materials || {};
       var haveColors = Array.isArray(rawMats.slotColors) ? rawMats.slotColors.length : 0;
       var haveMaps = Array.isArray(rawMats.slotMaps) ? rawMats.slotMaps.filter(Boolean).length : 0;
+      /* 有编辑层的槽：底座要是空的，就不能从 GLB 的合成图补（会重复叠笔迹） */
+      var skipMaps = null;
+      if (Array.isArray(rawMats.slotPainted) && rawMats.slotPainted.length) {
+        skipMaps = Object.create(null);
+        rawMats.slotPainted.forEach(function (k) { skipMaps[Number(k)] = 1; });
+      }
       if (haveColors < doc.materials.slotNames.length || haveMaps < doc.materials.slotNames.length) {
-        var filled = await backfillMaterials(doc, r.dataURL, haveColors);
+        var filled = await backfillMaterials(doc, r.dataURL, haveColors, skipMaps);
         if (filled) warn = (warn ? warn + '；' : '') + '已从原模型补回材质颜色';
       }
     }
@@ -8067,8 +8409,15 @@
     var n = Math.max(arr.length, (mats.slotNames || []).length, 1);
     var out = [];
     for (var i = 0; i < n; i++) {
+      /* 视口当前显示的这张才是最终视觉：纹理混合 / 绘画写回的合成图都挂在
+       * material.map 上，slotMaps 只是它的底座。底座优先会导出「旧的」那张图 ——
+       * 用户配好的混合层在 GLB 里看不到，就是这条顺序造成的。 */
       var img = null;
-      if (arr[i]) {
+      try {
+        var lv0 = liveSlotImage(i);
+        if (lv0 && (lv0.naturalWidth || lv0.width)) img = lv0;
+      } catch (e) { /* 视口还没起来就跳过 */ }
+      if (!img && arr[i]) {
         try {
           img = await new Promise(function (res) {
             var im = new Image();
@@ -8078,15 +8427,6 @@
           });
         } catch (e) { img = null; }
         if (img && !img.naturalWidth) img = null;
-      }
-      /* 老资产可能只在视口材质上挂了图、slotMaps 是空的；或者 URL 已经失效。
-       * 这时以「视口现在显示的那张」为准（liveSlotImage 是视口贴图的唯一真源），
-       * 不能让这一槽导出成白模。 */
-      if (!img) {
-        try {
-          var lv = liveSlotImage(i);
-          if (lv && (lv.naturalWidth || lv.width)) img = lv;
-        } catch (e) { /* 视口还没起来就跳过 */ }
       }
       if (!img) { out.push(null); continue; }
       try {
@@ -8161,6 +8501,45 @@
     };
   }
 
+  /* 写进 GLB 的 extras：slotMaps 必须是「笔迹 / 混合层之下的底座」。
+   * 旧顺序在 glbTexSwap 换图期间序列化，extras 里存的是「底座 ⊕ 笔迹」的合成图 ——
+   * 重开时再把 ops 叠一遍，同一笔会画两次；同一张图还在 GLB images 里存了第二份。
+   * 现在改成：
+   *   - 先还原、再序列化（底座就是底座）；
+   *   - 没叠过混合层 / 笔迹的槽，extras 不再存一份（GLB 的 baseColorTexture 就是它）；
+   *   - 叠过的槽保留底座，并标记 slotPainted，重开时不会拿合成图当底座。
+   * 这次导出一张图都没带上时不做任何瘦身 —— 宁可文件大，不能丢贴图。 */
+  function exportDocJson(buf) {
+    var docJson = SeedModel.Scene.toSeedModel(st.doc);
+    try {
+      var mats = docJson && docJson.materials;
+      var maps = mats && mats.slotMaps;
+      if (!maps || !maps.length) return docJson;
+      var imgCount = 0;
+      try { imgCount = ((SeedGLB.readJson(buf) || {}).images || []).length; } catch (e) { imgCount = 0; }
+      if (!imgCount) return docJson;
+      var TS = global.TexStack;
+      var painted = [];
+      for (var i = 0; i < maps.length; i++) {
+        var hasOps = !!(TS && TS.has && TS.has(st.doc, i));
+        var layered = !!(MIX && typeof MIX.hasLayers === 'function' && MIX.hasLayers(i));
+        if (!hasOps && !layered) {
+          /* 没叠过任何东西：GLB 的 baseColorTexture 就是这张底座本身，重开时
+           * backfill 会从 images 解回来，extras 不再存第二份。 */
+          maps[i] = '';
+          continue;
+        }
+        /* 有混合层 / 笔迹：slotMaps 是它们的底座，必须保留 —— GLB 里那张是
+         * 「底座 ⊕ 叠加」的合成图，拿它当底座会让重开时再叠一遍。
+         * 底座为空（从白底开始画）也要留个标记，别让 backfill 用合成图补上。 */
+        painted.push(i);
+      }
+      /* 有编辑层的槽：重开时不许从 GLB 的合成图补底座（会重复叠笔迹） */
+      if (painted.length) mats.slotPainted = painted;
+    } catch (e) { /* 元数据瘦身失败不影响导出本身 */ }
+    return docJson;
+  }
+
   async function save() {
     if (!st.doc || st.busy) return { ok: false, error: '正在保存中' };
     st.busy = true;
@@ -8177,15 +8556,16 @@
       }
       /* 把内存里的网格写回 meshes（现在真源是 doc.meshes；这步是幂等的） */
       SeedModel.Scene.setMesh(st.doc, st.mesh);
-      /* 投射层 → 合成图（见 glbTexSwap 的说明）。try/finally 保证异常也换回来 */
+      /* 投射层 → 合成图（见 glbTexSwap 的说明）。try/finally 保证异常也换回来；
+       * extras 必须在换回来之后再序列化，否则存进 GLB 的是合成图而不是底座。 */
       var restoreTex = glbTexSwap();
-      var buf, docJson;
+      var buf;
       try {
         buf = await currentGLB();
-        docJson = SeedModel.Scene.toSeedModel(st.doc);
       } finally {
         restoreTex();
       }
+      var docJson = exportDocJson(buf);
       var withExtras = SeedGLB.injectSeedModel(buf, docJson);
       var dataURL = SeedGLB.toDataURL(withExtras);
       var d = deskApi();
@@ -8399,8 +8779,8 @@
       var data, docJson;
       try {
         data = await buildExportData(fmt);
-        docJson = SeedModel.Scene.toSeedModel(st.doc);
       } finally { restoreTex(); }
+      docJson = data.buffer ? exportDocJson(data.buffer) : null;
       var dataURL;
       if (data.buffer) {
         /* GLB 自带 seedModel，重新导回本 App 时能恢复可编辑网格与材质槽 */
@@ -8701,6 +9081,8 @@
         selVertex: st.sel.vertexIds.length,
         selEdge: st.sel.edgeIds.length,
         selFace: st.sel.faceIds.length,
+        /* 稳定面 ID（探针按它反查 UV 岛，验证整岛填充的落点） */
+        selFaceIds: st.sel.faceIds.slice(),
         selHighlight: !!(st.selGroup && st.selGroup.children.length),
         /* 对象多选：集合 / 激活对象 / 视口包围盒高亮条数（探针按它断言多选高亮） */
         nodeIds: (st.nodeIds || []).slice(),
@@ -8709,7 +9091,12 @@
         hoverPick: st.hoverPick ? (st.hoverPick.kind + ':' + st.hoverPick.id) : '',
         /* 当前模式的高亮色（探针按它断言 UV 岛与面用不同颜色） */
         selColor: '#' + (SEL_COLOR[st.selMode] || 0).toString(16).padStart(6, '0'),
-        soft: { on: !!st.soft.on, falloff: st.soft.falloff, size: st.soft.size, custom: !!st.soft.custom },
+        soft: {
+          on: !!st.soft.on, mode: st.soft.mode, falloff: st.soft.falloff,
+          size: st.soft.size, custom: !!st.soft.custom, heatmap: !!st.soft.heatmap,
+          info: { mode: st.softInfo.mode, radius: st.softInfo.radius, count: st.softInfo.count },
+          heatLayer: !!(st.pivot && st.pivot.userData && st.pivot.userData.mdSoftLayer)
+        },
         texKey: st.doc && st.doc.materials.textureConfigKey,
         slotNames: st.doc ? st.doc.materials.slotNames.slice() : [],
         slotIds: st.doc ? (st.doc.materials.slotIds || []).slice() : [],

@@ -973,6 +973,38 @@ const check = (ok, name, extra) => {
   check(boolUi.join(',') === 'add,subtract,intersect,exclude' && boolOpt === 'subtract',
     '形状选项栏提供四种布尔运算', JSON.stringify(boolUi) + ' · op=' + boolOpt);
 
+  /* 18.2 布尔轮廓化：把复合结果写成真实锚点（外轮廓 + 孔洞），可撤销 */
+  const outlineState = await page.evaluate(() => {
+    window.psLab.__test.setMode('vector');
+    const doc = window.psLab.__test.doc();
+    const layer = PS.addShapeLayer(doc, [
+      { kind: 'rect', x: 100, y: 100, w: 200, h: 200, fill: '#ff0000' },
+      { kind: 'rect', x: 160, y: 160, w: 80, h: 80, fill: '#00ff00', op: 'subtract' }
+    ], { name: '轮廓化测试' });
+    const before = layer.shapes.length;
+    const res = window.psLab.__test.outlineShapes();
+    const after = window.psLab.__test.shapes();
+    const cv = PS.renderLayer(layer);
+    const c = cv.ctx;
+    const px = (x, y) => Array.from(c.getImageData(x, y, 1, 1).data);
+    return {
+      before, res, after,
+      outside: px(120, 120), hole: px(200, 200), b: px(350, 350)
+    };
+  });
+  check(outlineState.before === 2 && outlineState.after.length === 1
+    && outlineState.after[0].kind === 'path' && outlineState.after[0].subpaths === 2,
+    '轮廓化把两条布尔路径写成一条带孔洞的路径',
+    JSON.stringify({ before: outlineState.before, after: outlineState.after, res: outlineState.res }));
+  check(outlineState.outside[3] === 255 && outlineState.hole[3] === 0 && outlineState.b[3] === 0,
+    '轮廓化后外轮廓保留、孔洞仍透明', JSON.stringify(outlineState));
+
+  const outlineUndo = await page.evaluate(() => {
+    window.psLab.__test.undo();
+    return window.psLab.__test.shapes().length;
+  });
+  check(outlineUndo === 2, '轮廓化可撤销并恢复原始布尔路径', 'shapes=' + outlineUndo);
+
   /* 19. PS 风格快捷键：颜色 / 选区切换 / 新建图层 / 笔刷参数 / 填充 */
   await page.evaluate(() => window.psLab.__test.setMode('raster'));
   await page.click('#psTools [data-tool="move"]');

@@ -94,6 +94,11 @@
      */
     var assetId = String(deps.assetId || '');
     var TEX_KEY = 'openagi_model_tex_v1';
+    /* 建模 App 导出时把材质槽身份写进了 GLB 的 asset.extras.seedModel.materials
+     * （slotIds / slotNames），预览打开时由 m3d-preview 读出来传进来。
+     * 模型库的贴图配置必须按同一套键读写，否则同一个槽两边各存一条记录：
+     * 建模 App 画好的贴图，这里读的却是很早以前按材质名存的那条（旧图）。 */
+    var slotPlan = deps.slotPlan || null;
 
     function readTexCfg() {
       try {
@@ -104,15 +109,66 @@
     function writeTexCfg(all) {
       try { localStorage.setItem(TEX_KEY, JSON.stringify(all)); } catch (e) { }
     }
-    /* 槽的稳定标识：优先材质名（OBJ 的 usemtl 名、glTF 材质名都稳定），
-     * 匿名材质退回遍历序号（模型文件不变，遍历顺序也不变）。 */
+    /* 槽的稳定标识：材质名；同名多槽时补槽序号。
+     * 只用材质名会撞车：Tripo / OBJ 导入的模型经常多个材质同名（一个材质被拆到多个 mesh），
+     * 两个槽会读写同一条记录 —— 给 A 槽配的贴图被 B 槽一起套上，整张图落到错误的 UV 岛，
+     * 视口里就是「乱面」；不同模型只要材质同名，面板里看到的也像同一个槽。
+     * 序号取 collectSlots 的遍历序：同一个模型文件每次都一致，和名字一起既稳定又唯一。
+     * 名字唯一时键不变（老配置继续有效，建模 App 按槽名读的记录也不会丢）。 */
     function slotKey(slot) {
-      if (slot.mat && slot.mat.name) return String(slot.mat.name);
       var ss = collectSlots();
+      var nm = (slot.mat && slot.mat.name) ? String(slot.mat.name) : '';
+      var idx = -1, same = 0;
       for (var i = 0; i < ss.length; i++) {
-        if (ss[i].mat === slot.mat) return 'slot' + i;
+        if (ss[i].mat === slot.mat) idx = i;
+        var n = (ss[i].mat && ss[i].mat.name) ? String(ss[i].mat.name) : '';
+        if (nm && n === nm) same++;
       }
-      return 'slot0';
+      if (!nm) return 'slot' + (idx < 0 ? 0 : idx);
+      /* 同名记录属于哪一槽不可考（两个槽都写过它），不再套用，各槽各用带序号的键 */
+      return same > 1 ? (nm + '#' + (idx < 0 ? 0 : idx)) : nm;
+    }
+    /* 材质名 → seedModel 里的槽下标。同名多槽按 collectSlots 的出现序号对齐，
+     * 这与导出时 slotNames / slotIds 的顺序一致。 */
+    function docSlotIndexOf(slot) {
+      if (!slotPlan || !slotPlan.names || !slotPlan.names.length) return -1;
+      var nm = (slot.mat && slot.mat.name) ? String(slot.mat.name) : '';
+      if (!nm) return -1;
+      var ss = collectSlots(), occ = 0, i;
+      for (i = 0; i < ss.length; i++) {
+        if (ss[i] === slot) break;
+        var n = (ss[i].mat && ss[i].mat.name) ? String(ss[i].mat.name) : '';
+        if (n === nm) occ++;
+      }
+      var seen = 0;
+      for (i = 0; i < slotPlan.names.length; i++) {
+        if (String(slotPlan.names[i] || '') !== nm) continue;
+        if (seen === occ) return i;
+        seen++;
+      }
+      return -1;
+    }
+    /* 同一个槽可能有多条历史记录：建模 App 的槽 id（slotIds）、槽名、材质名。
+     * 按优先级返回全部候选键；读配置取第一条存在的，写配置写回命中那条 ——
+     * 不会再往材质名下另起一条，也不会把建模 App 的 ops 记录顶掉。 */
+    function slotKeys(slot) {
+      var out = [], i = docSlotIndexOf(slot);
+      if (i >= 0 && slotPlan) {
+        if (slotPlan.ids && slotPlan.ids[i]) out.push(String(slotPlan.ids[i]));
+        if (slotPlan.names && slotPlan.names[i]) out.push(String(slotPlan.names[i]));
+      }
+      var k = slotKey(slot);
+      if (out.indexOf(k) < 0) out.push(k);
+      return out;
+    }
+    function slotRecOf(slot, map) {
+      if (!map) return null;
+      var ks = slotKeys(slot);
+      for (var i = 0; i < ks.length; i++) {
+        var rec = map[ks[i]];
+        if (rec && typeof rec === 'object') return { key: ks[i], rec: rec };
+      }
+      return null;
     }
     function slotCfg() {
       if (!assetId) return null;
@@ -158,7 +214,10 @@
       var m = (all[assetId] && typeof all[assetId] === 'object') ? all[assetId] : {};
       var ls = [], arr = slot.layers || [];
       for (var i = 0; i < arr.length; i++) if (arr[i] && arr[i].id) ls.push(layerRec(arr[i]));
-      var k = slotKey(slot);
+      var hit = slotRecOf(slot, m);
+      /* 写回命中的那条记录（建模 App 优先），没有记录才按新键建一条；
+       * 否则同一个槽会一直分叉成「slot-1」和「材质名」两份配置。 */
+      var k = hit ? hit.key : slotKeys(slot)[0];
       /* 旧记录里可能有本查看器不认识的字段（v4 的 ops：建模 App 的编辑层栈）。
        * 这里只负责图层与烘焙图，**别人的字段原样搬回去** —— 一次「保存」就把
        * 「模型库看不懂的东西」删掉，等于用户的笔迹莫名其妙消失了。 */
@@ -167,6 +226,12 @@
        * 它替掉模型自带的图，所以哪怕图层是空的也要留记录——
        * v2 的「没层就删」会把烘焙结果一起删掉，下次打开又回到原始贴图。 */
       var baked = (slot.__baked && slot.__baked.id) ? slot.__baked : null;
+      /* 在「建模 App 的笔迹」之上重新烘焙：新图已经含全部笔迹，
+       * 旧 ops 必须一起清掉，否则建模 App 下次打开会在新底图上再叠一遍。 */
+      if (prev && Array.isArray(prev.ops) && prev.ops.length && baked &&
+          (!prev.baked || String(prev.baked.id) !== String(baked.id))) {
+        prev = { v: prev.v, baked: prev.baked || null };
+      }
       var rec = null;
       if (baked) {
         rec = { v: 3, layers: ls, baked: {
@@ -225,7 +290,12 @@
     }
     function composeSlot(slot) {
       var sz = mixSize(slot);
-      return TB.compose({ w: sz.w, h: sz.h, baseImg: slot.baseTex && slot.baseTex.image, layers: slot.layers });
+      return TB.compose({
+        w: sz.w, h: sz.h, baseImg: slot.baseTex && slot.baseTex.image, layers: slot.layers,
+        /* 合成结果会以 baseTex 的 flipY 当贴图：GLB 是 false、OBJ 是 true。
+         * 层是别的模块配的（建模 App 的 flipY=true）时，TB.compose 会按这个约定先翻一次。 */
+        baseFlipY: conventionFlipY(slot)
+      });
     }
 
     function applyMix(slot) {
@@ -430,24 +500,36 @@
       var dirty = false, restored = 0;
       for (var i = 0; i < slots.length; i++) {
         var slot = slots[i];
-        var rec = cfg.map[slotKey(slot)];
-        if (!rec) continue;
+        var hit = slotRecOf(slot, cfg.map);
+        if (!hit) continue;
+        var rec = hit.rec;
+        /* 建模 App 在这槽画过（记录里有 ops）：它保存出去的 GLB 已经内嵌了
+         * 「底座 ⊕ 笔迹」的最新合成图，配置里的 baked 只是更早的底图。
+         * 再拿 baked 顶掉 GLB 的贴图，这里显示/导出的就是旧图 ——
+         * 「画好的贴图保存出来是旧的」正是这条路径。只记 id，回写时原样保留。 */
+        var painted = Array.isArray(rec.ops) && rec.ops.length > 0;
+        slot.__painted = painted;
         /* 烘焙图先接管基础层，后面的图层再叠在它上面（和烘焙前的观感一模一样） */
         if (rec.baked && rec.baked.id) {
-          try {
-            var bimg = await readAssetImage(rec.baked.id);
-            var btex = new THREE.CanvasTexture(bimg);
-            btex.flipY = rec.baked.flipY !== false;
-            if (THREE.sRGBEncoding !== undefined) btex.encoding = THREE.sRGBEncoding;
-            btex.wrapS = btex.wrapT = THREE.RepeatWrapping;
-            btex.anisotropy = 4;
-            btex.name = (slot.mat.name || 'slot') + '-baked';
-            btex.needsUpdate = true;
-            slot.baseTex = btex;
-            slot.__baked = { id: String(rec.baked.id), name: rec.baked.name || '', flipY: btex.flipY };
-          } catch (e) { dirty = true; }
+          if (painted) {
+            slot.__baked = { id: String(rec.baked.id), name: rec.baked.name || '', flipY: rec.baked.flipY !== false };
+          } else {
+            try {
+              var bimg = await readAssetImage(rec.baked.id);
+              var btex = new THREE.CanvasTexture(bimg);
+              btex.flipY = rec.baked.flipY !== false;
+              if (THREE.sRGBEncoding !== undefined) btex.encoding = THREE.sRGBEncoding;
+              btex.wrapS = btex.wrapT = THREE.RepeatWrapping;
+              btex.anisotropy = 4;
+              btex.name = (slot.mat.name || 'slot') + '-baked';
+              btex.needsUpdate = true;
+              slot.baseTex = btex;
+              slot.__baked = { id: String(rec.baked.id), name: rec.baked.name || '', flipY: btex.flipY };
+            } catch (e) { dirty = true; }
+          }
         }
-        var recs = rec.layers ? rec.layers : (rec.id ? [rec] : []);
+        /* GLB 自带的贴图已经含建模 App 的合成结果时，库里的图层不能再叠一遍 */
+        var recs = painted ? [] : (rec.layers ? rec.layers : (rec.id ? [rec] : []));
         var kept = [];
         for (var j = 0; j < recs.length; j++) {
           var L = recs[j];
@@ -525,7 +607,17 @@
       /* glTF 导入器会把节点名写成 TEMPORARY_IMPORT_NAMESPACE_xxx_obj1:inputSurface，
        * 摆到面板上就是一串看不懂的乱码（中文还会变方块）。这种情况退回材质名。 */
       var n = (mesh && !/^TEMPORARY_IMPORT_NAMESPACE_/i.test(mesh)) ? mesh : slot.mat.name;
-      return n || mesh || ('插槽 ' + (i + 1));
+      n = n || mesh || ('插槽 ' + (i + 1));
+      /* 材质同名 / 节点同名在 Tripo、OBJ 导入的模型里很常见：
+       * 两行标题一模一样，看起来就像「不同模型显示的是同一个槽」。
+       * 重名时补上槽序号，至少能分清是在改哪一个。 */
+      var ss = collectSlots(), same = 0;
+      for (var k = 0; k < ss.length; k++) {
+        var mk = ss[k].meshes[0] && ss[k].meshes[0].name;
+        var nk = (mk && !/^TEMPORARY_IMPORT_NAMESPACE_/i.test(mk)) ? mk : (ss[k].mat && ss[k].mat.name);
+        if ((nk || '插槽 ' + (k + 1)) === n) same++;
+      }
+      return same > 1 ? (n + ' · 槽 ' + (i + 1)) : n;
     }
     /* 混合面板标题旁边显示「在改哪个材质」：和列表同一套取名规则 */
     function slotLabel(slot) {
@@ -570,7 +662,8 @@
       for (var i = 0; i < ls.length; i++) if (ls[i].mask && ls[i].mask.id) masks++;
       var state = ls.length
         ? (ls.length + ' 层混合' + (masks ? ' · ' + masks + ' 个遮罩' : ''))
-        : (slot.__baked ? '烘焙贴图' : (slot.baseTex ? '自带贴图' : '无贴图'));
+        : (slot.__painted ? '建模 App 绘制的贴图'
+          : (slot.__baked ? '烘焙贴图' : (slot.baseTex ? '自带贴图' : '无贴图')));
       return matType + ' · ' + slot.meshes.length + ' 个网格 · ' + state;
     }
 
@@ -2213,9 +2306,11 @@
       if (!ls.length) {
         var zero = document.createElement('div');
         zero.style.cssText = 'color:#8b90a0;font-size:12px;line-height:1.7;background:#12151b;border:1px dashed #2c303a;border-radius:10px;padding:10px;';
-        zero.textContent = slot.__baked
-          ? '当前已经是烘焙后的贴图（见下方底层）。还想继续改：再叠新图层，效果会从这张烘焙图起算。'
-          : '还没有混合层。点下面「＋ 本机贴图」加一张，它会盖在模型自带贴图上；再加第二张就能用「比例 + 遮罩」做过渡、脏迹、旧化这类效果。';
+        zero.textContent = slot.__painted
+          ? '这一槽的贴图来自建模 App 的绘制结果（已内嵌在 GLB 里）。还想继续改：再叠新图层，效果会从这张图起算。'
+          : (slot.__baked
+            ? '当前已经是烘焙后的贴图（见下方底层）。还想继续改：再叠新图层，效果会从这张烘焙图起算。'
+            : '还没有混合层。点下面「＋ 本机贴图」加一张，它会盖在模型自带贴图上；再加第二张就能用「比例 + 遮罩」做过渡、脏迹、旧化这类效果。');
         mixBody.appendChild(zero);
       }
 
@@ -2390,12 +2485,15 @@
       var col = document.createElement('div');
       col.style.cssText = 'flex:1;min-width:0;';
       var a = document.createElement('div');
-      a.textContent = slot.__baked ? '烘焙贴图（底层）' : '模型自带贴图（底层）';
+      a.textContent = slot.__painted ? '建模 App 保存的合成贴图（底层）'
+        : (slot.__baked ? '烘焙贴图（底层）' : '模型自带贴图（底层）');
       a.style.cssText = 'color:#c9cede;font-size:12px;';
       var b = document.createElement('div');
-      b.textContent = slot.__baked
-        ? '由混合层合并生成 · ' + (slot.__baked.id ? '已存入图库' : '已下载到本机') + ' · 不可删除'
-        : (has ? '不可删除、不参与混合比例' : '模型没有自带贴图，合成从白底开始');
+      b.textContent = slot.__painted
+        ? '已包含绘制笔迹 · 直接在 GLB 里 · 不可删除'
+        : (slot.__baked
+          ? '由混合层合并生成 · ' + (slot.__baked.id ? '已存入图库' : '已下载到本机') + ' · 不可删除'
+          : (has ? '不可删除、不参与混合比例' : '模型没有自带贴图，合成从白底开始'));
       b.style.cssText = 'color:#7d8291;font-size:11px;';
       col.appendChild(a); col.appendChild(b);
       row.appendChild(col);

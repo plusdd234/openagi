@@ -408,6 +408,14 @@ const PS = (function () {
           hox: p.hox == null ? null : p.hox, hoy: p.hoy == null ? null : p.hoy
         };
       });
+      if (s.subpaths && s.subpaths.length) {
+        out.subpaths = s.subpaths.map(function (sp) {
+          return {
+            closed: sp.closed !== false,
+            pts: (sp.pts || []).map(function (p) { return { x: p.x, y: p.y }; })
+          };
+        });
+      }
     } else if (s.kind === 'line') {
       out.x1 = s.x1; out.y1 = s.y1; out.x2 = s.x2; out.y2 = s.y2;
     } else {
@@ -423,7 +431,14 @@ const PS = (function () {
       x0 = Math.min(s.x1, s.x2); y0 = Math.min(s.y1, s.y2);
       x1 = Math.max(s.x1, s.x2); y1 = Math.max(s.y1, s.y2);
     } else if (s.kind === 'path') {
-      var pts = s.pts || [];
+      var pts = [];
+      if (s.subpaths && s.subpaths.length) {
+        s.subpaths.forEach(function (sp) {
+          (sp.pts || []).forEach(function (p) { pts.push(p); });
+        });
+      } else {
+        pts = s.pts || [];
+      }
       if (!pts.length) return null;
       x0 = x1 = pts[0].x; y0 = y1 = pts[0].y;
       pts.forEach(function (p) {
@@ -510,6 +525,16 @@ const PS = (function () {
       ctx.moveTo(s.x1, s.y1);
       ctx.lineTo(s.x2, s.y2);
     } else if (s.kind === 'path') {
+      if (s.subpaths && s.subpaths.length) {
+        s.subpaths.forEach(function (sp) {
+          var spPts = sp.pts || [];
+          if (!spPts.length) return;
+          ctx.moveTo(spPts[0].x, spPts[0].y);
+          for (var j = 1; j < spPts.length; j++) ctx.lineTo(spPts[j].x, spPts[j].y);
+          if (sp.closed !== false) ctx.closePath();
+        });
+        return;
+      }
       var pts = s.pts || [];
       if (!pts.length) return;
       ctx.moveTo(pts[0].x, pts[0].y);
@@ -547,7 +572,8 @@ const PS = (function () {
     shapePath(ctx, s);
     if (s.fill && s.kind !== 'line') {
       ctx.fillStyle = s.fill;
-      ctx.fill();
+      if (s.subpaths && s.subpaths.length) ctx.fill('evenodd');
+      else ctx.fill();
     }
     if (s.stroke && s.strokeWidth > 0) {
       ctx.strokeStyle = s.stroke;
@@ -627,7 +653,8 @@ const PS = (function () {
     shapePath(ctx, s);
     if (s.fill && s.kind !== 'line') {
       ctx.fillStyle = s.fill;
-      ctx.fill();
+      if (s.subpaths && s.subpaths.length) ctx.fill('evenodd');
+      else ctx.fill();
     }
     if (s.stroke && s.strokeWidth > 0) {
       ctx.strokeStyle = s.stroke;
@@ -670,6 +697,211 @@ const PS = (function () {
       paintShapeWithOp(buf.ctx, shapes[i], i === 0 ? 'add' : shapeOp(shapes[i]));
     }
     ctx.drawImage(buf.canvas, 0, 0, bw, bh, x0, y0, bw, bh);
+  }
+
+  /* ---------------- 布尔轮廓化：把视觉结果写回真实锚点 ----------------
+   * Canvas 没有路径布尔，复合结果只是一次性绘制。这里用「超采样 + Marching Squares
+   * 提取等值线 + RDP 简化」把复合结果转成一条带 subpaths 的闭合路径：
+   * 外形与孔洞都变成真实锚点，缩放仍然清晰，后续可以继续用路径选择工具编辑。
+   * 这是折线近似（不做曲线拟合），但不再依赖离屏缓冲反复合成。
+   */
+  var MS_CASES = {
+    1: [[3, 0]], 2: [[0, 1]], 3: [[3, 1]], 4: [[1, 2]],
+    6: [[0, 2]], 7: [[3, 2]], 8: [[2, 3]], 9: [[2, 0]],
+    11: [[1, 2]], 12: [[1, 3]], 13: [[0, 1]], 14: [[3, 0]]
+  };
+
+  function msKey(p) {
+    return Math.round(p.x * 1000) + ',' + Math.round(p.y * 1000);
+  }
+
+  function msSegment(caseIdx, x, y, a, b, c, d) {
+    function cut(edge) {
+      var v0, v1;
+      if (edge === 0) { v0 = a; v1 = b; }
+      else if (edge === 1) { v0 = b; v1 = c; }
+      else if (edge === 2) { v0 = d; v1 = c; }
+      else { v0 = a; v1 = d; }
+      var t = (v1 === v0) ? 0.5 : (128 - v0) / (v1 - v0);
+      t = Math.max(0, Math.min(1, t));
+      if (edge === 0) return { x: x + t, y: y };
+      if (edge === 1) return { x: x + 1, y: y + t };
+      if (edge === 2) return { x: x + t, y: y + 1 };
+      return { x: x, y: y + t };
+    }
+    var defs = MS_CASES[caseIdx];
+    if (!defs) {
+      if (caseIdx === 5) defs = (a + b + c + d) / 4 >= 128 ? [[0, 1], [2, 3]] : [[3, 0], [1, 2]];
+      else if (caseIdx === 10) defs = (a + b + c + d) / 4 >= 128 ? [[3, 0], [1, 2]] : [[0, 1], [2, 3]];
+      else return null;
+    }
+    return { a: cut(defs[0][0]), b: cut(defs[0][1]), a2: defs[1] ? cut(defs[1][0]) : null, b2: defs[1] ? cut(defs[1][1]) : null };
+  }
+
+  /* 从 alpha 栅格里提取闭合等值线（网格坐标）。 */
+  function marchContours(data, W, H) {
+    var at = function (x, y) { return data[(y * W + x) * 4 + 3]; };
+    var segs = [];
+    function push(p1, p2) { if (p1 && p2) segs.push([p1, p2]); }
+    for (var y = 0; y < H - 1; y++) {
+      for (var x = 0; x < W - 1; x++) {
+        var a = at(x, y);
+        var b = at(x + 1, y);
+        var c = at(x + 1, y + 1);
+        var d = at(x, y + 1);
+        var idx = (a >= 128 ? 1 : 0) | (b >= 128 ? 2 : 0) | (c >= 128 ? 4 : 0) | (d >= 128 ? 8 : 0);
+        if (!idx || idx === 15) continue;
+        var s = msSegment(idx, x, y, a, b, c, d);
+        if (!s) continue;
+        push(s.a, s.b);
+        push(s.a2, s.b2);
+      }
+    }
+    if (!segs.length) return [];
+    // 端点量化后建邻接，串成闭合环
+    var adj = new Map();
+    segs.forEach(function (seg, i) {
+      [seg[0], seg[1]].forEach(function (p) {
+        var k = msKey(p);
+        if (!adj.has(k)) adj.set(k, []);
+        adj.get(k).push(i);
+      });
+    });
+    var used = new Array(segs.length);
+    var loops = [];
+    for (var i = 0; i < segs.length; i++) {
+      if (used[i]) continue;
+      var seg = segs[i];
+      used[i] = true;
+      var loop = [seg[0], seg[1]];
+      var startKey = msKey(seg[0]);
+      var curKey = msKey(seg[1]);
+      var guard = 0;
+      while (curKey !== startKey && guard++ < segs.length + 8) {
+        var cands = adj.get(curKey) || [];
+        var next = -1;
+        for (var ci = 0; ci < cands.length; ci++) if (!used[cands[ci]]) { next = cands[ci]; break; }
+        if (next < 0) break;
+        used[next] = true;
+        var ns = segs[next];
+        var np = msKey(ns[0]) === curKey ? ns[1] : ns[0];
+        loop.push(np);
+        curKey = msKey(np);
+      }
+      if (loop.length >= 4 && curKey === startKey) loops.push(loop);
+    }
+    return loops;
+  }
+
+  function pointSegDist(p, a, b) {
+    var dx = b.x - a.x;
+    var dy = b.y - a.y;
+    var len = dx * dx + dy * dy;
+    var t = len ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / len : 0;
+    t = Math.max(0, Math.min(1, t));
+    var ex = p.x - (a.x + dx * t);
+    var ey = p.y - (a.y + dy * t);
+    return Math.sqrt(ex * ex + ey * ey);
+  }
+
+  /* 迭代式 Ramer–Douglas–Peucker，避免长直线上递归过深。 */
+  function simplifyLoop(pts, eps) {
+    if (pts.length < 4) return pts;
+    var closedPts = pts.concat([pts[0]]);
+    var keep = new Array(closedPts.length);
+    keep[0] = keep[closedPts.length - 1] = true;
+    var stack = [[0, closedPts.length - 1]];
+    while (stack.length) {
+      var seg = stack.pop();
+      var a = seg[0];
+      var b = seg[1];
+      var maxD = -1;
+      var idx = -1;
+      for (var i = a + 1; i < b; i++) {
+        var dist = pointSegDist(closedPts[i], closedPts[a], closedPts[b]);
+        if (dist > maxD) { maxD = dist; idx = i; }
+      }
+      if (maxD > eps && idx > a) {
+        keep[idx] = true;
+        stack.push([a, idx], [idx, b]);
+      }
+    }
+    var out = [];
+    for (var j = 0; j < closedPts.length - 1; j++) if (keep[j]) out.push(closedPts[j]);
+    return out;
+  }
+
+  function loopArea(pts) {
+    var area = 0;
+    for (var i = 0; i < pts.length; i++) {
+      var p = pts[i];
+      var q = pts[(i + 1) % pts.length];
+      area += p.x * q.y - q.x * p.y;
+    }
+    return area / 2;
+  }
+
+  /* 把形状层的布尔复合结果轮廓化，替换为一条带 subpaths 的路径（可撤销）。 */
+  function outlineShapeLayer(doc, layer) {
+    if (!doc || !layer || layer.type !== 'shape' || !layer.shapes || layer.shapes.length < 2) return null;
+    if (!hasShapeBoolean(layer.shapes)) return null;
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    layer.shapes.forEach(function (s) {
+      var b = shapeVisualBounds(s);
+      if (!b) return;
+      x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
+      x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h);
+    });
+    if (!isFinite(x0)) return null;
+    var pad = 4;
+    var bx = Math.floor(x0 - pad);
+    var by = Math.floor(y0 - pad);
+    var bw = Math.max(8, Math.ceil(x1 - x0 + pad * 2));
+    var bh = Math.max(8, Math.ceil(y1 - y0 + pad * 2));
+    var S = bw * bh > 3e6 ? 1 : 2;
+    var cv = makeCanvas(bw * S, bh * S);
+    var ctx = cv.ctx;
+    ctx.setTransform(S, 0, 0, S, -bx * S, -by * S);
+    for (var i = 0; i < layer.shapes.length; i++) {
+      paintShapeWithOp(ctx, layer.shapes[i], i === 0 ? 'add' : shapeOp(layer.shapes[i]));
+    }
+    var img = ctx.getImageData(0, 0, cv.canvas.width, cv.canvas.height);
+    var loops = marchContours(img.data, cv.canvas.width, cv.canvas.height);
+    var subpaths = [];
+    loops.forEach(function (loop) {
+      var docPts = loop.map(function (p) {
+        return { x: bx + p.x / S, y: by + p.y / S };
+      });
+      var simple = simplifyLoop(docPts, 0.45);
+      if (simple.length < 3 || Math.abs(loopArea(simple)) < 0.5) return;
+      subpaths.push({ pts: simple, closed: true });
+    });
+    if (!subpaths.length) return null;
+    subpaths.sort(function (a, b) { return Math.abs(loopArea(b.pts)) - Math.abs(loopArea(a.pts)); });
+    var top = layer.shapes[layer.shapes.length - 1];
+    var shape = {
+      kind: 'path',
+      closed: true,
+      pts: [],
+      subpaths: subpaths,
+      fill: top.fill || '#8a94a6',
+      stroke: top.stroke || null,
+      strokeWidth: top.strokeWidth || 0,
+      opacity: 1,
+      op: 'add'
+    };
+    var prev = layer.shapes;
+    var prevVersion = layer.version;
+    layer.shapes = [shape];
+    layer.version++;
+    pushEntry(doc, {
+      label: '轮廓化布尔结果',
+      touched: [layer],
+      undo: function () { layer.shapes = prev; layer.version = prevVersion; doc.version++; },
+      redo: function () { layer.shapes = [shape]; layer.version++; doc.version++; }
+    });
+    doc.version++;
+    return shape;
   }
 
   /* 在任意 2D 上下文里按 scale 画一个形状图层的全部形状（缩略图 / 合并用）。 */
@@ -2735,6 +2967,8 @@ const PS = (function () {
     appendShape: appendShape,
     setShapeOp: setShapeOp,
     shapeOp: shapeOp,
+    hasShapeBoolean: hasShapeBoolean,
+    outlineShapeLayer: outlineShapeLayer,
     SHAPE_OPS: SHAPE_OPS,
     SHAPE_OP_NAMES: SHAPE_OP_NAMES,
     rasterizeShapeLayer: rasterizeShapeLayer,

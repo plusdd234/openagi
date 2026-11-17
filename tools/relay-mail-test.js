@@ -16,7 +16,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const assert = require('assert');
-const { imapFetch } = require('../plugins/relay/mail');
+const { imapFetch, getAccessToken } = require('../plugins/relay/mail');
 const { smtpSend } = require('../plugins/relay/smtp');
 
 const RAW = Buffer.from([
@@ -181,7 +181,13 @@ function startTokenServer() {
           res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'AADSTS70000: refresh token expired' }));
           return;
         }
-        if (q.get('client_id') !== 'client-1' || (rt !== 'refresh-1' && rt !== 'refresh-bad')) {
+        if (rt === 'refresh-scope' && q.get('scope')) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: 'invalid_scope', error_description: 'requested scope not granted' }));
+          return;
+        }
+        if (q.get('client_id') !== 'client-1' ||
+            (rt !== 'refresh-1' && rt !== 'refresh-bad' && rt !== 'refresh-scope')) {
           res.statusCode = 400;
           res.end(JSON.stringify({ error: 'invalid_request' }));
           return;
@@ -240,6 +246,12 @@ async function main() {
     assert.strictEqual(oauth.count, 2, 'OAuth2 收信应读到邮箱总数');
     assert.strictEqual(oauth.messages[0].subject, '登录验证码 123456');
     console.log('PASS  OAuth2（XOAUTH2）收取');
+
+    const relaxed = await getAccessToken({
+      clientId: 'client-1', refreshToken: 'refresh-scope', tokenUrl: tokenUrl
+    });
+    assert.strictEqual(relaxed, 'goodtoken');
+    console.log('PASS  invalid_scope 自动去掉 scope 重试');
 
     const revoked = await imapFetch({
       host: '127.0.0.1', port: port, secure: false,

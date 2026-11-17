@@ -329,7 +329,7 @@ const visible = (page, sel) => page.evaluate((s) => {
   await page.waitForTimeout(150);
   check(await visible(page, '#maildeskWin #mdImportModal'), '批量导入弹层可以打开');
   await page.fill('#maildeskWin #mdImportText',
-    'alpha@example.com----AlphaPass----CLIENT-ID-1----REFRESH_TOKEN_SAVED_LOCALLY\n' +
+    'alpha@example.com----AlphaPass----CLIENT-ID-1----REFRESH_TOKEN_SAVED_LOCALLY----recover@wroutlook.cc----5559564\n' +
     'beta@example.com----BetaPass\n' +
     '这一行不是邮箱');
   await page.click('#maildeskWin #mdImportSave');
@@ -442,14 +442,21 @@ const visible = (page, sel) => page.evaluate((s) => {
   await page.evaluate(() => {
     window.__imapCalls = [];
     window.__smtpCalls = [];
+    window.__oauthChecks = [];
     const orig = window.fetch;
     window.fetch = function (url, init) {
       const u = String(url && url.url ? url.url : url);
-      if (u.indexOf('/mail/imap') < 0 && u.indexOf('/mail/smtp') < 0) {
+      if (u.indexOf('/mail/imap') < 0 && u.indexOf('/mail/smtp') < 0 && u.indexOf('/mail/oauth/check') < 0) {
         return orig.apply(this, arguments);
       }
       let body = null;
       try { body = JSON.parse((init && init.body) || '{}'); } catch (e) { body = null; }
+      if (u.indexOf('/mail/oauth/check') >= 0) {
+        window.__oauthChecks.push({ url: u, body: body });
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: true, scopes: ['IMAP.AccessAsUser.All', 'SMTP.Send']
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
       if (u.indexOf('/mail/smtp') >= 0) {
         window.__smtpCalls.push({ url: u, body: body });
         return Promise.resolve(new Response(JSON.stringify({ ok: true, accepted: [body && body.to] }), {
@@ -588,6 +595,23 @@ const visible = (page, sel) => page.evaluate((s) => {
   check(String(credAddr).trim() === 'oauth@outlook.com', '凭证弹层显示当前邮箱', credAddr.trim());
   await page.fill('#maildeskWin #mdCredClient', 'client-xyz');
   await page.fill('#maildeskWin #mdCredToken', 'refresh-xyz');
+  await page.click('#maildeskWin #mdCredTest');
+  await page.waitForFunction(() => window.__oauthChecks.length > 0, null, { timeout: 8000 });
+  await page.waitForTimeout(200);
+  const credTestState = await page.evaluate(() => {
+    const msg = document.querySelector('#maildeskWin #mdCredMsg');
+    return {
+      checks: window.__oauthChecks,
+      text: msg.textContent,
+      ok: msg.classList.contains('is-ok')
+    };
+  });
+  const checkBody = (credTestState.checks[0] || {}).body || {};
+  check(checkBody.clientId === 'client-xyz' && checkBody.refreshToken === 'refresh-xyz' &&
+    !('password' in checkBody),
+    '令牌体检只提交 client_id/refresh_token');
+  check(credTestState.ok && /令牌有效/.test(credTestState.text) && /SMTP\.Send/.test(credTestState.text),
+    '令牌体检显示有效与授权范围', credTestState.text.trim());
   await page.click('#maildeskWin #mdCredSave');
   await page.waitForTimeout(300);
   const credState = await page.evaluate(() => ({

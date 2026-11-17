@@ -146,6 +146,7 @@ window.MAILDESK_BODY =
       '<div class="md-ai-quick">' +
         '<button type="button" class="md-mini" data-ai-q="汇总每个信箱的未读来信和验证码">汇总未读</button>' +
         '<button type="button" class="md-mini" data-ai-q="检查哪些信箱没有口令、没有 OAuth2 凭证或者收取失败">检查凭证</button>' +
+        '<button type="button" class="md-mini" data-ai-q="我有卡密，怎么用令牌登录导入">卡密登录</button>' +
         '<button type="button" class="md-mini" data-ai-q="检查哪些信箱没有口令或者收取失败">检查异常</button>' +
         '<button type="button" class="md-mini" data-ai-q="列出没有来信且没有口令的空信箱，准备清理">找出空信箱</button>' +
         '<button type="button" class="md-mini" data-ai-q="按服务商统计一下现在的信箱数量和未读情况">服务商统计</button>' +
@@ -209,8 +210,10 @@ window.MAILDESK_BODY =
           '<input type="text" id="mdCredToken" placeholder="OAuth2 refresh_token（可选）" spellcheck="false" autocomplete="off">' +
         '</div>' +
         '<div class="md-modal-note">留空表示不修改；OAuth2 两项需要同时填写。旧值不会回显，保存后立即用于 IMAP / SMTP。</div>' +
+        '<div class="md-modal-note md-cred-msg" id="mdCredMsg" hidden></div>' +
         '<div class="md-modal-acts">' +
           '<button type="button" class="md-mini md-danger" id="mdCredClear">清除凭证</button>' +
+          '<button type="button" class="md-mini" id="mdCredTest">测试令牌</button>' +
           '<span class="md-act-spacer"></span>' +
           '<button type="button" class="md-mini" id="mdCredCancel">取消</button>' +
           '<button type="button" class="md-btn md-primary" id="mdCredSave">保存</button>' +

@@ -11,7 +11,7 @@
  * 对外（window.TexBlend）：
  *   BLEND_MODES / blendOp(key) / clampNum(v,a,b) /
  *   maskAlpha(rec,w,h,flip) / mixSize({baseImg,layers},maxSide) /
- *   compose({w,h,baseImg,layers,canvas?}) → canvas
+ *   compose({w,h,baseImg,layers,baseFlipY?,canvas?}) → canvas
  */
 (function (global) {
   'use strict';
@@ -96,7 +96,13 @@
    *   白底 → 基础图 → 每层先画到 tmp、遮罩裁一次、再按混合模式与比例叠上来。
    * 每层先画到自己那张纸上，是为了让遮罩裁剪只作用于这一层；
    * 直接在主画布上做 destination-in 会把底下的东西一起裁掉。
-   * 传 canvas 时复用同一张（拖滑杆 / 画笔每帧重合成，避免反复分配canvas与纹理）。 */
+   * 传 canvas 时复用同一张（拖滑杆 / 画笔每帧重合成，避免反复分配canvas与纹理）。
+   *
+   * 层的 flipY 必须按「相对底座」处理（baseFlipY = 合成结果要按哪种 Y 约定当贴图）：
+   * 同一张图在 flipY=true / false 下采样到的上下是相反的，两层约定不同却直接原样叠，
+   * 每个 UV 岛都会落到上下镜像的那个岛 —— 视口里就是整张贴图碎成乱面。
+   * 典型场景：模型库是 glTF 约定（baseFlipY=false），打开建模 App 配的图层
+   * （建模 App 画布 v=0 在下，flipY=true），不翻就一定错位。 */
   function compose(o) {
     o = o || {};
     var W = Math.max(4, Math.round(o.w || 1024));
@@ -122,17 +128,24 @@
     tmp.width = W; tmp.height = H;
     var tctx = tmp.getContext('2d');
     var ls = o.layers || [];
+    /* 合成结果按底座约定当贴图：层 / 遮罩的约定与它不同就先翻一次 */
+    var baseFlip = o.baseFlipY === undefined ? true : !!o.baseFlipY;
     for (var i = 0; i < ls.length; i++) {
       var l = ls[i];
       if (!l || !l.img) continue;
       var a = clampNum(l.opacity, 0, 1);
       if (a <= 0) continue;
+      var lFlip = l.flipY === undefined ? baseFlip : !!l.flipY;
+      tctx.setTransform(1, 0, 0, 1, 0, 0);
       tctx.globalCompositeOperation = 'source-over';
       tctx.clearRect(0, 0, W, H);
+      if (lFlip !== baseFlip) { tctx.translate(0, H); tctx.scale(1, -1); }
       tctx.drawImage(l.img, 0, 0, W, H);
+      tctx.setTransform(1, 0, 0, 1, 0, 0);
       if (l.mask && l.mask.img) {
+        var mFlip = (l.mask.flipY === undefined ? lFlip : !!l.mask.flipY) !== baseFlip;
         tctx.globalCompositeOperation = 'destination-in';
-        tctx.drawImage(maskAlpha(l.mask, W, H, false), 0, 0);
+        tctx.drawImage(maskAlpha(l.mask, W, H, mFlip), 0, 0);
         tctx.globalCompositeOperation = 'source-over';
       }
       ctx.globalAlpha = a;

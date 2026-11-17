@@ -388,6 +388,33 @@
     }
   }
 
+  /* 令牌体检：只换 access_token 并读权限，不发信、不收信、不返回令牌。 */
+  async function relayOauthCheck(payload, ms) {
+    const url = relayBaseSafe() + '/mail/oauth/check';
+    const ctl = new AbortController();
+    const timerId = setTimeout(function () { ctl.abort(); }, ms || 30000);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload),
+        signal: ctl.signal
+      });
+      const raw = await res.text().catch(function () { return ''; });
+      let data = null;
+      try { data = raw ? JSON.parse(raw) : null; } catch (e) { data = null; }
+      if (!data || typeof data !== 'object') throw new Error('本地中转返回了无法识别的内容');
+      return data;
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw new Error('令牌校验超时（30 秒）');
+      if (e && e.name === 'TypeError') throw new Error('本地中转未启动或不可达');
+      throw e;
+    } finally {
+      clearTimeout(timerId);
+    }
+  }
+
   async function loadDomains(provider, force) {
     const c = DOMAIN_CACHE[provider];
     if (!force && c.list.length && now() - c.at < 10 * 60 * 1000) return c.list;
@@ -1223,10 +1250,15 @@
     }
     closeImport();
     renderAll();
+    const needOauth = S.boxes.filter(function (b) {
+      return b.provider === 'manual' && /@(outlook|hotmail|live|msn)\.com$/i.test(b.address) && !hasOauth(b);
+    }).length;
     setStatus('导入完成：新增 ' + r.added + ' 个' +
       (r.updated ? '，更新凭证 ' + r.updated + ' 个' : '') +
       (r.dup ? '，跳过重复 ' + r.dup + ' 个' : '') +
-      (r.bad ? '，' + r.bad + ' 行无法识别' : ''), (r.added || r.updated) ? 'ok' : 'err');
+      (r.bad ? '，' + r.bad + ' 行无法识别' : '') +
+      (needOauth ? '；' + needOauth + ' 个 Outlook 邮箱仍缺 OAuth2 凭证，请点「凭证」补齐 client_id 与 refresh_token' : ''),
+      (r.added || r.updated) ? 'ok' : 'err');
   }
 
   /* ---- 写邮件 ---- */
@@ -1288,6 +1320,7 @@
     els.credPass.value = '';
     els.credClient.value = '';
     els.credToken.value = '';
+    showCredMsg('', '');
     els.credModal.hidden = false;
     setTimeout(function () { try { els.credPass.focus(); } catch (e) { /* 忽略 */ } }, 40);
   }
@@ -1307,6 +1340,40 @@
     closeCred();
     renderAll();
     setStatus('凭证已更新：' + b.address + (hasOauth(b) ? '（OAuth2）' : ''), 'ok');
+  }
+
+  function showCredMsg(text, kind) {
+    els.credMsg.hidden = !text;
+    els.credMsg.textContent = text || '';
+    els.credMsg.className = 'md-modal-note md-cred-msg' + (kind ? ' is-' + kind : '');
+  }
+
+  /* 只验证 refresh_token 能否换到 access_token，并显示授权范围；不发信、不收信。 */
+  async function testCred() {
+    const b = activeBox();
+    if (!b) return;
+    const cid = String(els.credClient.value || '').trim() || b.clientId;
+    const rt = String(els.credToken.value || '').trim() || b.refreshToken;
+    if (!cid || !rt) {
+      showCredMsg('需要 client_id 与 refresh_token 才能测试；也可以先在导入里粘贴完整卡密。', 'err');
+      return;
+    }
+    els.credTest.disabled = true;
+    showCredMsg('正在用 refresh_token 换取访问令牌…', '');
+    try {
+      const r = await relayOauthCheck({ clientId: cid, refreshToken: rt });
+      if (r.ok) {
+        showCredMsg('令牌有效' + (Array.isArray(r.scopes) && r.scopes.length
+          ? '；授权范围：' + r.scopes.join('、')
+          : '') + '。保存后即可用它自动登录 IMAP / SMTP。', 'ok');
+      } else {
+        showCredMsg('令牌无效：' + (r.error || '未知错误'), 'err');
+      }
+    } catch (e) {
+      showCredMsg('测试失败：' + msgOf(e), 'err');
+    } finally {
+      els.credTest.disabled = false;
+    }
   }
 
   function clearCred() {
@@ -1389,7 +1456,10 @@
           (b.provider === 'demo' || b.provider === 'manual'
             ? ''
             : '<span class="md-box-prov">' + esc(providerLabel(b.provider)) + '</span>') +
-          esc(b.provider === 'demo' ? '本地演示' : (b.provider === 'manual' ? '手动登记' : fmtAgo(b.lastSync || b.createdAt))) +
+          esc(b.provider === 'demo' ? '本地演示'
+            : (b.provider === 'manual'
+              ? ('手动登记' + (hasOauth(b) ? ' · OAuth2' : (b.password ? ' · 口令' : ' · 无凭证')))
+              : fmtAgo(b.lastSync || b.createdAt))) +
           (b.error ? ' · <em class="md-err">收取失败</em>' : '') +
         '</span>' +
       '</span>' +
@@ -1692,7 +1762,7 @@
   /* ================= AI 邮箱助手 =================
    * 把当前信箱清单（地址、未读、是否有口令、最近来信与识别到的验证码）交给模型，
    * 模型只返回一份操作计划；删除等动作必须由用户点「执行」后才落到本机。
-   * 口令永远不进模型上下文。
+   * 口令与 OAuth2 令牌永远不进模型上下文；模型只返回操作计划，执行由用户确认。
    */
   const AI = { open: false, busy: false, log: [] };
 
@@ -1702,13 +1772,17 @@
     '格式：{"reply":"中文答复","actions":[...]}',
     '可用动作：',
     '{"type":"add","address":"name@example.com","password":"可选"}',
+    '{"type":"import"}',
     '{"type":"remove","address":"name@example.com"}',
     '{"type":"select","address":"name@example.com"}',
     '{"type":"refresh","address":"可选；为空表示全部"}',
     '{"type":"send","address":"发件信箱，可选；为空用当前信箱","to":"收件人","subject":"主题","body":"纯文本正文"}',
+    '能力说明：手动邮箱支持两种登录方式——口令，或 OAuth2（client_id + refresh_token）自动登录；',
+    '用户提到「卡密 / 令牌登录 / refresh_token」时，要回答系统支持令牌登录，并引导用户点「导入」粘贴整行卡密',
+    '（格式 地址----口令----client_id----refresh_token），或调用 {"type":"import"} 帮他打开导入面板；',
+    '令牌只能由用户在导入/凭证弹层里自行填写，助手不接收、不回显、不索要；不要让用户把 refresh_token 发到对话里。',
     '规则：只能引用状态清单里存在的地址；用户没有明确要求删除时不要生成 remove；',
     '只有用户明确要求发信时才生成 send，正文要完整可发送，不要虚构凭证或验证码；',
-    '凭证明细不会出现在状态里，也不要向用户索要 refresh_token；',
     '不要编造地址、口令或来信内容；不需要执行动作时 actions 用空数组；reply 控制在 80 字内。'
   ].join('\n');
 
@@ -1752,10 +1826,10 @@
     if (a < 0 || b <= a) return { reply: t || '（模型没有返回内容）', actions: [] };
     let obj;
     try { obj = JSON.parse(t.slice(a, b + 1)); } catch (e) { return { reply: t.slice(a, b + 1), actions: [] }; }
-    const allowed = { add: 1, remove: 1, select: 1, refresh: 1, send: 1 };
+    const allowed = { add: 1, import: 1, remove: 1, select: 1, refresh: 1, send: 1 };
     const actions = Array.isArray(obj.actions) ? obj.actions.filter(function (x) {
       if (!x || !allowed[x.type]) return false;
-      if (x.type === 'refresh') return true;
+      if (x.type === 'refresh' || x.type === 'import') return true;
       if (x.type === 'send') return !!String(x.to || '').trim() && !!String(x.body || '').trim();
       return !!String(x.address || '').trim();
     }).slice(0, 12) : [];
@@ -1765,6 +1839,7 @@
   function actionLabel(a) {
     const addr = String(a.address || '');
     if (a.type === 'add') return '添加手动邮箱 ' + addr + (a.password ? '（含口令）' : '（无口令）');
+    if (a.type === 'import') return '打开导入面板，粘贴卡密';
     if (a.type === 'remove') return '移除 ' + addr;
     if (a.type === 'select') return '选中 ' + addr;
     if (a.type === 'refresh') return addr ? ('刷新 ' + addr) : '刷新全部可收信信箱';
@@ -1818,7 +1893,7 @@
     if (AI.open && !AI.log.length) {
       AI.log.push({
         role: 'agent',
-        text: '我可以汇总未读、检查凭证与异常、刷新收信、添加或清理信箱，也能代写并发信。说出要求，我先给计划，你确认后再执行。',
+        text: '我可以汇总未读、检查凭证与异常、刷新收信、添加或清理信箱，也能代写并发信。支持口令和卡密（OAuth2 令牌）两种登录；令牌请粘到「导入」里，不用发给我。说出要求，我先给计划，你确认后再执行。',
         actions: []
       });
     }
@@ -1908,6 +1983,9 @@
         if (a.type === 'add') {
           const r = addManualBox(a.address, a.password);
           item.results.push(r.error || ('已添加 ' + r.box.address));
+        } else if (a.type === 'import') {
+          openImport();
+          item.results.push('已打开导入面板，请粘贴卡密（地址----口令----client_id----refresh_token）');
         } else if (a.type === 'remove') {
           const box = findBox(a.address);
           if (!box) item.results.push('没找到：' + a.address);
@@ -2042,7 +2120,9 @@
       credToken: q('#mdCredToken'),
       credSave: q('#mdCredSave'),
       credCancel: q('#mdCredCancel'),
-      credClear: q('#mdCredClear')
+      credClear: q('#mdCredClear'),
+      credTest: q('#mdCredTest'),
+      credMsg: q('#mdCredMsg')
     };
   }
 
@@ -2136,6 +2216,7 @@
     els.cred.addEventListener('click', function () { openCred(); });
     els.credCancel.addEventListener('click', closeCred);
     els.credSave.addEventListener('click', saveCred);
+    els.credTest.addEventListener('click', testCred);
     els.credClear.addEventListener('click', clearCred);
     els.credModal.addEventListener('click', function (e) {
       if (e.target === els.credModal) closeCred();
