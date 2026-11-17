@@ -65,7 +65,22 @@
 **非商业（NC）与相同方式共享（SA）依然有效**。因此本插件整体按
 「代码 MIT + 素材 CC BY-NC-SA 4.0、非商业」发布。
 
-## 四、权利主张 / Takedown
+## 四、Haru（Live2D 官方免费示例）
+
+`apps/live2d/model/haru/` 来自 Live2D 官方示例数据：
+
+- 下载页：<https://www.live2d.com/download/sample-data/>，本仓库用的是 `haru_ja.zip`；
+- 文件：`haru.moc3`、`haru.1024/texture_00..02.png`、`haru.physics3.json`、`haru.pose3.json`、
+  `haru.cdi3.json`、`motion/*.motion3.json`；`haru.model3.json` 由本项目按同目录结构整理；
+- 原作者：插画 / 建模 **Live2D Inc.**，语音 **癒月**。本项目**没有**使用任何语音文件
+  （wav 已全部删除，`model3.json` 里的 `Sound` 字段也一并移除）。
+
+原 ReadMe 的许可说明：一般用户与小规模事业者同意规约后可商用；中大规模事业者仅限非公开测试用途。
+使用需同意《無償提供マテリアルの使用許諾契約書》（ライセンスタイプ・Live2Dオリジナルキャラクター）。
+本项目**非商业**，按更保守的范围（个人 / 非商业演示）使用，并署名 **Live2D Inc.**。
+许可证全文与最新条款以官方页面为准：<https://www.live2d.com/download/sample-data/>。
+
+## 五、权利主张 / Takedown
 
 如果你认为本项目中有素材侵犯了你的权利，请开一条 issue 说明**文件名**与**依据**，
 核实后会立即替换或移除，不附加其它条件。

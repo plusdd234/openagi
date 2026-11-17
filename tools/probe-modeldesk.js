@@ -1515,7 +1515,9 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
     g.dispose();
     return { cap: M.MAX_FACES, faces: M.faceCount(mesh), ms: Math.round(ms) };
   });
-  check(capite.cap >= 50000 && capite.faces > 10000 && capite.ms < 500,
+  /* 上限是策略线，不是性能线：这里只拦住「转换卡死 / 指数级退化」，
+   * 不拿固定毫秒数当硬件基准（同一台机器并行跑浏览器时 500ms 会假红）。 */
+  check(capite.cap >= 50000 && capite.faces > 10000 && capite.ms < 1500,
     '面数上限抬到 50000，2 万面级网格可转换',
     JSON.stringify(capite));
 
@@ -1836,6 +1838,124 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
   check(mergedOpen.nodes.length === 1 && mergedOpen.nodes[0] === 'Body' && mergedOpen.faces[0] === 12,
     '同名同材质碎片并成一个节点（不再裂成两个 Body）',
     JSON.stringify(mergedOpen));
+
+  /* 11.10d 多 object 各带一张贴图，但材质同名同色（Tripo 导出的常见形态）：
+   * 旧逻辑按「名字 + 底色」给材质槽去重，两个对象会被并到一个槽、只剩第一张图；
+   * 老资产里第二个槽的 slotMaps 为空时，补图又会按名字把第一张图补进第二个槽 ——
+   * 用户看到的是「导出 gltf 贴图错位」。这里两条路径都要钉住。 */
+  const multiTex = await page.evaluate(async () => {
+    const THREE = window.THREE, G = window.SeedGLB, S = window.SeedModel.Scene, M = window.SeedModel.Mesh;
+    function mk(hex) {
+      const c = document.createElement('canvas');
+      c.width = 32; c.height = 32;
+      const x = c.getContext('2d');
+      x.fillStyle = hex; x.fillRect(0, 0, 32, 32);
+      return { canvas: c, url: c.toDataURL('image/png') };
+    }
+    const red = mk('#ff0000'), green = mk('#00ff00');
+    /* 两个网格、材质同名同色（都叫 Material / 纯白），只有贴图不同 */
+    const scene = new THREE.Scene();
+    [red, green].forEach(function (t, i) {
+      const tex = new THREE.CanvasTexture(t.canvas);
+      tex.flipY = false;
+      const mat = new THREE.MeshStandardMaterial({ name: 'Material', color: 0xffffff, map: tex });
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), mat);
+      mesh.name = 'part' + i;
+      mesh.position.x = i * 1.2;
+      scene.add(mesh);
+    });
+    const buf = await new Promise((res, rej) =>
+      new THREE.GLTFExporter().parse(scene, res, rej, { binary: true }));
+
+    /* 老资产形态：两个槽同名同色，第二个槽贴图缺失 → 打开时应走 backfill 补图 */
+    const mkBox = slot => {
+      const m = M.fromBufferGeometry(new THREE.BoxGeometry(1, 1, 1), { weld: true });
+      m.faceSlots = new Array(m.faceSlots.length).fill(slot);
+      return m;
+    };
+    const seedDoc = S.createDoc({
+      name: '两贴图', mesh: mkBox(0), nodeName: 'part0',
+      materials: { slotNames: ['Material', 'Material'], slotColors: ['#ffffff', '#ffffff'], slotMaps: [red.url, ''] }
+    });
+    S.addMeshNode(seedDoc, { name: 'part1', mesh: mkBox(1), slots: [1] });
+    const seedGlb = G.injectSeedModel(buf, S.toSeedModel(seedDoc));
+
+    /* 普通 GLB 形态：没有 seedModel，只能按材质建槽 */
+    const json = G.readJson(buf);
+    if (json.asset && json.asset.extras) delete json.asset.extras.seedModel;
+    const plainGlb = G.writeJson(buf, json);
+
+    const store = { 'asset-2tex-seed': G.toDataURL(seedGlb), 'asset-2tex-plain': G.toDataURL(plainGlb) };
+    const prevRead = window.openagiDesktop.assetRead;
+    window.openagiDesktop.assetRead = async id => store[id]
+      ? { ok: true, dataURL: store[id] } : prevRead(id);
+
+    /* 槽贴图中心像素：同名不同图时必须是两种颜色 */
+    async function px(u) {
+      if (!u) return null;
+      const img = await new Promise(res => {
+        const x = new Image(); x.onload = () => res(x); x.onerror = () => res(null); x.src = u;
+      });
+      if (!img) return null;
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      const x2 = c.getContext('2d');
+      x2.drawImage(img, 0, 0);
+      const d = x2.getImageData(img.width >> 1, img.height >> 1, 1, 1).data;
+      return [d[0], d[1], d[2]];
+    }
+    const isRed = p => !!p && p[0] > 170 && p[1] < 90 && p[2] < 90;
+    const isGreen = p => !!p && p[1] > 150 && p[0] < 90 && p[2] < 90;
+
+    await window.modelDesk.openAsset('asset-2tex-seed');
+    await new Promise(r => setTimeout(r, 300));
+    const d1 = window.modelDesk.getDocument();
+    const seed = {
+      slots: d1.materials.slotNames.length,
+      colors0: await px(d1.materials.slotMaps[0]),
+      colors1: await px(d1.materials.slotMaps[1]),
+      nodeSlots: S.nodesOf(d1).map(n => S.meshSlotsOf(d1, n).slice())
+    };
+
+    await window.modelDesk.openAsset('asset-2tex-plain');
+    await new Promise(r => setTimeout(r, 300));
+    const d2 = window.modelDesk.getDocument();
+    const plain = {
+      slots: d2.materials.slotNames.length,
+      colors0: await px(d2.materials.slotMaps[0]),
+      colors1: await px(d2.materials.slotMaps[1]),
+      nodeSlots: S.nodesOf(d2).map(n => S.meshSlotsOf(d2, n).slice())
+    };
+
+    /* 再导出一次，核对 primitive → 图片下标不是同一个 */
+    const out = await window.modelDesk.exportBytes();
+    const oj = G.readJson(out);
+    const primImgs = [];
+    (oj.meshes || []).forEach(mm => (mm.primitives || []).forEach(p => {
+      const mat = (oj.materials || [])[p.material] || {};
+      const b = mat.pbrMetallicRoughness && mat.pbrMetallicRoughness.baseColorTexture;
+      primImgs.push(b ? ((oj.textures || [])[b.index] || {}).source : -1);
+    }));
+
+    window.openagiDesktop.assetRead = prevRead;
+    /* 普通导入的槽号是按遍历顺序建的，而 GLTFLoader 返回网格的顺序不稳定
+     * （贴图异步解析）。这里只钉住「两张图分别进了两个槽、两个对象各占一个槽」，
+     * 不钉哪个槽是红 —— 否则测试会随加载顺序随机翻转。 */
+    return { seed, plain, primImgs, red0: isRed(seed.colors0), green1: isGreen(seed.colors1),
+      pTwo: (isRed(plain.colors0) && isGreen(plain.colors1)) || (isGreen(plain.colors0) && isRed(plain.colors1)),
+      pSplit: plain.nodeSlots.length === 2 && plain.nodeSlots[0][0] !== plain.nodeSlots[1][0] };
+  });
+  check(multiTex.seed.slots === 2 && multiTex.red0 && multiTex.green1,
+    '老资产补图：同名同色的第二个槽补的是自己那张图（不是第一张）',
+    JSON.stringify({ slots: multiTex.seed.slots, px: [multiTex.seed.colors0, multiTex.seed.colors1],
+      nodeSlots: multiTex.seed.nodeSlots }));
+  check(multiTex.plain.slots === 2 && multiTex.pTwo && multiTex.pSplit,
+    '普通 GLB 导入：同名同色但贴图不同的两个对象分成两个槽',
+    JSON.stringify({ slots: multiTex.plain.slots, px: [multiTex.plain.colors0, multiTex.plain.colors1],
+      nodeSlots: multiTex.plain.nodeSlots }));
+  check(multiTex.primImgs.length === 2 && multiTex.primImgs[0] !== multiTex.primImgs[1] &&
+    multiTex.primImgs.every(i => i >= 0),
+    '导出后两个对象各指一张自己的贴图（不再共用第一张）', JSON.stringify(multiTex.primImgs));
 
   /* 11.10b FBX：ASCII 网格走同一条「普通模型」导入路径 */
   const FBX_MINI = `; FBX 7.2.0 project file
@@ -2978,7 +3098,12 @@ Connections:  {
       hasMask: !!document.getElementById('mdPaintMask'),
       dir: getComputedStyle(right).flexDirection,
       propsHidden: getComputedStyle(props).display === 'none',
-      tabs: Array.from(document.querySelectorAll('[data-md-tbk]')).map(b => b.dataset.mdTbk)
+      tabs: Array.from(document.querySelectorAll('[data-md-tbk]')).map(b => b.dataset.mdTbk),
+      /* 编辑器模式：绘画页签同时也是「绘制界面」的入口 */
+      editor: document.querySelector('.md-app').dataset.mdEditor,
+      barShown: !document.getElementById('mdPaintBar').hidden,
+      shelfDisplay: getComputedStyle(document.querySelector('.md-shelf')).display,
+      stripDisplay: getComputedStyle(document.querySelector('.md-strip')).display
     };
   });
   check(paintTab.kind === 'paint' && paintTab.boxVisible && paintTab.toolboxHidden && paintTab.hasBrush && paintTab.hasSize,
@@ -2986,6 +3111,32 @@ Connections:  {
   check(paintTab.dir === 'column' && paintTab.propsHidden && paintTab.hasMask && paintTab.tabs.length === 3,
     '属性编辑器与工具箱同排页签，切换显示不占额外空间',
     JSON.stringify({ dir: paintTab.dir, propsHidden: paintTab.propsHidden, tabs: paintTab.tabs }));
+  check(paintTab.editor === 'paint' && paintTab.barShown === true &&
+    paintTab.shelfDisplay === 'none' && paintTab.stripDisplay === 'none',
+    '绘制模式：顶部换成笔刷条，建模工具架 / 竖条整排收起',
+    JSON.stringify({ editor: paintTab.editor, bar: paintTab.barShown, shelf: paintTab.shelfDisplay, strip: paintTab.stripDisplay }));
+
+  /* 绘制模式左侧专业工具栏：清单 + 选中态与 st.paint.tool 同步。
+   * 这是「参考图像编辑器」那一列的地基 —— 工具不在 = 界面退化成只有一支画笔。 */
+  const paintRail = await page.evaluate(() => {
+    const rail = document.getElementById('mdPaintRail');
+    const rb = rail ? rail.getBoundingClientRect() : null;
+    const ids = Array.from(document.querySelectorAll('#mdPaintRail [data-md-ptool]')).map(b => b.dataset.mdPtool);
+    const picks = [];
+    for (const t of ['pencil', 'blur', 'smudge', 'picker', 'wand', 'eraser', 'brush']) {
+      const b = document.querySelector('#mdPaintRail [data-md-ptool="' + t + '"]');
+      if (b) b.click();
+      picks.push({ t, tool: window.modelDesk.getState().paintTool, on: !!(b && b.classList.contains('on')) });
+    }
+    return { shown: !!(rail && !rail.hidden && rb && rb.width > 0 && rb.height > 0), ids, picks };
+  });
+  check(paintRail.shown && paintRail.ids.length === 7 &&
+    ['brush', 'pencil', 'eraser', 'blur', 'smudge', 'picker', 'wand'].every(t => paintRail.ids.indexOf(t) >= 0),
+    '绘制模式：左侧工具栏含画笔 / 铅笔 / 橡皮 / 模糊 / 涂抹 / 吸管 / 魔棒 7 个工具',
+    paintRail.ids.join(','));
+  check(paintRail.picks.every(x => x.t === x.tool && x.on),
+    '点选左侧工具：paintTool 与选中态同步',
+    paintRail.picks.map(x => x.t + '=' + x.tool + (x.on ? '✓' : '✗')).join(' '));
 
   const paintOpts = await page.evaluate(() => {
     const sel = document.getElementById('mdBrushSel');
@@ -3019,6 +3170,148 @@ Connections:  {
   check(/60 px/.test(paintUi.meta) && paintUi.dotW && paintUi.color === '#2b7cd3' &&
     paintUi.swOn === 1 && paintUi.slotDot,
     '笔刷预览条 / 色板与笔刷状态联动', JSON.stringify(paintUi));
+
+  /* 视口光圈 = 模型上的真实覆盖：同一个落点，
+   *   - 笔刷在 UV 里的半径 = size/2/2048（画笔落点的定义）；
+   *   - 屏幕上应该看到多大 = 该 UV 半径 ×「每 UV 的世界长度」×「每世界的屏幕像素」。
+   * 所以直接量一次落笔的实际覆盖（合成贴图上的红色半径 → UV），再投影回屏幕，
+   * 与光圈半径对比。比「尺寸翻倍 → 光圈翻倍」更贴近用户看到的「圈 = 我画到的范围」。 */
+  const paintRing = await page.evaluate(async () => {
+    const API = window.modelDesk, d = API.__debug(), T = window.THREE;
+    const tb = document.querySelector('[data-md-tbk="paint"]');
+    if (tb) tb.click();
+    const set = (id, v, ev) => { const el = document.getElementById(id); el.value = v; el.dispatchEvent(new Event(ev, { bubbles: true })); };
+    set('mdBrushColor', '#ff0000', 'input');
+    set('mdBrushOpacity', '100', 'input');
+    set('mdBrushSize', '120', 'input');
+    const m = d.mesh, canvas = d.canvas, r = canvas.getBoundingClientRect();
+    const camPos = d.camera.getWorldPosition(new T.Vector3());
+    let bestDot = -Infinity, bestF = -1, bestC = null;
+    for (let f = 0; f < m.faceIds.length; f++) {
+      const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+      if (e - s < 3) continue;
+      const c = new T.Vector3();
+      for (let k = s; k < e; k++) {
+        const vi = m.faceIndices[k] * 3;
+        c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
+      }
+      c.multiplyScalar(1 / (e - s));
+      const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
+      const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+      const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+      const n = new T.Vector3().crossVectors(v1, v2).normalize();
+      const wc = d.pivot.localToWorld(c.clone());
+      const wn = n.clone().transformDirection(d.pivot.matrixWorld);
+      const dot = wn.dot(camPos.clone().sub(wc).normalize());
+      if (dot > bestDot) { bestDot = dot; bestF = f; bestC = wc; }
+    }
+    if (!bestC) return { skip: true };
+    const pc = bestC.clone().project(d.camera);
+    const x = r.left + (pc.x * 0.5 + 0.5) * r.width, y = r.top + (-pc.y * 0.5 + 0.5) * r.height;
+    const ring = document.querySelector('.md-gest-brush');
+    canvas.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true, cancelable: true, button: -1, buttons: 0, pointerId: 90, clientX: x, clientY: y
+    }));
+    const ringR = ring ? (parseFloat(ring.style.width) || 0) / 2 : 0;
+    const shown = ring ? ring.style.display : '';
+
+    /* 拖动中两个性能红线：
+     *   - 材质不能每帧 needsUpdate（three 会重编译着色器 → 一闪一卡）；
+     *   - 没有混合层时不能每帧整张重合成（2048² 拷贝 + 上传 → 卡顿），
+     *     材质上应该一直挂着绘画工作副本。 */
+    const solids = [];
+    d.scene.traverse(o => {
+      if (!o.userData || o.userData.mdPart !== 'solid' || !o.material) return;
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(mm => solids.push(mm));
+    });
+    const slotIdx = API.getState().paintSlot | 0;
+    const mat = solids[slotIdx] || solids[0] || null;
+    const send = (type, dx, dy) => canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      pointerId: 94, clientX: x + (dx || 0), clientY: y + (dy || 0)
+    }));
+    send('pointerdown');
+    await new Promise(res => setTimeout(res, 100));
+    send('pointermove', 8, 5);
+    await new Promise(res => setTimeout(res, 100));
+    const v1 = mat ? mat.version : -1, map1 = mat ? mat.map : null;
+    send('pointermove', 16, 10);
+    await new Promise(res => setTimeout(res, 100));
+    send('pointermove', 24, 15);
+    await new Promise(res => setTimeout(res, 100));
+    const v2 = mat ? mat.version : -1, map2 = mat ? mat.map : null;
+    send('pointerup', 24, 15);
+    await new Promise(res => setTimeout(res, 400));
+    const undoDrag = API.undo();
+    const drag = {
+      vDelta: v2 - v1,
+      mapKept: !!map1 && map1 === map2,
+      workingCopy: !!map2 && String(map2.name || '').indexOf('md-texmix') !== 0,
+      undoOk: undoDrag === true
+    };
+
+    /* UV → 世界：取落笔面的第一条边，世界长 / UV 长
+     * （m.positions 是网格局部坐标，落笔覆盖会跟着对象缩放，必须换到世界再比） */
+    const s = m.faceOffsets[bestF], e = m.faceOffsets[bestF + 1];
+    const A = new T.Vector3(), B = new T.Vector3(), C = new T.Vector3();
+    const i0 = m.faceIndices[s] * 3, i1 = m.faceIndices[s + 1] * 3, i2 = m.faceIndices[s + 2] * 3;
+    A.set(m.positions[i0], m.positions[i0 + 1], m.positions[i0 + 2]).applyMatrix4(d.pivot.matrixWorld);
+    B.set(m.positions[i1], m.positions[i1 + 1], m.positions[i1 + 2]).applyMatrix4(d.pivot.matrixWorld);
+    C.set(m.positions[i2], m.positions[i2 + 1], m.positions[i2 + 2]).applyMatrix4(d.pivot.matrixWorld);
+    const uvLen = Math.hypot(m.uvs[(s + 1) * 2] - m.uvs[s * 2], m.uvs[(s + 1) * 2 + 1] - m.uvs[s * 2 + 1]);
+    const worldPerUv = uvLen > 1e-6 ? A.distanceTo(B) / uvLen : 1;
+    /* 世界 → 屏幕：沿「面内、垂直于视线」的方向走「实际覆盖的世界半径」再投影。
+     * 这是笔刷在曲面上的真实足迹方向，和用户看到的圈是同一个量。 */
+    const nW = new T.Vector3().subVectors(B, A).cross(new T.Vector3().subVectors(C, A)).normalize();
+    const P0 = bestC.clone();   /* bestC 已经是世界坐标 */
+    const viewW = camPos.clone().sub(P0).normalize();
+    const tangent = new T.Vector3().crossVectors(nW, viewW).normalize();
+    const s0 = P0.clone().project(d.camera);
+
+    /* 真的点一下：合成贴图上的红色斑半径 = 实际覆盖 */
+    send('pointerdown');
+    send('pointerup');
+    await new Promise(res => setTimeout(res, 450));
+    let img = null;
+    d.scene.traverse(o => {
+      const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+      ms.forEach(mm => { if (mm.map && mm.map.image && mm.map.image.width) img = mm.map.image; });
+    });
+    let rUv = -1, texW = 0;
+    if (img) {
+      texW = img.width;
+      const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
+      const g = cv.getContext('2d'); g.drawImage(img, 0, 0);
+      const data = g.getImageData(0, 0, cv.width, cv.height).data;
+      let n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] > 190 && data[i + 1] < 90 && data[i + 2] < 90 && data[i + 3] > 10) n++;
+      }
+      if (n > 0) rUv = Math.sqrt(n / Math.PI) / cv.width;
+    }
+    /* 清掉这一笔，别污染后面的笔画 / 撤销断言 */
+    const undoOk = API.undo();
+    const opsLeft = window.TexStack ? window.TexStack.ops(API.getDocument(), API.getState().paintSlot).length : -1;
+    let expectedR = -1;
+    if (rUv > 0) {
+      const s1 = P0.clone().addScaledVector(tangent, rUv * worldPerUv).project(d.camera);
+      expectedR = Math.hypot((s1.x - s0.x) * 0.5 * r.width, (s1.y - s0.y) * 0.5 * r.height);
+    }
+    return {
+      ringR: +ringR.toFixed(2), expectedR: +expectedR.toFixed(2), rUv: +rUv.toFixed(5),
+      texW, worldPerUv: +worldPerUv.toFixed(3),
+      shown, undoOk, opsLeft, drag
+    };
+  });
+  const ringRatio = paintRing.expectedR > 0 ? paintRing.ringR / paintRing.expectedR : 0;
+  check(!paintRing.skip && paintRing.shown === 'block' && paintRing.ringR > 1 &&
+    ringRatio > 0.55 && ringRatio < 1.75 && paintRing.undoOk === true && paintRing.opsLeft === 0,
+    '视口光圈大小 = 落笔在模型上的真实覆盖',
+    JSON.stringify({ ...paintRing, ratio: +ringRatio.toFixed(2) }));
+  check(paintRing.drag && paintRing.drag.vDelta === 0 && paintRing.drag.mapKept &&
+    paintRing.drag.workingCopy && paintRing.drag.undoOk === true,
+    '拖动中不重编译材质、不整张重合成（无闪烁 / 卡顿）',
+    JSON.stringify(paintRing.drag));
 
   /* 面板分区不允许互相压住：相邻两个可见分区的矩形不能有纵向交叠 */
   const paintLayout = await page.evaluate(() => {
@@ -3063,7 +3356,7 @@ Connections:  {
     sel.dispatchEvent(new Event('change', { bubbles: true }));
   });
 
-  const paintStroke = await page.evaluate(() => {
+  const paintStroke = await page.evaluate(async () => {
     const API = window.modelDesk, d = API.__debug(), T = window.THREE;
     const canvas = d.canvas, r = canvas.getBoundingClientRect();
     /* 探针跑到这里时对象已被前面的变换测试挪过位置，不能再拿世界原点当落笔点；
@@ -3104,7 +3397,38 @@ Connections:  {
     send('pointerdown', x, y);
     const mid = API.getState();
     for (let i = 1; i <= 5; i++) send('pointermove', x + i * 8, y + i * 5);
+    /* pointermove 被合并到 rAF 里（见 paintMoveSchedule）：先让最后一次移动真正落笔，
+     * 再取「抬笔前」的合成图。否则抬笔时补上的那一小段会被误判成「重复叠层」，
+     * 而视口大小一变（笔迹相对屏幕的距离变了）结论就跟着变。 */
+    await new Promise(res => requestAnimationFrame(res));
+    /* 抬笔前后合成图必须逐像素一致：抬笔只是把工作副本采纳成正式纹理，
+     * 不能再把同一批笔迹叠一遍（旧实现会回放层栈，半透明笔一抬笔就变深）。 */
+    const mapCvAt = () => {
+      let cv = null;
+      d.scene.traverse(o => {
+        if (cv || !o.material) return;
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        ms.forEach(mm => { if (!cv && mm && mm.map && mm.map.image && mm.map.image.width) cv = mm.map.image; });
+      });
+      return cv;
+    };
+    const cv0 = mapCvAt();
+    const img0 = cv0 ? cv0.getContext('2d').getImageData(0, 0, cv0.width, cv0.height).data : null;
     send('pointerup', x + 40, y + 25);
+    await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+    await new Promise(res => setTimeout(res, 200));
+    const cv1 = mapCvAt();
+    let diffPx = -1, maxDiff = -1;
+    if (img0 && cv1 && cv1.width === cv0.width && cv1.height === cv0.height) {
+      const img1 = cv1.getContext('2d').getImageData(0, 0, cv1.width, cv1.height).data;
+      diffPx = 0; maxDiff = 0;
+      for (let i = 0; i < img0.length; i += 4) {
+        const dd = Math.abs(img0[i] - img1[i]) + Math.abs(img0[i + 1] - img1[i + 1]) +
+          Math.abs(img0[i + 2] - img1[i + 2]) + Math.abs(img0[i + 3] - img1[i + 3]);
+        if (dd > 24) diffPx++;
+        if (dd > maxDiff) maxDiff = dd;
+      }
+    }
     const end = API.getState();
     const after = (API.getDocument().materials.slotMaps || [])[0] || '';
     /* 切片三之后：一笔 = 一个 stroke 层，slotMaps 一个字都不该动 */
@@ -3121,16 +3445,90 @@ Connections:  {
       restored: !end.paintClipped,
       beforeLen: before.length, afterLen: after.length, before, mapSame: before === after,
       ops: stack.length, opType: stack.length ? stack[stack.length - 1].type : '', inkPx,
+      commitDiff: diffPx, commitMax: maxDiff,
       slot: end.paintSlot
     };
   });
   check(paintStroke.ops === 1 && paintStroke.opType === 'stroke' && paintStroke.inkPx > 0 && paintStroke.mapSame,
     '在模型上画一笔 = 推一个 stroke 层（slotMaps 不动）',
     JSON.stringify({ ops: paintStroke.ops, type: paintStroke.opType, inkPx: paintStroke.inkPx, mapSame: paintStroke.mapSame }));
+  check(paintStroke.commitDiff === 0 && paintStroke.commitMax <= 24,
+    '抬笔不重复叠层：提交前后合成图像素一致',
+    JSON.stringify({ diff: paintStroke.commitDiff, max: paintStroke.commitMax }));
   check(paintStroke.maskOn === true && paintStroke.clipped === true &&
     paintStroke.clipPolys >= 1 && paintStroke.restored === true,
     'UV 岛遮罩：落笔试加了岛剪裁，抬笔后释放',
     JSON.stringify({ mask: paintStroke.maskOn, clipped: paintStroke.clipped, polys: paintStroke.clipPolys, restored: paintStroke.restored }));
+
+  /* 局部上传的 GPU 侧对齐：先传一个大脏块把中转画布撑大，再传一个小脏块。
+   * 只比 2D 画布永远发现不了「翻转取样落到画布下半部分」这类错位（会表现为黑块 / 乱线），
+   * 必须把纹理真正渲染出来回读。 */
+  const upAlign = await page.evaluate(() => {
+    const T = window.THREE, d = window.modelDesk.__debug(), renderer = d.renderer;
+    const UP = window.MDPaintUpload.create({ renderer: () => renderer });
+    const cv = document.createElement('canvas');
+    cv.width = 64; cv.height = 64;
+    const g = cv.getContext('2d');
+    g.fillStyle = '#336699'; g.fillRect(0, 0, 64, 64);
+    const tex = new T.CanvasTexture(cv);
+    tex.generateMipmaps = false;
+    tex.minFilter = T.NearestFilter;
+    tex.magFilter = T.NearestFilter;
+    const scene = new T.Scene();
+    const cam = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const quad = new T.Mesh(new T.PlaneGeometry(2, 2), new T.MeshBasicMaterial({ map: tex }));
+    quad.position.z = -0.5;
+    scene.add(quad);
+    const rt = new T.WebGLRenderTarget(64, 64);
+    const prevEnc = renderer.outputEncoding, prevTone = renderer.toneMapping;
+    renderer.outputEncoding = T.LinearEncoding;
+    renderer.toneMapping = T.NoToneMapping;
+    /* 靶子每帧显式绑定：即使 flush 把渲染目标弄丢也不会连带影响像素对齐的判定 */
+    const draw = () => { renderer.setRenderTarget(rt); renderer.render(scene, cam); };
+    draw();                                /* 让 three 建好纹理对象 */
+    UP.track(tex);
+    UP.flush();                            /* 首次整张上传 */
+    const rtKept = renderer.getRenderTarget() === rt;
+    draw();
+    g.fillStyle = '#ff0000'; g.fillRect(0, 0, 48, 48);
+    UP.markDirty(tex, { x: 0, y: 0, w: 48, h: 48 });
+    UP.flush();                            /* 大脏块：中转画布被撑到 48×48 */
+    draw();
+    g.fillStyle = '#00ff00'; g.fillRect(8, 8, 6, 6);
+    UP.markDirty(tex, { x: 8, y: 8, w: 6, h: 6 });
+    UP.flush();                            /* 小脏块：错位就发生在这里 */
+    draw();
+    const px = new Uint8Array(64 * 64 * 4);
+    renderer.readRenderTargetPixels(rt, 0, 0, 64, 64, px);
+    renderer.setRenderTarget(null);
+    renderer.outputEncoding = prevEnc;
+    renderer.toneMapping = prevTone;
+    const exp = g.getImageData(0, 0, 64, 64).data;
+    let bad = 0, max = 0;
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) {
+        const i = ((63 - y) * 64 + x) * 4;   /* RT 回读是上下翻转的 */
+        const j = (y * 64 + x) * 4;
+        const dd = Math.max(
+          Math.abs(px[i] - exp[j]), Math.abs(px[i + 1] - exp[j + 1]),
+          Math.abs(px[i + 2] - exp[j + 2]), Math.abs(px[i + 3] - exp[j + 3])
+        );
+        if (dd > 8) bad++;
+        if (dd > max) max = dd;
+      }
+    }
+    quad.geometry.dispose();
+    quad.material.dispose();
+    tex.dispose();
+    rt.dispose();
+    return { bad, max, rtKept };
+  });
+  check(upAlign.bad === 0,
+    '局部上传：大脏块之后的小脏块在 GPU 上仍落在正确位置',
+    JSON.stringify(upAlign));
+  check(upAlign.rtKept === true,
+    '局部上传不改变调用方的渲染目标（RenderTarget 里接着画仍然正确）',
+    JSON.stringify({ rtKept: upAlign.rtKept }));
 
   /* 画笔撤销：一笔 = 一条历史；撤销少这一层，重做回来，贴图始终在 */
   const paintUndo = await page.evaluate(() => {
@@ -3159,6 +3557,494 @@ Connections:  {
     paintUndo.gizmoHidden === true,
     '画笔笔画可撤销 / 重做（栈里少一层再回来，贴图始终在）',
     JSON.stringify({ undoOk: paintUndo.undoOk, ops: paintUndo.n0 + '→' + paintUndo.nMid + '→' + paintUndo.nBack, mapSame: paintUndo.mapSame, gizmoHidden: paintUndo.gizmoHidden }));
+
+  /* 左侧工具栏的工具要真的改行为，而不只是换图标：
+   * 吸管取色 / 魔棒锁岛 / 涂抹改像素并可撤销。三条都用同一个落笔点，
+   * 结束后把工具复位成画笔，后续用例的栈与手势状态保持不变。 */
+  const railTools = await page.evaluate(async () => {
+    const API = window.modelDesk, d = API.__debug(), T = window.THREE;
+    const m = d.mesh, canvas = d.canvas, r = canvas.getBoundingClientRect();
+    const camPos = d.camera.getWorldPosition(new T.Vector3());
+    let bestDot = -Infinity, bestC = null, bestF = 0;
+    for (let f = 0; f < m.faceIds.length; f++) {
+      const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+      if (e - s < 3) continue;
+      const c = new T.Vector3(), n = new T.Vector3();
+      for (let k = s; k < e; k++) {
+        const vi = m.faceIndices[k] * 3;
+        c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
+      }
+      c.multiplyScalar(1 / (e - s));
+      const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
+      const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+      const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+      n.crossVectors(v1, v2).normalize().transformDirection(d.pivot.matrixWorld);
+      const wc = d.pivot.localToWorld(c.clone());
+      const dot = n.dot(camPos.clone().sub(wc).normalize());
+      if (dot > bestDot) { bestDot = dot; bestF = f; bestC = wc; }
+    }
+    if (!bestC) return { skip: 'no-face' };
+    const pc = bestC.clone().project(d.camera);
+    const x = r.left + (pc.x * 0.5 + 0.5) * r.width, y = r.top + (-pc.y * 0.5 + 0.5) * r.height;
+    /* 面内方向：取落笔三角形第一条边的屏幕投影。涂抹沿线推，整笔留在同一 UV 岛内，
+     * 既能看到像素变化，又不会撞接缝（跨接缝断笔由 seamInk 用例单独覆盖）。 */
+    const fs = m.faceOffsets[bestF], va = m.faceIndices[fs] * 3, vb = m.faceIndices[fs + 1] * 3;
+    const wa = d.pivot.localToWorld(new T.Vector3(m.positions[va], m.positions[va + 1], m.positions[va + 2])).project(d.camera);
+    const wb = d.pivot.localToWorld(new T.Vector3(m.positions[vb], m.positions[vb + 1], m.positions[vb + 2])).project(d.camera);
+    let ax = (wb.x - wa.x) * 0.5 * r.width, ay = -(wb.y - wa.y) * 0.5 * r.height;
+    const al = Math.hypot(ax, ay) || 1; ax /= al; ay /= al;
+    const send = (type, cx, cy) => canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      pointerId: 93, clientX: cx, clientY: cy
+    }));
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
+    const tool = t => document.querySelector('#mdPaintRail [data-md-ptool="' + t + '"]').click();
+    const set = (id, v) => { const el = document.getElementById(id); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+    const snap = () => {
+      let img = null;
+      d.scene.traverse(o => {
+        if (img || !o.material) return;
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        ms.forEach(mm => { if (!img && mm && mm.map && mm.map.image && mm.map.image.width) img = mm.map.image; });
+      });
+      if (!img) return null;
+      const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
+      cv.getContext('2d').drawImage(img, 0, 0);
+      return { w: cv.width, h: cv.height, data: cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data };
+    };
+    const diff = (a, b) => {
+      if (!a || !b || a.w !== b.w || a.h !== b.h) return -1;
+      let n = 0;
+      for (let i = 0; i < a.data.length; i += 4) {
+        if (Math.abs(a.data[i] - b.data[i]) + Math.abs(a.data[i + 1] - b.data[i + 1]) +
+          Math.abs(a.data[i + 2] - b.data[i + 2]) > 24) n++;
+      }
+      return n;
+    };
+    const out = {};
+
+    /* 吸管：先把笔刷改蓝，再从已经画过的红笔迹上取色 */
+    set('mdBrushColor', '#0000ff');
+    tool('picker');
+    send('pointerdown', x, y); send('pointerup', x, y);
+    await sleep(160);
+    out.picker = { before: '#0000ff', after: API.getState().brushColor };
+
+    /* 魔棒：点一下锁岛（同时开遮罩），再点同一岛解除 */
+    tool('wand');
+    send('pointerdown', x, y); send('pointerup', x, y);
+    await sleep(120);
+    const s1 = API.getState();
+    send('pointerdown', x, y); send('pointerup', x, y);
+    await sleep(120);
+    out.wand = { lock: s1.paintLockIsland, mask: s1.paintMask, unlock: API.getState().paintLockIsland };
+
+    /* 涂抹：沿落笔面的边方向推出去（面内，不撞接缝）。笔迹是「中心 → 右下」，
+     * 取样点自带红色像素；每一步让出一帧 —— move 是 rAF 合并的，连续 dispatch
+     * 只会处理最后一段，测不出中间图章。抬笔入「涂抹」层，撤销后逐点还原。 */
+    const before = snap();
+    tool('smudge');
+    send('pointerdown', x, y);
+    for (let i = 1; i <= 5; i++) {
+      await sleep(40);
+      send('pointermove', x + ax * i * 4, y + ay * i * 4);
+    }
+    await sleep(40);
+    send('pointerup', x + ax * 20, y + ay * 20);
+    await sleep(460);
+    const ops = window.TexStack.ops(API.getDocument(), API.getState().paintSlot);
+    const top = ops.length ? ops[ops.length - 1] : null;
+    out.smudge = { tool: API.getState().paintTool, label: top ? top.label : '', changed: diff(before, snap()) };
+    out.smudge.undoOk = API.undo();
+    await sleep(420);
+    out.smudge.restored = diff(before, snap());
+
+    /* 复位：工具回到画笔；遮罩保持原样（后面的「岛遮罩」用例依赖它仍是开的） */
+    tool('brush');
+    await sleep(60);
+    return out;
+  });
+  check(!railTools.skip && railTools.picker.after !== '#0000ff' && /^#f[0-9a-f]/.test(railTools.picker.after),
+    '吸管：从红笔迹上取回颜色',
+    JSON.stringify(railTools.picker));
+  check(railTools.wand.lock >= 0 && railTools.wand.mask === true && railTools.wand.unlock === -1,
+    '魔棒：点一下锁定 UV 岛（并开遮罩），再点同一岛解除',
+    JSON.stringify(railTools.wand));
+  check(railTools.smudge.tool === 'smudge' && railTools.smudge.label === '涂抹' &&
+    railTools.smudge.changed > 0 && railTools.smudge.undoOk === true && railTools.smudge.restored === 0,
+    '涂抹工具：拖动改变贴图，抬笔入栈「涂抹」层且可撤销还原',
+    JSON.stringify(railTools.smudge));
+
+  /* 上一条只能证明「预览画布加了 clip」。真正决定成品的是抬笔进栈的增量层：
+   * 它不受裁的话，预览看着正常，一抬笔合成 / 下次重放层栈就溢出到相邻岛（就是用户看到的「遮罩失效」）。
+   * 笔刷上限只有 180，岛又比笔刷大，所以这里直接把笔刷调到超过贴图尺寸：
+   * 一笔盖满整张贴图，岛外必然有溢色，这条断言才有判别力。画完立刻撤销，不影响后续用例。 */
+  const maskInk = await page.evaluate(() => {
+    const API = window.modelDesk, d = API.__debug(), ps = d.paintState;
+    const canvas = d.canvas, r = canvas.getBoundingClientRect();
+    const T = window.THREE, m = d.mesh;
+    /* 取正对相机的那张面的中心当落笔点（与画笔用例同一套算法，避免依赖射线命中） */
+    const camPos = d.camera.getWorldPosition(new T.Vector3());
+    let bestDot = -Infinity, bestF = -1, bestC = null;
+    for (let f = 0; f < m.faceIds.length; f++) {
+      const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+      if (e - s < 3) continue;
+      const c = new T.Vector3();
+      for (let k = s; k < e; k++) {
+        const vi = m.faceIndices[k] * 3;
+        c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
+      }
+      c.multiplyScalar(1 / (e - s));
+      const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
+      const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+      const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+      const n = new T.Vector3().crossVectors(v1, v2).normalize().transformDirection(d.pivot.matrixWorld);
+      const wc = d.pivot.localToWorld(c.clone());
+      const dot = n.dot(camPos.clone().sub(wc).normalize());
+      if (dot > bestDot) { bestDot = dot; bestF = f; bestC = wc; }
+    }
+    if (!bestC) return { skip: 'no-face' };
+    const pc = bestC.clone().project(d.camera);
+    const hx = (pc.x * 0.5 + 0.5) * r.width, hy = (-pc.y * 0.5 + 0.5) * r.height;
+    const info = window.SeedModel.Mesh.uvIslands(m);
+    const iid = info.faceIsland ? info.faceIsland[bestF] : -1;
+    const faces = (iid != null && iid >= 0 && info.islands[iid]) ? info.islands[iid].faces : [];
+    if (!faces.length) return { skip: 'no-island' };
+    const prevSize = ps.size;
+    ps.size = 2600;                       /* 半径 1300px > 半张贴图 */
+    const send = (type, cx, cy) => canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      pointerId: 88, clientX: cx, clientY: cy
+    }));
+    send('pointerdown', r.left + hx, r.top + hy);
+    send('pointerup', r.left + hx, r.top + hy);
+    const ops = window.TexStack.ops(API.getDocument(), API.getState().paintSlot);
+    const ic = ops.length ? ops[ops.length - 1].canvas : null;
+    let outside = -1, inkPx = 0;
+    if (ic) {
+      /* 独立算一遍岛多边形（与 App 无关的第二套实现），再逐像素查增量层 */
+      const mk = document.createElement('canvas');
+      mk.width = ic.width; mk.height = ic.height;
+      const mg = mk.getContext('2d');
+      mg.fillStyle = '#fff';
+      faces.forEach(f => {
+        const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+        if (e - s < 3) return;
+        mg.beginPath();
+        for (let k = s; k < e; k++) {
+          const ux = m.uvs[k * 2] * mk.width, vy = (1 - m.uvs[k * 2 + 1]) * mk.height;
+          if (k === s) mg.moveTo(ux, vy); else mg.lineTo(ux, vy);
+        }
+        mg.closePath();
+        mg.fill();
+      });
+      const maskD = mg.getImageData(0, 0, mk.width, mk.height).data;
+      const inkD = ic.getContext('2d').getImageData(0, 0, ic.width, ic.height).data;
+      outside = 0;
+      for (let i = 0; i < inkD.length; i += 4) {
+        if (inkD[i + 3] > 8) { inkPx++; if (maskD[i] < 128) outside++; }
+      }
+    }
+    ps.size = prevSize;
+    const slot = API.getState().paintSlot;
+    API.undo();                            /* 撤掉这一笔，后续用例状态不变 */
+    return { outside, inkPx, islandFaces: faces.length, slot, dot: Number(bestDot.toFixed(2)) };
+  });
+  check(!maskInk.skip && maskInk.outside === 0 && maskInk.inkPx > 0,
+    'UV 岛遮罩：抬笔进栈的增量层同样被裁，岛外没有笔迹',
+    JSON.stringify(maskInk));
+
+  /* 跨 UV 接缝断笔：3D 相邻、UV 质心相隔很远的一对面，在接缝两侧各取约 9px 的点，
+   * 一次指针移动跨过去。修复前会按 UV 距离补满图章、在模型上拉出一条长线（用户反馈）；
+   * 修复后断笔只点新位置 —— 变化像素约等于一个图章，不随接缝距离增长。 */
+  const seamInk = await page.evaluate(async () => {
+    const API = window.modelDesk, d = API.__debug(), T = window.THREE, ps = d.paintState;
+    const m = d.mesh;
+    if (!m || !m.uvs || !m.uvs.length) return { skip: 'no-uv' };
+    const off = m.faceOffsets, fidx = m.faceIndices, uvs = m.uvs;
+    const camPos = d.camera.getWorldPosition(new T.Vector3());
+    const normalOf = f => {
+      const s = off[f];
+      const a0 = fidx[s] * 3, a1 = fidx[s + 1] * 3, a2 = fidx[s + 2] * 3;
+      const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+      const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+      return new T.Vector3().crossVectors(v1, v2).normalize().transformDirection(d.pivot.matrixWorld);
+    };
+    const pkey = vi => Math.round(m.positions[vi * 3] * 1e4) + ',' +
+      Math.round(m.positions[vi * 3 + 1] * 1e4) + ',' + Math.round(m.positions[vi * 3 + 2] * 1e4);
+    const faces = [];
+    for (let f = 0; f < m.faceIds.length; f++) {
+      const s = off[f], e = off[f + 1];
+      if (e - s < 3) continue;
+      let cu = 0, cv = 0, n = 0;
+      const c = new T.Vector3(), keys = new Set();
+      for (let k = s; k < e; k++) {
+        const vi = fidx[k];
+        keys.add(pkey(vi));
+        cu += uvs[vi * 2]; cv += uvs[vi * 2 + 1]; n++;
+        c.x += m.positions[vi * 3]; c.y += m.positions[vi * 3 + 1]; c.z += m.positions[vi * 3 + 2];
+      }
+      c.multiplyScalar(1 / n);
+      faces.push({ f, cu: cu / n, cv: cv / n, c, keys, n: normalOf(f) });
+    }
+    /* 面之间按「顶点位置」判相邻：很多模型（含默认立方体）为了法线 / UV 把顶点拆开了，
+     * 共享顶点下标判不出来，只能比坐标。 */
+    const byKey = new Map();
+    faces.forEach(fc => fc.keys.forEach(k => {
+      let a = byKey.get(k); if (!a) byKey.set(k, a = []); a.push(fc);
+    }));
+    const facing = fc => fc.n.dot(camPos.clone().sub(d.pivot.localToWorld(fc.c.clone())).normalize()) > 0.15;
+    let pick = null;
+    for (let i = 0; i < faces.length; i++) {
+      const A = faces[i];
+      if (!facing(A)) continue;
+      const cnt = new Map();
+      A.keys.forEach(k => (byKey.get(k) || []).forEach(B => { if (B !== A) cnt.set(B, (cnt.get(B) || 0) + 1); }));
+      for (const [B, c] of cnt) {
+        if (c < 2 || !facing(B)) continue;
+        const duv = Math.hypot(A.cu - B.cu, A.cv - B.cv);
+        if (pick && duv <= pick.duv) continue;
+        const shared = [...A.keys].filter(k => B.keys.has(k));
+        if (shared.length < 2) continue;
+        pick = { A, B, shared, duv };
+      }
+    }
+    if (!pick) return { skip: 'no-adjacent-visible-pair' };
+    if (pick.duv < 0.08) return { skip: 'continuous-uv:' + pick.duv.toFixed(3) };
+    const r = d.canvas.getBoundingClientRect();
+    const toScreen = v3 => {
+      const q = v3.clone().project(d.camera);
+      return { x: r.left + (q.x * 0.5 + 0.5) * r.width, y: r.top + (-q.y * 0.5 + 0.5) * r.height };
+    };
+    const wpKey = k => { const a = k.split(',').map(Number); return d.pivot.localToWorld(new T.Vector3(a[0] / 1e4, a[1] / 1e4, a[2] / 1e4)); };
+    const p0 = wpKey(pick.shared[0]), p1 = wpKey(pick.shared[1]);
+    const mid = p0.clone().add(p1).multiplyScalar(0.5);
+    const elen = p0.distanceTo(p1);
+    const A3 = d.pivot.localToWorld(pick.A.c.clone());
+    const B3 = d.pivot.localToWorld(pick.B.c.clone());
+    const uA = A3.clone().sub(mid).normalize();
+    const probeP = mid.clone().add(uA.clone().multiplyScalar(elen * 0.2));
+    const sm = toScreen(mid), spp = toScreen(probeP);
+    const px3d = Math.hypot(spp.x - sm.x, spp.y - sm.y) / (elen * 0.2);
+    if (!(px3d > 1e-6)) return { skip: 'degenerate' };
+    const step3d = 9 / px3d;                 /* 屏幕上离接缝约 9px */
+    const sa = toScreen(mid.clone().add(uA.clone().multiplyScalar(step3d)));
+    const sb = toScreen(mid.clone().add(B3.clone().sub(mid).normalize().multiplyScalar(step3d)));
+    const dpx = Math.hypot(sa.x - sb.x, sa.y - sb.y);
+    if (dpx >= 30) return { skip: 'too-far:' + Math.round(dpx) };
+    const snap = () => {
+      let img = null;
+      d.scene.traverse(o => {
+        if (img || !o.material) return;
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        ms.forEach(mm => { if (!img && mm && mm.map && mm.map.image && mm.map.image.width) img = mm.map.image; });
+      });
+      if (!img) return null;
+      const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
+      cv.getContext('2d').drawImage(img, 0, 0);
+      return { w: cv.width, h: cv.height, data: cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data };
+    };
+    const diff = (a, b) => {
+      if (!a || !b || a.w !== b.w || a.h !== b.h) return -1;
+      let n = 0;
+      for (let i = 0; i < a.data.length; i += 4) {
+        if (Math.abs(a.data[i] - b.data[i]) + Math.abs(a.data[i + 1] - b.data[i + 1]) +
+          Math.abs(a.data[i + 2] - b.data[i + 2]) > 24) n++;
+      }
+      return n;
+    };
+    const send = (type, cx, cy) => d.canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      pointerId: 71, clientX: cx, clientY: cy
+    }));
+    const maskEl = document.getElementById('mdPaintMask');
+    const maskBefore = !!maskEl.checked;
+    if (maskBefore) { maskEl.checked = false; maskEl.dispatchEvent(new Event('change', { bubbles: true })); }
+    const sizeBefore = ps.size;
+    ps.size = 18;                              /* 小笔刷：一个图章 ≈ 250px，长线会差一个数量级 */
+    document.querySelector('#mdPaintRail [data-md-ptool="brush"]').click();
+    send('pointerdown', sa.x, sa.y);
+    await new Promise(res => requestAnimationFrame(res));
+    const before = snap();
+    send('pointermove', sb.x, sb.y);
+    send('pointerup', sb.x, sb.y);
+    await new Promise(res => setTimeout(res, 420));
+    const changed = diff(before, snap());
+    ps.size = sizeBefore;
+    if (maskBefore) {
+      maskEl.checked = true; maskEl.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    const undoOk = API.undo();
+    return { dpx: Math.round(dpx), changed, undoOk, duv: +Math.hypot(pick.A.cu - pick.B.cu, pick.A.cv - pick.B.cv).toFixed(3) };
+  });
+  if (seamInk.skip) {
+    info('跨接缝断笔', '跳过：' + seamInk.skip);
+  } else {
+    check(seamInk.changed > 0 && seamInk.changed < 1500,
+      '跨 UV 接缝：接缝两侧各点一下，不连成横穿图集的长线',
+      JSON.stringify(seamInk));
+  }
+
+  /* 11.16 架构修复：笔迹必须叠在混合层之上。
+   * 走真实 UI 加一张混合层，再画一笔 —— 抬笔后材质贴图上必须仍有笔刷色像素。
+   * 修复前 stroke 被合成在混合层之下，指针一抬就被不透明贴图整片盖掉。 */
+  const mixB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d');
+    g.fillStyle = '#8090a0'; g.fillRect(0, 0, 128, 128);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  const fcWait = page.waitForEvent('filechooser', { timeout: 4000 }).catch(() => null);
+  await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('.md-mix-acts button'))
+      .find(x => x.textContent.indexOf('贴图') >= 0);
+    if (b) b.click();
+  });
+  const fc = await fcWait;
+  if (fc) await fc.setFiles({ name: 'mix.png', mimeType: 'image/png', buffer: Buffer.from(mixB64, 'base64') });
+  await page.waitForTimeout(600);
+  const mixRow = await page.evaluate(() => document.querySelectorAll('.md-mix-list .md-mix-row').length);
+
+  const paintOverLayer = await page.evaluate(() => {
+    const API = window.modelDesk, d = API.__debug(), T = window.THREE;
+    const set = (id, v, ev) => { const el = document.getElementById(id); el.value = v; el.dispatchEvent(new Event(ev, { bubbles: true })); };
+    set('mdBrushColor', '#ff0000', 'input');
+    set('mdBrushSize', '80', 'input');
+    set('mdBrushOpacity', '100', 'input');
+    const m = d.mesh, canvas = d.canvas, r = canvas.getBoundingClientRect();
+    const camPos = d.camera.getWorldPosition(new T.Vector3());
+    let bestDot = -Infinity, bestC = null;
+    for (let f = 0; f < m.faceIds.length; f++) {
+      const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+      if (e - s < 3) continue;
+      const c = new T.Vector3();
+      for (let k = s; k < e; k++) {
+        const vi = m.faceIndices[k] * 3;
+        c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
+      }
+      c.multiplyScalar(1 / (e - s));
+      const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
+      const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+      const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+      const n = new T.Vector3().crossVectors(v1, v2).normalize();
+      const wc = d.pivot.localToWorld(c.clone());
+      const wn = n.clone().transformDirection(d.pivot.matrixWorld);
+      const dot = wn.dot(camPos.clone().sub(wc).normalize());
+      if (dot > bestDot) { bestDot = dot; bestC = wc; }
+    }
+    if (!bestC) return { skip: true };
+    const p = bestC.clone().project(d.camera);
+    const x = r.left + (p.x * 0.5 + 0.5) * r.width, y = r.top + (-p.y * 0.5 + 0.5) * r.height;
+    const send = (type, cx, cy) => canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      pointerId: 81, clientX: cx, clientY: cy
+    }));
+    send('pointerdown', x, y);
+    for (let i = 1; i <= 5; i++) send('pointermove', x + i * 9, y + i * 5);
+    send('pointerup', x + 45, y + 25);
+    return { ok: true, slot: API.getState().paintSlot };
+  });
+
+  await page.waitForTimeout(400);
+  const layerStroke = await page.evaluate(() => {
+    const d = window.modelDesk.__debug();
+    let best = null;
+    d.scene.traverse(o => {
+      const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+      ms.forEach(m => { if (m.map && m.map.image && m.map.image.width) best = m.map.image; });
+    });
+    if (!best) return { img: false, red: -1 };
+    const c = document.createElement('canvas'); c.width = best.width; c.height = best.height;
+    const g = c.getContext('2d'); g.drawImage(best, 0, 0);
+    const data = g.getImageData(0, 0, c.width, c.height).data;
+    let red = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] > 200 && data[i + 1] < 70 && data[i + 2] < 70 && data[i + 3] > 10) red++;
+    }
+    return { img: true, w: c.width, h: c.height, red };
+  });
+  check(mixRow === 1 && paintOverLayer.ok === true && layerStroke.red > 0,
+    '有混合层时抬笔后笔迹仍在（笔迹合成在混合层之上）',
+    JSON.stringify({ mixRow, paintOverLayer, layerStroke }));
+
+  /* Shift + 拖动 = 模糊笔：同一片区域再来一遍，必须推一个 blur 遮罩层，
+   * 而且合成图上的笔迹色还在（糊开 ≠ 擦掉） */
+  const blurStroke = await page.evaluate(() => {
+    const API = window.modelDesk, d = API.__debug(), T = window.THREE;
+    const m = d.mesh, canvas = d.canvas, r = canvas.getBoundingClientRect();
+    const camPos = d.camera.getWorldPosition(new T.Vector3());
+    let bestDot = -Infinity, bestC = null;
+    for (let f = 0; f < m.faceIds.length; f++) {
+      const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+      if (e - s < 3) continue;
+      const c = new T.Vector3();
+      for (let k = s; k < e; k++) {
+        const vi = m.faceIndices[k] * 3;
+        c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
+      }
+      c.multiplyScalar(1 / (e - s));
+      const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
+      const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+      const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+      const n = new T.Vector3().crossVectors(v1, v2).normalize();
+      const wc = d.pivot.localToWorld(c.clone());
+      const wn = n.clone().transformDirection(d.pivot.matrixWorld);
+      const dot = wn.dot(camPos.clone().sub(wc).normalize());
+      if (dot > bestDot) { bestDot = dot; bestC = wc; }
+    }
+    if (!bestC) return { skip: true };
+    const p = bestC.clone().project(d.camera);
+    const x = r.left + (p.x * 0.5 + 0.5) * r.width, y = r.top + (-p.y * 0.5 + 0.5) * r.height;
+    const send = (type, cx, cy) => canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      pointerId: 82, shiftKey: true, clientX: cx, clientY: cy
+    }));
+    const before = (window.TexStack ? window.TexStack.ops(API.getDocument(), API.getState().paintSlot || 0) : []).length;
+    send('pointerdown', x, y);
+    for (let i = 1; i <= 5; i++) send('pointermove', x + i * 9, y + i * 5);
+    send('pointerup', x + 45, y + 25);
+    const stack = window.TexStack ? window.TexStack.ops(API.getDocument(), API.getState().paintSlot || 0) : [];
+    const last = stack[stack.length - 1];
+    let maskPx = 0;
+    if (last && last.canvas) {
+      const dd = last.canvas.getContext('2d').getImageData(0, 0, last.canvas.width, last.canvas.height).data;
+      for (let i = 3; i < dd.length; i += 4) if (dd[i] > 8) maskPx++;
+    }
+    return {
+      before, after: stack.length,
+      type: last ? last.type : '', label: last ? last.label : '',
+      radius: last ? last.radius : 0, maskPx
+    };
+  });
+  await page.waitForTimeout(400);
+  const blurKeep = await page.evaluate(() => {
+    const d = window.modelDesk.__debug();
+    let best = null;
+    d.scene.traverse(o => {
+      const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+      ms.forEach(m => { if (m.map && m.map.image && m.map.image.width) best = m.map.image; });
+    });
+    if (!best) return { img: false, red: -1 };
+    const c = document.createElement('canvas'); c.width = best.width; c.height = best.height;
+    const g = c.getContext('2d'); g.drawImage(best, 0, 0);
+    const data = g.getImageData(0, 0, c.width, c.height).data;
+    let red = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] > 200 && data[i + 1] < 70 && data[i + 2] < 70 && data[i + 3] > 10) red++;
+    }
+    return { img: true, red };
+  });
+  check(blurStroke.type === 'blur' && blurStroke.maskPx > 0 && blurKeep.red > 0,
+    'Shift + 拖动 = 模糊笔（推 blur 遮罩层且笔迹色仍在）',
+    JSON.stringify({ blurStroke, blurKeep, before: blurStroke.before }));
+
+  /* 收回混合层：后面的断言按「干净文档」继续 */
+  await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('.md-mix-acts button'))
+      .find(x => x.textContent.trim() === '清空');
+    if (b) b.click();
+  });
+  await page.waitForTimeout(250);
 
   /* 平铺 / atlas UV（导入模型的 uv 常超出 0–1）：修复前笔刷落在画布外，
    * UV 岛遮罩还会把整笔裁成空 —— 表现就是「有贴图的模型上绘制无反应」。
@@ -3430,9 +4316,18 @@ Connections:  {
   const backModel = await page.evaluate(() => {
     document.querySelector('[data-md-tbk="model"]').click();
     const s = window.modelDesk.getState();
-    return { kind: s.tbKind, boxHidden: document.getElementById('mdPaintBox').hidden };
+    return {
+      kind: s.tbKind, boxHidden: document.getElementById('mdPaintBox').hidden,
+      editor: s.editor, barHidden: document.getElementById('mdPaintBar').hidden,
+      railHidden: document.getElementById('mdPaintRail').hidden,
+      shelf: getComputedStyle(document.querySelector('.md-shelf')).display
+    };
   });
   check(backModel.kind === 'model' && backModel.boxHidden, '切回建模工具箱后绘画面板收起', JSON.stringify(backModel));
+  check(backModel.editor === 'model' && backModel.barHidden === true && backModel.railHidden === true &&
+    backModel.shelf !== 'none',
+    '切回建模模式：笔刷条与左侧绘制工具栏收起，建模工具架恢复',
+    JSON.stringify({ editor: backModel.editor, bar: backModel.barHidden, rail: backModel.railHidden, shelf: backModel.shelf }));
 
   /* 组件单独显示：面模式下选一张面，隔离后只显示这张面（替身网格），退出恢复整只对象 */
   await page.keyboard.press('F11');

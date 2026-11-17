@@ -56,11 +56,25 @@
   function cardLlm() {
     var key = val('llmKey'), model = val('llmModel'), base = val('llmBaseUrl');
     var st = key && model ? 'ok' : (key || model ? 'warn' : 'off');
+    /* 模型池多余一条时，顺带在卡片上给出「几个模型、几个空闲」，
+       省得为了看一眼路由状态再点进语言模型页。 */
+    var pool = '';
+    try {
+      if (typeof LLMRouter !== 'undefined' && LLMRouter && typeof LLMRouter.stats === 'function') {
+        var list = LLMRouter.stats() || [];
+        if (list.length > 1) {
+          var idle = list.filter(function (e) {
+            return e.enabled && e.inflight === 0 && e.cooldownLeft === 0;
+          }).length;
+          pool = ' · 池内 ' + list.length + ' 个 · ' + idle + ' 空闲';
+        }
+      }
+    } catch (e) { pool = ''; }
     return {
       key: 'llm', name: '语言模型', ico: 'llm', state: st,
-      value: model
+      value: (model
         ? esc(model) + ' · ' + esc(hostOf(base))
-        : (key ? '已填 Key，还没选模型' : '未配置：填 Key 后读取模型')
+        : (key ? '已填 Key，还没选模型' : '未配置：填 Key 后读取模型')) + pool
     };
   }
 

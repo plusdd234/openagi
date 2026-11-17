@@ -704,3 +704,134 @@
 }
 .os-win.imglab ::-webkit-scrollbar-thumb:hover { background: #c3cad4; background-clip: content-box; }
 .os-win.imglab ::-webkit-scrollbar-track { background: transparent; }
+
+/* 图层蒙版：内容缩略图 + 蒙版缩略图并排，点谁编辑谁 */
+.ps-app .ps-lay-slot { display: flex; align-items: center; gap: 3px; flex: 0 0 auto; }
+.ps-app .ps-lay-thumb.is-dim { opacity: .55; }
+.ps-app .ps-lay-mask {
+  flex: 0 0 32px; width: 32px; height: 32px; border-radius: 4px;
+  background: #fff; border: 1px solid #e3e6ea; cursor: pointer;
+}
+.ps-app .ps-lay-mask:hover { border-color: #9aabbd; }
+.ps-app .ps-lay-mask.is-target { outline: 2px solid #3d6ea8; outline-offset: 1px; border-color: #3d6ea8; }
+.ps-app .ps-lay-mask.is-muted { opacity: .42; }
+.ps-app .ps-mask-row { flex-wrap: wrap; row-gap: 4px; padding-top: 2px; }
+.ps-app .ps-mask-state {
+  flex: 0 0 auto; font-size: 9.5px; color: #98a0ae;
+  padding: 1px 6px; border-radius: 999px; background: #f2f4f7;
+}
+.ps-app .ps-mask-state.is-on { color: #3d6ea8; background: #eef3fb; }
+.ps-app .ps-mask-state.is-off { color: #b06a2c; background: #fdf3e8; }
+.ps-app .ps-mask-row .ps-mini { height: 19px; padding: 0 7px; font-size: 9.5px; }
+.ps-app .ps-mini.is-primary { color: #fff; background: #3d6ea8; border-color: #3d6ea8; }
+.ps-app .ps-mini.is-primary:hover { background: #345f92; color: #fff; }
+.ps-app .ps-mini.is-on { color: #3d6ea8; background: #eef3fb; border-color: #cfe0f5; }
+
+.ps-app .ps-histogram {
+  margin: 2px 10px 6px; border-radius: 5px; overflow: hidden;
+  border: 1px solid #e3e6ea; background: #12161e;
+}
+.ps-app .ps-histogram canvas { display: block; width: 100%; height: 52px; }
+
+/* ---------- 通道面板 ---------- */
+.ps-app .ps-ch-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 8px; min-height: 42px; cursor: pointer;
+  border-bottom: 1px solid #f2f4f6; border-left: 2px solid transparent;
+}
+.ps-app .ps-ch-row:hover { background: #f7f8fa; }
+.ps-app .ps-ch-row.is-on { background: #eef4fc; border-left-color: var(--ps-accent); }
+.ps-app .ps-ch-dot {
+  flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .16);
+}
+.ps-app .ps-ch-dot.is-rgb { background: conic-gradient(#e2574c 0 33%, #4fae63 0 66%, #4a7fd4 0); }
+.ps-app .ps-ch-dot.is-r { background: #e2574c; }
+.ps-app .ps-ch-dot.is-g { background: #4fae63; }
+.ps-app .ps-ch-dot.is-b { background: #4a7fd4; }
+.ps-app .ps-ch-thumb {
+  flex: 0 0 40px; width: 40px; height: 34px; border-radius: 4px;
+  background: #0e1116; border: 1px solid #dfe3e8;
+}
+.ps-app .ps-ch-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ps-app .ps-ch-meta b { color: #2a2f36; font-size: 11px; font-weight: 500; }
+.ps-app .ps-ch-row.is-on .ps-ch-meta b { color: #1f2328; }
+.ps-app .ps-ch-meta i { color: #98a0ae; font-style: normal; font-size: 9.5px; }
+.ps-app .ps-ch-key { flex: 0 0 auto; color: #b3bac5; font-style: normal; font-size: 9px; letter-spacing: .2px; }
+.ps-app .ps-ch-foot {
+  padding: 8px 10px 9px; color: #98a0ae; font-size: 9.5px; line-height: 1.6;
+}
+
+/* ---------- 路径面板 ---------- */
+.ps-app .ps-path-head {
+  display: flex; align-items: center; gap: 6px;
+  min-height: 30px; padding: 3px 8px 3px 6px;
+  border-bottom: 1px solid #f2f4f6; cursor: pointer;
+  background: #fbfcfd;
+}
+.ps-app .ps-path-head:hover { background: #f6f8fa; }
+.ps-app .ps-path-head.is-on { background: #eef4fc; }
+.ps-app .ps-path-head.is-off { opacity: .55; }
+.ps-app .ps-path-eye {
+  flex: 0 0 16px; width: 16px; height: 18px; padding: 0;
+  border: 0; background: transparent; color: #8a9098; cursor: pointer;
+  font-size: 12px; line-height: 1;
+}
+.ps-app .ps-path-eye:hover { color: #3d6ea8; }
+.ps-app .ps-path-name {
+  flex: 1 1 auto; min-width: 0; color: #2a2f36; font-size: 10.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ps-app .ps-path-head.is-on .ps-path-name { color: #1f2328; font-weight: 500; }
+.ps-app .ps-path-n {
+  flex: 0 0 auto; min-width: 16px; padding: 0 5px; border-radius: 8px;
+  background: #eef1f5; color: #6a7488; font-size: 9px; line-height: 14px; text-align: center;
+}
+.ps-app .ps-path-row {
+  display: flex; align-items: center; gap: 7px;
+  min-height: 32px; padding: 3px 8px 3px 18px; cursor: pointer;
+  border-bottom: 1px solid #f4f6f8; border-left: 2px solid transparent;
+}
+.ps-app .ps-path-row:hover { background: #f7f8fa; }
+.ps-app .ps-path-row.is-on { background: #eef4fc; border-left-color: var(--ps-accent); }
+.ps-app .ps-path-ico { flex: 0 0 15px; width: 15px; height: 15px; color: #a5761a; }
+.ps-app .ps-path-ico svg { width: 15px; height: 15px; display: block; }
+.ps-app .ps-path-meta { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ps-app .ps-path-meta b { color: #2a2f36; font-size: 10.5px; font-weight: 500; }
+.ps-app .ps-path-row.is-on .ps-path-meta b { color: #1f2328; }
+.ps-app .ps-path-meta i { color: #98a0ae; font-style: normal; font-size: 9px; }
+
+/* 状态栏颜色模式芯片：单通道预览时高亮，提醒当前不是 RGB 复合视图 */
+.ps-app .ps-stat.ps-mode.is-solo { color: #a5761a; font-weight: 600; }
+
+/* ---------- 位图 / 矢量双编辑器 ---------- */
+.ps-app .ps-mode-switch {
+  display: inline-flex; padding: 2px; gap: 2px;
+  background: #eef1f5; border: 1px solid #e0e4e9; border-radius: 7px;
+}
+.ps-app .ps-mode-switch button {
+  height: 20px; padding: 0 10px; border: 0; border-radius: 5px; cursor: pointer;
+  font: inherit; font-size: 10.5px; color: #6a7488; background: transparent;
+  transition: background .13s ease, color .13s ease;
+}
+.ps-app .ps-mode-switch button:hover { color: #1f2328; background: #e4e8ee; }
+.ps-app .ps-mode-switch button.is-on {
+  color: #fff; background: #2f6fd0;
+  box-shadow: 0 1px 2px rgba(24, 56, 108, .22);
+}
+.ps-app .ps-stat.ps-editor { color: #6a7488; }
+.ps-app .ps-stat.ps-editor.is-vector { color: #2f6fd0; font-weight: 600; }
+
+/* 路径面板里的布尔运算徽标 */
+.ps-app .ps-path-op {
+  flex: 0 0 auto; margin-left: auto; padding: 0 5px; border-radius: 7px;
+  font-size: 9px; line-height: 14px; color: #7a828f; background: #f0f2f5;
+}
+.ps-app .ps-path-op.is-subtract { color: #b4543b; background: #fbeeea; }
+.ps-app .ps-path-op.is-intersect { color: #2f6fd0; background: #eaf1fc; }
+.ps-app .ps-path-op.is-exclude { color: #8a5bb8; background: #f2ecfa; }
+
+/* 矢量模式：画布边缘与选项栏给一点冷色提示，提醒当前在矢量编辑 */
+.ps-app.is-vector .ps-opt-tool { color: #245ba8; }
+.ps-app .ps-bool-seg { margin-right: 2px; }
+

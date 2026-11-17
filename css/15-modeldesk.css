@@ -3766,4 +3766,138 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
   text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* ============================================================
+ * 22. 编辑器模式：建模 / 绘制
+ * 同一套 DOM，靠 .md-app[data-md-editor] 换显隐与工具条：
+ *   建模 → 工具架 / 竖条 / 大纲 / 建模工具箱 / 内容浏览器
+ *   绘制 → 顶部笔刷条 + 绘画工具箱（视口最大化，建模工具整排收起）
+ * 切模式不改任何状态（文档 / 选择 / 笔刷 / 页签都留在原处）。
+ * ============================================================ */
+
+/* 22.1 菜单条里的模式开关 */
+.md-app .md-editorsw {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 2px;
+  padding: 2px; margin-right: 4px;
+  border: 1px solid var(--md-line); border-radius: 5px;
+  background: var(--md-sunken);
+}
+.md-app .md-edbtn {
+  height: 18px; padding: 0 9px;
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 0; border-radius: 3px;
+  background: transparent; color: var(--md-mute);
+  font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
+}
+.md-app .md-edbtn svg { width: 12px; height: 12px; display: block; }
+.md-app .md-edbtn:hover { color: var(--md-txt); background: var(--md-raise-hi); }
+.md-app .md-edbtn.on {
+  background: var(--md-raise); color: var(--md-txt);
+  box-shadow: 0 1px 2px rgba(28, 38, 60, .12), inset 0 0 0 1px var(--md-line);
+}
+.md-app .md-edbtn.on[data-md-editor-btn="paint"] {
+  background: var(--md-on); color: #fff; box-shadow: none;
+}
+.md-app .md-edbtn.on[data-md-editor-btn="paint"]:hover { background: var(--md-on-hi); color: #fff; }
+
+/* 22.2 绘制模式专用工具条（只在绘制模式出现） */
+.md-app .md-paintbar {
+  flex: 0 0 34px; height: 34px;
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 9px;
+  background: linear-gradient(180deg, #f5f9fe 0%, #edf3fa 100%);
+  border-bottom: 1px solid var(--md-line);
+  overflow: hidden;
+}
+.md-app .md-paintbar[hidden] { display: none; }
+.md-app .md-pb-title {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 700; color: var(--md-on-line); letter-spacing: .02em;
+}
+.md-app .md-pb-title svg { width: 13px; height: 13px; display: block; color: var(--md-on); }
+.md-app .md-pb-sep {
+  flex: 0 0 1px; width: 1px; height: 16px; background: var(--md-line);
+}
+.md-app .md-pb-group { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.md-app .md-pb-btn {
+  height: 22px; padding: 0 9px; flex: 0 0 auto;
+  border: 1px solid var(--md-field-line); border-radius: 4px;
+  background: var(--md-raise); color: var(--md-dim);
+  font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 1px 1px rgba(28, 38, 60, .04);
+}
+.md-app .md-pb-btn:hover { background: var(--md-raise-hi); color: var(--md-txt); border-color: #c9d0d9; }
+.md-app .md-pb-btn.on {
+  background: var(--md-on); border-color: var(--md-on-line); color: #fff; box-shadow: none;
+}
+.md-app .md-pb-field {
+  flex: 0 1 auto; min-width: 0;
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10.5px; color: var(--md-dim); white-space: nowrap;
+}
+.md-app .md-pb-field > span { flex: 0 0 auto; }
+.md-app .md-pb-field > b {
+  flex: 0 0 34px; font-size: 10px; font-weight: 500; color: var(--md-txt);
+  font-variant-numeric: tabular-nums;
+}
+.md-app .md-pb-field input[type=range] {
+  width: 82px; min-width: 60px; height: 14px; margin: 0;
+  accent-color: var(--md-on); cursor: pointer;
+}
+.md-app .md-paintbar input[type=color] {
+  flex: 0 0 auto; width: 26px; height: 22px; padding: 1px;
+  border: 1px solid var(--md-field-line); border-radius: 4px;
+  background: var(--md-field); cursor: pointer;
+}
+.md-app .md-pb-meta {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  font-size: 10px; color: var(--md-mute); white-space: nowrap;
+}
+.md-app .md-pb-right { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+
+/* 22.3 右侧标题：建模模式显示三个页签，绘制模式只显示标题 */
+.md-app .md-right-paint-t { display: none; font-size: 11px; font-weight: 600; color: var(--md-txt); }
+.md-app[data-md-editor="paint"] .md-right-paint-t { display: inline-flex; }
+
+/* 22.4 绘制模式的显隐：建模专用区域整块收起（DOM 保留，状态不动） */
+.md-app[data-md-editor="paint"] .md-shelf,
+.md-app[data-md-editor="paint"] .md-strip,
+.md-app[data-md-editor="paint"] .md-outline,
+.md-app[data-md-editor="paint"] .md-dock,
+.md-app[data-md-editor="paint"] .md-tb-left,
+.md-app[data-md-editor="paint"] .md-tbkinds { display: none; }
+
+/* 22.5 绘制模式左侧工具条：图标竖向排列，选中态用主色实心块，
+ * 与右侧参数面板形成「左边选工具、右边调参数」的图像编辑器习惯。 */
+.md-app .md-paintrail {
+  flex: 0 0 38px; min-height: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 6px 0;
+  background: #f6f7f9; border-right: 1px solid var(--md-line);
+  overflow: hidden;
+}
+.md-app .md-paintrail[hidden] { display: none; }
+.md-app .md-prbtn {
+  width: 30px; height: 30px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 4px;
+  background: transparent; color: #3b4147; cursor: pointer;
+}
+.md-app .md-prbtn svg { width: 18px; height: 18px; display: block; }
+.md-app .md-prbtn:hover { background: var(--md-raise-hi); border-color: var(--md-line); color: var(--md-txt); }
+.md-app .md-prbtn.on {
+  background: var(--md-on); border-color: var(--md-on-line); color: #fff;
+  box-shadow: 0 1px 3px rgba(28, 60, 100, .22);
+}
+.md-app .md-prsep { flex: 0 0 1px; width: 20px; height: 1px; margin: 4px 0; background: var(--md-line); }
+.md-app .md-prspacer { flex: 1 1 auto; }
+.md-app .md-prsw {
+  flex: 0 0 auto; width: 22px; height: 22px; border-radius: 4px;
+  border: 1px solid var(--md-field-line); background: #d94f4f;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .55);
+}
+
+/* 绘制模式：顶栏只留文档动作（新建 / 打开 / 保存 / 撤销 / 重做） */
+.md-app[data-md-editor="paint"] .md-toolbar { background: #fbfbfc; }
+
 

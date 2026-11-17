@@ -170,8 +170,7 @@ function msLocalChoice(item){
   if(item.engine === 'kokoro') return msKokoroChoice(item);
   /* MeloTTS 是单音色、ZipVoice 只有一套参考录音，值固定即可 */
   if(item.engine === 'melo') return 'melo:zh_en';
-  /* 机械音复用海星模型，靠效果器区分，启用值也要能带上 effect */
-  if(item.engine === 'vits') return item.effect ? ('vits:' + item.effect) : 'vits:theresa';
+  if(item.engine === 'vits') return 'vits:theresa';
   if(item.engine === 'zipvoice') return 'zipvoice:clone';
   return msPiperChoice(item);
 }
@@ -253,7 +252,7 @@ async function msPreviewLocal(item){
   const payload = { text: msPreviewText(item), rate: 1 };
   if(item.engine === 'kokoro'){ payload.engine = 'kokoro'; payload.sid = item.sid; }
   else if(item.engine === 'melo'){ payload.engine = 'melo'; }
-  else if(item.engine === 'vits'){ payload.engine = 'vits'; if(item.effect) payload.effect = item.effect; }
+  else if(item.engine === 'vits'){ payload.engine = 'vits'; }
   else if(item.engine === 'zipvoice'){ payload.engine = 'zipvoice'; }
   else { payload.voice = item.voiceFile; }
   const res = await fetch(base + '/tts/speak', {

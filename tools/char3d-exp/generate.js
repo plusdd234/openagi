@@ -844,8 +844,9 @@ async function main() {
    * 验证「原画像素直接当参考」对头发的影响时，不必重跑整套对照组。 */
   const ONLY_PEEL = process.argv.includes('--only-peel');
   const HYBRID_UV = process.argv.includes('--hybrid-uv');
+  const REGIONAL = process.argv.includes('--regional');
   const HYBRID = process.argv.includes('--hybrid') || HYBRID_UV;
-  const REUSE = ONLY_CN || ONLY_PEEL || HYBRID;
+  const REUSE = ONLY_CN || ONLY_PEEL || HYBRID || REGIONAL;
   const front = inputs.front;
   const CN_LINE = 'control_v11p_sd15_lineart_fp16.safetensors';
   const CN_DEPTH = 'control_v11f1p_sd15_depth_fp16.safetensors';
@@ -1366,6 +1367,205 @@ async function main() {
   /* ---------- --hybrid：细节（depth CN + 二段）与配色（UV 语义底图回灌）解耦 ----------
    * 每个视图：depth 1.0 → 0.35 二段（只接躯干/腿/脚）→ 用 flat_<v> 回灌色相 → 锁轮廓。
    * 验证两件事：①细节是否保住 CND 的水平；②跨视角色差是否接近 D。 */
+  /* ---------- --regional：底图从「每岛一个定值」改成「岛内保留原画分布」 ----------
+   * 岛仍然决定「哪块原画属于哪个表面」，但岛内不再取均值：
+   *   reg = artw + (岛均值(flat) - 岛均值(artw))
+   * 逐像素搬原画的分布（眼睛、淋巴结、花纹都在），再用逐岛均值偏移把整块色相
+   * 对齐到语义底图，避免跨岛串色。这是「分布」而不是「均值」的取色。 */
+  if (REGIONAL) {
+    const v = 'front';
+    const wf = await warpArt(v);
+    await ops.load([{ name: 'artw_' + v, url: 'data:image/png;base64,' + fs.readFileSync(wf).toString('base64') }]);
+    await flatBase(v);
+    const regRes = await ops.page.evaluate(({ v, S }) => {
+      const grab = n => {
+        const c = document.createElement('canvas');
+        c.width = c.height = S;
+        const g = c.getContext('2d');
+        g.drawImage(window.BUF[n], 0, 0, S, S);
+        return g.getImageData(0, 0, S, S).data;
+      };
+      const flat = grab('flat_' + v), art = grab('artw_' + v);
+      const idm = grab('im_' + v), m = grab('in_' + v + '_mask');
+      const st = {};
+      for (let i = 0; i < flat.length; i += 4) {
+        if (m[i] < 128) continue;
+        const id = idm[i] | (idm[i + 1] << 8);
+        if (!id) continue;
+        const e = st[id] || (st[id] = { n: 0, f: [0, 0, 0], a: [0, 0, 0] });
+        e.n++;
+        for (let c = 0; c < 3; c++) { e.f[c] += flat[i + c]; e.a[c] += art[i + c]; }
+      }
+      for (const id of Object.keys(st)) {
+        const e = st[id];
+        for (let c = 0; c < 3; c++) { e.f[c] /= e.n; e.a[c] /= e.n; }
+      }
+      /* 语义遮挡门控：岛是皮肤、原画同位置却是头发/绿饰（cls 1/3）的像素先标记；
+       * 再按 4 邻连通域区分——面积大的（刘海、披风）拦掉，面积小的（虹膜、眼线）
+       * 保留。阈值 300 来自实测：512 下每只眼睛约 100~200 px，刘海 > 600 px。 */
+      const cls = (r, g, b) => {
+        if (r > g && r - b > 14) return 0;
+        if (g + 4 >= r && g - b > 6) return 1;
+        if (Math.max(r, g, b) - Math.min(r, g, b) <= 14 && Math.min(r, g, b) > 170) return 2;
+        return 3;
+      };
+      const skinIsl = {};
+      for (const id of Object.keys(st)) skinIsl[id] = cls(st[id].f[0], st[id].f[1], st[id].f[2]) === 0;
+      const bad = new Uint8Array(S * S);
+      let before = 0, skinPx = 0;
+      for (let p = 0; p < S * S; p++) {
+        const i = p * 4;
+        if (m[i] < 128) continue;
+        const id = idm[i] | (idm[i + 1] << 8);
+        if (!id || !skinIsl[id]) continue;
+        skinPx++;
+        const ac = cls(art[i], art[i + 1], art[i + 2]);
+        if (ac === 1 || ac === 3) { bad[p] = 1; before++; }
+      }
+      const gate = new Uint8Array(S * S);
+      const vis = new Uint8Array(S * S);
+      const stack = [];
+      for (let p0 = 0; p0 < S * S; p0++) {
+        if (!bad[p0] || vis[p0]) continue;
+        stack.length = 0;
+        stack.push(p0);
+        vis[p0] = 1;
+        const comp = [];
+        while (stack.length) {
+          const p = stack.pop();
+          comp.push(p);
+          const x = p % S, y = (p / S) | 0;
+          const nb = [x > 0 ? p - 1 : -1, x < S - 1 ? p + 1 : -1, y > 0 ? p - S : -1, y < S - 1 ? p + S : -1];
+          for (const q of nb) {
+            if (q < 0 || !bad[q] || vis[q]) continue;
+            vis[q] = 1;
+            stack.push(q);
+          }
+        }
+        if (comp.length >= 300) for (const p of comp) gate[p] = 1;
+      }
+      let gated = 0;
+      for (let p = 0; p < S * S; p++) if (gate[p]) gated++;
+      const c = document.createElement('canvas');
+      c.width = c.height = S;
+      const g = c.getContext('2d');
+      const od = g.createImageData(S, S);
+      /* 掩膜外填白（与 SD 的 white background 一致），避免黑色边框被当成结构 */
+      for (let i = 0; i < od.data.length; i += 4) { od.data[i] = od.data[i + 1] = od.data[i + 2] = 255; od.data[i + 3] = 255; }
+      for (let p = 0; p < S * S; p++) {
+        const i = p * 4;
+        if (m[i] < 128) continue;
+        const id = idm[i] | (idm[i + 1] << 8);
+        const e = st[id];
+        if (gate[p]) {
+          /* 被遮挡：退回该岛均值，不再把原画前景像素贴到背景表面 */
+          for (let ch = 0; ch < 3; ch++) od.data[i + ch] = e ? Math.round(e.f[ch]) : 255;
+          continue;
+        }
+        for (let ch = 0; ch < 3; ch++) {
+          const shift = e ? (e.f[ch] - e.a[ch]) : 0;
+          od.data[i + ch] = Math.max(0, Math.min(255, Math.round(art[i + ch] + shift)));
+        }
+      }
+      g.putImageData(od, 0, 0);
+      window.BUF['reg2_' + v] = c;
+      return {
+        url: c.toDataURL('image/png'),
+        stats: { skinPx, mismatchBefore: before, gatedPx: gated, mismatchAfter: before - gated,
+          mismatchPctBefore: skinPx ? +(100 * before / skinPx).toFixed(1) : 0,
+          mismatchPctAfter: skinPx ? +(100 * (before - gated) / skinPx).toFixed(1) : 0 }
+      };
+    }, { v, S: PX });
+    saveUrl(path.join(genDir, 'reg2_front.png'), regRes.url);
+    recon.gateStats = regRes.stats;
+    console.log('[regional] 门控 ' + JSON.stringify(regRes.stats));
+
+    const regIn = comfy.pushInput(path.join(genDir, 'reg2_front.png'), 'c3_' + runTag + '_reg2_front.png');
+    const R35g = await gen(comfy.img2img({
+      positive: POS, negative: NEG, image: regIn, denoise: 0.35, seed: SEED, prefix: prefix + '_R35G'
+    }), 'R35g');
+    await ops.load([{ name: 'R35g', url: 'data:image/png;base64,' + fs.readFileSync(R35g.file).toString('base64') }]);
+
+    /* 两层语义边界：岛缝当候选，三分类筛成语义界，再叠部件带界 + 外轮廓。
+     * 只把它当结构约束叠在原画分布底图上，验证「岛内细节 + 分件边界」能否共存。 */
+    const seamR = await uvSeam('front');
+    const seamRIn = comfy.pushInput(seamR.file, 'c3_' + runTag + '_uvseam_r.png');
+    const RU5 = await gen(comfy.controlnet({
+      positive: POS, negative: NEG, image: seamRIn, cnet: CN_LINE, strength: 0.5,
+      base: regIn, latent: true, denoise: 0.35, seed: SEED, prefix: prefix + '_RU5', w: PX, h: PX
+    }), 'RU5');
+    const RU7 = await gen(comfy.controlnet({
+      positive: POS, negative: NEG, image: seamRIn, cnet: CN_LINE, strength: 0.7,
+      base: regIn, latent: true, denoise: 0.35, seed: SEED, prefix: prefix + '_RU7', w: PX, h: PX
+    }), 'RU7');
+    await ops.load([
+      { name: 'RU5', url: 'data:image/png;base64,' + fs.readFileSync(RU5.file).toString('base64') },
+      { name: 'RU7', url: 'data:image/png;base64,' + fs.readFileSync(RU7.file).toString('base64') }
+    ]);
+
+    const mrect = { x: 0, y: 0, w: PX, h: PX };
+    recon.metrics.R35g = await ops.measure('R35g', 'in_front_mask', mrect, manifest.tree.front);
+    recon.metrics.RU5 = await ops.measure('RU5', 'in_front_mask', mrect, manifest.tree.front);
+    recon.metrics.RU7 = await ops.measure('RU7', 'in_front_mask', mrect, manifest.tree.front);
+
+    /* 脸部保真度：生成图 vs 对齐原画，在 head 掩膜内的逐像素 Lab 距离 */
+    const faceNames = ['reg2_front', 'R35g', 'RU5', 'RU7'];
+    const extraLoads = [];
+    for (const n of ['R_img35', 'D_front_final', 'H_front_final', 'LAB_d100']) {
+      const f = path.join(genDir, n + '.png');
+      if (!fs.existsSync(f)) continue;
+      faceNames.push(n);
+      extraLoads.push({ name: n, url: 'data:image/png;base64,' + fs.readFileSync(f).toString('base64') });
+    }
+    if (extraLoads.length) await ops.load(extraLoads);
+    const faceDE = await ops.page.evaluate(({ names }) => {
+      const S = 512;
+      const grab = n => {
+        const c = document.createElement('canvas');
+        c.width = c.height = S;
+        const g = c.getContext('2d');
+        g.drawImage(window.BUF[n], 0, 0, S, S);
+        return g.getImageData(0, 0, S, S).data;
+      };
+      const lab = (r, g, b) => {
+        let R = r / 255, G = g / 255, B = b / 255;
+        R = R > 0.04045 ? Math.pow((R + 0.055) / 1.055, 2.4) : R / 12.92;
+        G = G > 0.04045 ? Math.pow((G + 0.055) / 1.055, 2.4) : G / 12.92;
+        B = B > 0.04045 ? Math.pow((B + 0.055) / 1.055, 2.4) : B / 12.92;
+        let X = (R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047;
+        let Y = R * 0.2126 + G * 0.7152 + B * 0.0722;
+        let Z = (R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883;
+        const f = t => t > 0.008856 ? Math.cbrt(t) : (7.787 * t + 16 / 116);
+        [X, Y, Z] = [f(X), f(Y), f(Z)];
+        return [116 * Y - 16, 500 * (X - Y), 200 * (Y - Z)];
+      };
+      const ref = grab('artw_front'), hm = grab('pm_front_head');
+      const out = {};
+      for (const n of names) {
+        const d = grab(n);
+        let sum = 0, cnt = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          if (hm[i] < 128) continue;
+          const a = lab(ref[i], ref[i + 1], ref[i + 2]);
+          const b = lab(d[i], d[i + 1], d[i + 2]);
+          sum += Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+          cnt++;
+        }
+        out[n] = { headDE: cnt ? +(sum / cnt).toFixed(2) : null, px: cnt };
+      }
+      return out;
+    }, { names: faceNames });
+    recon.faceDE2 = faceDE;
+    recon.conditions.reg2 = { file: 'gen/reg2_front.png', desc: '岛内分布 + 语义遮挡门控（刘海拦、虹膜留）' };
+    recon.conditions.R35g = { file: 'gen/R35g.png', desc: 'reg2 底图 img2img 0.35' };
+    recon.conditions.RU5 = { file: 'gen/RU5.png', desc: 'reg2 底图 + 语义边界 CN 0.5 / 0.35' };
+    recon.conditions.RU7 = { file: 'gen/RU7.png', desc: 'reg2 底图 + 语义边界 CN 0.7 / 0.35' };
+    console.log('[regional] R35g ' + JSON.stringify(recon.metrics.R35g));
+    console.log('[regional] RU5 ' + JSON.stringify(recon.metrics.RU5));
+    console.log('[regional] RU7 ' + JSON.stringify(recon.metrics.RU7));
+    console.log('[regional] faceDE ' + JSON.stringify(faceDE));
+  }
+
   if (HYBRID) {
     const Hfiles = {};
     const Hraw = {};
@@ -1904,6 +2104,20 @@ async function main() {
     fs.writeFileSync(jsonFile, JSON.stringify(old, null, 2));
     console.log('[metrics] P ' + JSON.stringify(metrics.P));
     console.log('[metrics] D ' + JSON.stringify(metrics.D));
+  } else if (REGIONAL) {
+    const old = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
+    old.metrics.R35g = recon.metrics.R35g;
+    old.metrics.RU5 = recon.metrics.RU5;
+    old.metrics.RU7 = recon.metrics.RU7;
+    old.gateStats = recon.gateStats;
+    old.conditions.reg2 = recon.conditions.reg2;
+    old.conditions.R35g = recon.conditions.R35g;
+    old.conditions.RU5 = recon.conditions.RU5;
+    old.conditions.RU7 = recon.conditions.RU7;
+    old.faceDE = Object.assign(old.faceDE || {}, recon.faceDE2 || {});
+    fs.writeFileSync(jsonFile, JSON.stringify(old, null, 2));
+    console.log('[metrics] R35g ' + JSON.stringify(recon.metrics.R35g));
+    console.log('[faceDE] ' + JSON.stringify(recon.faceDE2));
   } else if (HYBRID) {
     /* 只补 H 组：保留旧指标、反投结果，追加 H 的条件 / 度量 / 跨视角色差 / 反投源 */
     const old = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));

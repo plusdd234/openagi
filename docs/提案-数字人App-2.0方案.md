@@ -98,7 +98,10 @@
   `openSettings('tts')`，ZipVoice 缺参考录音时在提示里指路到「声音克隆」。
 - 音色优先级不变：人设 `persona.tts.voice` 优先，未选时跟随 `hf_ttsVoice` 默认音色，提示行会写明正在跟随谁。
 
-### S7 音色分「超拟人 / 机械音」，机械音可选朗读方式（2026-11-16 追加）
+### S7 音色分「超拟人 / 机械音」，机械音可选朗读方式（2026-11-16 追加，2026-11-17 已废弃）
+
+> 2026-11-17 更新：深海机娘机械音、`tts-mecha.js` 效果器与 `vits:mecha` 启用值已删除，
+> 该页签由 S9「快速合成」替代；下面的机械音描述只作历史记录。
 
 - 设置页「语音合成 → 音色」拆成两个页签：
   - **超拟人**：系统语音 + 本地自然音色（Piper / Kokoro / MeloTTS / 角色音色原声 / ZipVoice）。
@@ -107,9 +110,47 @@
 - 机械音的两种朗读方式存在 `hf_ttsMechaMode`（`ai` 默认 / `direct`），设置页与数字人共用同一份状态：
   - `ai`：系统提示词才下发 `[[p]]/[[r]]/[[t]]` 规则，由模型按语义控制停顿 / 变速 / 拖音；试听文本没有标记时自动套一句示范节奏。
   - `direct`：合成前剥离全部标记，整句原样读出。
-- 数字人语音面板：本地音色分成「超拟人 · 本地模型」与「机械音」两组；选中机械音时出现「AI 控制 / 直接朗读」切换；
-  直接朗读下 `speakAloud()` 先剥标记，避免标记被断句念出。
+- 数字人语音面板：本地音色分成「超拟人 · 本地模型」与「机械音」两组；选中机械音时出现「AI 控制 / 直接朗读」切换
+  （S8 已把这一行扩展到全部支持韵律的本地音色）；直接朗读下 `speakAloud()` 先剥标记，避免标记被断句念出。
 - 气泡、聊天记录、长期记忆仍只存剥离后的文本；标记只影响朗读链路。
+
+### S8 AI 语音控制扩展到全部可韵律音色（2026-11-17 追加）
+
+- 触发条件从「机械音 + AI 控制」放宽为「**支持韵律的本地音色 + AI 控制**」：
+  Piper / Kokoro / MeloTTS / VITS 角色音色都会在系统提示词里拿到 `[[p]]/[[r]]/[[t]]` 规则；
+  系统语音、ZipVoice 克隆音色不注入，直接朗读模式下也不注入。
+- 数字人语音面板的「AI 控制 / 直接朗读」行不再只在机械音下出现，选中上述任一本地音色即可切换；
+  状态键后来改为 `hf_ttsAiMode`（设置页与数字人共用），旧键不再读取。
+- 桥接层 `/tts/speak` 的韵律分段从 VITS 专用改为通用：
+  - `PROSODY_ENGINES = piper / kokoro / melo / vits`，逐段按 `[[r]]` 设置该引擎的 `length_scale`；
+  - 段间按 `[[p]]` 插静音，段尾按 `[[t]]` 补拖音，最后拼成一个 WAV；
+  - 没有标记时仍走原单次合成，不增加开销；ZipVoice 的语速参数不同，暂不参与。
+- 角色音色（含机械音）默认开启 AI 控制；关闭后 `speakAloud()` 先剥标记，气泡 / 记忆始终只存干净文本。
+- 验证：`tools/probe-live2d.js` 增加角色音色显示切换、直接朗读、提示文案、系统提示注入 4 项断言（共 65 项）；
+  `tools/tts-prosody.js` 35/35、`tools/tts-mecha.js` 12/12、`tools/settings.js` 全绿。
+  真实引擎的逐段合成需在装好模型后的桌面端试听确认；本机未安装本地语音模型，未跑端到端音频合成。
+
+### S9 参数合成 · 快问快答（2026-11-17 追加）
+
+目标不是给声音加机械音色，而是**运行时不再加载大语音模型**：老师模型只在离线蒸馏时用一次，
+之后由 LLM 的语速 / 停顿 / 音调 / 重音参数直接驱动波形，适合数字人短问答。
+
+- 离线蒸馏：`tools/distill-voice.js` 用已安装的 VITS Theresa 作为老师，从 `lexicon.txt`
+  取「单字 → 带调音节」，每个音节合成一次，裁静音、估基频、统一成 16 kHz 单声道 PCM，
+  写 `<TTS_DIR>/param/{bank.json,units.bin}`（断点续传，`--limit` / `--dry-run` / `--force`）。
+- 运行时：`plugins/runtime/tts-param.js` 纯 JS 合成，不启动子进程、不加载 onnx：
+  - 文字按「单字 → 音节」查音库，TD-PSOLA 同时控制时长与音调；
+  - 标点自带基础停顿，段落按 LLM 标记叠加 `[[r]]/[[p]]/[[t]]`，并支持 `[[f]]` 音调、`[[e]]` 重音；
+  - 相同请求走 LRU 缓存；音库缺失返回 404 由前端提示蒸馏，损坏才报 500。
+- 桥接层：`/tts/speak` 新增 `engine=param`；`/tts/status` 回报 `param/paramUnits/paramChars`。
+- 数字人：音色清单在音库就绪后出现「参数合成 · 快问快答」，与其它本地音色一样支持
+  「AI 控制 / 直接朗读」；系统提示只在参数音色下额外注入 `[[f]]/[[e]]` 规则。
+- 入口替换：删除「深海机娘 · 二次元机械音」目录项、`vits:mecha`、`tts-mecha.js` 与 DSP 效果器；
+  设置页第二页签与数字人快照都改为「快速合成」（`param:fast`），音库未蒸馏时显示引导文案。
+  数字人的 AI 控制开关改用中性命名 `l2dAiCtrl` / `data-l2d-ai`，状态键统一为 `hf_ttsAiMode`。
+- 验证：`tools/tts-param.js` 21/21（状态、拼接、语速、停顿、PSOLA 变调、重音、缓存、坏索引）、
+  `tools/tts-prosody.js` 45/45。本机未安装 VITS，`distill-voice.js` 只做了缺少模型时的报错路径验证，
+  真实音库需在桌面端装好角色音色后运行一次再试听。
 
 ## 3. 多 AI 分工（文件所有权）
 
@@ -169,3 +210,6 @@
 - 2026-11-15：衣柜联动——启动读 `hf_wardrobe_state.draft`（皮套 + 隐藏部件），`beforeModelUpdate` 压部件透明度；新增 `window.__l2dApplyOutfit` 与 `__l2dRig().hidden`；加载器中间件改为按 `settings.__l2dPack` 认领，衣柜与数字人同时打开也不会串包。详见 `docs/提案-衣柜App.md`。
 - 2026-11-16：语音合成配置对齐系统能力（S6）——`js/settings-tts.js` 的 `ttsBridge` 增补 `catalog/label/spec/supportsPitch/openSettings` 并派发 `hf-tts-changed` / `hf-tts-status`；角色面板改为分组音色下拉 + 引擎徽标 / 状态行 / 检测 / 语音设置入口，本地音色禁用音调并给出说明；探针补 8 项，共 59 项。
 - 2026-11-16：音色界面分「超拟人 / 机械音」（S7）——设置页两页签 + 机械音卡片（AI 控制 / 直接朗读 / 使用 / 试听），数字人语音下拉同步分组并显示模式切换，`hf_ttsMechaMode` 为唯一状态；节奏标记只在「机械音 + AI 控制」时注入系统提示；`tools/probe-live2d.js` 补 2 项（共 61 项），`tools/settings.js` 补 4 项页签与模式断言。
+- 2026-11-17：AI 语音控制从机械音扩展到全部可韵律本地音色（S8）——数字人角色音色也显示「AI 控制 / 直接朗读」，系统提示按音色能力注入；桥接层韵律分段支持 Piper / Kokoro / MeloTTS / VITS，语速换算统一为 `ttsRateScale()`；探针补 4 项（共 65 项）。
+- 2026-11-17：参数合成 · 快问快答（S9）——`tools/distill-voice.js` 离线蒸馏带调音节音库，`plugins/runtime/tts-param.js` 纯 JS PSOLA 拼接，`/tts/speak` 增 `engine=param`，数字人音色清单自动出现该音色；`[[f]]/[[e]]` 扩展到 LLM 可控制的音调与重音；`tools/tts-param.js` 21/21、`tools/tts-prosody.js` 45/45。
+- 2026-11-17：下线深海机娘机械音（S7），第二个音色页签改为「快速合成」——删除 `vits-mecha` 目录项、`vits:mecha` 启用值、`plugins/runtime/tts-mecha.js` 与 `tools/tts-mecha.js`；数字人 AI 控制行改为 `l2dAiCtrl`，状态键统一 `hf_ttsAiMode`；`tools/model-store.js` 增加「机械音已下线」断言。

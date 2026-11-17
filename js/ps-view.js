@@ -33,6 +33,10 @@ function PSView(host, opts) {
   this.previewLine = null;
   this.previewPath = null;
   this.previewVector = null;
+  this.previewShapeSel = null;
+  this.guides = null;
+  this.channel = 'rgb';
+  this._chKey = '';
   this.cursorDoc = null;
   this.cursorRadius = 0;
   this.cursorOn = false;
@@ -103,6 +107,14 @@ PSView.prototype._bindEvents = function () {
       self._startPan(e);
       return;
     }
+    if (e.button === 2) {
+      // 右键交给工具层：钢笔用它结束开放路径
+      if (self.toolHandlers && typeof self.toolHandlers.context === 'function') {
+        self.toolHandlers.context(p, e);
+        self.schedule();
+      }
+      return;
+    }
     if (e.button !== 0) return;
     self.dragging = true;
     try { self.canvas.setPointerCapture(e.pointerId); } catch (err) {}
@@ -142,6 +154,14 @@ PSView.prototype._bindEvents = function () {
     if (self.toolHandlers && typeof self.toolHandlers.up === 'function') self.toolHandlers.up(p, e);
     self.schedule();
   };
+  this._onDblClick = function (e) {
+    if (!self.doc) return;
+    var p = self.pointOf(e);
+    if (self.toolHandlers && typeof self.toolHandlers.dblclick === 'function') {
+      self.toolHandlers.dblclick(p, e);
+      self.schedule();
+    }
+  };
   this._onKeyDown = function (e) {
     if (!self._isActive()) return;
     if (e.code === 'Space') {
@@ -171,6 +191,7 @@ PSView.prototype._bindEvents = function () {
   this.canvas.addEventListener('pointerleave', this._onLeave);
   this.canvas.addEventListener('pointerup', this._onUp);
   this.canvas.addEventListener('pointercancel', this._onUp);
+  this.canvas.addEventListener('dblclick', this._onDblClick);
   this.canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
   window.addEventListener('keydown', this._onKeyDown);
   window.addEventListener('keyup', this._onKeyUp);
@@ -229,11 +250,17 @@ PSView.prototype.resize = function () {
   this.canvas.style.height = h + 'px';
   this.comp = null;
   this.scratch = null;
+  this._layerBuf = null;
+  this._maskBuf = null;
+  this._chKey = '';
   this.schedule();
 };
 
 PSView.prototype.setDoc = function (doc) {
   this.doc = doc || null;
+  this._chKey = '';
+  this._chRes = null;
+  this.previewShapeSel = null;
   if (this.hint) this.hint.hidden = !!doc;
   if (doc) this.fit();
   this.schedule();
@@ -256,6 +283,37 @@ PSView.prototype.fit = function () {
 PSView.prototype.actual = function () {
   if (!this.doc) return;
   this.setZoom(1);
+};
+
+/* 通道单独查看：只影响屏幕预览，不改图层像素。
+ * 用像素映射把 R/G/B 任一通道铺成灰度，和 PS 的通道面板观感一致。 */
+PSView.prototype.setChannel = function (mode) {
+  this.channel = mode === 'r' || mode === 'g' || mode === 'b' ? mode : 'rgb';
+  this._chKey = '';
+  this.schedule();
+};
+
+PSView.prototype._isolateChannel = function (comp, dx, dy, dw, dh) {
+  var off = this.channel === 'r' ? 0 : this.channel === 'g' ? 1 : 2;
+  var x0 = Math.max(0, dx);
+  var y0 = Math.max(0, dy);
+  var x1 = Math.min(comp.w, dx + dw);
+  var y1 = Math.min(comp.h, dy + dh);
+  if (x1 <= x0 || y1 <= y0) return;
+  var img;
+  try {
+    img = comp.ctx.getImageData(x0, y0, x1 - x0, y1 - y0);
+  } catch (err) {
+    return;
+  }
+  var d = img.data;
+  for (var i = 0; i < d.length; i += 4) {
+    var v = d[i + off];
+    d[i] = v;
+    d[i + 1] = v;
+    d[i + 2] = v;
+  }
+  comp.ctx.putImageData(img, x0, y0);
 };
 
 PSView.prototype.setZoom = function (z, cx, cy) {
@@ -348,17 +406,45 @@ PSView.prototype.render = function () {
   ctx.fillRect(dx, dy, dw, dh);
   ctx.restore();
 
-  // 透明棋盘格
-  this._drawChecker(dx, dy, dw, dh);
-  // 用棋盘格的静态图案做剪裁，合成结果直接盖上去
+  // 透明棋盘格；单独查看通道时改用黑底，和 PS 的通道预览一致
+  var solo = this.channel !== 'rgb';
+  if (solo) {
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(dx, dy, dw, dh);
+  } else {
+    this._drawChecker(dx, dy, dw, dh);
+  }
+  // 合成结果直接盖在底板 / 棋盘格上
   var comp = this.comp;
-  comp.ctx.setTransform(1, 0, 0, 1, 0, 0);
-  comp.ctx.clearRect(0, 0, comp.w, comp.h);
-  var res = PS.composite(comp.ctx, doc, {
-    zoom: z, panX: px, panY: py, dpr: dpr,
-    width: this.cssW, height: this.cssH,
-    scratch: this.scratch, useMips: this.useMips
-  });
+  var res;
+  // 单独查看通道时，只要内容与视图没变就复用上一次的隔离结果，
+  // 避免悬停重绘反复做整幅像素映射。
+  var sig = '';
+  if (solo) {
+    sig = this.channel + '|' + doc.version + '|' + dx + '|' + dy + '|' + dw + '|' + dh;
+    for (var li = 0; li < doc.layers.length; li++) {
+      var cl = doc.layers[li];
+      sig += '|' + (cl.version || 0) + (cl.mask ? (cl.mask.enabled ? '1' : '0') + (cl.mask.version || 0) : '');
+    }
+  }
+  if (solo && sig === this._chKey) {
+    res = this._chRes || { tiles: 0, mips: 0 };
+  } else {
+    comp.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    comp.ctx.clearRect(0, 0, comp.w, comp.h);
+    res = PS.composite(comp.ctx, doc, {
+      zoom: z, panX: px, panY: py, dpr: dpr,
+      width: this.cssW, height: this.cssH,
+      scratch: this.scratch, useMips: this.useMips
+    });
+    if (solo) {
+      this._chKey = sig;
+      this._chRes = res;
+      this._isolateChannel(comp, dx, dy, dw, dh);
+    } else {
+      this._chKey = '';
+    }
+  }
   ctx.drawImage(comp.canvas, 0, 0, comp.w, comp.h, 0, 0, comp.w, comp.h);
 
   this._drawOverlays(ctx, doc, dx, dy, dw, dh, z, dpr);
@@ -440,6 +526,33 @@ PSView.prototype._drawOverlays = function (ctx, doc, dx, dy, dw, dh, z, dpr) {
     ctx.restore();
   }
 
+  // 智能参考线：移动时吸附到文档 / 其他图层的边或中心
+  if (this.guides && this.guides.length) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(dx, dy, dw, dh);
+    ctx.clip();
+    ctx.strokeStyle = '#ff2d95';
+    ctx.lineWidth = 1;
+    for (var gi = 0; gi < this.guides.length; gi++) {
+      var g = this.guides[gi];
+      if (g.axis === 'v') {
+        var gx = Math.round((this.panX + g.pos * z) * dpr) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(gx, dy);
+        ctx.lineTo(gx, dy + dh);
+        ctx.stroke();
+      } else {
+        var gy = Math.round((this.panY + g.pos * z) * dpr) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(dx, gy);
+        ctx.lineTo(dx + dw, gy);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
   // 选区：黑底 + 白虚线，深浅背景都看得见
   if (sel.active && sel.shape) {
     this._strokeShape(ctx, doc, sel.shape, z, dpr, '#ffffff', 2);
@@ -447,6 +560,22 @@ PSView.prototype._drawOverlays = function (ctx, doc, dx, dy, dw, dh, z, dpr) {
   }
   if (this.previewShape) {
     this._strokeShape(ctx, doc, this.previewShape, z, dpr, '#5b8fd9', 1.5);
+  }
+  // 路径面板选中：基础形状用虚线描边；自由路径由 previewPath 画锚点
+  if (this.previewShapeSel && this.previewShapeSel.shape
+    && this.previewShapeSel.shape.kind !== 'path') {
+    var pss = this.previewShapeSel;
+    var spx = 1 / (z * dpr);
+    ctx.save();
+    this._docTransform(ctx, z, dpr, this.panX, this.panY);
+    ctx.translate(pss.layer.x || 0, pss.layer.y || 0);
+    ctx.beginPath();
+    PS.shapePath(ctx, pss.shape);
+    ctx.strokeStyle = '#5b8fd9';
+    ctx.lineWidth = 1.4 * spx;
+    ctx.setLineDash([5 * spx, 4 * spx]);
+    ctx.stroke();
+    ctx.restore();
   }
   if (this.previewRect) {
     var pr = this.previewRect;
@@ -475,11 +604,14 @@ PSView.prototype._drawOverlays = function (ctx, doc, dx, dy, dw, dh, z, dpr) {
   }
 
   // 钢笔路径预览：已落下的锚点 + 到光标的橡皮筋 + 控制柄
+  // 路径选择工具复用同一套绘制，edit 为真时只画锚点与控制柄
   if (this.previewPath) {
     var pp = this.previewPath;
     var px = 1 / (z * dpr);
     ctx.save();
     this._docTransform(ctx, z, dpr, this.panX, this.panY);
+    // 路径选择 overlay 的锚点是图层本地坐标，要跟随图层偏移
+    if (pp.layer) ctx.translate(pp.layer.x || 0, pp.layer.y || 0);
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     if (pp.pts.length >= 2) {
@@ -489,16 +621,37 @@ PSView.prototype._drawOverlays = function (ctx, doc, dx, dy, dw, dh, z, dpr) {
       ctx.lineWidth = 1.6 * px;
       ctx.stroke();
     }
+    // 光标靠近起点时画个圈，提示可以点回去闭合
+    if (pp.closeHint && pp.pts.length >= 2) {
+      ctx.beginPath();
+      ctx.arc(pp.pts[0].x, pp.pts[0].y, 9 * px, 0, Math.PI * 2);
+      ctx.strokeStyle = '#5b8fd9';
+      ctx.lineWidth = 1.6 * px;
+      ctx.stroke();
+    }
     if (pp.cursor && pp.pts.length) {
       var lastPt = pp.pts[pp.pts.length - 1];
       ctx.beginPath();
       ctx.moveTo(lastPt.x, lastPt.y);
-      ctx.lineTo(pp.cursor.x, pp.cursor.y);
+      // 上一个锚点有外侧控制柄时，橡皮筋按贝塞尔曲率延伸，预览更接近最终形状
+      if (lastPt.hox != null) {
+        ctx.bezierCurveTo(lastPt.hox, lastPt.hoy, pp.cursor.x, pp.cursor.y, pp.cursor.x, pp.cursor.y);
+      } else {
+        ctx.lineTo(pp.cursor.x, pp.cursor.y);
+      }
       ctx.setLineDash([6 * px, 4 * px]);
       ctx.strokeStyle = 'rgba(91,143,217,.82)';
       ctx.lineWidth = 1 * px;
       ctx.stroke();
       ctx.setLineDash([]);
+      // 落点预览
+      ctx.beginPath();
+      ctx.arc(pp.cursor.x, pp.cursor.y, 3 * px, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = '#5b8fd9';
+      ctx.lineWidth = 1 * px;
+      ctx.stroke();
     }
     pp.pts.forEach(function (a, idx) {
       if (a.hox != null || a.hoy != null) {
@@ -525,8 +678,9 @@ PSView.prototype._drawOverlays = function (ctx, doc, dx, dy, dw, dh, z, dpr) {
         ctx.fillStyle = '#5b8fd9';
         ctx.fill();
       }
-      var half = (idx === 0 ? 4.2 : 3.2) * px;
-      ctx.fillStyle = idx === 0 ? '#ffffff' : '#5b8fd9';
+      var isStart = idx === 0 && pp.start !== false;
+      var half = (isStart ? 4.2 : 3.2) * px;
+      ctx.fillStyle = isStart ? '#ffffff' : '#5b8fd9';
       ctx.strokeStyle = '#111318';
       ctx.lineWidth = 1 * px;
       ctx.fillRect(a.x - half, a.y - half, half * 2, half * 2);

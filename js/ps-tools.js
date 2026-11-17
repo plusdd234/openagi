@@ -33,11 +33,12 @@ const PSTools = (function () {
       fill: { tolerance: 32, contiguous: true, opacity: 100 },
       eye: { size: 1, merged: true },
       crop: { ratio: 'free' },
-      move: { autoSelect: false },
+      move: { autoSelect: false, snap: true },
       colors: { fg: '#e8a13a', bg: '#ffffff' },
       wand: { contiguous: true, sampleMerged: false },
-      vector: { kind: 'rect', fillOn: true, fill: '#e8a13a', strokeOn: true, stroke: '#0f1115', width: 2 },
-      penEdit: null
+      vector: { kind: 'rect', fillOn: true, fill: '#e8a13a', strokeOn: true, stroke: '#0f1115', width: 2, op: 'add', append: false },
+      penEdit: null,
+      pathSel: null
     };
 
     function activeDoc() { return hooks.doc(); }
@@ -50,26 +51,104 @@ const PSTools = (function () {
       return st.colors;
     }
 
+    /* 当前是否在图层蒙版上编辑（由 app 决定，工具层不持有 UI 状态） */
+    function maskTarget(layer) {
+      if (!layer || !layer.mask) return null;
+      if (!hooks.mask) return null;
+      return hooks.mask(layer) ? layer.mask : null;
+    }
+
+    function paintBlocked(layer) {
+      if (!layer) return '请先选中图层';
+      if (PS.hasLock(layer, 'image')) return '「' + layer.name + '」锁定了图像像素，不能绘画';
+      return '';
+    }
+
+    function lumaOf(hex) {
+      var c = PS.hexToRgb(hex);
+      return (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255;
+    }
+
+    /* ---------------- 移动对齐（智能参考线） ---------------- */
+
+    /* 对齐目标：文档边缘 / 中心，以及其他可见图层内容的左中右、上中下 */
+    function collectSnapTargets(doc, layer) {
+      var xs = [0, doc.width / 2, doc.width];
+      var ys = [0, doc.height / 2, doc.height];
+      doc.layers.forEach(function (l) {
+        if (l === layer || l.visible === false) return;
+        var b = PS.layerContentBounds(l);
+        if (!b) return;
+        xs.push(b.x, b.x + b.w / 2, b.x + b.w);
+        ys.push(b.y, b.y + b.h / 2, b.y + b.h);
+      });
+      return { xs: xs, ys: ys };
+    }
+
+    /* 把图层包围盒的左/中/右（上/中/下）吸到最近的目标线。
+     * 阈值按屏幕像素换算成文档像素，缩放时手感一致。 */
+    function snapMove(d, x, y) {
+      var rel = d.rel;
+      if (!rel || !d.targets) return { x: x, y: y, guides: null };
+      var tol = Math.max(1, 6 / Math.max(0.05, view.zoom));
+      var ex = [rel.x, rel.x + rel.w / 2, rel.x + rel.w];
+      var ey = [rel.y, rel.y + rel.h / 2, rel.y + rel.h];
+      var bestX = tol + 1;
+      var bestY = tol + 1;
+      var gx = 0;
+      var gy = 0;
+      var i, j, delta;
+      for (i = 0; i < ex.length; i++) {
+        for (j = 0; j < d.targets.xs.length; j++) {
+          delta = d.targets.xs[j] - (x + ex[i]);
+          if (Math.abs(delta) < Math.abs(bestX)) { bestX = delta; gx = d.targets.xs[j]; }
+        }
+      }
+      for (i = 0; i < ey.length; i++) {
+        for (j = 0; j < d.targets.ys.length; j++) {
+          delta = d.targets.ys[j] - (y + ey[i]);
+          if (Math.abs(delta) < Math.abs(bestY)) { bestY = delta; gy = d.targets.ys[j]; }
+        }
+      }
+      var hitX = Math.abs(bestX) <= tol;
+      var hitY = Math.abs(bestY) <= tol;
+      var guides = [];
+      if (hitX) guides.push({ axis: 'v', pos: gx });
+      if (hitY) guides.push({ axis: 'h', pos: gy });
+      return {
+        x: x + (hitX ? bestX : 0),
+        y: y + (hitY ? bestY : 0),
+        guides: guides.length ? guides : null
+      };
+    }
+
     function updateCursor() {
       var map = {
         move: 'grab', 'select-rect': 'crosshair', 'select-ellipse': 'crosshair',
         'select-lasso': 'crosshair', crop: 'crosshair', eyedropper: 'crosshair',
         brush: 'none', eraser: 'none', gradient: 'crosshair', fill: 'crosshair', text: 'text',
-        'magic-wand': 'crosshair', pen: 'crosshair', shape: 'crosshair', 'path-select': 'default'
+        'magic-wand': 'crosshair', pen: 'crosshair', shape: 'crosshair', 'path-select': 'default',
+        hand: 'grab', zoom: 'zoom-in'
       };
       view.canvas.style.cursor = map[st.tool] || 'default';
     }
 
     function setTool(id) {
       if (st.penEdit) {
-        if (st.penEdit.pts.length >= 2) finishPen(true);
+        // 切走时按开放路径落盘，闭合只由「点回起点」触发，避免误闭合
+        if (st.penEdit.pts.length >= 2) finishPen(false);
         else cancelPen();
       }
       st.tool = id;
       st.drag = null;
+      st.pathSel = null;
       view.previewShape = null;
       view.previewRect = null;
       view.previewLine = null;
+      view.previewShapeSel = null;
+      view.guides = null;
+      // 路径选择工具在悬停时借用 previewPath 画锚点，切走时必须收回
+      view.previewPath = null;
       view.clearCursor();
       updateCursor();
       // 用快捷键切到画笔 / 橡皮擦时指针可能已经在画布里，立即补画刷环，
@@ -98,6 +177,7 @@ const PSTools = (function () {
       else if (key === 'eyeMerged') st.eye.merged = !!value;
       else if (key === 'cropRatio') st.crop.ratio = value;
       else if (key === 'autoSelect') st.move.autoSelect = !!value;
+      else if (key === 'moveSnap') st.move.snap = !!value;
       else if (key === 'wandContiguous') st.wand.contiguous = !!value;
       else if (key === 'wandMerged') st.wand.sampleMerged = !!value;
       else if (key === 'vectorKind') st.vector.kind = value;
@@ -106,6 +186,8 @@ const PSTools = (function () {
       else if (key === 'strokeOn') st.vector.strokeOn = !!value;
       else if (key === 'strokeColor') st.vector.stroke = value;
       else if (key === 'strokeWidth') st.vector.width = Math.max(0, Math.min(80, Number(value) || 0));
+      else if (key === 'vectorOp') setShapeOp(value);
+      else if (key === 'vectorAppend') st.vector.append = !!value;
     }
 
     function options() {
@@ -127,6 +209,7 @@ const PSTools = (function () {
         eyeMerged: st.eye.merged,
         cropRatio: st.crop.ratio,
         autoSelect: st.move.autoSelect,
+        moveSnap: st.move.snap,
         wandContiguous: st.wand.contiguous,
         wandMerged: st.wand.sampleMerged,
         vectorKind: st.vector.kind,
@@ -135,6 +218,8 @@ const PSTools = (function () {
         strokeOn: st.vector.strokeOn,
         strokeColor: st.vector.stroke,
         strokeWidth: st.vector.width,
+        vectorOp: st.vector.op,
+        vectorAppend: st.vector.append,
         penActive: !!st.penEdit
       };
     }
@@ -168,6 +253,29 @@ const PSTools = (function () {
       ctx.restore();
     }
 
+    /* 蒙版瓦片：alpha 表示隐藏量。深色画笔增加隐藏，浅色 / 橡皮减少隐藏。 */
+    function stampMaskTile(doc, layer, mask, t, docX, docY, drag) {
+      var lx = docX - layer.x - t.x;
+      var ly = docY - layer.y - t.y;
+      var r = drag.r;
+      if (lx + r < 0 || ly + r < 0 || lx - r > t.w || ly - r > t.h) return;
+      var ctx = t.ctx;
+      ctx.save();
+      PS.clipToSelection(ctx, doc, layer, t);
+      var hard = drag.hardness;
+      var strength = Math.max(0.001, Math.min(1, drag.opacity * drag.strength));
+      var g = ctx.createRadialGradient(lx, ly, 0, lx, ly, Math.max(1, r));
+      g.addColorStop(0, 'rgba(0,0,0,' + strength + ')');
+      g.addColorStop(Math.max(0.02, hard), 'rgba(0,0,0,' + strength + ')');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalCompositeOperation = drag.reveal ? 'destination-out' : 'source-over';
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(lx, ly, Math.max(1, r), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
     function stampAt(x, y) {
       var d = st.drag;
       if (!d || d.kind !== 'brush') return;
@@ -180,7 +288,14 @@ const PSTools = (function () {
       var ty1 = Math.min(rows - 1, Math.floor((y - d.layer.y + r) / PS.TILE));
       for (var ty = ty0; ty <= ty1; ty++) {
         for (var tx = tx0; tx <= tx1; tx++) {
-          var t = PS.ensureTile(d.layer, tx, ty, false);
+          if (d.mask) {
+            var mt = PS.ensureMaskTile(d.mask, tx, ty, true);
+            if (!mt) continue;
+            PS.snapTile(d.tx, d.layer, mt, true);
+            stampMaskTile(d.doc, d.layer, d.mask, mt, x, y, d);
+            continue;
+          }
+          var t = PS.ensureTile(d.layer, tx, ty, !d.erase);
           if (!t) continue;
           PS.snapTile(d.tx, d.layer, t);
           stampTile(d.doc, d.layer, t, x, y, d);
@@ -205,12 +320,44 @@ const PSTools = (function () {
     function beginStroke(p) {
       var doc = activeDoc();
       var layer = activeLayer();
-      if (!layer || layer.type !== 'pixel') {
+      var mask = maskTarget(layer);
+      var isErase = st.tool === 'eraser';
+      if (!mask && (!layer || layer.type !== 'pixel')) {
         if (hooks.status) hooks.status('请先选中一个像素图层', true);
         return;
       }
+      if (layer) {
+        var blocked = paintBlocked(layer);
+        if (blocked) {
+          if (hooks.status) hooks.status(blocked, true);
+          return;
+        }
+      }
       var c = colors();
-      var isErase = st.tool === 'eraser';
+      if (mask) {
+        /* 蒙版只存灰度：深色 = 隐藏，浅色 = 恢复；橡皮擦永远恢复 */
+        var luma = lumaOf(c.fg);
+        st.drag = {
+          kind: 'brush',
+          doc: doc,
+          layer: layer,
+          mask: mask,
+          tx: PS.beginTx(doc, isErase ? '蒙版擦除' : '蒙版绘制'),
+          erase: isErase,
+          reveal: isErase || luma >= 0.5,
+          strength: isErase ? 1 : Math.abs(luma >= 0.5 ? luma : 1 - luma),
+          color: '#000000',
+          r: Math.max(1, st.brush.size / 2),
+          hardness: st.brush.hardness / 100,
+          opacity: isErase ? 1 : st.brush.opacity / 100,
+          lastX: p.docX,
+          lastY: p.docY
+        };
+        stampAt(p.docX, p.docY);
+        if (hooks.status) hooks.status('蒙版 · ' + (isErase ? '擦除（恢复显示）' : (luma >= 0.5 ? '恢复显示' : '隐藏')) + ' · ' + Math.round(st.brush.size) + 'px');
+        view.schedule();
+        return;
+      }
       st.drag = {
         kind: 'brush',
         doc: doc,
@@ -241,10 +388,17 @@ const PSTools = (function () {
           if (mask) PS.applyMaskBlendTile(rec.tile, rec.before, mask);
         });
       }
-      PS.touch(layer);
+      if (d.mask) {
+        // 蒙版不改变图层像素，保留 mip，只刷新蒙版版本
+        layer.version++;
+        d.mask.version++;
+      } else {
+        if (PS.alphaLocked(layer)) PS.restoreTileAlpha(d.tx);
+        PS.touch(layer);
+        PS.requestMips(doc);
+      }
       PS.endTx(d.tx);
       doc.version++;
-      PS.requestMips(doc);
       if (hooks.change) hooks.change('brush');
     }
 
@@ -291,6 +445,11 @@ const PSTools = (function () {
         if (hooks.status) hooks.status('请先选中一个像素图层', true);
         return false;
       }
+      var gradBlocked = paintBlocked(layer);
+      if (gradBlocked) {
+        if (hooks.status) hooks.status(gradBlocked, true);
+        return false;
+      }
       var big = layer.width * layer.height > 16e6;
       var tiles = big ? PS.existingTiles(layer) : PS.ensureAllTiles(layer);
       if (!tiles.length) return false;
@@ -327,6 +486,7 @@ const PSTools = (function () {
           if (mask) PS.applyMaskBlendTile(rec.tile, rec.before, mask);
         });
       }
+      if (PS.alphaLocked(layer)) PS.restoreTileAlpha(tx);
       PS.touch(layer);
       PS.endTx(tx);
       doc.version++;
@@ -340,6 +500,11 @@ const PSTools = (function () {
     function fillAt(doc, layer, x, y, color) {
       if (!layer || layer.type !== 'pixel') {
         if (hooks.status) hooks.status('请先选中一个像素图层', true);
+        return { ok: false };
+      }
+      var fillBlocked = paintBlocked(layer);
+      if (fillBlocked) {
+        if (hooks.status) hooks.status(fillBlocked, true);
         return { ok: false };
       }
       var tiles = PS.ensureAllTiles(layer);
@@ -359,6 +524,7 @@ const PSTools = (function () {
           if (mask) PS.applyMaskBlendTile(rec.tile, rec.before, mask);
         });
       }
+      if (PS.alphaLocked(layer)) PS.restoreTileAlpha(tx);
       PS.touch(layer);
       PS.endTx(tx);
       doc.version++;
@@ -368,6 +534,47 @@ const PSTools = (function () {
       return res;
     }
 
+    /* 用纯色填充选区（没有选区则整层）——对应 PS 的 Alt+Backspace / Ctrl+Backspace。 */
+    function fillRegion(doc, layer, color) {
+      if (!layer || layer.type !== 'pixel') {
+        if (hooks.status) hooks.status('请先选中一个像素图层', true);
+        return false;
+      }
+      var blocked = paintBlocked(layer);
+      if (blocked) {
+        if (hooks.status) hooks.status(blocked, true);
+        return false;
+      }
+      var big = layer.width * layer.height > 16e6;
+      var tiles = big ? PS.existingTiles(layer) : PS.ensureAllTiles(layer);
+      if (!tiles.length) return false;
+      var tx = PS.beginTx(doc, '填充');
+      tiles.forEach(function (t) { if (t) PS.snapTile(tx, layer, t); });
+      tiles.forEach(function (t) {
+        if (!t) return;
+        var ctx = t.ctx;
+        ctx.save();
+        PS.clipToSelection(ctx, doc, layer, t);
+        ctx.fillStyle = color;
+        ctx.fillRect(0, 0, t.w, t.h);
+        ctx.restore();
+      });
+      if (doc.selection.active) {
+        tx.tiles.forEach(function (rec) {
+          var mask = PS.maskForTile(doc, layer, rec.tile);
+          if (mask) PS.applyMaskBlendTile(rec.tile, rec.before, mask);
+        });
+      }
+      if (PS.alphaLocked(layer)) PS.restoreTileAlpha(tx);
+      PS.touch(layer);
+      PS.endTx(tx);
+      doc.version++;
+      PS.requestMips(doc);
+      if (hooks.change) hooks.change('fill');
+      if (hooks.status) hooks.status('已填充 ' + color.toUpperCase());
+      return true;
+    }
+
     /* ---------------- 文字 ---------------- */
     function drawText(doc, layer, o) {
       o = o || {};
@@ -375,6 +582,11 @@ const PSTools = (function () {
       if (!text.trim()) return false;
       if (!layer || layer.type !== 'pixel') {
         if (hooks.status) hooks.status('请先选中一个像素图层', true);
+        return false;
+      }
+      var textBlocked = paintBlocked(layer);
+      if (textBlocked) {
+        if (hooks.status) hooks.status(textBlocked, true);
         return false;
       }
       var size = Math.max(6, Math.round(o.size || 96));
@@ -415,6 +627,7 @@ const PSTools = (function () {
           }
         }
       }
+      if (PS.alphaLocked(layer)) PS.restoreTileAlpha(tx);
       PS.touch(layer);
       PS.endTx(tx);
       doc.version++;
@@ -449,51 +662,98 @@ const PSTools = (function () {
     }
 
     /* ---------------- 钢笔 ---------------- */
+    /* 把 b 点吸附到过 a 点的 45° 射线方向，长度保持不变。 */
+    function constrain45(ax, ay, bx, by) {
+      var dx = bx - ax;
+      var dy = by - ay;
+      var len = Math.hypot(dx, dy);
+      if (len < 1e-6) return { x: bx, y: by };
+      var step = Math.PI / 4;
+      var ang = Math.round(Math.atan2(dy, dx) / step) * step;
+      return { x: ax + Math.cos(ang) * len, y: ay + Math.sin(ang) * len };
+    }
+
+    function penTol() { return 9 / Math.max(0.15, view.zoom); }
+
+    function updateCloseHint(d, p) {
+      var first = d.pts[0];
+      d.closeHint = !!(first && d.pts.length >= 2 &&
+        Math.hypot(p.docX - first.x, p.docY - first.y) <= penTol());
+    }
+
     function syncPenPreview() {
       var d = st.penEdit;
       if (!d) { view.previewPath = null; return; }
-      view.previewPath = { pts: d.pts, closed: !!d.closed, cursor: d.cursor };
+      view.previewPath = {
+        pts: d.pts, closed: !!d.closed, cursor: d.cursor,
+        closeHint: !!d.closeHint
+      };
       view.schedule();
     }
 
     function penState() {
       var doc = activeDoc();
       if (!st.penEdit || st.penEdit.doc !== doc) {
-        st.penEdit = { doc: doc, pts: [], closed: false, dragging: -1, cursor: null };
+        st.penEdit = { doc: doc, pts: [], closed: false, dragging: -1, cursor: null, closeHint: false };
       }
       return st.penEdit;
     }
 
-    function penDown(p) {
+    function penDown(p, e) {
       var d = penState();
       var first = d.pts[0];
-      var tol = 9 / Math.max(0.15, view.zoom);
-      if (first && Math.hypot(p.docX - first.x, p.docY - first.y) <= tol) {
+      // 先按原始指针判断是否点回起点：Shift 约束不能把闭合操作挤掉
+      if (first && d.pts.length >= 2 && Math.hypot(p.docX - first.x, p.docY - first.y) <= penTol()) {
         d.closed = true;
         finishPen(true);
         return;
       }
-      d.pts.push({ x: p.docX, y: p.docY, hix: null, hiy: null, hox: null, hoy: null });
+      var x = p.docX, y = p.docY;
+      var last = d.pts[d.pts.length - 1];
+      // Shift 把新锚点约束到上一点的 45° 射线上
+      if (last && e && e.shiftKey) {
+        var c = constrain45(last.x, last.y, x, y);
+        x = c.x; y = c.y;
+      }
+      d.pts.push({ x: x, y: y, hix: null, hiy: null, hox: null, hoy: null });
       d.dragging = d.pts.length - 1;
-      d.cursor = { x: p.docX, y: p.docY };
+      d.cursor = { x: x, y: y };
+      d.closeHint = false;
       syncPenPreview();
     }
 
-    function penDrag(p) {
+    function penDrag(p, e) {
       var d = st.penEdit;
       if (!d) return;
+      var shift = !!(e && e.shiftKey);
+      var alt = !!(e && e.altKey);
       if (d.dragging >= 0) {
         var a = d.pts[d.dragging];
-        var dx = p.docX - a.x;
-        var dy = p.docY - a.y;
+        var hx = p.docX, hy = p.docY;
+        if (shift) {
+          var c = constrain45(a.x, a.y, hx, hy);
+          hx = c.x; hy = c.y;
+        }
+        var dx = hx - a.x, dy = hy - a.y;
         if (Math.hypot(dx, dy) > 1.5) {
-          a.hox = p.docX;
-          a.hoy = p.docY;
-          a.hix = a.x - dx;
-          a.hiy = a.y - dy;
+          a.hox = hx;
+          a.hoy = hy;
+          if (alt) {
+            // Alt 拖动：只保留外侧控制柄，形成尖角
+            a.hix = null;
+            a.hiy = null;
+          } else {
+            a.hix = a.x - dx;
+            a.hiy = a.y - dy;
+          }
+        } else if (alt) {
+          // Alt 原地点击：把刚落的锚点改成尖角
+          a.hix = null;
+          a.hiy = null;
         }
       }
       d.cursor = { x: p.docX, y: p.docY };
+      updateCloseHint(d, p);
       syncPenPreview();
     }
 
@@ -501,12 +761,82 @@ const PSTools = (function () {
       var d = st.penEdit;
       if (!d) return;
       d.cursor = { x: p.docX, y: p.docY };
+      updateCloseHint(d, p);
       syncPenPreview();
     }
 
     function penUp() {
       var d = st.penEdit;
       if (d) d.dragging = -1;
+    }
+
+    /* 退回上一个锚点，用于绘制中按 Backspace / Delete。 */
+    function removeLastAnchor() {
+      var d = st.penEdit;
+      if (!d || !d.pts.length) return false;
+      d.pts.pop();
+      d.dragging = -1;
+      d.closeHint = false;
+      if (!d.pts.length) {
+        st.penEdit = null;
+        view.previewPath = null;
+        view.schedule();
+        if (hooks.status) hooks.status('已撤回全部锚点，路径结束');
+        return true;
+      }
+      syncPenPreview();
+      if (hooks.status) hooks.status('已撤回上一个锚点 · 剩余 ' + d.pts.length + ' 个');
+      return true;
+    }
+
+    /* 双击结束开放路径：第二下会多落一个重合锚点，这里先去掉。 */
+    function penDouble() {
+      var d = st.penEdit;
+      if (!d || !d.pts.length) return false;
+      if (d.pts.length >= 2) {
+        var last = d.pts[d.pts.length - 1];
+        var prev = d.pts[d.pts.length - 2];
+        if (Math.hypot(last.x - prev.x, last.y - prev.y) <= penTol()) d.pts.pop();
+      }
+      return finishPen(false);
+    }
+
+    /* 决定新形状落到哪里：矢量编辑器里默认追加到当前形状层，
+     * 这样布尔运算能直接作用于同一层的多条路径；否则新建图层。 */
+    function placeShape(doc, shape, name, opts) {
+      opts = opts || {};
+      var layer = activeLayer();
+      var append = st.vector.append && layer && layer.type === 'shape'
+        && !PS.hasLock(layer, 'image');
+      if (append) {
+        shape.op = st.vector.op || 'add';
+        PS.appendShape(doc, layer, shape, { label: opts.addLabel || ('添加' + name) });
+        return layer;
+      }
+      shape.op = 'add';
+      return PS.addShapeLayer(doc, [shape], {
+        name: opts.layerName || name,
+        label: opts.newLabel || ('新建' + name)
+      });
+    }
+
+    /* 设置布尔运算：有选中路径就应用到它，否则作为下一个形状的默认值。 */
+    function setShapeOp(op) {
+      if (!PS.SHAPE_OPS[op]) return false;
+      st.vector.op = op;
+      var doc = activeDoc();
+      var sel = st.pathSel;
+      var applied = false;
+      if (doc && sel && sel.layer && sel.shape) {
+        applied = PS.setShapeOp(doc, sel.layer, sel.shape, op);
+        if (applied && hooks.change) hooks.change('shape');
+      }
+      view.schedule();
+      if (hooks.status) {
+        hooks.status('布尔运算：' + PS.SHAPE_OP_NAMES[op] +
+          (applied ? ' · 已应用到选中路径' : ' · 用于下一个形状'));
+      }
+      return true;
     }
 
     function finishPen(close) {
@@ -520,6 +850,8 @@ const PSTools = (function () {
         view.schedule();
         return false;
       }
+      // 少于三个点闭合没有面积，按开放路径处理
+      if (close && d.pts.length < 3) close = false;
       var v = st.vector;
       var shape = {
         kind: 'path',
@@ -531,10 +863,12 @@ const PSTools = (function () {
         stroke: v.strokeOn && v.width > 0 ? v.stroke : null,
         strokeWidth: v.strokeOn ? v.width : 0
       };
-      PS.addShapeLayer(doc, [shape], { name: '矢量路径', label: '钢笔路径' });
       PS.requestMips(doc);
+      placeShape(doc, shape, '矢量路径', {
+        layerName: '矢量路径', newLabel: '钢笔路径', addLabel: '添加钢笔路径'
+      });
       if (hooks.change) hooks.change('shape');
-      if (hooks.status) hooks.status('矢量路径已创建 · ' + d.pts.length + ' 个锚点');
+      if (hooks.status) hooks.status('矢量路径已创建 · ' + d.pts.length + ' 个锚点' + (close ? ' · 已闭合' : ' · 开放路径') + (st.vector.append ? ' · 已合成到当前形状层' : ''));
       view.schedule();
       return true;
     }
@@ -606,34 +940,75 @@ const PSTools = (function () {
         return;
       }
       var name = shapeName(shape.kind);
-      PS.addShapeLayer(d.doc, [shape], { name: name, label: '新建' + name });
+      placeShape(d.doc, shape, name, { layerName: name, newLabel: '新建' + name, addLabel: '添加' + name });
       PS.requestMips(d.doc);
       if (hooks.change) hooks.change('shape');
-      if (hooks.status) hooks.status('已创建矢量' + name);
+      if (hooks.status) hooks.status('已创建矢量' + name + (st.vector.append ? ' · 已合成到当前形状层' : ''));
       view.schedule();
     }
 
     /* ---------------- 路径选择 ---------------- */
+    /* 原地恢复点集：保持 pts 数组引用不变，悬停/编辑的锚点 overlay 才不会画旧数据。 */
+    function restorePts(shape, src) {
+      var pts = PS.cloneShape(src).pts;
+      shape.pts.length = 0;
+      for (var i = 0; i < pts.length; i++) shape.pts.push(pts[i]);
+    }
+
+    /* 借用 previewPath 显示锚点与控制柄；shape.pts 是实时引用，拖动时自动跟随。 */
+    function setPathOverlay(shape, layer) {
+      if (!shape || !shape.pts) {
+        view.previewPath = null;
+        view.canvas.style.cursor = 'default';
+      } else {
+        view.previewPath = {
+          pts: shape.pts, closed: !!shape.closed, cursor: null,
+          edit: true, start: false, layer: layer || null
+        };
+        view.canvas.style.cursor = 'move';
+      }
+      view.schedule();
+    }
+
     function pathDown(p) {
       var doc = activeDoc();
       var hit = PS.hitShapeLayer(doc, p.docX, p.docY, 8 / Math.max(0.2, view.zoom));
       if (!hit) {
+        st.pathSel = null;
+        view.previewShapeSel = null;
+        setPathOverlay(null);
         if (hooks.status) hooks.status('没有命中矢量路径');
         return;
       }
       doc.activeId = hit.layer.id;
       PS.touchDoc(doc);
       if (hooks.change) hooks.change('layer');
-      if (hit.anchor >= 0) {
+      setPathOverlay(hit.shape, hit.layer);
+      if (hit.anchor >= 0 && hit.handle) {
+        // 控制柄：Alt 只改单侧，否则另一侧同步镜像
+        st.pathSel = { doc: doc, layer: hit.layer, shape: hit.shape, shapeIndex: hit.shapeIndex, index: hit.anchor, handle: hit.handle };
+        st.drag = {
+          kind: 'handle', doc: doc, layer: hit.layer, shape: hit.shape,
+          index: hit.anchor, which: hit.handle,
+          before: PS.cloneShape(hit.shape), moved: false
+        };
+        if (hooks.status) hooks.status('拖动' + (hit.handle === 'in' ? '内侧' : '外侧') + '控制柄 · Alt 单独调整');
+      } else if (hit.anchor >= 0) {
         var a = hit.shape.pts[hit.anchor];
+        st.pathSel = { doc: doc, layer: hit.layer, shape: hit.shape, shapeIndex: hit.shapeIndex, index: hit.anchor, handle: null };
         st.drag = {
           kind: 'anchor', doc: doc, layer: hit.layer, shape: hit.shape,
           index: hit.anchor, sx: p.docX, sy: p.docY,
           ox: a.x, oy: a.y,
           before: PS.cloneShape(hit.shape), moved: false
         };
-        if (hooks.status) hooks.status('拖动锚点 · 第 ' + (hit.anchor + 1) + ' 个');
+        if (hooks.status) hooks.status('拖动锚点 · 第 ' + (hit.anchor + 1) + ' 个 · Shift 约束 45° · Delete 删除');
       } else {
+        if (PS.hasLock(hit.layer, 'position')) {
+          if (hooks.status) hooks.status('「' + hit.layer.name + '」锁定了位置，不能移动', true);
+          return;
+        }
+        st.pathSel = null;
         st.drag = {
           kind: 'shape-move', doc: doc, layer: hit.layer,
           sx: p.docX, sy: p.docY, ox: hit.layer.x, oy: hit.layer.y, moved: false
@@ -643,12 +1018,41 @@ const PSTools = (function () {
       view.schedule();
     }
 
-    function pathMove(p) {
+    /* 悬停时显示路径锚点，否则用户只能靠猜锚点在哪。 */
+    function pathHover(p) {
+      var doc = activeDoc();
+      if (!doc) return;
+      var hit = PS.hitShapeLayer(doc, p.docX, p.docY, 8 / Math.max(0.2, view.zoom));
+      // 只有自由路径才有锚点可显示；矩形/椭圆等基础形状不画 overlay
+      var shape = hit && hit.shape && hit.shape.kind === 'path' ? hit.shape : null;
+      if (!shape) {
+        if (!view.previewPath) return;
+        view.previewPath = null;
+        view.canvas.style.cursor = 'default';
+        view.schedule();
+        return;
+      }
+      if (view.previewPath && view.previewPath.edit && view.previewPath.pts === shape.pts &&
+        view.previewPath.layer === hit.layer) return;
+      view.previewPath = {
+        pts: shape.pts, closed: !!shape.closed, cursor: null,
+        edit: true, start: false, layer: hit.layer
+      };
+      view.canvas.style.cursor = hit.anchor >= 0 ? 'move' : 'default';
+      view.schedule();
+    }
+
+    function pathMove(p, shift, alt) {
       var d = st.drag;
       if (!d) return;
       if (d.kind === 'anchor') {
         var dx = p.docX - d.sx;
         var dy = p.docY - d.sy;
+        if (shift) {
+          var c = constrain45(0, 0, dx, dy);
+          dx = c.x;
+          dy = c.y;
+        }
         var a = d.shape.pts[d.index];
         var prevX = a.x, prevY = a.y;
         a.x = d.ox + dx;
@@ -656,6 +1060,33 @@ const PSTools = (function () {
         var mdx = a.x - prevX, mdy = a.y - prevY;
         if (a.hix != null) { a.hix += mdx; a.hiy += mdy; }
         if (a.hox != null) { a.hox += mdx; a.hoy += mdy; }
+        d.moved = true;
+        d.layer.version++;
+        d.doc.version++;
+        view.schedule();
+      } else if (d.kind === 'handle') {
+        var shape = d.shape;
+        var hp = shape.pts[d.index];
+        // 锚点和控制柄都在图层本地坐标里，指针要先减掉图层偏移
+        var hx = p.docX - d.layer.x, hy = p.docY - d.layer.y;
+        if (shift) {
+          var hc = constrain45(hp.x, hp.y, hx, hy);
+          hx = hc.x;
+          hy = hc.y;
+        }
+        if (d.which === 'in') {
+          hp.hix = hx; hp.hiy = hy;
+          if (!alt && hp.hox != null) {
+            hp.hox = hp.x * 2 - hx;
+            hp.hoy = hp.y * 2 - hy;
+          }
+        } else {
+          hp.hox = hx; hp.hoy = hy;
+          if (!alt && hp.hix != null) {
+            hp.hix = hp.x * 2 - hx;
+            hp.hiy = hp.y * 2 - hy;
+          }
+        }
         d.moved = true;
         d.layer.version++;
         d.doc.version++;
@@ -670,23 +1101,75 @@ const PSTools = (function () {
       }
     }
 
+    /* 删除路径选择中的锚点，保留至少两个点。 */
+    function deletePathAnchor() {
+      var sel = st.pathSel;
+      if (st.tool !== 'path-select' || !sel || !sel.shape || sel.index == null) return false;
+      var pts = sel.shape.pts || [];
+      if (pts.length <= 2) {
+        if (hooks.status) hooks.status('路径至少保留两个锚点', true);
+        return false;
+      }
+      var before = PS.cloneShape(sel.shape);
+      sel.shape.pts.splice(sel.index, 1);
+      var after = PS.cloneShape(sel.shape);
+      sel.layer.version++;
+      sel.doc.version++;
+      PS.pushEntry(sel.doc, {
+        label: '删除锚点',
+        touched: [sel.layer],
+        undo: function () { restorePts(sel.shape, before); sel.layer.version++; sel.doc.version++; },
+        redo: function () { restorePts(sel.shape, after); sel.layer.version++; sel.doc.version++; }
+      });
+      PS.touch(sel.layer);
+      st.pathSel = null;
+      setPathOverlay(sel.shape, sel.layer);
+      if (hooks.change) hooks.change('shape');
+      if (hooks.status) hooks.status('已删除锚点 · 剩余 ' + sel.shape.pts.length + ' 个');
+      return true;
+    }
+
+    /* 路径面板点击：选中矢量图层里的某个形状，画布同步高亮。
+     * 只做选择，不切换当前工具，避免用户点面板时被强行换掉画笔。 */
+    function selectShape(layer, index) {
+      var doc = activeDoc();
+      if (!doc || !layer || layer.type !== 'shape' || !layer.shapes) return false;
+      var shape = layer.shapes[index];
+      if (!shape) return false;
+      doc.activeId = layer.id;
+      st.pathSel = { doc: doc, layer: layer, shape: shape, shapeIndex: index, index: null, handle: null };
+      if (shape.kind === 'path' && shape.pts && shape.pts.length) {
+        view.previewShapeSel = null;
+        view.previewPath = {
+          pts: shape.pts, closed: !!shape.closed, cursor: null,
+          edit: true, start: false, layer: layer
+        };
+      } else {
+        view.previewPath = null;
+        view.previewShapeSel = { layer: layer, shape: shape };
+      }
+      view.schedule();
+      if (hooks.change) hooks.change('shape');
+      return true;
+    }
+
     function pathUp() {
       var d = st.drag;
       if (!d) return;
       st.drag = null;
       if (!d.moved) return;
-      if (d.kind === 'anchor') {
+      if (d.kind === 'anchor' || d.kind === 'handle') {
         var after = PS.cloneShape(d.shape);
         var before = d.before;
         PS.pushEntry(d.doc, {
-          label: '编辑锚点',
+          label: d.kind === 'handle' ? '编辑控制柄' : '编辑锚点',
           touched: [d.layer],
-          undo: function () { d.shape.pts = PS.cloneShape(before).pts; d.layer.version++; d.doc.version++; },
-          redo: function () { d.shape.pts = PS.cloneShape(after).pts; d.layer.version++; d.doc.version++; }
+          undo: function () { restorePts(d.shape, before); d.layer.version++; d.doc.version++; },
+          redo: function () { restorePts(d.shape, after); d.layer.version++; d.doc.version++; }
         });
         PS.touch(d.layer);
         if (hooks.change) hooks.change('shape');
-        if (hooks.status) hooks.status('锚点已移动');
+        if (hooks.status) hooks.status(d.kind === 'handle' ? '控制柄已调整' : '锚点已移动');
       } else if (d.kind === 'shape-move') {
         var dx = d.layer.x - d.ox;
         var dy = d.layer.y - d.oy;
@@ -730,6 +1213,18 @@ const PSTools = (function () {
       if (!doc) return;
       var layer = activeLayer();
 
+      if (st.tool === 'hand') {
+        view._startPan(e);
+        return;
+      }
+
+      if (st.tool === 'zoom') {
+        var factor = e && e.altKey ? 1 / 1.35 : 1.35;
+        view.zoomAt(p.x, p.y, factor);
+        if (hooks.status) hooks.status('缩放 ' + Math.round(view.zoom * 100) + '%');
+        return;
+      }
+
       if (st.tool === 'move') {
         var target = layer;
         // 「自动选择」：按下时先选中最上层的不透明图层，再开始拖
@@ -745,14 +1240,23 @@ const PSTools = (function () {
           if (hooks.status) hooks.status('调整层不能移动，请选中像素或矢量图层', true);
           return;
         }
-        if (target.locked) {
-          if (hooks.status) hooks.status('「' + target.name + '」已锁定，不能移动（右键图层可解锁）', true);
+        if (PS.hasLock(target, 'position')) {
+          if (hooks.status) hooks.status('「' + target.name + '」锁定了位置，不能移动（图层属性里可解锁）', true);
           return;
         }
         st.drag = {
           kind: 'move', doc: doc, layer: target,
-          sx: p.docX, sy: p.docY, ox: target.x, oy: target.y
+          sx: p.docX, sy: p.docY, ox: target.x, oy: target.y,
+          rel: null, targets: null
         };
+        var tb = PS.layerContentBounds(target);
+        if (tb) {
+          st.drag.rel = {
+            x: tb.x - target.x, y: tb.y - target.y, w: tb.w, h: tb.h
+          };
+        }
+        if (st.move.snap) st.drag.targets = collectSnapTargets(doc, target);
+        view.guides = null;
         view.canvas.style.cursor = 'grabbing';
         return;
       }
@@ -763,7 +1267,7 @@ const PSTools = (function () {
       }
 
       if (st.tool === 'pen') {
-        penDown(p);
+        penDown(p, e);
         return;
       }
 
@@ -804,6 +1308,15 @@ const PSTools = (function () {
       }
 
       if (st.tool === 'brush' || st.tool === 'eraser') {
+        // PS 习惯：画笔状态下按住 Alt 临时变成吸管
+        if (e && e.altKey && st.tool === 'brush') {
+          var pick = PS.samplePixel(doc, p.docX, p.docY, {
+            size: st.eye.size, layer: st.eye.merged ? null : layer
+          });
+          if (hooks.onColor) hooks.onColor(pick.hex);
+          if (hooks.status) hooks.status('吸管取样 ' + pick.hex.toUpperCase());
+          return;
+        }
         beginStroke(p);
         return;
       }
@@ -827,17 +1340,36 @@ const PSTools = (function () {
 
     function move(p, e) {
       var shift = !!(e && e.shiftKey);
-      if (st.tool === 'pen') { penDrag(p); return; }
+      var alt = !!(e && e.altKey);
+      if (st.tool === 'pen') { penDrag(p, e); return; }
       var d = st.drag;
       if (!d) {
+        if (st.tool === 'path-select') pathHover(p);
         if (st.tool === 'brush' || st.tool === 'eraser') {
           view.setCursor(p.docX, p.docY, st.brush.size / 2);
         }
         return;
       }
       if (d.kind === 'move') {
-        d.layer.x = Math.round(d.ox + (p.docX - d.sx));
-        d.layer.y = Math.round(d.oy + (p.docY - d.sy));
+        var nx = Math.round(d.ox + (p.docX - d.sx));
+        var ny = Math.round(d.oy + (p.docY - d.sy));
+        // Shift 约束到水平 / 垂直方向
+        if (shift) {
+          if (Math.abs(nx - d.ox) >= Math.abs(ny - d.oy)) ny = d.oy;
+          else nx = d.ox;
+        }
+        // Ctrl / Cmd 临时关闭吸附，和 PS 的「临时禁用对齐」一致
+        var noSnap = !!(e && (e.ctrlKey || e.metaKey));
+        if (!noSnap && st.move.snap && d.targets) {
+          var snapped = snapMove(d, nx, ny);
+          nx = snapped.x;
+          ny = snapped.y;
+          view.guides = snapped.guides;
+        } else {
+          view.guides = null;
+        }
+        d.layer.x = nx;
+        d.layer.y = ny;
         d.layer.version++;
         d.doc.version++;
         return;
@@ -846,8 +1378,8 @@ const PSTools = (function () {
         shapeMove(p, shift);
         return;
       }
-      if (d.kind === 'anchor' || d.kind === 'shape-move') {
-        pathMove(p);
+      if (d.kind === 'anchor' || d.kind === 'handle' || d.kind === 'shape-move') {
+        pathMove(p, shift, alt);
         return;
       }
       if (d.kind === 'select') {
@@ -884,12 +1416,13 @@ const PSTools = (function () {
         shapeUp(p, !!(e && e.shiftKey));
         return;
       }
-      if (d.kind === 'anchor' || d.kind === 'shape-move') {
+      if (d.kind === 'anchor' || d.kind === 'handle' || d.kind === 'shape-move') {
         pathUp();
         return;
       }
       if (d.kind === 'move') {
         st.drag = null;
+        view.guides = null;
         var dx = d.layer.x - d.ox;
         var dy = d.layer.y - d.oy;
         view.canvas.style.cursor = 'grab';
@@ -902,6 +1435,8 @@ const PSTools = (function () {
           redo: function () { layer.x = d.ox + dx; layer.y = d.oy + dy; layer.version++; d.doc.version++; }
         });
         PS.touch(layer);
+        // 内容没变，只更新缓存版本，下一次拖动不必重扫像素
+        if (d.rel) layer._boundsCache = { version: layer.version, rel: d.rel };
         if (hooks.change) hooks.change('move');
         return;
       }
@@ -945,8 +1480,8 @@ const PSTools = (function () {
         d.layer.version++;
         d.doc.version++;
       }
-      if (d && d.kind === 'anchor' && d.before) {
-        d.shape.pts = PS.cloneShape(d.before).pts;
+      if (d && (d.kind === 'anchor' || d.kind === 'handle') && d.before) {
+        restorePts(d.shape, d.before);
         d.layer.version++;
         d.doc.version++;
       }
@@ -958,15 +1493,29 @@ const PSTools = (function () {
       }
       if (st.penEdit) cancelPen();
       st.drag = null;
+      st.pathSel = null;
       view.previewShape = null;
       view.previewRect = null;
       view.previewLine = null;
       view.previewVector = null;
       view.previewPath = null;
+      view.previewShapeSel = null;
+      view.guides = null;
+      if (st.tool === 'path-select') view.canvas.style.cursor = 'default';
       view.schedule();
     }
 
-    view.toolHandlers = { down: down, move: move, up: up };
+    /* 钢笔绘制中右键 = 结束开放路径（与 Photoshop 一致）。 */
+    function contextDown() {
+      if (st.tool === 'pen' && st.penEdit) finishPen(false);
+    }
+
+    /* 钢笔双击 = 结束开放路径；第二下产生的重合锚点由 penDouble 去掉。 */
+    function dblclick() {
+      if (st.tool === 'pen' && st.penEdit) penDouble();
+    }
+
+    view.toolHandlers = { down: down, move: move, up: up, context: contextDown, dblclick: dblclick };
     updateCursor();
 
     return {
@@ -976,16 +1525,43 @@ const PSTools = (function () {
       options: options,
       drawText: drawText,
       fillAt: fillAt,
+      fillRegion: fillRegion,
+      setShapeOp: setShapeOp,
       applyGradient: applyGradient,
       finishPen: finishPen,
       cancelPen: cancelPen,
+      removeLastAnchor: removeLastAnchor,
+      deletePathAnchor: deletePathAnchor,
+      selectShape: selectShape,
       penActive: function () { return !!st.penEdit; },
+      penPoints: function () {
+        return st.penEdit ? st.penEdit.pts.map(function (a) {
+          return { x: a.x, y: a.y, hix: a.hix, hiy: a.hiy, hox: a.hox, hoy: a.hoy };
+        }) : [];
+      },
+      pathSelection: function () {
+        var sel = st.pathSel;
+        return sel && sel.shape ? {
+          layerId: sel.layer ? sel.layer.id : null,
+          shapeIndex: typeof sel.shapeIndex === 'number' ? sel.shapeIndex : null,
+          index: sel.index, handle: sel.handle || null,
+          pts: sel.shape.pts ? sel.shape.pts.length : 0
+        } : null;
+      },
       paintDot: function (doc, layer, x, y) {
         if (!layer || layer.type !== 'pixel') return false;
-        var tx = PS.beginTx(doc, '画笔');
+        var blocked = paintBlocked(layer);
+        if (blocked) return false;
+        var mask = maskTarget(layer);
+        var tx = PS.beginTx(doc, mask ? '蒙版绘制' : '画笔');
         var fake = { kind: 'brush', doc: doc, layer: layer, tx: tx, erase: false,
           color: colors().fg, r: st.brush.size / 2, hardness: st.brush.hardness / 100,
           opacity: st.brush.opacity / 100 };
+        if (mask) {
+          fake.mask = mask;
+          fake.reveal = false;
+          fake.strength = 1;
+        }
         var prev = st.drag;
         st.drag = fake;
         stampAt(x, y);
@@ -996,10 +1572,16 @@ const PSTools = (function () {
             if (mask) PS.applyMaskBlendTile(rec.tile, rec.before, mask);
           });
         }
-        PS.touch(layer);
+        if (mask) {
+          layer.version++;
+          mask.version++;
+        } else {
+          if (PS.alphaLocked(layer)) PS.restoreTileAlpha(tx);
+          PS.touch(layer);
+          PS.requestMips(doc);
+        }
         PS.endTx(tx);
         doc.version++;
-        PS.requestMips(doc);
         if (hooks.change) hooks.change('brush');
         return true;
       },

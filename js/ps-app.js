@@ -33,18 +33,20 @@
     { id: 'move', name: '移动', key: 'V', group: 1, svg: '<path d="M12 3.5v17M3.5 12h17"/><path d="m9.2 6.3 2.8-2.8 2.8 2.8M9.2 17.7l2.8 2.8 2.8-2.8M6.3 9.2 3.5 12l2.8 2.8M17.7 9.2 20.5 12l-2.8 2.8"/>' },
     { id: 'select-rect', name: '矩形选区', key: 'M', group: 2, svg: '<rect x="4" y="6" width="16" height="12" rx="2" stroke-dasharray="3.2 2.8"/>' },
     { id: 'select-ellipse', name: '椭圆选区', key: 'Shift+M', group: 2, svg: '<ellipse cx="12" cy="12" rx="8" ry="6.2" stroke-dasharray="3.2 2.8"/>' },
-    { id: 'select-lasso', name: '套索选区', key: 'L', group: 2, svg: '<path d="M12 18.8c-4.5 0-8-2.6-8-6.2S7.5 6.4 12 6.4s8 2.6 8 6.2c0 2.6-1.9 4.8-4.6 5.7"/><path d="M9.2 18.2c-.9.9-1.2 2-.7 2.8"/>' },
-    { id: 'magic-wand', name: '魔棒', key: 'W', group: 2, svg: '<path d="m4 20 9-9"/><path d="m13.8 5.6 4.6 4.6-2.6 2.6-4.6-4.6z"/><path d="M6 4v3M4.5 5.5h3M19 16.5v2.5M17.8 17.8h2.4"/>' },
-    { id: 'crop', name: '裁剪', key: 'C', group: 3, svg: '<path d="M7 3.5v12A2.5 2.5 0 0 0 9.5 18h11"/><path d="M17 20.5v-12A2.5 2.5 0 0 0 14.5 6h-11"/>' },
+    { id: 'select-lasso', name: '套索选区', key: 'L', group: 2, modes: ['raster'], svg: '<path d="M12 18.8c-4.5 0-8-2.6-8-6.2S7.5 6.4 12 6.4s8 2.6 8 6.2c0 2.6-1.9 4.8-4.6 5.7"/><path d="M9.2 18.2c-.9.9-1.2 2-.7 2.8"/>' },
+    { id: 'magic-wand', name: '魔棒', key: 'W', group: 2, modes: ['raster'], svg: '<path d="m4 20 9-9"/><path d="m13.8 5.6 4.6 4.6-2.6 2.6-4.6-4.6z"/><path d="M6 4v3M4.5 5.5h3M19 16.5v2.5M17.8 17.8h2.4"/>' },
+    { id: 'crop', name: '裁剪', key: 'C', group: 3, modes: ['raster'], svg: '<path d="M7 3.5v12A2.5 2.5 0 0 0 9.5 18h11"/><path d="M17 20.5v-12A2.5 2.5 0 0 0 14.5 6h-11"/>' },
     { id: 'eyedropper', name: '吸管', key: 'I', group: 3, svg: '<path d="m3.6 20.4 1-3.3L14 7.7l2.3 2.3L7 19.4z"/><path d="m13.3 6.4 2-2a2.5 2.5 0 0 1 3.5 0l.8.8a2.5 2.5 0 0 1 0 3.5l-2 2"/>' },
-    { id: 'brush', name: '画笔', key: 'B', group: 4, svg: '<path d="m14.5 4.5 5 5"/><path d="m12.8 6.2 5 5-7 7a2.6 2.6 0 0 1-3.7 0l-1.3-1.3a2.6 2.6 0 0 1 0-3.7z"/><path d="m9.2 15.2 3-3"/>' },
-    { id: 'eraser', name: '橡皮擦', key: 'E', group: 4, svg: '<rect x="4.2" y="9.4" width="15.6" height="7.4" rx="2" transform="rotate(-42 12 13.1)"/><path d="m8.7 8.9 6.2 6.2"/>' },
-    { id: 'gradient', name: '渐变', key: 'G', group: 4, svg: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 9.6h16M4 14.6h16" opacity=".45"/>' },
-    { id: 'fill', name: '油漆桶', key: 'K', group: 4, svg: '<path d="m5.2 11.2 6.4-6.4a1.6 1.6 0 0 1 2.3 0l5.3 5.3a1.6 1.6 0 0 1 0 2.3l-4.6 4.6a2 2 0 0 1-2.8 0L5.2 13.5a1.6 1.6 0 0 1 0-2.3Z"/><path d="m9.2 5.2 1.6-1.6"/><path d="M19 15.5s2 2.2 2 3.3a2 2 0 0 1-4 0c0-1.1 2-3.3 2-3.3Z"/>' },
-    { id: 'pen', name: '钢笔', key: 'P', group: 5, svg: '<path d="M9 3.5h6l1.5 9L12 20.5 7.5 12.5 9 3.5Z"/><circle cx="12" cy="10" r="1.8"/><path d="M12 11.8v5"/>' },
-    { id: 'shape', name: '形状', key: 'U', group: 5, svg: '<rect x="4" y="10" width="10.5" height="10" rx="1.8"/><circle cx="14.8" cy="9.2" r="4.8"/>' },
-    { id: 'path-select', name: '路径选择', key: 'A', group: 5, svg: '<path d="m6 4 13 8.2-5.7 1.7-1.8 5.8L6 4Z"/>' },
-    { id: 'text', name: '文字', key: 'T', group: 6, svg: '<path d="M5.5 6.5V5h13v1.5M12 5v14.5M8.6 19.5h6.8"/>' }
+    { id: 'brush', name: '画笔', key: 'B', group: 4, modes: ['raster'], svg: '<path d="m14.5 4.5 5 5"/><path d="m12.8 6.2 5 5-7 7a2.6 2.6 0 0 1-3.7 0l-1.3-1.3a2.6 2.6 0 0 1 0-3.7z"/><path d="m9.2 15.2 3-3"/>' },
+    { id: 'eraser', name: '橡皮擦', key: 'E', group: 4, modes: ['raster'], svg: '<rect x="4.2" y="9.4" width="15.6" height="7.4" rx="2" transform="rotate(-42 12 13.1)"/><path d="m8.7 8.9 6.2 6.2"/>' },
+    { id: 'gradient', name: '渐变', key: 'G', group: 4, modes: ['raster'], svg: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 9.6h16M4 14.6h16" opacity=".45"/>' },
+    { id: 'fill', name: '油漆桶', key: 'K', group: 4, modes: ['raster'], svg: '<path d="m5.2 11.2 6.4-6.4a1.6 1.6 0 0 1 2.3 0l5.3 5.3a1.6 1.6 0 0 1 0 2.3l-4.6 4.6a2 2 0 0 1-2.8 0L5.2 13.5a1.6 1.6 0 0 1 0-2.3Z"/><path d="m9.2 5.2 1.6-1.6"/><path d="M19 15.5s2 2.2 2 3.3a2 2 0 0 1-4 0c0-1.1 2-3.3 2-3.3Z"/>' },
+    { id: 'pen', name: '钢笔', key: 'P', group: 5, modes: ['vector'], svg: '<path d="M9 3.5h6l1.5 9L12 20.5 7.5 12.5 9 3.5Z"/><circle cx="12" cy="10" r="1.8"/><path d="M12 11.8v5"/>' },
+    { id: 'shape', name: '形状', key: 'U', group: 5, modes: ['vector'], svg: '<rect x="4" y="10" width="10.5" height="10" rx="1.8"/><circle cx="14.8" cy="9.2" r="4.8"/>' },
+    { id: 'path-select', name: '路径选择', key: 'A', group: 5, modes: ['vector'], svg: '<path d="m6 4 13 8.2-5.7 1.7-1.8 5.8L6 4Z"/>' },
+    { id: 'hand', name: '抓手', key: 'H', group: 5, svg: '<path d="M8.5 12.5V6.8a1.7 1.7 0 0 1 3.4 0v4.4-5.9a1.7 1.7 0 0 1 3.4 0v5.9-4.9a1.7 1.7 0 0 1 3.4 0v7.9c0 3.4-2.5 5.9-6 5.9-2.6 0-4.1-1.4-5.1-3.5l-2.1-4.3a1.6 1.6 0 0 1 2.9-1.3l.5 1.1"/>' },
+    { id: 'zoom', name: '缩放', key: 'Z', group: 5, svg: '<circle cx="10.8" cy="10.8" r="6.3"/><path d="m15.4 15.4 4.3 4.3M8.4 10.8h4.8M10.8 8.4v4.8"/>' },
+    { id: 'text', name: '文字', key: 'T', group: 6, modes: ['raster'], svg: '<path d="M5.5 6.5V5h13v1.5M12 5v14.5M8.6 19.5h6.8"/>' }
   ];
 
   /* 参考图里工具箱还有一排本版本没实现的工具。它们只是**占位控件**：
@@ -53,9 +55,7 @@
   var PH_TOOLS = [
     { name: '仿制图章', svg: '<rect x="8" y="9" width="8" height="5" rx="1.2"/><path d="M12 4.5V9M10 4.5h4"/><path d="M7 20.5h10M9.5 14v3.5h5V14"/>' },
     { name: '模糊 / 锐化', svg: '<path d="M12 3.8c3.4 4 6 7.2 6 10.4a6 6 0 0 1-12 0c0-3.2 2.6-6.4 6-10.4Z"/><path d="M9.2 14.5a2.8 2.8 0 0 0 2.8 2.8"/>' },
-    { name: '减淡 / 加深', svg: '<circle cx="12" cy="12" r="3.6"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4 17 7M7 17l-1.6 1.6"/>' },
-    { name: '抓手', svg: '<path d="M8.5 12.5V6.8a1.7 1.7 0 0 1 3.4 0v4.4-5.9a1.7 1.7 0 0 1 3.4 0v5.9-4.9a1.7 1.7 0 0 1 3.4 0v7.9c0 3.4-2.5 5.9-6 5.9-2.6 0-4.1-1.4-5.1-3.5l-2.1-4.3a1.6 1.6 0 0 1 2.9-1.3l.5 1.1"/>' },
-    { name: '缩放', svg: '<circle cx="10.8" cy="10.8" r="6.3"/><path d="m15.4 15.4 4.3 4.3M8.4 10.8h4.8M10.8 8.4v4.8"/>' }
+    { name: '减淡 / 加深', svg: '<circle cx="12" cy="12" r="3.6"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4 17 7M7 17l-1.6 1.6"/>' }
   ];
 
   /* 右侧面板图标槽：参考图最右那列竖排小图标 */
@@ -108,6 +108,11 @@
       { label: '复制图层', hint: 'Ctrl+J', act: 'dupLayer' },
       { label: '删除图层', act: 'delLayer' },
       { sep: true },
+      { label: '添加图层蒙版', act: 'maskAdd' },
+      { label: '停用 / 启用蒙版', act: 'maskToggle' },
+      { label: '应用图层蒙版', act: 'maskApply' },
+      { label: '删除图层蒙版', act: 'maskDelete' },
+      { sep: true },
       { label: '新建调整层…', act: 'addAdjust' },
       { label: '向下合并', hint: 'Ctrl+E', act: 'mergeDown' }
     ] },
@@ -144,7 +149,20 @@
       { label: '重置工作区', act: 'resetWorkspace' },
       { sep: true },
       { label: '显示网格', act: 'toggleGrid' },
-      { label: '显示瓦片边界', act: 'toggleTiles' }
+      { label: '显示瓦片边界', act: 'toggleTiles' },
+      { label: '智能参考线（对齐）', act: 'toggleSnap' },
+      { sep: true },
+      { label: '图像编辑器（位图）', hint: 'F2', act: 'mode:raster' },
+      { label: '矢量编辑器', hint: 'F3', act: 'mode:vector' }
+    ] },
+    { id: 'vector', name: '矢量', modes: ['vector'], items: [
+      { label: '合并（添加）', act: 'shapeOp:add' },
+      { label: '减去', act: 'shapeOp:subtract' },
+      { label: '相交', act: 'shapeOp:intersect' },
+      { label: '排除重叠', act: 'shapeOp:exclude' },
+      { sep: true },
+      { label: '栅格化形状', act: 'rasterizeShape' },
+      { label: '切换到图像编辑器', hint: 'F2', act: 'mode:raster' }
     ] },
     { id: 'help', name: '帮助', items: [
       { label: '快捷键…', act: 'shortcuts' },
@@ -173,15 +191,20 @@
     navComp: null,
     navScratch: null,
     menuPop: null,
+    menuFor: null,
     layerMenu: null,
+    maskEditId: null,
+    channel: 'rgb',
+    mode: 'raster',
+    opacityType: { digits: '', at: 0 },
     keyBound: false
   };
 
   /* ---------------- 空白画布 / 演示内容 ---------------- */
   function buildBlank() {
     var doc = PS.createDoc(1600, 1000, '未命名-1', { fill: '#ffffff' });
-    /* 默认背景层锁定：和 PS 一样，移动工具拖不动它 */
-    if (doc.layers[0]) doc.layers[0].locked = true;
+    /* 默认背景层锁定位置：和 PS 一样，移动工具拖不动它 */
+    if (doc.layers[0]) doc.layers[0].locks.position = true;
     return doc;
   }
 
@@ -245,7 +268,8 @@
     tools: true, options: true, side: true, status: true,
     /* 默认布局对齐参考图：历史记录收成标题条，导航器收起，图层占满右侧 */
     cards: { hist: true, layers: false, nav: true },
-    sideW: 312
+    sideW: 312,
+    mode: 'raster'
   };
 
   function loadUiState() {
@@ -263,6 +287,7 @@
         });
       }
       if (typeof s.sideW === 'number' && s.sideW >= 240 && s.sideW <= 560) uiState.sideW = s.sideW;
+      if (s.mode === 'vector' || s.mode === 'raster') uiState.mode = s.mode;
     } catch (e) { /* 忽略损坏的本地偏好 */ }
   }
 
@@ -443,6 +468,10 @@
           '<div class="ps-menus" id="psMenus"></div>' +
           '<div class="ps-doc-title" id="psDocTitle">图像工坊</div>' +
           '<div class="ps-menubar-right">' +
+            '<span class="ps-mode-switch" id="psModeSwitch" role="group" aria-label="编辑器模式">' +
+              '<button type="button" data-mode="raster" title="图像编辑器：画笔、选区、滤镜（F2）">位图</button>' +
+              '<button type="button" data-mode="vector" title="矢量编辑器：钢笔、形状、布尔（F3）">矢量</button>' +
+            '</span>' +
             '<span class="ps-workspace" id="psWorkspace">' +
               '<button type="button" class="ps-ws-btn" data-ws="tools" title="显示 / 隐藏工具箱"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16"/></svg></button>' +
               '<button type="button" class="ps-ws-btn" data-ws="options" title="显示 / 隐藏选项栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 12h4M15 12h2"/></svg></button>' +
@@ -524,6 +553,7 @@
                 '</span></div>' +
                 '<div class="ps-nav"><canvas id="psNavCanvas" width="248" height="148"></canvas></div>' +
                 '<div class="ps-nav-zoom"><span id="psNavZoom">100%</span><span class="ps-nav-zoom-lab">缩放</span></div>' +
+                '<div class="ps-histogram" title="RGB 直方图 · 反映当前合成结果"><canvas id="psHistogram" width="248" height="52"></canvas></div>' +
                 '<div class="ps-info-list" id="psInfo"></div>' +
               '</section>' +
             '</div>' +
@@ -537,6 +567,8 @@
             '<button type="button" class="ps-zbtn" data-zoom="fit" title="适应窗口（Ctrl+0）">适应</button>' +
           '</span>' +
           '<span class="ps-stat" id="psStatSize">—</span>' +
+          '<span class="ps-stat ps-editor" id="psStatEditor">位图</span>' +
+          '<span class="ps-stat ps-mode" id="psStatMode">RGB · 8 位</span>' +
           '<span class="ps-stat" id="psStatTiles">0 瓦片</span>' +
           '<span class="ps-stat" id="psStatFps">— FPS</span>' +
           '<span class="ps-stat" id="psStatMem">0 MB</span>' +
@@ -551,9 +583,10 @@
     var e = app.els;
     ['psMenus', 'psDocTitle', 'psTools', 'psPhTools', 'psOptions', 'psOptPh', 'psStageHost', 'psLayerProps',
       'psLayerList', 'psLayerCount', 'psHistList', 'psHistCount', 'psInfo', 'psNavCanvas',
-      'psStatZoom', 'psStatSize', 'psStatTiles', 'psStatFps', 'psStatMem', 'psNote',
+      'psHistogram',
+      'psStatZoom', 'psStatSize', 'psStatMode', 'psStatEditor', 'psStatTiles', 'psStatFps', 'psStatMem', 'psNote',
       'psFg', 'psBg', 'psSwap', 'psColorHex', 'psFile', 'psProjFile', 'psRail', 'psSwatches', 'psStatusIcons',
-      'psDocTabName', 'psLayersCard', 'psHistCard', 'psNavCard', 'psSideResize', 'psWorkspace', 'psZoomCtl'
+      'psDocTabName', 'psLayersCard', 'psHistCard', 'psNavCard', 'psSideResize', 'psWorkspace', 'psZoomCtl', 'psModeSwitch'
     ].forEach(function (id) { e[id] = $id(id); });
 
     var navFit = $id('psNavFit');
@@ -566,6 +599,7 @@
       doc: function () { return app.doc; },
       layer: function () { return app.doc ? PS.activeLayer(app.doc) : null; },
       colors: function () { return { fg: app.fg, bg: app.bg }; },
+      mask: function (layer) { return !!layer && app.maskEditId === layer.id && !!layer.mask; },
       status: setNote,
       change: function () { refreshAll(); },
       onColor: function (hex) {
@@ -589,18 +623,33 @@
     bindWorkspace();
     app.ui = true;
     applyUiState();
+    app.mode = uiState.mode === 'vector' ? 'vector' : 'raster';
+    app.tools.setOption('vectorAppend', app.mode === 'vector');
+    updateModeUI();
+    buildMenus();
+    buildToolbar();
+    buildPlaceholderTools();
   }
 
   function buildMenus() {
     var wrap = app.els.psMenus;
+    if (!wrap) return;
+    closeMenu();
+    wrap.innerHTML = '';
     MENUS.forEach(function (m) {
+      if (m.modes && m.modes.indexOf(app.mode) < 0) return;
       var b = document.createElement('button');
       b.type = 'button';
       b.className = 'ps-menu';
       b.textContent = m.name;
       b.addEventListener('click', function (ev) {
         ev.stopPropagation();
+        if (app.menuFor === b && app.menuPop) { closeMenu(); return; }
         openMenu(m, b);
+      });
+      /* 和 PS 一样：已有菜单展开时，鼠标横向划过菜单标题就直接切过去 */
+      b.addEventListener('pointerenter', function () {
+        if (app.menuFor && app.menuFor !== b) openMenu(m, b);
       });
       wrap.appendChild(b);
     });
@@ -611,6 +660,7 @@
       app.menuPop.remove();
       app.menuPop = null;
     }
+    app.menuFor = null;
   }
 
   function openMenu(menu, btn) {
@@ -640,16 +690,31 @@
     pop.style.left = Math.max(6, rect.left - hostRect.left) + 'px';
     pop.style.top = Math.max(6, rect.bottom - hostRect.top + 4) + 'px';
     app.menuPop = pop;
+    app.menuFor = btn;
     setTimeout(function () {
       document.addEventListener('pointerdown', function h(ev) {
+        // 悬停切换菜单时旧弹层已被移除，旧监听要自己退出，
+        // 否则会把新弹层也误关掉。
+        if (app.menuPop !== pop) {
+          document.removeEventListener('pointerdown', h);
+          return;
+        }
         if (!pop.contains(ev.target)) { closeMenu(); document.removeEventListener('pointerdown', h); }
       });
     }, 0);
   }
 
+  function toolAllowed(t) {
+    if (!t) return false;
+    return !t.modes || t.modes.indexOf(app.mode) >= 0;
+  }
+
   function buildToolbar() {
     var wrap = app.els.psTools;
+    if (!wrap) return;
+    wrap.innerHTML = '';
     TOOLS.forEach(function (t) {
+      if (!toolAllowed(t)) return;
       var b = document.createElement('button');
       b.type = 'button';
       b.className = 'ps-tool' + (t.id === app.tools.tool() ? ' is-on' : '');
@@ -664,11 +729,61 @@
   }
 
   function selectTool(id) {
+    var meta = null;
+    TOOLS.forEach(function (t) { if (t.id === id) meta = t; });
+    if (!toolAllowed(meta)) {
+      setNote((app.mode === 'vector' ? '矢量编辑器' : '图像编辑器') + '里没有这个工具，先切换模式。');
+      return false;
+    }
     app.tools.setTool(id);
     Array.prototype.forEach.call(app.els.psTools.children, function (b) {
       b.classList.toggle('is-on', b.dataset.tool === id);
     });
     buildOptions();
+    app.view.schedule();
+    return true;
+  }
+
+  /* ---------------- 位图 / 矢量双编辑器 ---------------- */
+  function updateModeUI() {
+    var sw = app.els.psModeSwitch;
+    if (sw) {
+      Array.prototype.forEach.call(sw.children, function (b) {
+        b.classList.toggle('is-on', b.dataset.mode === app.mode);
+        b.setAttribute('aria-pressed', b.dataset.mode === app.mode ? 'true' : 'false');
+      });
+    }
+    if (app.els.psStatEditor) {
+      app.els.psStatEditor.textContent = app.mode === 'vector' ? '矢量' : '位图';
+      app.els.psStatEditor.classList.toggle('is-vector', app.mode === 'vector');
+    }
+    if (app.host) {
+      app.host.classList.toggle('is-vector', app.mode === 'vector');
+      app.host.classList.toggle('is-raster', app.mode !== 'vector');
+    }
+  }
+
+  function setMode(mode, silent) {
+    mode = mode === 'vector' ? 'vector' : 'raster';
+    app.mode = mode;
+    uiState.mode = mode;
+    saveUiState();
+    updateModeUI();
+    buildMenus();
+    buildToolbar();
+    buildPlaceholderTools();
+    app.tools.setOption('vectorAppend', mode === 'vector');
+    var current = app.tools.tool();
+    var meta = null;
+    TOOLS.forEach(function (t) { if (t.id === current) meta = t; });
+    if (!toolAllowed(meta)) selectTool(mode === 'vector' ? 'pen' : 'move');
+    else buildOptions();
+    switchLayerTab(mode === 'vector' ? 'paths' : 'layers');
+    if (!silent) {
+      setNote(mode === 'vector'
+        ? '矢量编辑器：钢笔绘制曲线与曲面，形状工具 + 布尔运算组合路径，A 键选择锚点。'
+        : '图像编辑器：画笔、选区、渐变与滤镜等像素工具。');
+    }
     app.view.schedule();
   }
 
@@ -676,6 +791,9 @@
   function buildPlaceholderTools() {
     var wrap = app.els.psPhTools;
     if (!wrap) return;
+    wrap.innerHTML = '';
+    // 矢量模式只保留矢量工具，占位位图工具先收起来，避免分散注意力
+    if (app.mode !== 'raster') return;
     PH_TOOLS.forEach(function (t) {
       var b = document.createElement('button');
       b.type = 'button';
@@ -826,6 +944,15 @@
     }).join('') + '</span>';
   }
 
+  function optBoolBar(op) {
+    var vals = [['add', '合并'], ['subtract', '减去'], ['intersect', '相交'], ['exclude', '排除']];
+    return '<span class="ps-seg ps-bool-seg" title="布尔运算：决定新形状如何与当前形状层组合">' +
+      vals.map(function (v) {
+        return '<button type="button" class="ps-seg-btn' + (op === v[0] ? ' is-on' : '') +
+          '" data-bool-op="' + v[0] + '">' + v[1] + '</button>';
+      }).join('') + '</span>';
+  }
+
   function buildOptions() {
     var wrap = app.els.psOptions;
     var tool = app.tools.tool();
@@ -840,7 +967,9 @@
         '<span class="ps-opt-sep"></span>' +
         (tool === 'brush' ? optVal('hardness', '硬度', 0, 100, 1, o.hardness, '%') : '') +
         optVal('opacity', '不透明度', 5, 100, 1, o.opacity, '%') +
-        '<div class="ps-opt-hint">Shift 画直线 · 间距按笔刷直径的百分比 · 松手写入历史</div>';
+        '<div class="ps-opt-hint">' + (app.maskEditId
+          ? '蒙版编辑中：深色隐藏、浅色恢复，橡皮擦恢复；Alt+点击蒙版缩略图可停用'
+          : 'Shift 画直线 · 间距按笔刷直径的百分比 · 松手写入历史') + '</div>';
     } else if (tool === 'select-rect' || tool === 'select-ellipse' || tool === 'select-lasso') {
       html += optNum('feather', '羽化', 0, 200, 1, o.feather, 'px') +
         '<div class="ps-opt-hint">拖拽创建选区 · 羽化让选区边缘按遮罩柔和过渡</div>';
@@ -882,16 +1011,26 @@
         optCheck('strokeOn', '描边', o.strokeOn) +
         optColor('strokeColor', '色', o.strokeOn, o.strokeColor) +
         optNum('strokeWidth', '宽度', 0, 40, 1, o.strokeWidth, 'px') +
+        '<span class="ps-opt-sep"></span>' +
+        optBoolBar(o.vectorOp) +
+        optCheck('vectorAppend', '合成到当前形状层', o.vectorAppend) +
         '<div class="ps-opt-hint">' + (tool === 'pen'
-          ? '单击落锚点 · 拖动拉出控制柄 · 点回起点或 Enter 闭合 · Esc 取消'
-          : '拖拽创建矢量形状 · Shift 等比 · 缩放不失真') + '</div>';
+          ? '单击落点 · 拖动出曲线 · Shift 约束 45° · Alt 拖出尖角 · 点回起点闭合 · Enter/双击/右键结束 · Backspace 撤回锚点'
+          : '拖拽创建矢量形状 · Shift 等比 · 缩放不失真') +
+        ' · 布尔运算需合成到同一形状层</div>';
     } else if (tool === 'path-select') {
-      html += '<div class="ps-opt-hint">点击矢量路径选中图层 · 拖动锚点改形 · 拖动路径整体移动</div>';
+      html += optBoolBar(o.vectorOp) +
+        '<div class="ps-opt-hint">悬停显示锚点 · 拖动锚点或控制柄改形 · Alt 单独调整一侧控制柄 · Delete 删除锚点 · 拖动路径整体移动 · 布尔按钮应用到选中路径</div>';
     } else if (tool === 'move') {
       html += optCheck('autoSelect', '自动选择', o.autoSelect) +
-        '<div class="ps-opt-hint">按下时选中光标下最上层的不透明图层 · 滚轮平移 · Ctrl+滚轮缩放</div>';
+        optCheck('moveSnap', '对齐', o.moveSnap) +
+        '<div class="ps-opt-hint">拖动时吸附文档与其他图层的边缘 / 中心 · Ctrl 临时关闭吸附 · Shift 约束水平或垂直 · 滚轮平移 · Ctrl+滚轮缩放</div>';
     } else if (tool === 'text') {
       html += '<div class="ps-opt-hint">点击画布放置文字基线，再填写内容、字号与颜色</div>';
+    } else if (tool === 'hand') {
+      html += '<div class="ps-opt-hint">拖拽平移画布 · 任何工具下按住空格也能临时抓手</div>';
+    } else if (tool === 'zoom') {
+      html += '<div class="ps-opt-hint">单击放大 · Alt 单击缩小 · 滚轮缩放以光标为中心</div>';
     } else {
       html += '<div class="ps-opt-hint">拖拽创建选区 · 选区外自动保护</div>';
     }
@@ -936,6 +1075,12 @@
         });
       });
     });
+    wrap.querySelectorAll('[data-bool-op]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        app.tools.setShapeOp(btn.dataset.boolOp);
+        buildOptions();
+      });
+    });
   }
 
   function bindEvents() {
@@ -963,6 +1108,13 @@
     });
     syncColorUI();
 
+    if (e.psModeSwitch) {
+      e.psModeSwitch.addEventListener('click', function (ev) {
+        var b = ev.target.closest('[data-mode]');
+        if (b) setMode(b.dataset.mode);
+      });
+    }
+
     Array.prototype.forEach.call(app.host.querySelectorAll('[data-lay]'), function (b) {
       b.addEventListener('click', function () { layerAction(b.dataset.lay); });
     });
@@ -978,7 +1130,59 @@
         return;
       }
       app.doc.activeId = layer.id;
+      var maskHit = ev.target.closest('[data-surface="mask"]');
+      if (maskHit && layer.mask) {
+        if (ev.altKey) {
+          PS.setLayerMaskEnabled(app.doc, layer, !layer.mask.enabled);
+          setNote(layer.mask.enabled ? '蒙版已启用' : '蒙版已停用（图层恢复完整显示）');
+        } else {
+          app.maskEditId = app.maskEditId === layer.id ? null : layer.id;
+          setNote(app.maskEditId ? '正在编辑蒙版：画笔深色隐藏、浅色恢复，橡皮擦恢复' : '已切回图层像素');
+        }
+        refreshAll();
+        return;
+      }
+      app.maskEditId = null;
       refreshAll();
+    });
+    /* 通道 / 路径面板的点击（这两个面板复用同一个列表容器） */
+    e.psLayerList.addEventListener('click', function (ev) {
+      if (!app.doc) return;
+      var ch = ev.target.closest('[data-ch]');
+      if (ch) {
+        setChannel(ch.dataset.ch);
+        return;
+      }
+      var vis = ev.target.closest('[data-path-vis]');
+      if (vis) {
+        var lv = PS.layerById(app.doc, vis.dataset.pathVis);
+        if (lv) {
+          PS.setLayerProp(app.doc, lv, 'visible', !lv.visible);
+          refreshAll();
+        }
+        return;
+      }
+      var head = ev.target.closest('[data-path-head]');
+      if (head) {
+        var lh = PS.layerById(app.doc, head.dataset.pathHead);
+        if (lh) {
+          app.doc.activeId = lh.id;
+          refreshAll();
+          setNote('已选中路径图层：' + lh.name);
+        }
+        return;
+      }
+      var row = ev.target.closest('[data-path-row]');
+      if (row) {
+        var lp = PS.layerById(app.doc, row.dataset.layer);
+        var idx = Number(row.dataset.index);
+        if (lp && app.tools.selectShape(lp, idx)) {
+          refreshAll();
+          var b = PS.shapeBounds(lp.shapes[idx]);
+          setNote('已选中路径：' + lp.name + ' / 第 ' + (idx + 1) + ' 个'
+            + (b ? ' · ' + Math.round(b.w) + ' × ' + Math.round(b.h) : ''));
+        }
+      }
     });
     e.psLayerList.addEventListener('dragstart', function (ev) {
       var row = ev.target.closest('.ps-lay');
@@ -1092,22 +1296,16 @@
       });
     }
 
-    /* 图层 / 通道 / 路径 切换：后两个是占位面板 */
+    /* 图层 / 通道 / 路径 切换：三个面板都是真实内容 */
     var layerTabs = $id('psLayerTabs');
     if (layerTabs) {
       layerTabs.addEventListener('click', function (ev) {
         var b = ev.target.closest('[data-ltab]');
         if (!b) return;
-        app.layerTab = b.dataset.ltab;
-        Array.prototype.forEach.call(layerTabs.querySelectorAll('[data-ltab]'), function (x) {
-          x.classList.toggle('is-on', x === b);
-        });
-        if (app.layerTab !== 'layers') {
-          setNote('「' + (app.layerTab === 'channels' ? '通道' : '路径') + '」面板是占位控件：当前版本只用图层合成。');
-        } else {
-          setNote('图层面板');
-        }
-        renderLayers();
+        switchLayerTab(b.dataset.ltab);
+        if (app.layerTab === 'channels') setNote('通道：单击任一通道单独查看灰度，Ctrl+2 回到 RGB 复合');
+        else if (app.layerTab === 'paths') setNote('路径：这里是文档里的矢量形状，单击可选中并在画布高亮');
+        else setNote('图层面板');
       });
     }
 
@@ -1180,6 +1378,150 @@
     }
   }
 
+  /* ---------------- 通道 / 路径面板 ---------------- */
+  var CHANNEL_DEFS = [
+    { id: 'rgb', name: 'RGB', sub: '复合通道', key: 'Ctrl+2', dot: 'is-rgb' },
+    { id: 'r', name: '红', sub: 'Red', key: 'Ctrl+3', dot: 'is-r' },
+    { id: 'g', name: '绿', sub: 'Green', key: 'Ctrl+4', dot: 'is-g' },
+    { id: 'b', name: '蓝', sub: 'Blue', key: 'Ctrl+5', dot: 'is-b' }
+  ];
+  var CHANNEL_NAMES = { rgb: 'RGB 复合', r: '红', g: '绿', b: '蓝' };
+
+  /* 状态栏颜色模式芯片：单独查看通道时同步显示，避免用户忘了自己在单通道预览 */
+  function updateChannelChips() {
+    var el = app.els.psStatMode;
+    if (!el) return;
+    el.textContent = app.channel === 'rgb'
+      ? 'RGB · 8 位'
+      : CHANNEL_NAMES[app.channel] + ' 通道 · 8 位';
+    el.classList.toggle('is-solo', app.channel !== 'rgb');
+  }
+
+  function switchLayerTab(tab) {
+    app.layerTab = tab === 'channels' || tab === 'paths' ? tab : 'layers';
+    var tabs = $id('psLayerTabs');
+    if (tabs) {
+      Array.prototype.forEach.call(tabs.querySelectorAll('[data-ltab]'), function (x) {
+        x.classList.toggle('is-on', x.dataset.ltab === app.layerTab);
+      });
+    }
+    renderLayers();
+  }
+
+  function setChannel(mode) {
+    app.channel = mode === 'r' || mode === 'g' || mode === 'b' ? mode : 'rgb';
+    if (app.view) app.view.setChannel(app.channel);
+    updateChannelChips();
+    if (app.layerTab === 'channels') renderLayers();
+    else switchLayerTab('channels');
+    setNote(app.channel === 'rgb'
+      ? '已回到 RGB 复合视图'
+      : '单独查看' + CHANNEL_NAMES[app.channel] + '通道（仅影响预览，不改像素）');
+  }
+
+  /* 通道缩略图取导航缩略图的合成结果：尺寸小、复用现成数据，不必再合成一次大图 */
+  function paintChannelThumbs() {
+    var list = app.els.psLayerList;
+    if (!list || app.layerTab !== 'channels' || !app.navComp) return;
+    Array.prototype.forEach.call(list.querySelectorAll('[data-ch]'), function (row) {
+      var cv = row.querySelector('.ps-ch-thumb');
+      if (!cv) return;
+      var ctx = cv.getContext('2d');
+      var w = cv.width;
+      var h = cv.height;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#0e1116';
+      ctx.fillRect(0, 0, w, h);
+      var src = app.navComp.canvas;
+      var s = Math.min(w / src.width, h / src.height);
+      var dw = src.width * s;
+      var dh = src.height * s;
+      ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
+      var mode = row.dataset.ch;
+      if (mode === 'rgb') return;
+      var img;
+      try {
+        img = ctx.getImageData(0, 0, w, h);
+      } catch (err) {
+        return;
+      }
+      var d = img.data;
+      var off = mode === 'r' ? 0 : mode === 'g' ? 1 : 2;
+      for (var i = 0; i < d.length; i += 4) {
+        var v = d[i + off];
+        d[i] = v;
+        d[i + 1] = v;
+        d[i + 2] = v;
+      }
+      ctx.putImageData(img, 0, 0);
+    });
+  }
+
+  function renderChannels() {
+    var list = app.els.psLayerList;
+    if (!list) return;
+    if (app.els.psLayerCount) app.els.psLayerCount.textContent = String(CHANNEL_DEFS.length);
+    var html = '';
+    CHANNEL_DEFS.forEach(function (d) {
+      html += '<div class="ps-ch-row' + (app.channel === d.id ? ' is-on' : '') + '" data-ch="' + d.id + '" title="单击单独查看' + d.name + '通道（预览，不改像素）">' +
+        '<span class="ps-ch-dot ' + d.dot + '"></span>' +
+        '<canvas class="ps-ch-thumb" width="40" height="34"></canvas>' +
+        '<span class="ps-ch-meta"><b>' + d.name + '</b><i>' + d.sub + '</i></span>' +
+        '<em class="ps-ch-key">' + d.key + '</em>' +
+        '</div>';
+    });
+    html += '<div class="ps-ch-foot">8 位/通道 · 单独查看只影响屏幕预览，不改变图层像素</div>';
+    list.innerHTML = html;
+    paintChannelThumbs();
+  }
+
+  function shapeKindName(kind) {
+    return kind === 'ellipse' ? '椭圆' : kind === 'line' ? '直线' : kind === 'path' ? '路径' : '矩形';
+  }
+
+  function pathKindIcon(kind) {
+    if (kind === 'ellipse') return ico('<ellipse cx="12" cy="12" rx="7.2" ry="5.8"/>');
+    if (kind === 'line') return ico('<path d="M5.5 18.5 18.5 5.5"/><circle cx="5.5" cy="18.5" r="1.7"/><circle cx="18.5" cy="5.5" r="1.7"/>');
+    if (kind === 'path') return ico('<path d="M5 18c6-1 4-10 14-10"/><circle cx="5" cy="18" r="1.7"/><circle cx="19" cy="8" r="1.7"/>');
+    return ico('<rect x="5" y="6" width="14" height="12" rx="1.6"/>');
+  }
+
+  function renderPaths() {
+    var list = app.els.psLayerList;
+    if (!list) return;
+    var doc = app.doc;
+    if (!doc) return;
+    var sel = app.tools.pathSelection ? app.tools.pathSelection() : null;
+    var total = 0;
+    var html = '';
+    doc.layers.slice().reverse().forEach(function (layer) {
+      if (layer.type !== 'shape' || !layer.shapes || !layer.shapes.length) return;
+      html += '<div class="ps-path-head' + (layer.id === doc.activeId ? ' is-on' : '') + (layer.visible ? '' : ' is-off') + '" data-path-head="' + esc(layer.id) + '">' +
+        '<button type="button" class="ps-path-eye" data-path-vis="' + esc(layer.id) + '" title="显示 / 隐藏">' + (layer.visible ? '◉' : '○') + '</button>' +
+        '<span class="ps-path-name">' + esc(layer.name) + '</span>' +
+        '<span class="ps-path-n">' + layer.shapes.length + '</span></div>';
+      layer.shapes.forEach(function (s, i) {
+        total++;
+        var b = PS.shapeBounds(s);
+        var on = sel && sel.layerId === layer.id && sel.shapeIndex === i;
+        var op = PS.shapeOp ? PS.shapeOp(s) : 'add';
+        html += '<div class="ps-path-row' + (on ? ' is-on' : '') + '" data-path-row="1" data-layer="' + esc(layer.id) + '" data-index="' + i + '">' +
+          '<span class="ps-path-ico">' + pathKindIcon(s.kind) + '</span>' +
+          '<span class="ps-path-meta"><b>' + shapeKindName(s.kind) + ' ' + (i + 1) +
+          '</b><i>' + (b ? Math.round(b.w) + ' × ' + Math.round(b.h) : '') + (s.fill ? ' · 填充' : '') + (s.stroke ? ' · 描边' : '') + '</i></span>' +
+          '<span class="ps-path-op is-' + op + '">' + esc(PS.SHAPE_OP_NAMES ? PS.SHAPE_OP_NAMES[op] : op) + '</span>' +
+          '</div>';
+      });
+    });
+    if (!html) {
+      html = '<div class="ps-empty-panel">当前文档没有矢量路径<br>' +
+        '<span>用钢笔（P）或形状（U）在画布上绘制，就会出现在这里</span></div>';
+    }
+    list.innerHTML = html;
+    if (app.els.psLayerCount) app.els.psLayerCount.textContent = String(total);
+  }
+
   function onStats(stats) {
     var e = app.els;
     if (!app.doc) return;
@@ -1198,12 +1540,15 @@
 
   function refreshAll() {
     if (!app.doc) return;
+    var act = PS.activeLayer(app.doc);
+    if (app.maskEditId && (!act || act.id !== app.maskEditId || !act.mask)) app.maskEditId = null;
     renderDocTitle();
     renderLayers();
     renderLayerProps();
     renderHistory();
     renderInfo();
     renderNav();
+    updateChannelChips();
     updateMem();
     app.view.schedule();
   }
@@ -1235,10 +1580,8 @@
     var alt = app.layerTab !== 'layers';
     if (app.els.psLayersCard) app.els.psLayersCard.classList.toggle('is-alt', alt);
     if (alt) {
-      var label = app.layerTab === 'channels' ? '通道' : '路径';
-      list.innerHTML = '<div class="ps-empty-panel">' + label + '面板 · 占位控件<br>' +
-        '<span>当前版本只用图层合成，' + label + '留作参考图的结构位</span></div>';
-      if (app.els.psLayerCount) app.els.psLayerCount.textContent = '0';
+      if (app.layerTab === 'channels') renderChannels();
+      else renderPaths();
       return;
     }
     var count = doc.layers.length;
@@ -1251,25 +1594,44 @@
         : layer.type === 'shape'
           ? '矢量 · ' + ((layer.shapes && layer.shapes.length) || 0) + ' 个形状'
           : '像素 · ' + Math.round(layer.opacity * 100) + '%';
+      var maskEditing = app.maskEditId === layer.id && layer.mask;
+      var anyLock = layer.locks.all || layer.locks.image || layer.locks.position || layer.locks.transparent;
+      var lockTitle = layer.locks.all ? '全部锁定' : [
+        layer.locks.transparent ? '透明像素' : '', layer.locks.image ? '图像像素' : '',
+        layer.locks.position ? '位置' : ''
+      ].filter(Boolean).join(' / ');
       rows += '<div class="ps-lay' + (active ? ' is-on' : '') + (layer.visible ? '' : ' is-off') + '" draggable="true" data-id="' + esc(layer.id) + '">' +
         '<button type="button" class="ps-eye" data-vis="1" title="显示 / 隐藏">' + (layer.visible ? '◉' : '○') + '</button>' +
-        '<canvas class="ps-lay-thumb" width="34" height="34"></canvas>' +
+        '<span class="ps-lay-slot">' +
+        '<canvas class="ps-lay-thumb' + (maskEditing ? ' is-dim' : '') + '" width="34" height="34" data-surface="pixels" title="图层内容"></canvas>' +
+        (layer.mask ? '<canvas class="ps-lay-mask' + (layer.mask.enabled ? '' : ' is-muted') + (maskEditing ? ' is-target' : '') + '" width="34" height="34" data-surface="mask" title="图层蒙版（Alt+点击停用/启用）"></canvas>' : '') +
+        '</span>' +
         '<div class="ps-lay-meta"><div class="ps-lay-name">' + esc(layer.name) + '</div>' +
         '<div class="ps-lay-kind' + (layer.type === 'shape' ? ' is-vector' : '') + '">' + kindText + '</div></div>' +
-        '<span class="ps-lay-lock' + (layer.locked ? ' is-locked' : '') + '"' + (layer.locked ? ' title="图层已锁定"' : '') + '>' + (layer.locked ? LOCK_SVG : '') + '</span>' +
+        '<span class="ps-lay-lock' + (anyLock ? ' is-locked' : '') + '"' + (anyLock ? ' title="' + esc(lockTitle) + '"' : '') + '>' + (anyLock ? LOCK_SVG : '') + '</span>' +
         '</div>';
     });
     list.innerHTML = rows;
     // 缩略图：OffscreenCanvas 画到普通 canvas 上
     Array.prototype.forEach.call(list.querySelectorAll('.ps-lay'), function (row) {
       var layer = PS.layerById(doc, row.dataset.id);
+      if (!layer) return;
       var cv = row.querySelector('.ps-lay-thumb');
-      if (!layer || !cv) return;
-      var ctx = cv.getContext('2d');
-      ctx.clearRect(0, 0, 34, 34);
-      var pv = PS.layerPreview(layer, 68);
-      var s = Math.min(34 / pv.width, 34 / pv.height, 1);
-      ctx.drawImage(pv, (34 - pv.width * s) / 2, (34 - pv.height * s) / 2, pv.width * s, pv.height * s);
+      if (cv) {
+        var ctx = cv.getContext('2d');
+        ctx.clearRect(0, 0, 34, 34);
+        var pv = PS.layerPreview(layer, 68);
+        var s = Math.min(34 / pv.width, 34 / pv.height, 1);
+        ctx.drawImage(pv, (34 - pv.width * s) / 2, (34 - pv.height * s) / 2, pv.width * s, pv.height * s);
+      }
+      var mc = row.querySelector('.ps-lay-mask');
+      if (mc && layer.mask) {
+        var mctx = mc.getContext('2d');
+        mctx.clearRect(0, 0, 34, 34);
+        var mp = PS.maskPreview(layer.mask, 68);
+        var ms = Math.min(34 / mp.width, 34 / mp.height, 1);
+        mctx.drawImage(mp, (34 - mp.width * ms) / 2, (34 - mp.height * ms) / 2, mp.width * ms, mp.height * ms);
+      }
     });
   }
 
@@ -1284,7 +1646,10 @@
     }
     var blendOptions = ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'difference', 'color-dodge', 'soft-light', 'luminosity'];
     var blendNames = { normal: '正常', multiply: '正片叠底', screen: '滤色', overlay: '叠加', darken: '变暗', lighten: '变亮', difference: '差值', 'color-dodge': '颜色减淡', 'soft-light': '柔光', luminosity: '明度' };
-    var lockNames = ['透明像素', '图像像素', '位置', '全部'];
+    var lockDefs = [
+      { key: 'transparent', name: '透明像素' }, { key: 'image', name: '图像像素' },
+      { key: 'position', name: '位置' }, { key: 'all', name: '全部' }
+    ];
     var html = '<div class="ps-lp-row">' +
       '<select id="psBlend" title="混合模式">' +
       blendOptions.map(function (b) { return '<option value="' + b + '"' + (layer.blend === b ? ' selected' : '') + '>' + blendNames[b] + '</option>'; }).join('') +
@@ -1294,10 +1659,25 @@
       '<b id="psOpacityVal">' + Math.round(layer.opacity * 100) + '%</b></div>' +
       '<div class="ps-lp-row ps-lp-lockrow">' +
       '<span class="ps-lp-lab">锁定：</span>' +
-      lockNames.map(function (n) {
-        return '<button type="button" class="ps-lock-btn" data-lock="' + n + '" title="锁定' + n + '（占位控件）">' + LOCK_SVG + '</button>';
+      lockDefs.map(function (d) {
+        var on = layer.locks.all || layer.locks[d.key];
+        return '<button type="button" class="ps-lock-btn' + (on ? ' is-on' : '') + '" data-lock="' + d.key + '" title="锁定' + d.name + '">' + LOCK_SVG + '</button>';
       }).join('') +
       '<span class="ps-lp-lab ps-lp-fill">填充：</span><b>100%</b></div>';
+
+    if (layer.type === 'pixel') {
+      var maskOn = app.maskEditId === layer.id && layer.mask;
+      html += '<div class="ps-lp-row ps-mask-row">' +
+        '<span class="ps-mask-state' + (layer.mask ? (layer.mask.enabled ? ' is-on' : ' is-off') : '') + '">' +
+        (layer.mask ? (layer.mask.enabled ? '蒙版已启用' : '蒙版已停用') : '无蒙版') + '</span>' +
+        (layer.mask
+          ? '<button type="button" class="ps-mini' + (maskOn ? ' is-on' : '') + '" data-mask-act="select">' + (maskOn ? '正在编辑蒙版' : '编辑蒙版') + '</button>' +
+            '<button type="button" class="ps-mini" data-mask-act="toggle">' + (layer.mask.enabled ? '停用' : '启用') + '</button>' +
+            '<button type="button" class="ps-mini" data-mask-act="apply">应用</button>' +
+            '<button type="button" class="ps-mini" data-mask-act="delete">删除</button>'
+          : '<button type="button" class="ps-mini is-primary" data-mask-act="add">添加蒙版</button>') +
+        '</div>';
+    }
     if (layer.type === 'shape') {
       html += '<div class="ps-lp-row ps-vector-row"><span class="ps-vec-badge">VECTOR</span>' +
         '<span class="ps-vec-txt">' + ((layer.shapes && layer.shapes.length) || 0) + ' 个形状 · 缩放不失真</span>' +
@@ -1313,8 +1693,39 @@
 
     Array.prototype.forEach.call(wrap.querySelectorAll('.ps-lock-btn'), function (b) {
       b.addEventListener('click', function () {
-        b.classList.toggle('is-on');
-        setNote('锁定「' + b.dataset.lock + '」：占位控件，不会真的锁住像素。');
+        var key = b.dataset.lock;
+        layer.locks[key] = !layer.locks[key];
+        layer.version++;
+        doc.version++;
+        var names = { transparent: '透明像素', image: '图像像素', position: '位置', all: '全部' };
+        setNote((layer.locks[key] ? '已锁定' : '已解锁') + names[key]);
+        refreshAll();
+      });
+    });
+
+    Array.prototype.forEach.call(wrap.querySelectorAll('[data-mask-act]'), function (b) {
+      b.addEventListener('click', function () {
+        var act = b.dataset.maskAct;
+        if (act === 'add') {
+          if (layer.type !== 'pixel') return setNote('只有像素图层可以添加蒙版', true);
+          PS.addLayerMask(doc, layer);
+          app.maskEditId = layer.id;
+          setNote('已添加蒙版：画笔深色隐藏、浅色恢复；Alt+点击蒙版缩略图可停用');
+        } else if (act === 'select') {
+          app.maskEditId = app.maskEditId === layer.id ? null : layer.id;
+          setNote(app.maskEditId ? '正在编辑蒙版' : '已切回图层像素');
+        } else if (act === 'toggle' && layer.mask) {
+          PS.setLayerMaskEnabled(doc, layer, !layer.mask.enabled);
+        } else if (act === 'apply') {
+          PS.applyLayerMask(doc, layer);
+          app.maskEditId = null;
+          setNote('蒙版已烘焙进像素，原蒙版已删除（可撤销）');
+        } else if (act === 'delete') {
+          PS.removeLayerMask(doc, layer);
+          app.maskEditId = null;
+          setNote('蒙版已删除（可撤销）');
+        }
+        refreshAll();
       });
     });
 
@@ -1453,6 +1864,57 @@
     );
     ctx.strokeStyle = 'rgba(28,38,60,.18)';
     ctx.strokeRect(panX + 0.5, panY + 0.5, doc.width * s, doc.height * s);
+    renderHistogram();
+    if (app.layerTab === 'channels') paintChannelThumbs();
+  }
+
+  /* 直方图取导航缩略图的数据：足够代表整体，又不必再合成一次大图 */
+  function renderHistogram() {
+    var cv = app.els.psHistogram;
+    if (!cv || !app.navComp) return;
+    var ctx = cv.getContext('2d');
+    var w = cv.width;
+    var h = cv.height;
+    var comp = app.navComp;
+    var sw = comp.canvas.width;
+    var sh = comp.canvas.height;
+    var data;
+    try {
+      data = comp.ctx.getImageData(0, 0, sw, sh).data;
+    } catch (err) {
+      return;
+    }
+    var bins = [new Uint32Array(256), new Uint32Array(256), new Uint32Array(256)];
+    for (var i = 0; i < data.length; i += 4) {
+      if (data[i + 3] < 8) continue;
+      bins[0][data[i]]++;
+      bins[1][data[i + 1]]++;
+      bins[2][data[i + 2]]++;
+    }
+    var max = 1;
+    for (var c = 0; c < 3; c++) {
+      for (var b = 0; b < 256; b++) if (bins[c][b] > max) max = bins[c][b];
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(18,22,30,.9)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'lighter';
+    var colors = ['rgba(255,96,96,.72)', 'rgba(96,224,128,.66)', 'rgba(96,150,255,.72)'];
+    for (var ch = 0; ch < 3; ch++) {
+      ctx.beginPath();
+      ctx.moveTo(0, h);
+      for (var x = 0; x < 256; x++) {
+        var px = (x / 255) * (w - 1);
+        var py = h - 2 - (Math.log(1 + bins[ch][x]) / Math.log(1 + max)) * (h - 5);
+        ctx.lineTo(px, py);
+      }
+      ctx.lineTo(w, h);
+      ctx.closePath();
+      ctx.fillStyle = colors[ch];
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   /* ---------------- 动作 ---------------- */
@@ -1460,8 +1922,21 @@
     if (!app.doc && act !== 'new' && act !== 'open' && act !== 'place' && act !== 'openProject'
       && act !== 'paste' && act !== 'about' && act !== 'shortcuts' && act !== 'libraryPlace'
       && act !== 'focusMode' && act !== 'toggleTools' && act !== 'toggleOptions'
-      && act !== 'toggleSide' && act !== 'toggleStatus' && act !== 'resetWorkspace') return;
+      && act !== 'toggleSide' && act !== 'toggleStatus' && act !== 'resetWorkspace'
+      && act !== 'mode:raster' && act !== 'mode:vector') return;
     var doc = app.doc;
+    if (act === 'mode:raster') return setMode('raster');
+    if (act === 'mode:vector') return setMode('vector');
+    if (act.indexOf('shapeOp:') === 0) {
+      if (app.tools.setShapeOp(act.slice(8))) buildOptions();
+      return;
+    }
+    if (act === 'rasterizeShape') {
+      var lr = PS.activeLayer(doc);
+      if (lr && lr.type === 'shape') rasterizeLayer(lr);
+      else setNote('请先选中一个形状图层', true);
+      return;
+    }
     if (act === 'focusMode') return toggleFocusMode();
     if (act === 'resetWorkspace') return resetWorkspace();
     if (act === 'toggleTools') return toggleWorkspace('tools');
@@ -1493,6 +1968,13 @@
       setNote('瓦片边界 ' + (app.view.showTiles ? '开' : '关'));
       return;
     }
+    if (act === 'toggleSnap') {
+      var snapOn = !app.tools.options().moveSnap;
+      app.tools.setOption('moveSnap', snapOn);
+      buildOptions();
+      setNote('智能参考线 ' + (snapOn ? '开' : '关'));
+      return;
+    }
     if (act === 'selectAll') { PS.selectAll(doc); refreshAll(); return; }
     if (act === 'selectNone') { PS.clearSelection(doc); refreshAll(); return; }
     if (act === 'selectInvert') { PS.invertSelection(doc); refreshAll(); return; }
@@ -1511,6 +1993,9 @@
       return;
     }
     if (act === 'addAdjust') { askAdjustKind(); return; }
+    if (act === 'maskAdd' || act === 'maskToggle' || act === 'maskApply' || act === 'maskDelete') {
+      return maskAction(act);
+    }
     if (act === 'flatten') { PS.flatten(doc); refreshAll(); setNote('已拼合为一个图层'); return; }
     if (act === 'docInfo') { showDocInfo(); return; }
     if (act === 'cropSelection') return cropToSelection();
@@ -1552,8 +2037,33 @@
 
   function toggleLayerLock(layer) {
     if (!app.doc || !layer) return;
-    layer.locked = !layer.locked;
-    setNote('「' + layer.name + '」' + (layer.locked ? '已锁定，移动工具拖不动' : '已解锁，可以移动'));
+    layer.locks.all = !layer.locks.all;
+    setNote('「' + layer.name + '」' + (layer.locks.all ? '已全部锁定' : '已解锁'));
+    refreshAll();
+  }
+
+  function maskAction(act) {
+    var doc = app.doc;
+    var layer = PS.activeLayer(doc);
+    if (!layer) return;
+    if (layer.type !== 'pixel') return setNote('只有像素图层可以添加蒙版', true);
+    if (act === 'maskAdd') {
+      PS.addLayerMask(doc, layer);
+      app.maskEditId = layer.id;
+      setNote('已添加蒙版：画笔深色隐藏、浅色恢复；Alt+点击蒙版缩略图可停用');
+    } else if (!layer.mask) {
+      return setNote('当前图层没有蒙版', true);
+    } else if (act === 'maskToggle') {
+      PS.setLayerMaskEnabled(doc, layer, !layer.mask.enabled);
+    } else if (act === 'maskApply') {
+      PS.applyLayerMask(doc, layer);
+      app.maskEditId = null;
+      setNote('蒙版已烘焙进像素，原蒙版已删除（可撤销）');
+    } else if (act === 'maskDelete') {
+      PS.removeLayerMask(doc, layer);
+      app.maskEditId = null;
+      setNote('蒙版已删除（可撤销）');
+    }
     refreshAll();
   }
 
@@ -1585,7 +2095,8 @@
     closeLayerMenu();
     var items = [
       { label: '重命名…', act: function () { renameLayer(layer); } },
-      { label: layer.locked ? '解锁图层' : '锁定图层', act: function () { toggleLayerLock(layer); } },
+      { label: layer.locks.all ? '全部解锁' : '全部锁定', act: function () { toggleLayerLock(layer); } },
+      { label: layer.mask ? (layer.mask.enabled ? '停用蒙版' : '启用蒙版') : '添加蒙版', act: function () { maskAction(layer.mask ? 'maskToggle' : 'maskAdd'); } },
       { sep: true },
       { label: '新建图层', act: function () { layerAction('add'); } },
       { label: '复制图层', act: function () { layerAction('dup'); } },
@@ -1788,13 +2299,15 @@
   function showShortcuts() {
     var html = '<div class="ps-info-modal">' +
       '<div><b>文件</b> Ctrl+O 打开图片 · Ctrl+Shift+O 置入图片 · Ctrl+V 粘贴为图层 · Ctrl+Shift+E 导出 · Ctrl+S 保存工程 · Ctrl+Shift+C 复制图像</div>' +
-      '<div><b>工具</b> V 移动 · M 矩形选区 · L 套索 · <b>W 魔棒</b> · C 裁剪 · I 吸管 · B 画笔 · E 橡皮 · G 渐变 · K 油漆桶 · <b>P 钢笔</b> · <b>U 形状</b> · <b>A 路径选择</b> · T 文字</div>' +
-      '<div><b>矢量</b> 钢笔：单击落点 · 拖动出曲线 · 点回起点或 Enter 闭合 · Esc 取消；路径选择可拖动锚点改形</div>' +
-      '<div><b>编辑</b> Ctrl+Z 撤销 · Ctrl+Shift+Z 重做 · Ctrl+A 全选 · Ctrl+D 取消选区 · Ctrl+Shift+I 反选</div>' +
-      '<div><b>图层</b> Ctrl+J 复制 · Ctrl+E 向下合并 · Ctrl+Shift+F 拼合</div>' +
-      '<div><b>视图</b> Ctrl+0 适应 · Ctrl+1 实际像素 · Ctrl+= / - 缩放 · 空格拖拽平移 · Ctrl+滚轮缩放</div>' +
+      '<div><b>工具</b> V 移动 · M 矩形选区 · Shift+M 椭圆选区 · L 套索 · <b>W 魔棒</b> · C 裁剪 · I 吸管 · B 画笔 · E 橡皮 · G 渐变 · K 油漆桶 · <b>P 钢笔</b> · <b>U 形状</b> · <b>A 路径选择</b> · T 文字</div>' +
+      '<div><b>模式</b> F2 图像编辑器（位图）· F3 矢量编辑器 · 右上角「位图 / 矢量」也可切换</div>' +
+      '<div><b>矢量</b> 钢笔：单击落点 · 拖动出曲线 · Shift 约束 45° · Alt 拖出尖角 · 点回起点闭合 · Enter/双击/右键结束开放路径 · Backspace 撤回锚点 · Esc 取消；路径选择：悬停显示锚点，拖动锚点或控制柄改形，Alt 单独调整一侧控制柄，Delete 删除锚点；选项栏 / 矢量菜单提供合并、减去、相交、排除</div>' +
+      '<div><b>颜色</b> D 复位黑 / 白 · X 交换前景 / 背景 · Alt+点击画笔临时吸管 · Alt+Backspace 填前景色 · Ctrl+Backspace 填背景色</div>' +
+      '<div><b>编辑</b> Ctrl+Z 撤销 · Ctrl+Shift+Z 重做 · Ctrl+A 全选 · Ctrl+D 取消选区 · Ctrl+Shift+I 反选 · Ctrl+Shift+N 新建图层</div>' +
+      '<div><b>图层</b> Ctrl+J 复制 · Ctrl+E 向下合并 · Ctrl+Shift+F 拼合 · 移动工具下按数字键改图层不透明度</div>' +
+      '<div><b>视图</b> Ctrl+0 适应 · Ctrl+1 实际像素 · Ctrl+= / - 缩放 · 空格拖拽平移 · Ctrl+滚轮缩放 · Shift+Tab 只收起右侧面板</div>' +
       '<div><b>工作区</b> Tab 专注模式（收起全部面板）· 右上角四个按钮分别收纳工具箱 / 选项栏 / 面板 / 状态栏 · 双击面板标签可折叠</div>' +
-      '<div><b>笔刷</b> [ / ] 调整大小 · 自由滚轮平移画布</div>' +
+      '<div><b>笔刷</b> [ / ] 调整大小 · Shift+[ / ] 调整硬度 · 数字键 1–9 / 0 设定不透明度 · 自由滚轮平移画布</div>' +
       '</div>';
     modal({ title: '快捷键', html: html });
   }
@@ -2309,6 +2822,8 @@
     if (!spec) return;
     var layer = PS.activeLayer(app.doc);
     if (!layer || layer.type !== 'pixel') { setNote('请先选中像素图层', true); return; }
+    if (PS.hasLock(layer, 'image')) { setNote('「' + layer.name + '」锁定了图像像素，不能使用滤镜', true); return; }
+    if (app.maskEditId === layer.id) { setNote('正在编辑蒙版：滤镜只作用于像素内容，请先点图层缩略图切回像素', true); return; }
     var params = {};
     if (spec.fields && spec.fields.length) {
       var v = await modal({ title: spec.name, fields: spec.fields });
@@ -2346,12 +2861,45 @@
       refreshAll();
       return;
     }
+    // 钢笔绘制中撤回上一个锚点；路径选择中删除选中的锚点
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      if (app.tools.penActive()) {
+        e.preventDefault();
+        app.tools.removeLastAnchor();
+        refreshAll();
+        return;
+      }
+      if (app.tools.pathSelection && app.tools.pathSelection()) {
+        e.preventDefault();
+        app.tools.deletePathAnchor();
+        refreshAll();
+        return;
+      }
+    }
     if (e.key === 'Escape') {
       app.tools.cancel();
       return;
     }
     var k = String(e.key || '').toLowerCase();
     if (!mod && !e.shiftKey && k === 'tab') { e.preventDefault(); toggleFocusMode(); return; }
+    if (!mod && e.shiftKey && k === 'tab') { e.preventDefault(); toggleWorkspace('side'); return; }
+    if (e.key === 'F2') { e.preventDefault(); setMode('raster'); return; }
+    if (e.key === 'F3') { e.preventDefault(); setMode('vector'); return; }
+    /* PS 习惯：Alt+Backspace 填前景色，Ctrl+Backspace 填背景色（选区存在时只填选区） */
+    if ((e.key === 'Backspace' || e.key === 'Delete') && (e.altKey || mod) && app.doc) {
+      var lf = PS.activeLayer(app.doc);
+      if (lf) {
+        e.preventDefault();
+        app.tools.fillRegion(app.doc, lf, mod ? app.bg : app.fg);
+        refreshAll();
+        return;
+      }
+    }
+    if (mod && e.shiftKey && k === 'n') {
+      e.preventDefault();
+      if (app.doc) { PS.addLayer(app.doc, { name: '图层 ' + (app.doc.layers.length + 1) }); refreshAll(); }
+      return;
+    }
     if (mod && k === 'z') {
       e.preventDefault();
       if (e.shiftKey) PS.redo(app.doc); else PS.undo(app.doc);
@@ -2367,6 +2915,12 @@
     if (mod && e.shiftKey && k === 'f') { e.preventDefault(); PS.flatten(app.doc); refreshAll(); return; }
     if (mod && k === '0') { e.preventDefault(); app.view.fit(); return; }
     if (mod && k === '1') { e.preventDefault(); app.view.actual(); return; }
+    /* Ctrl+2..5：RGB 复合 / 红 / 绿 / 蓝 通道，和 PS 的默认快捷键一致 */
+    if (mod && (k === '2' || k === '3' || k === '4' || k === '5')) {
+      e.preventDefault();
+      setChannel({ '2': 'rgb', '3': 'r', '4': 'g', '5': 'b' }[k]);
+      return;
+    }
     if (mod && (k === '=' || k === '+')) { e.preventDefault(); app.view.setZoom(app.view.zoom * 1.35); return; }
     if (mod && k === '-') { e.preventDefault(); app.view.setZoom(app.view.zoom / 1.35); return; }
     if (mod && k === 'n') { e.preventDefault(); newDocDialog(); return; }
@@ -2381,7 +2935,65 @@
     if (mod && k === 'o') { e.preventDefault(); app.els.psFile.click(); return; }
     if (mod && e.shiftKey && k === 'e') { e.preventDefault(); exportDialog(); return; }
     if (mod) return;
-    var map = { v: 'move', m: 'select-rect', l: 'select-lasso', w: 'magic-wand', c: 'crop', i: 'eyedropper', b: 'brush', e: 'eraser', g: 'gradient', k: 'fill', p: 'pen', u: 'shape', a: 'path-select', t: 'text' };
+    /* PS 默认前景 / 背景色：D 复位为黑 / 白，X 交换 */
+    if (k === 'd') { e.preventDefault(); app.fg = '#000000'; app.bg = '#ffffff'; syncColorUI(); setNote('已复位前景色 / 背景色'); return; }
+    if (k === 'x') { e.preventDefault(); var tc = app.fg; app.fg = app.bg; app.bg = tc; syncColorUI(); return; }
+    /* Shift+M 在矩形 / 椭圆选区之间切换 */
+    if (e.shiftKey && k === 'm') {
+      e.preventDefault();
+      selectTool(app.tools.tool() === 'select-ellipse' ? 'select-rect' : 'select-ellipse');
+      return;
+    }
+    /* Shift+[ / Shift+] 调画笔硬度 */
+    if (e.shiftKey && (k === '{' || k === '[') && e.code === 'BracketLeft') {
+      var h1 = Math.max(0, app.tools.options().hardness - 10);
+      app.tools.setOption('hardness', h1);
+      buildOptions();
+      setNote('硬度 ' + h1 + '%');
+      return;
+    }
+    if (e.shiftKey && (k === '}' || k === ']') && e.code === 'BracketRight') {
+      var h2 = Math.min(100, app.tools.options().hardness + 10);
+      app.tools.setOption('hardness', h2);
+      buildOptions();
+      setNote('硬度 ' + h2 + '%');
+      return;
+    }
+    /* 数字键设定不透明度：画笔类改工具选项，移动工具改当前图层（和 PS 一致） */
+    if (/^\d$/.test(k) && !e.altKey) {
+      var paintTools = /^(brush|eraser|gradient|fill)$/;
+      if (paintTools.test(app.tools.tool())) {
+        e.preventDefault();
+        var now = Date.now();
+        var ot = app.opacityType;
+        var raw = k;
+        if (ot.at && now - ot.at < 500 && ot.digits) {
+          var joined = ot.digits + k;
+          if (joined.length <= 3 && Number(joined) <= 100) raw = joined;
+        }
+        ot.digits = raw;
+        ot.at = now;
+        var nv = Number(raw);
+        var ov = raw.length === 1 ? (nv === 0 ? 100 : nv * 10) : (nv || 100);
+        ov = Math.max(1, Math.min(100, ov));
+        app.tools.setOption('opacity', ov);
+        buildOptions();
+        setNote('不透明度 ' + ov + '%');
+        return;
+      }
+      if (app.tools.tool() === 'move' && app.doc) {
+        var lay = PS.activeLayer(app.doc);
+        if (lay) {
+          e.preventDefault();
+          var lv = k === '0' ? 100 : Number(k) * 10;
+          PS.setLayerProp(app.doc, lay, 'opacity', lv / 100);
+          refreshAll();
+          setNote('「' + lay.name + '」不透明度 ' + lv + '%');
+          return;
+        }
+      }
+    }
+    var map = { v: 'move', m: 'select-rect', l: 'select-lasso', w: 'magic-wand', c: 'crop', i: 'eyedropper', b: 'brush', e: 'eraser', g: 'gradient', k: 'fill', p: 'pen', u: 'shape', a: 'path-select', h: 'hand', z: 'zoom', t: 'text' };
     if (map[k]) {
       e.preventDefault();
       selectTool(map[k]);
@@ -2413,7 +3025,10 @@
       app.view.schedule();
     }
     refreshAll();
-    setNote('图像工坊 · 瓦片图层 / 选区 / 滤镜 · 滚轮平移，Ctrl+滚轮缩放');
+    switchLayerTab(app.mode === 'vector' ? 'paths' : 'layers');
+    setNote(app.mode === 'vector'
+      ? '矢量编辑器 · 钢笔曲线 / 形状布尔 / 路径选择 · F2 切回位图'
+      : '图像工坊 · 瓦片图层 / 选区 / 滤镜 · 滚轮平移，Ctrl+滚轮缩放');
   }
 
   function __debug() {
@@ -2428,6 +3043,14 @@
       visible: !!win && !win.classList.contains('hidden'),
       zoom: app.view ? app.view.zoom : 0,
       pan: app.view ? { x: app.view.panX, y: app.view.panY } : null,
+      channel: app.channel,
+      mode: app.mode,
+      fg: app.fg,
+      bg: app.bg,
+      layerTab: app.layerTab,
+      guides: app.view && app.view.guides
+        ? app.view.guides.map(function (g) { return g.axis + ':' + Math.round(g.pos); })
+        : [],
       stats: app.view ? app.view.stats : null,
       doc: {
         w: doc.width, h: doc.height, name: doc.name,
@@ -2455,6 +3078,12 @@
   }
 
   var TEST = {
+    doc: function () { return app.doc; },
+    addLayer: function (name) {
+      var l = PS.addLayer(app.doc, { name: name || '测试图层' });
+      refreshAll();
+      return l.id;
+    },
     undo: function () { var r = PS.undo(app.doc); refreshAll(); return r; },
     redo: function () { var r = PS.redo(app.doc); refreshAll(); return r; },
     selectRect: function (r) {
@@ -2470,6 +3099,13 @@
       return app.tools.paintDot(app.doc, PS.activeLayer(app.doc), x, y);
     },
     sample: function (x, y) { return PS.samplePixel(app.doc, x, y); },
+    layerAlphaAt: function (x, y) {
+      var l = PS.activeLayer(app.doc);
+      if (!l) return null;
+      var t = PS.tileOfLocal(l, x - l.x, y - l.y);
+      if (!t) return 0;
+      return t.ctx.getImageData(Math.floor(x - l.x - t.x), Math.floor(y - l.y - t.y), 1, 1).data[3];
+    },
     flattenSample: function (x, y) {
       var cv = PS.renderFlatten(app.doc);
       var d = cv.ctx.getImageData(x, y, 1, 1).data;
@@ -2492,16 +3128,65 @@
     tool: function () { return app.tools.tool(); },
     setOption: function (key, value) { app.tools.setOption(key, value); return app.tools.options(); },
     options: function () { return app.tools.options(); },
+    penPoints: function () { return app.tools.penPoints(); },
+    penRemove: function () { return app.tools.removeLastAnchor(); },
+    pathSelection: function () { return app.tools.pathSelection(); },
+    deleteAnchor: function () { var ok = app.tools.deletePathAnchor(); refreshAll(); return ok; },
+    shapeInfo: function () {
+      var l = PS.activeLayer(app.doc);
+      if (!l || l.type !== 'shape' || !l.shapes || !l.shapes.length) return null;
+      var s = l.shapes[0];
+      return {
+        kind: s.kind, closed: !!s.closed, pts: s.pts ? s.pts.length : 0,
+        op: PS.shapeOp(s),
+        points: s.pts ? s.pts.map(function (p) {
+          return { x: p.x, y: p.y, hix: p.hix, hiy: p.hiy, hox: p.hox, hoy: p.hoy };
+        }) : []
+      };
+    },
     preview: function () {
       return {
         vector: app.view ? !!app.view.previewVector : false,
-        path: app.view ? (app.view.previewPath ? app.view.previewPath.pts.length : 0) : 0
+        path: app.view && app.view.previewPath && app.view.previewPath.pts ? app.view.previewPath.pts.length : 0,
+        edit: app.view && app.view.previewPath ? !!app.view.previewPath.edit : false,
+        closeHint: app.view && app.view.previewPath ? !!app.view.previewPath.closeHint : false,
+        shapeSel: app.view ? !!app.view.previewShapeSel : false
       };
     },
+    channel: function () { return app.channel; },
+    setChannel: function (mode) { setChannel(mode); return app.channel; },
     addShape: function (shape, name) {
       var l = PS.addShapeLayer(app.doc, [shape], { name: name || '测试形状' });
       refreshAll();
       return l ? l.id : null;
+    },
+    mode: function () { return app.mode; },
+    setMode: function (mode) { setMode(mode); return app.mode; },
+    shapes: function () {
+      var l = PS.activeLayer(app.doc);
+      if (!l || l.type !== 'shape' || !l.shapes) return [];
+      return l.shapes.map(function (s, i) {
+        return { index: i, kind: s.kind, op: PS.shapeOp(s), closed: !!s.closed };
+      });
+    },
+    setShapeOp: function (op, index) {
+      var l = PS.activeLayer(app.doc);
+      if (!l || l.type !== 'shape' || !l.shapes) return false;
+      var i = typeof index === 'number' ? index : l.shapes.length - 1;
+      var ok = PS.setShapeOp(app.doc, l, l.shapes[i], op);
+      refreshAll();
+      return ok;
+    },
+    appendShape: function (shape) {
+      var l = PS.activeLayer(app.doc);
+      var res = PS.appendShape(app.doc, l, shape, {});
+      refreshAll();
+      return !!res;
+    },
+    fillRegion: function (color) {
+      var ok = app.tools.fillRegion(app.doc, PS.activeLayer(app.doc), color || app.fg);
+      refreshAll();
+      return ok;
     },
     rasterize: function () {
       var l = PS.activeLayer(app.doc);
@@ -2513,7 +3198,87 @@
       var h = PS.hitShapeLayer(app.doc, x, y, 8);
       return h ? { id: h.layer.id, anchor: h.anchor, kind: h.shape.kind } : null;
     },
-    activeLayer: function () { var l = PS.activeLayer(app.doc); return l ? { id: l.id, name: l.name, type: l.type, tiles: l.tiles.size, shapes: l.shapes ? l.shapes.length : 0, x: l.x, y: l.y, locked: !!l.locked } : null; },
+    activeLayer: function () {
+      var l = PS.activeLayer(app.doc);
+      return l ? {
+        id: l.id, name: l.name, type: l.type, tiles: l.tiles.size,
+        shapes: l.shapes ? l.shapes.length : 0, x: l.x, y: l.y,
+        opacity: typeof l.opacity === 'number' ? l.opacity : 1,
+        bounds: PS.layerContentBounds(l),
+        locked: !!(l.locks.all || l.locks.image || l.locks.position || l.locks.transparent), locks: {
+          transparent: !!l.locks.transparent, image: !!l.locks.image,
+          position: !!l.locks.position, all: !!l.locks.all
+        },
+        mask: l.mask ? { enabled: l.mask.enabled !== false, tiles: l.mask.tiles.size } : null,
+        maskEditing: app.maskEditId === l.id
+      } : null;
+    },
+    lockSet: function (key, on) {
+      var l = PS.activeLayer(app.doc);
+      if (!l) return null;
+      l.locks[key] = !!on;
+      l.version++;
+      app.doc.version++;
+      refreshAll();
+      return l.locks;
+    },
+    maskAdd: function () {
+      var l = PS.activeLayer(app.doc);
+      var m = PS.addLayerMask(app.doc, l);
+      if (m) app.maskEditId = l.id;
+      refreshAll();
+      return !!m;
+    },
+    maskSelect: function (on) {
+      var l = PS.activeLayer(app.doc);
+      if (!l || !l.mask) return false;
+      app.maskEditId = on === false ? null : l.id;
+      refreshAll();
+      return app.maskEditId === l.id;
+    },
+    maskToggle: function () {
+      var l = PS.activeLayer(app.doc);
+      if (!l || !l.mask) return null;
+      PS.setLayerMaskEnabled(app.doc, l, !l.mask.enabled);
+      refreshAll();
+      return l.mask.enabled;
+    },
+    maskApply: function () {
+      var l = PS.activeLayer(app.doc);
+      var ok = PS.applyLayerMask(app.doc, l);
+      if (ok) app.maskEditId = null;
+      refreshAll();
+      return ok;
+    },
+    maskDelete: function () {
+      var l = PS.activeLayer(app.doc);
+      var ok = PS.removeLayerMask(app.doc, l);
+      if (ok) app.maskEditId = null;
+      refreshAll();
+      return ok;
+    },
+    maskPaintAt: function (x, y) {
+      var l = PS.activeLayer(app.doc);
+      if (!l || !l.mask) return false;
+      app.maskEditId = l.id;
+      return app.tools.paintDot(app.doc, l, x, y);
+    },
+    maskValue: function (x, y) {
+      var l = PS.activeLayer(app.doc);
+      if (!l || !l.mask) return null;
+      var mt = PS.maskTileOfLocal(l.mask, x - l.x, y - l.y);
+      if (!mt) return 0;
+      var d = mt.ctx.getImageData(Math.floor(x - l.x - mt.x), Math.floor(y - l.y - mt.y), 1, 1).data;
+      return d[3] / 255;
+    },
+    histogram: function () {
+      var cv = app.els.psHistogram;
+      if (!cv) return null;
+      var d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      var sum = 0;
+      for (var i = 3; i < d.length; i += 4) sum += d[i];
+      return { w: cv.width, h: cv.height, alphaSum: sum };
+    },
     addAdjust: function (kind) {
       var l = PS.addAdjustLayer(app.doc, kind);
       refreshAll();

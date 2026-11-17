@@ -127,12 +127,12 @@ window.L2D_BODY = `
                 <span class="l2d-tts-key">音色</span>
                 <select id="l2dVoiceSel" class="l2d-select" aria-label="音色"></select>
               </label>
-              <!-- 只有选中机械音时才出现：决定朗读是交给 AI 控节奏，还是原样整句读 -->
-              <div class="l2d-tts-row l2d-mecha hidden" id="l2dMecha">
+              <!-- 选中支持韵律的本地音色时出现：决定朗读是交给 AI 控节奏，还是原样整句读 -->
+              <div class="l2d-tts-row l2d-ai hidden" id="l2dAiCtrl">
                 <span class="l2d-tts-key">方式</span>
-                <div class="l2d-mecha-modes" role="radiogroup" aria-label="机械音朗读方式">
-                  <button type="button" class="l2d-mecha-btn on" data-l2d-mecha="ai" role="radio" aria-checked="true">AI 控制</button>
-                  <button type="button" class="l2d-mecha-btn" data-l2d-mecha="direct" role="radio" aria-checked="false">直接朗读</button>
+                <div class="l2d-ai-modes" role="radiogroup" aria-label="AI 语音控制方式">
+                  <button type="button" class="l2d-ai-btn on" data-l2d-ai="ai" role="radio" aria-checked="true">AI 控制</button>
+                  <button type="button" class="l2d-ai-btn" data-l2d-ai="direct" role="radio" aria-checked="false">直接朗读</button>
                 </div>
               </div>
               <div class="l2d-stats" id="l2dVoiceStatus">检测中…</div>

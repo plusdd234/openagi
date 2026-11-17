@@ -85,6 +85,9 @@
     var liveSlotImage = ctx.liveSlotImage;
     var paintCanvasFor = ctx.paintCanvasFor;
     var paintTexFor = ctx.paintTexFor;
+    var paintInkFor = ctx.paintInkFor;
+    /* 与画笔共用的脏块上传通道：合成图也只在笔迹范围内重传 */
+    var UP = ctx.upload || null;
     var totalBytes = ctx.totalBytes, syncBytes = ctx.syncBytes;
     var HISTORY_BUDGET = ctx.historyBudget;
 
@@ -517,12 +520,19 @@
 
     function dropTex(rec) {
       rec.texValid = false;
-      if (rec.tex) { try { rec.tex.dispose(); } catch (e) {} rec.tex = null; }
+      if (rec.tex) {
+        if (UP) UP.untrack(rec.tex);
+        try { rec.tex.dispose(); } catch (e) {}
+        rec.tex = null;
+      }
     }
 
-    function ensureTex(rec, canvas) {
+    /* box 非空 = 只有这块像素变了（笔迹增量），按块上传；
+     * 换画布 / 换纹理时整张重传。 */
+    function ensureTex(rec, canvas, box) {
       if (rec.tex && rec.tex.image === canvas) {
-        rec.tex.needsUpdate = true;
+        if (UP && box) UP.markDirty(rec.tex, box);
+        else rec.tex.needsUpdate = true;
         return rec.tex;
       }
       dropTex(rec);
@@ -536,6 +546,7 @@
       tex.userData.mdShared = true;
       rec.tex = tex;
       rec.texValid = true;
+      if (UP) UP.track(tex); else tex.needsUpdate = true;
       return tex;
     }
 
@@ -556,10 +567,13 @@
       applySlotTexture(slot, null);
     }
 
-    /* 编辑层栈（投射 / 笔迹）的合成结果：底座之上、混合层之下。
+    /* 编辑层栈的合成结果。kinds 限定只回放某一类层：
+     *   - 投射（project）属于「底座」，在混合层之下；
+     *   - 笔迹（stroke）必须叠在混合层之上 —— 否则不透明贴图会把刚画的像素盖掉
+     *     （2026-11-16：抬笔后笔迹消失就是这个顺序问题）。
      * 缓存键带上「底座的来源 + 地址 + 尺寸」—— 换图 / 撤销画笔之后底座变了，
      * 继续用旧合成图会把上一次的像素留在视口里。 */
-    function editsFor(slot, doc, rec) {
+    function editsFor(slot, doc, rec, kinds) {
       if (!global.TexStack || !global.TexStack.has(doc, slot)) return null;
       var base = null, key = '';
       if (global.TexSource) {
@@ -567,7 +581,219 @@
         base = r.img;
         key = r.from + '|' + r.url + '|' + (base ? (base.naturalWidth || base.width) + 'x' + (base.naturalHeight || base.height) : '');
       }
-      return global.TexStack.edited(doc, slot, { base: base, baseKey: key });
+      return global.TexStack.edited(doc, slot, { base: base, baseKey: key, kinds: kinds });
+    }
+
+    /* 这一槽里有没有橡皮笔迹：有就得走「透明笔迹层」合成，不能直接往合成图上打洞 */
+    function strokesHasErase(doc, slot) {
+      if (!global.TexStack) return false;
+      var list = global.TexStack.ops(doc, slot) || [];
+      for (var i = 0; i < list.length; i++) {
+        var o = list[i];
+        if (o && o.type === 'stroke' && o.mode === 'erase') return true;
+      }
+      return false;
+    }
+
+    /* 这一槽里有没有模糊笔迹：有就不能再用「工作副本当底座」的快路径，
+     * 否则 blur 层回放时没有底座可糊（而且层会被跳过） */
+    function opsHaveBlur(doc, slot) {
+      if (!global.TexStack) return false;
+      var list = global.TexStack.ops(doc, slot) || [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].type === 'blur') return true;
+      }
+      return false;
+    }
+
+    /* 合成结果的状态快照：尺寸 / 底座对象 / 混合层对象与不透明度 / 已提交笔迹 rev。
+     * 全都没变时，这一帧只需要把新增的笔迹补上去 —— 有混合层也不必从底座重画整张。 */
+    function composeStateOf(sz, baseImg, eff, rev) {
+      return {
+        w: sz.w, h: sz.h, base: baseImg || null, rev: rev | 0,
+        layers: (eff || []).slice(), opacs: (eff || []).map(function (l) { return l.opacity; })
+      };
+    }
+    function sameCompose(s, sz, baseImg, eff, rev) {
+      if (!s || s.w !== sz.w || s.h !== sz.h || s.base !== (baseImg || null) || s.rev !== (rev | 0)) return false;
+      if (s.layers.length !== (eff || []).length) return false;
+      for (var i = 0; i < s.layers.length; i++) {
+        if (s.layers[i] !== eff[i] || s.opacs[i] !== eff[i].opacity) return false;
+      }
+      return true;
+    }
+    /* 画布坐标的脏块 → 目标画布坐标（两边尺寸可能不同，例如笔迹 2048、合成 1024） */
+    function scaleBox(b, sw, sh, dw, dh) {
+      if (!b || !sw || !sh || !dw || !dh) return null;
+      var x0 = Math.max(0, Math.floor(b.x * dw / sw));
+      var y0 = Math.max(0, Math.floor(b.y * dh / sh));
+      var x1 = Math.min(dw, Math.ceil((b.x + b.w) * dw / sw));
+      var y1 = Math.min(dh, Math.ceil((b.y + b.h) * dh / sh));
+      if (!(x1 > x0 && y1 > y0)) return null;
+      return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    }
+
+    /* 把「底座 + 混合层 + 笔迹」写成一张画布并挂到材质上。
+     * 顺序是固定的：底座 → 混合层（TB.compose）→ 已提交的笔迹 / 模糊层 → 正在画的这一笔。
+     * 笔迹必须在混合层之上；放到下面就会被不透明贴图整片盖住。 */
+    /* 整图重算次数：性能基准用它判断「拖动时是否还在整张合成」。
+     * 增量合成不计入 —— 它的成本是笔刷包围盒，与整图不是一个量级。 */
+    var composeN = 0;
+    function composeOnto(doc, slot, rec, baseImg, eff, ink) {
+      var sz = TB.mixSize({ baseImg: baseImg, layers: eff || [] }, MAX_SIDE);
+      /* 只有笔迹、没有底座/混合层时，尺寸要跟笔迹画布一致（工作副本 2048），
+       * 不能落到 mixSize 的 1024 默认值 —— 否则笔迹被缩小后再贴回 UV。 */
+      if (!sz || ((!baseImg || !baseImg.width) && !(eff && eff.length))) {
+        var ops = (global.TexStack && global.TexStack.ops(doc, slot)) || [];
+        for (var i = 0; i < ops.length; i++) {
+          var c0 = ops[i] && ops[i].canvas;
+          if (c0 && c0.width) { sz = { w: c0.width, h: c0.height }; break; }
+        }
+      }
+      if (!rec.canvas) rec.canvas = document.createElement('canvas');
+      var hasStrokes = !!(global.TexStack && global.TexStack.has(doc, slot));
+      var hasInk = !!(ink && ink.canvas && ink.canvas.width);
+      var blurInk = !!(hasInk && ink.type === 'blur');
+      var strokeInk = hasInk && !blurInk;
+      /* 橡皮（erase）必须在**单独的透明笔迹层**上打洞，再整层盖回去 ——
+       * 直接 destination-out 到合成图上会把底座一起擦出透明洞（视口变黑）。
+       * 模糊层（blur）相反：它必须对「已经合成好的结果」做，所以永远直接作用在 cv 上。 */
+      var erase = (strokeInk && ink.mode === 'erase') || strokesHasErase(doc, slot);
+      var rev = hasStrokes ? global.TexStack.rev(doc, slot) : 0;
+      var inkBox = (ink && ink.box) || null;
+
+      /* 增量合成：底座 / 混合层 / 已提交笔迹都没变，只有这一笔在长。
+       * 只把 ink 的脏块盖到上一帧的结果上 —— 与整图重算逐像素一致，
+       * 因为这块以外 rec.canvas 的内容本来就没有变。 */
+      if (inkBox && strokeInk && !erase && rec.canvas.width === sz.w && rec.canvas.height === sz.h &&
+          sameCompose(rec.composeState, sz, baseImg, eff, rev)) {
+        var cvI = rec.canvas;
+        var bx = scaleBox(inkBox, ink.canvas.width, ink.canvas.height, cvI.width, cvI.height);
+        if (bx) {
+          var gi = cvI.getContext('2d');
+          var kx = ink.canvas.width / cvI.width, ky = ink.canvas.height / cvI.height;
+          gi.globalAlpha = 1;
+          gi.globalCompositeOperation = 'source-over';
+          gi.drawImage(ink.canvas, bx.x * kx, bx.y * ky, bx.w * kx, bx.h * ky,
+            bx.x, bx.y, bx.w, bx.h);
+          rec.slotName = slotKeyOf(doc, slot);
+          applySlotTexture(slot, ensureTex(rec, cvI, bx));
+          return;
+        }
+      }
+
+      var cv = TB.compose({
+        w: sz.w, h: sz.h, baseImg: baseImg, layers: eff || [], canvas: rec.canvas,
+        /* 没有底座时用材质槽色打底，别用 TB 默认的白 —— 否则「没贴图的模型」
+         * 一进合成就变白，和材质本色对不上 */
+        baseColor: ((doc.materials && doc.materials.slotColors) || [])[slot] || '#c9ccd4'
+      });
+      rec.canvas = cv;
+      composeN++;
+      if (hasStrokes || hasInk) {
+        if (erase) {
+          var lc = rec.inkCv;
+          if (!lc) lc = rec.inkCv = document.createElement('canvas');
+          if (lc.width !== cv.width) lc.width = cv.width;
+          if (lc.height !== cv.height) lc.height = cv.height;
+          var l2 = lc.getContext('2d');
+          l2.setTransform(1, 0, 0, 1, 0, 0);
+          l2.globalAlpha = 1;
+          l2.globalCompositeOperation = 'source-over';
+          l2.clearRect(0, 0, lc.width, lc.height);
+          if (hasStrokes) global.TexStack.overlay(lc, doc, slot, ['stroke']);
+          if (strokeInk) {
+            l2.globalCompositeOperation = ink.mode === 'erase' ? 'destination-out' : 'source-over';
+            l2.drawImage(ink.canvas, 0, 0, lc.width, lc.height);
+            l2.globalCompositeOperation = 'source-over';
+          }
+          var c3 = cv.getContext('2d');
+          c3.globalAlpha = 1;
+          c3.globalCompositeOperation = 'source-over';
+          c3.drawImage(lc, 0, 0);
+          /* 模糊层排在笔迹之后（只在「橡皮 + 模糊」混用时顺序才会略偏） */
+          if (hasStrokes) global.TexStack.overlay(cv, doc, slot, ['blur']);
+        } else {
+          if (hasStrokes) global.TexStack.overlay(cv, doc, slot, ['stroke', 'blur']);
+          if (strokeInk) {
+            var c2 = cv.getContext('2d');
+            c2.globalAlpha = 1;
+            c2.globalCompositeOperation = 'source-over';
+            c2.drawImage(ink.canvas, 0, 0, cv.width, cv.height);
+          }
+        }
+        if (blurInk) global.TexStack.blurMasked(cv, ink.canvas, ink.radius || 0);
+      }
+      rec.slotName = slotKeyOf(doc, slot);
+      /* 整图重算完成后的快照：下一帧若只有 ink 增长，就走上面的增量分支 */
+      rec.composeState = composeStateOf(sz, baseImg, eff, rev);
+      var tex = ensureTex(rec, cv, null);
+      applySlotTexture(slot, tex);
+    }
+
+    /* 合成用的底座：烘焙图 / 仅投射层 / 解码缓存 / 材质实图。
+     * 唯一要排除的是「绘画工作副本」—— 它已经含笔迹，当底座会成双份。 */
+    function baseFor(slot, doc, rec) {
+      var proj = editsFor(slot, doc, rec, ['project']);
+      if (proj) return proj;
+      if (global.TexSource) {
+        var r = global.TexSource.resolveBase(slot, { cached: rec && rec.baseImg, cachedUrl: rec && rec.baseUrl });
+        var img = r.img || null;
+        var pc = paintCanvasFor ? paintCanvasFor(slot) : null;
+        if (img && img !== pc) return img;
+      }
+      return rec.baseImg || null;
+    }
+
+    /* 工作副本直接当合成图：**不能再回放层栈**。
+     * 工作副本里已经是「底座 ⊕ 全部已提交层 ⊕ 这一笔」的像素，再叠一次同样的
+     * 笔迹会让半透明笔变深（抬笔瞬间颜色变重，层越多越明显）。
+     * 上传量按「新增的那一层」回算：同一张工作副本、层栈只追加了一笔时，
+     * 变化的只有这一笔的 bbox，不需要把 2048² 整张再传一遍。 */
+    function adoptPaintCanvas(doc, slot, rec, src, liveInk) {
+      var rev = (global.TexStack && global.TexStack.has(doc, slot)) ? global.TexStack.rev(doc, slot) : 0;
+      /* 同一张工作副本 + 同一版层栈 + 没有正在画的这一笔：视口里已经是它，不拷贝也不上传 */
+      if (!liveInk && rec.canvas && rec.pcRef === src && rec.pcRev === rev) {
+        if (rec.tex) applySlotTexture(slot, rec.tex);
+        else applySlotTexture(slot, ensureTex(rec, rec.canvas, null));
+        return;
+      }
+      var cv = rec.canvas;
+      if (!cv) cv = rec.canvas = document.createElement('canvas');
+      var box = null;
+      if (!liveInk && rec.pcRef === src && cv.width === src.width && cv.height === src.height &&
+          rev === (rec.pcRev | 0) + 1 && global.TexStack) {
+        var ops = global.TexStack.ops(doc, slot);
+        var last = ops[ops.length - 1];
+        /* 只有「追加一笔笔迹」能用 bbox 增量：投射层进的是底座，不在工作副本里 */
+        if (last && last.type === 'stroke' && last.bbox) {
+          box = scaleBox(last.bbox, src.width, src.height, cv.width, cv.height);
+        }
+      }
+      if (cv.width !== src.width) cv.width = src.width;
+      if (cv.height !== src.height) cv.height = src.height;
+      var g = cv.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.globalAlpha = 1;
+      g.globalCompositeOperation = 'source-over';
+      /* 先清再画：只处理 bbox，其余像素保持上次采纳的结果。
+       * 不能用 'copy'：它对源矩形之外的整张画布也会生效（实测会把画面清空）；
+       * 也不能只画不清：橡皮留下的透明像素会盖不掉旧笔迹。 */
+      if (box) {
+        g.clearRect(box.x, box.y, box.w, box.h);
+        g.drawImage(src, box.x, box.y, box.w, box.h, box.x, box.y, box.w, box.h);
+      } else {
+        g.clearRect(0, 0, cv.width, cv.height);
+        g.drawImage(src, 0, 0);
+      }
+      rec.pcRef = src;
+      rec.pcRev = rev;
+      /* 合成图的来源不再是「底座 + 层栈」的组合：下次改层必须整图重算，
+       * 不能走 composeOnto 的增量分支（那块像素的来源已经对不上了） */
+      rec.composeState = null;
+      composeN++;
+      rec.slotName = slotKeyOf(doc, slot);
+      applySlotTexture(slot, ensureTex(rec, cv, box));
     }
 
     function composeAndApply(slot) {
@@ -576,22 +802,26 @@
       var rec = recOf(doc, slot);
       var pc = paintCanvasFor ? paintCanvasFor(slot) : null;
       var eff = effectiveLayers(rec);
-      var edits = editsFor(slot, doc, rec);
-      /* 有烘焙图也要合成：烘焙图就是新的基础层 */
-      if (!eff.length && !pc && !rec.baked && !edits) { applyBase(slot); return; }
-      var baseImg = pc || (rec.baked && rec.baked.img) || edits || rec.baseImg || null;
-      var sz = TB.mixSize({ baseImg: baseImg, layers: eff }, MAX_SIDE);
-      if (!rec.canvas) rec.canvas = document.createElement('canvas');
-      var cv = TB.compose({
-        w: sz.w, h: sz.h, baseImg: baseImg, layers: eff, canvas: rec.canvas,
-        /* 没有底座时用材质槽色打底，别用 TB 默认的白 —— 否则「没贴图的模型」
-         * 一进合成就变白，和材质本色对不上 */
-        baseColor: ((doc.materials && doc.materials.slotColors) || [])[slot] || '#c9ccd4'
-      });
-      rec.canvas = cv;
-      rec.slotName = slotKeyOf(doc, slot);
-      var tex = ensureTex(rec, cv);
-      applySlotTexture(slot, tex);
+      var hasOps = !!(global.TexStack && global.TexStack.has(doc, slot));
+      var ink = paintInkFor ? paintInkFor(slot) : null;
+      var blur = !!(ink && ink.type === 'blur') || opsHaveBlur(doc, slot);
+      /* 边画边看：没有混合层时，材质上直接挂绘画工作副本就够了 ——
+       * 笔尖每落一次只改那张画布，纹理自己 needsUpdate；每帧再整张重合成
+       * （2048² 拷贝 + 新纹理上传）会把拖动手感拖垮。抬笔后 ink 归 null，
+       * 再走下面的正常合成。模糊笔也一样：工作副本里已经做了局部模糊。 */
+      var ptex = paintTexFor ? paintTexFor(slot) : null;
+      if (!eff.length && ptex && ink) { applySlotTexture(slot, ptex); return; }
+      /* 没有混合层时，绘画工作副本就是最终像素（底座 ⊕ 已提交层 ⊕ 这一笔）。
+       * 抬笔后 ink 归 null，这里把它当成成品直接采纳 —— 回放层栈会把同一批笔迹
+       * 再叠一遍（橡皮还会多擦一次），所以走 adoptPaintCanvas 而不是 composeOnto。
+       * 模糊例外：blur 层要作用在「底座 + 混合层」的结果上，工作副本里没有
+       * 混合层，不能拿它当底座，否则糊出来的是底座颜色。 */
+      if (!eff.length && pc && !blur) { adoptPaintCanvas(doc, slot, rec, pc, !!ink); return; }
+      var baked = (rec.baked && rec.baked.img) || null;
+      if (!eff.length && !baked && !hasOps && !ink) { applyBase(slot); return; }
+      /* 底座只取「投射」层：笔迹由 composeOnto 叠在混合层之上 */
+      var baseImg = baked || baseFor(slot, doc, rec);
+      composeOnto(doc, slot, rec, baseImg, eff, ink);
     }
 
     /* 编辑层栈落盘：栈的 rev 变了就写一次配置（v4）。
@@ -604,6 +834,19 @@
       var rec = recOf(doc, slot);
       var rv = global.TexStack.rev(doc, slot);
       if (rec.opsRev === rv) return;
+      /* 新笔迹的像素还在异步编码（OffscreenCanvas → data URL）。
+       * 这时候写配置会拿到「没有 src」的层，等于把这一笔从存档里删掉：
+       * 等编完再写，期间不占用主线程。 */
+      if (global.TexStack.pendingSrc(doc, slot) > 0) {
+        if (!rec.opsEnc) {
+          rec.opsEnc = true;
+          global.TexStack.ensureSrc(doc, slot).then(function () {
+            rec.opsEnc = false;
+            if (st.doc === doc) persistOps(doc, slot);
+          }).catch(function () { rec.opsEnc = false; });
+        }
+        return;
+      }
       rec.opsRev = rv;
       writeCfg(doc, slot, readCfg(doc, slot));
     }
@@ -642,9 +885,11 @@
       });
     }
 
+    /* 单槽刷新。返回 Promise 的语义：调用方（基准 / 探针）要等「层解码 + 合成完成」
+     * 再测性能，不能假设贴图解码是同步的。 */
     function refreshSlot(slot, force) {
       var doc = docOf();
-      if (!doc) return;
+      if (!doc) return Promise.resolve(0);
       var cfg = readCfg(doc, slot);
       var rec = recOf(doc, slot);
       /* 编辑层栈也算「有东西要合成」：没有混合层时它是唯一让视口更新的路径 */
@@ -656,14 +901,16 @@
           /* 没配置也没合成过：什么都不用动，材质本来就是基础贴图 */
         }
         rec.ready = true; rec.sig = JSON.stringify(cfg);
-        return;
+        return Promise.resolve(0);
       }
-      ensureSlot(slot, force).then(function (r) {
-        if (!r || st.doc !== doc) return;
+      return ensureSlot(slot, force).then(function (r) {
+        if (!r || st.doc !== doc) return 0;
         composeAndApply(slot);
         if (uiReady) renderUi();
+        return 1;
       }).catch(function (e) {
         setStatus('纹理混合：' + ((e && e.message) || e), true);
+        return 0;
       });
     }
 
@@ -1780,7 +2027,9 @@
       refreshSlot: refreshSlot,
       baseImageFor: baseImageFor, bakedImageFor: bakedImageFor, texFor: texFor, applyPatch: applyPatch,
       rekey: rekey, selectSlot: selectSlot, adoptSlot: adoptSlot, listSlots: listSlots,
-      migrateLegacy: migrateLegacy
+      migrateLegacy: migrateLegacy,
+      /* 性能基准：整图重算次数（增量合成不计） */
+      stats: function () { return { compose: composeN }; }
     };
   }
 

@@ -797,6 +797,49 @@
 
           <section class="set-sec">
             <div class="set-sec-head">
+              <div class="set-sec-t">模型池 <span class="set-sec-tag">自动路由</span></div>
+              <div class="set-sec-s">可配置多个语言模型。App 请求时由路由层自动挑一个空闲的：占用高、冷却中、已停用的会被避开；上面「当前配置」始终是池里的一员。登录云端账号时全部请求走网关，这一池暂停参与路由。</div>
+            </div>
+            <div class="llm-pool-list" id="llmPoolList">
+              <div class="empty">读取中…</div>
+            </div>
+            <div class="llm-pool-form">
+              <div class="set-grid">
+                <div class="field">
+                  <label for="llmPoolLabel">名称</label>
+                  <input type="text" id="llmPoolLabel" placeholder="例如：主力 / 备用">
+                </div>
+                <div class="field">
+                  <label for="llmPoolModel">模型名</label>
+                  <input type="text" id="llmPoolModel" placeholder="deepseek-chat">
+                </div>
+                <div class="field span2">
+                  <label for="llmPoolBase">接口地址</label>
+                  <input type="text" id="llmPoolBase" placeholder="https://api.example.com/v1">
+                </div>
+                <div class="field span2">
+                  <label for="llmPoolKey">Key</label>
+                  <input type="password" id="llmPoolKey" placeholder="sk-...">
+                </div>
+                <div class="field">
+                  <label for="llmPoolApps">绑定 App（可选）</label>
+                  <input type="text" id="llmPoolApps" placeholder="留空 = 所有 App，多个用逗号分隔">
+                </div>
+                <div class="field">
+                  <label for="llmPoolMax">最大并发</label>
+                  <input type="number" id="llmPoolMax" min="1" max="16" value="2">
+                </div>
+              </div>
+              <div class="llm-pool-commit">
+                <button type="button" class="btn sm primary" id="llmPoolAdd">添加到模型池</button>
+                <button type="button" class="btn sm hidden" id="llmPoolCancel">取消编辑</button>
+                <span class="llm-pool-msg" id="llmPoolMsg"></span>
+              </div>
+            </div>
+          </section>
+
+          <section class="set-sec">
+            <div class="set-sec-head">
               <div class="set-sec-t">推理与测试</div>
             </div>
             <label class="check" for="llmThink">
@@ -914,11 +957,11 @@
           <section class="set-sec">
             <div class="set-sec-head">
               <div class="set-sec-t">音色</div>
-              <div class="set-sec-s">分成两类：超拟人追求自然；机械音带金属颗粒，可选原样朗读，或交给 AI 按语义控制节奏。</div>
+              <div class="set-sec-s">分成两类：超拟人追求自然；快速合成不加载大语音模型，由 AI 参数控制节奏，适合短问答。</div>
             </div>
             <div class="tts-tabs" role="tablist" aria-label="音色类型">
               <button type="button" class="tts-tab on" data-tts-tab="human" role="tab" aria-selected="true">超拟人</button>
-              <button type="button" class="tts-tab" data-tts-tab="mecha" role="tab" aria-selected="false">机械音</button>
+              <button type="button" class="tts-tab" data-tts-tab="fast" role="tab" aria-selected="false">快速合成</button>
             </div>
 
             <div class="tts-tabpane" data-tts-pane="human">
@@ -929,29 +972,29 @@
               <div class="note" id="ttsVoiceHint">读取中…</div>
             </div>
 
-            <div class="tts-tabpane hidden" data-tts-pane="mecha">
-              <div class="tts-mecha">
-                <span class="tts-mecha-ico">M</span>
-                <div class="tts-mecha-main">
-                  <div class="tts-mecha-name">深海机娘 · 二次元机械音</div>
-                  <div class="tts-mecha-desc">复用「海星」声线，叠加环形调制与比特压限；不额外占磁盘。</div>
+            <div class="tts-tabpane hidden" data-tts-pane="fast">
+              <div class="tts-param">
+                <span class="tts-param-ico">P</span>
+                <div class="tts-param-main">
+                  <div class="tts-param-name">快速合成 · 自蒸馏音库</div>
+                  <div class="tts-param-desc">从角色音色蒸馏带调音节，运行时不加载语音模型，由 LLM 的参数直接驱动波形。</div>
                 </div>
-                <span class="tts-badge" id="ttsMechaState">检测中</span>
+                <span class="tts-badge" id="ttsParamState">检测中</span>
               </div>
-              <div class="tts-modes" role="radiogroup" aria-label="机械音朗读方式">
-                <button type="button" class="tts-mode on" data-mecha-mode="ai" role="radio" aria-checked="true">
+              <div class="tts-modes" role="radiogroup" aria-label="快速合成的朗读方式">
+                <button type="button" class="tts-mode on" data-ai-mode="ai" role="radio" aria-checked="true">
                   <b>AI 控制</b>
-                  <span>模型按语义插入停顿、变速、句尾拖音</span>
+                  <span>模型按语义插入停顿、变速、音调与重音</span>
                 </button>
-                <button type="button" class="tts-mode" data-mecha-mode="direct" role="radio" aria-checked="false">
+                <button type="button" class="tts-mode" data-ai-mode="direct" role="radio" aria-checked="false">
                   <b>直接朗读</b>
                   <span>原样读完整句，不加任何节奏</span>
                 </button>
               </div>
               <div class="inline tts-actions">
-                <button type="button" class="btn sm primary" id="ttsMechaUse">使用机械音</button>
-                <button type="button" class="btn sm" id="ttsMechaPlay">试听</button>
-                <span class="note" id="ttsMechaMsg"></span>
+                <button type="button" class="btn sm primary" id="ttsParamUse">使用快速合成</button>
+                <button type="button" class="btn sm" id="ttsParamPlay">试听</button>
+                <span class="note" id="ttsParamMsg"></span>
               </div>
             </div>
 
@@ -1329,6 +1372,9 @@
 <!-- 外壳拆出的小模块必须排在 model-desk 之前 -->
 <script src="js/md-uv-editor.js"></script>
 <script src="js/md-isolate.js"></script>
+<!-- 笔刷采样（纯函数，Node 单测）+ 预览纹理局部上传，都必须排在 md-paint 之前 -->
+<script src="js/paint-stroke.js"></script>
+<script src="js/md-paint-upload.js"></script>
 <script src="js/md-paint.js"></script>
 <script src="js/md-proj-bake.js"></script>
 <script src="js/md-texmix.js"></script>
@@ -1371,6 +1417,8 @@
 <!-- 语音合成设置：音色读写 hf_ttsVoice（与模型商店「设为默认」同源），
      试听走系统语音或本地引擎桥；必须在 provider.js / model-catalog.js 之后 -->
 <script src="js/settings-tts.js"></script>
+<!-- 语言模型池：多模型增删改与空闲/工作状态，数据全部来自 js/llm-router.js -->
+<script src="js/settings-llm-pool.js"></script>
 <script src="js/blueprint-core.js"></script>
 <script src="js/node-registry.js"></script>
 <script src="js/node-defs.js"></script>

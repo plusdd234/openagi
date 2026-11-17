@@ -86,6 +86,25 @@ eq(p.segments[0].rate, 0.9, '开头语速标记生效');
 eq(p.lead, 0.2, '文本前的停顿变成开头静音');
 eq(p.segments[0].after, 0, '开头静音不会重复挂到段尾');
 
+console.log('\n=== 音调 / 重音参数 ===');
+p = parseProsody('你好[[f=1.3]]啊[[e=1.4]]吧', 1);
+eq(p.segments.length, 3, '音调 / 重音变化都会切段');
+eq(p.segments[0].pitch, 1, '音调标记前的段保持 1');
+eq(p.segments[1].pitch, 1.3, '音调标记生效');
+eq(p.segments[2].gain, 1.4, '重音标记对之后的话生效');
+p = parseProsody('[[pitch=1.2]]你好', 1);
+eq(p.segments[0].pitch, 1.2, '长写法 pitch 生效');
+p = parseProsody('[[gain=1.3]]你好', 1);
+eq(p.segments[0].gain, 1.3, '长写法 gain 生效');
+p = parseProsody('你好[[f=9]]啊', 1);
+eq(p.segments[1].pitch, 1.5, '音调上限钳到 1.5');
+p = parseProsody('你好[[f=0.1]]啊', 1);
+eq(p.segments[1].pitch, 0.7, '音调下限钳到 0.7');
+p = parseProsody('你好[[e=9]]啊', 1);
+eq(p.segments[1].gain, 1.5, '重音上限钳到 1.5');
+p = parseProsody('你好[[e=0.1]]啊', 1);
+eq(p.segments[1].gain, 0.8, '重音下限钳到 0.8');
+
 console.log('\n=== WAV 拼接 ===');
 const a = makeWav(new Array(100).fill(0.5), 1000);   // 0.1s
 const b = makeWav(new Array(50).fill(-0.5), 1000);   // 0.05s

@@ -8,5 +8,14 @@ window.L2D_MODELS = [
     "entry": "c_0120.model3.json",
     "dir": "apps/live2d/model/c_0120/",
     "pack": "apps/live2d/model/c_0120/pack.js"
+  },
+  {
+    "id": "haru",
+    "name": "Haru（ハル）",
+    "author": "Live2D Inc.",
+    "license": "Live2D 免费示例素材许可：一般用户 / 小规模商用可，需署名 Live2D Inc.；中大规模商用仅限非公开测试。详见 apps/live2d/model/PROVENANCE.md",
+    "entry": "haru.model3.json",
+    "dir": "apps/live2d/model/haru/",
+    "pack": "apps/live2d/model/haru/pack.js"
   }
 ];

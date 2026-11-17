@@ -160,19 +160,31 @@
     try { localStorage.setItem(STORE_KEY, JSON.stringify(payload)); } catch (e) { /* 配额满就只留在内存里 */ }
   }
 
-  /* 读衣柜存下的当前搭配；没配过衣柜就返回 null */
+  /* 读衣柜存下的当前搭配；没配过衣柜就返回 null。
+     v2 多了 params（作者预留的换装参数），v1 只有 hidden，都兼容。 */
   function readWardrobeWear() {
     var raw = null;
     try { raw = localStorage.getItem(WARDROBE_KEY); } catch (e) { return null; }
     if (!raw) return null;
     var d = null;
     try { d = JSON.parse(raw); } catch (e) { return null; }
-    if (!d || d.v !== 1 || !d.draft || typeof d.draft !== 'object') return null;
+    if (!d || (d.v !== 1 && d.v !== 2) || !d.draft || typeof d.draft !== 'object') return null;
+    var params = {};
+    if (d.draft.params && typeof d.draft.params === 'object') {
+      Object.keys(d.draft.params).forEach(function (k) {
+        var v = Number(d.draft.params[k]);
+        if (k && isFinite(v)) params[k] = v;
+      });
+    }
     return {
       modelId: typeof d.draft.modelId === 'string' ? d.draft.modelId : '',
       hidden: Array.isArray(d.draft.hidden) ? d.draft.hidden.filter(function (x) {
         return typeof x === 'string' && x;
-      }).slice(0, 300) : []
+      }).slice(0, 300) : [],
+      shown: Array.isArray(d.draft.shown) ? d.draft.shown.filter(function (x) {
+        return typeof x === 'string' && x;
+      }).slice(0, 300) : [],
+      params: params
     };
   }
 
@@ -199,6 +211,10 @@
       modelId: loaded.modelId,
       /* 衣柜当前搭配里隐藏的部件（Cubism 部件 id）；换装时按它压透明度 */
       hiddenParts: [],
+      /* 衣柜要求整组显示的部件（Haru 另一套服装默认 opacity 为 0） */
+      shownParts: [],
+      /* 衣柜写下的换装参数（作者预留的开关），每帧写回 */
+      outfitParams: {},
       emo: 'neutral',
       busy: false,
       abort: null,
@@ -235,6 +251,8 @@
     if (wear) {
       if (wear.modelId) S.modelId = wear.modelId;
       S.hiddenParts = wear.hidden;
+      S.shownParts = wear.shown || [];
+      S.outfitParams = wear.params || {};
     }
 
     applyPersonaUI();
@@ -288,7 +306,7 @@
       creditAuthor: b.querySelector('#l2dCreditAuthor'),
       creditLicense: b.querySelector('#l2dCreditLicense'),
       voiceSel: b.querySelector('#l2dVoiceSel'),
-      mecha: b.querySelector('#l2dMecha'),
+      aiCtrl: b.querySelector('#l2dAiCtrl'),
       voiceRefresh: b.querySelector('#l2dVoiceRefresh'),
       voiceEngine: b.querySelector('#l2dVoiceEngine'),
       voiceStatus: b.querySelector('#l2dVoiceStatus'),
@@ -353,13 +371,13 @@
       if (el) el.addEventListener('input', applyTtsForm);
     });
     if (r.voiceSel) r.voiceSel.addEventListener('change', applyTtsForm);
-    /* 机械音的朗读方式：AI 控制 / 直接朗读，写回全局键，设置页与本 App 同一份状态 */
-    if (r.mecha) {
-      r.mecha.addEventListener('click', function (e) {
-        var b = e.target.closest('[data-l2d-mecha]');
+    /* AI 语音控制 / 直接朗读：对所有支持韵律的本地音色生效 */
+    if (r.aiCtrl) {
+      r.aiCtrl.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-l2d-ai]');
         if (!b) return;
-        setMechaMode(b.getAttribute('data-l2d-mecha'));
-        paintMechaBtns();
+        setAiCtrlMode(b.getAttribute('data-l2d-ai'));
+        paintAiCtrlBtns();
         paintVoiceHint();
       });
     }
@@ -576,7 +594,9 @@
         breath: s.breath || 0,
         eyeL: s.eyeL === undefined ? 1 : s.eyeL,
         browL: s.browL || 0,
-        hidden: (S.hiddenParts || []).slice()
+        hidden: (S.hiddenParts || []).slice(),
+        shown: (S.shownParts || []).slice(),
+        params: Object.assign({}, S.outfitParams || {})
       };
     };
 
@@ -586,6 +606,7 @@
       return {
         speaking: !!S.rig.speaking,
         tts: { voice: S.persona.tts.voice, rate: S.persona.tts.rate, pitch: S.persona.tts.pitch },
+        aiCtrl: { on: aiCtrlOn(), mode: aiCtrlMode(), prosody: prosodyEngine(localVoiceSpec()) },
         mem: { summary: S.mem.summary, at: S.mem.at, count: S.mem.count },
         aff: S.aff,
         msgs: S.msgs.length,
@@ -809,21 +830,23 @@
     return t.replace(/[ \t]{2,}/g, ' ').trim();
   }
 
-  /* 机械音的朗读方式与设置页同源：hf_ttsMechaMode = 'ai' | 'direct' */
-  function mechaMode() {
-    try { return localStorage.getItem('hf_ttsMechaMode') === 'direct' ? 'direct' : 'ai'; }
+  /* AI 语音控制：模型在回复里插 [[r=]] / [[p=]] / [[t=]]，桥接层逐段合成。
+   * 目前支持 Piper / Kokoro / MeloTTS / VITS / 参数合成；ZipVoice 与系统语音不走这条路。
+   * 状态键与设置页共用 hf_ttsAiMode。 */
+  function aiCtrlMode() {
+    try { return localStorage.getItem('hf_ttsAiMode') === 'direct' ? 'direct' : 'ai'; }
     catch (e) { return 'ai'; }
   }
-  function setMechaMode(m) {
-    try { localStorage.setItem('hf_ttsMechaMode', m === 'direct' ? 'direct' : 'ai'); } catch (e) { /* 隐私模式 */ }
+  function setAiCtrlMode(m) {
+    try { localStorage.setItem('hf_ttsAiMode', m === 'direct' ? 'direct' : 'ai'); } catch (e) { /* 隐私模式 */ }
   }
-  function mechaSelected() {
-    var spec = localVoiceSpec();
-    return !!(spec && spec.effect === 'mecha');
+  function prosodyEngine(spec) {
+    /* param 是纯 JS 参数合成，[[f]]/[[e]] 也能直接用上，所以和神经引擎一起算支持韵律 */
+    return !!(spec && /^(piper|kokoro|melo|vits|param)$/.test(String(spec.engine || '')));
   }
-  /* 只有「机械音 + AI 控制」才让模型去写节奏标记；直接朗读时写标记只会被剥掉 */
-  function mechaAi() {
-    return mechaSelected() && mechaMode() === 'ai';
+  /* 只有「本地 + 支持韵律 + AI 控制」才让模型去写节奏标记；直接朗读时写标记只会被剥掉 */
+  function aiCtrlOn() {
+    return prosodyEngine(localVoiceSpec()) && aiCtrlMode() === 'ai';
   }
 
   function detectEmo(text) {
@@ -864,10 +887,17 @@
       '3. 回复最开头用【情绪】标注一次，只能从：开心、害羞、难过、生气、惊讶、思考、平静 中选择。',
       '4. 不要重复用户的原话，不要自称 AI、语言模型或助手。'
     );
-    /* 节奏标记只在「机械音 + AI 控制」下有用：直接朗读会剥掉，超拟人音色也不该出现标记 */
-    if (mechaAi()) {
+    /* 只要是支持韵律的本地音色且开着 AI 控制，就让模型写节奏标记；
+     * 系统语音、ZipVoice 或直接朗读模式下不注入，避免标记被念出来。 */
+    if (aiCtrlOn()) {
+      /* 参数合成的音高 / 重音由运行时直接改波形，可以让模型一起控制；
+       * 神经引擎只支持分段语速与停顿，别给它压做不到的参数。 */
+      var aiSpec = localVoiceSpec();
+      var paramVoice = !!(aiSpec && aiSpec.engine === 'param');
       lines.push(
-        '5. 想控制朗读节奏时可以插入标记（显示时会自动隐藏）：[[r=0.9]] 之后放慢（0.8~1.2），[[p=0.4]] 停 0.4 秒，[[t=0.3]] 句尾拖 0.3 秒。一条回复最多 2 个，不要连续堆叠。',
+        '5. 想控制朗读节奏时可以插入标记（显示时会自动隐藏）：[[r=0.9]] 之后放慢（0.8~1.2），[[p=0.4]] 停 0.4 秒，' +
+          (paramVoice ? '[[f=1.1]] 之后提高音调（0.8~1.2），[[e=1.2]] 下一句加重（1~1.3），' : '') +
+          '[[t=0.3]] 句尾拖 0.3 秒。一条回复最多 2 个，不要连续堆叠。',
         '6. 想表现思考时可以自然地说「嗯……」「那个……」，但不要每句都用。'
       );
     }
@@ -1040,15 +1070,15 @@
     var head = s.indexOf('piper:') === 0 ? 'piper'
       : (s.indexOf('kokoro:') === 0 ? 'kokoro'
         : (s.indexOf('melo:') === 0 ? 'melo'
-          : (s.indexOf('vits:') === 0 ? 'vits' : (s.indexOf('zipvoice:') === 0 ? 'zipvoice' : ''))));
+          : (s.indexOf('vits:') === 0 ? 'vits'
+            : (s.indexOf('zipvoice:') === 0 ? 'zipvoice'
+              : (s.indexOf('param:') === 0 ? 'param' : '')))));
     if (!head) return null;
     /* melo / vits / zipvoice 是单一份共享模型，启用值里没有可查的目录 id */
     if (head === 'melo') return { engine: 'melo', label: 'MeloTTS · 中英混读女声' };
-    if (head === 'vits') {
-      if (s === 'vits:mecha') return { engine: 'vits', effect: 'mecha', label: '深海机娘 · 二次元机械音' };
-      return { engine: 'vits', label: 'VITS · 海星 · 俏皮甜美（近似）' };
-    }
+    if (head === 'vits') return { engine: 'vits', label: 'VITS · 海星 · 俏皮甜美（近似）' };
     if (head === 'zipvoice') return { engine: 'zipvoice', label: 'ZipVoice · 我的克隆声音' };
+    if (head === 'param') return { engine: 'param', label: '参数合成 · 快问快答' };
     var item = (typeof catalogGet === 'function') ? catalogGet(s.slice(head.length + 1)) : null;
     if (!item) return null;
     if (item.engine === 'kokoro' && typeof item.sid === 'number') return { engine: 'kokoro', sid: item.sid, label: item.name };
@@ -1093,23 +1123,15 @@
     }
 
     if (local.length) {
-      /* 与设置页同一套分类：机械音单独一组，不和超拟人音色混在一起 */
-      var human = local.filter(function (v) { return v.effect !== 'mecha'; });
-      var mecha = local.filter(function (v) { return v.effect === 'mecha'; });
-      var fill = function (label, items) {
-        if (!items.length) return;
-        var g = document.createElement('optgroup');
-        g.label = label;
-        items.forEach(function (v) {
-          var o = document.createElement('option');
-          o.value = v.value;
-          o.textContent = v.name + (v.ready ? '' : (v.needRef ? '（缺参考录音）' : '（未就绪）'));
-          g.appendChild(o);
-        });
-        sel.appendChild(g);
-      };
-      fill('超拟人 · 本地模型', human);
-      fill('机械音', mecha);
+      var g = document.createElement('optgroup');
+      g.label = '本地模型';
+      local.forEach(function (v) {
+        var o = document.createElement('option');
+        o.value = v.value;
+        o.textContent = v.name + (v.ready ? '' : (v.needRef ? '（缺参考录音）' : '（未就绪）'));
+        g.appendChild(o);
+      });
+      sel.appendChild(g);
     }
 
     /* 已存音色不在清单里（模型刚卸载 / 引擎还没探测到）也补一项，别让下拉悄悄退回系统默认 */
@@ -1128,12 +1150,12 @@
     paintVoiceMeta(snap);
   }
 
-  function paintMechaBtns() {
+  function paintAiCtrlBtns() {
     var r = S && S.refs;
-    if (!r || !r.mecha) return;
-    var mode = mechaMode();
-    r.mecha.querySelectorAll('[data-l2d-mecha]').forEach(function (b) {
-      var on = b.getAttribute('data-l2d-mecha') === mode;
+    if (!r || !r.aiCtrl) return;
+    var mode = aiCtrlMode();
+    r.aiCtrl.querySelectorAll('[data-l2d-ai]').forEach(function (b) {
+      var on = b.getAttribute('data-l2d-ai') === mode;
       b.classList.toggle('on', on);
       b.setAttribute('aria-checked', on ? 'true' : 'false');
     });
@@ -1150,14 +1172,16 @@
       r.voiceEngine.textContent = isLocal ? '本地模型' : '系统语音';
       r.voiceEngine.classList.toggle('is-local', isLocal);
     }
-    /* 只有机械音才需要选朗读方式；超拟人没有「AI 控节奏」这回事 */
-    if (r.mecha) r.mecha.classList.toggle('hidden', !(spec && spec.effect === 'mecha'));
-    paintMechaBtns();
-    if (r.pitch) r.pitch.disabled = isLocal;
+    /* AI 控制对所有支持韵律的本地音色都可用；系统语音与 ZipVoice 隐藏这一行 */
+    if (r.aiCtrl) r.aiCtrl.classList.toggle('hidden', !prosodyEngine(spec));
+    paintAiCtrlBtns();
+    /* 参数合成的音调由运行时改波形，和系统语音一样可调；神经音色仍由权重决定 */
+    var pitchOk = !isLocal || !!(spec && spec.engine === 'param');
+    if (r.pitch) r.pitch.disabled = !pitchOk;
     if (r.pitchRow) {
-      r.pitchRow.classList.toggle('is-off', isLocal);
+      r.pitchRow.classList.toggle('is-off', !pitchOk);
       var lab = r.pitchRow.querySelector('span');
-      if (lab) lab.textContent = isLocal ? '音调 · 仅系统语音' : '音调';
+      if (lab) lab.textContent = pitchOk ? '音调' : '音调 · 仅系统语音';
     }
     paintVoiceStatus(snapshot);
     paintVoiceHint(snapshot);
@@ -1180,6 +1204,11 @@
         label: 'ZipVoice',
         on: !!(st.zipvoice && st.clone),
         title: st.zipvoice ? (st.clone ? 'ZipVoice 克隆声音就绪' : 'ZipVoice 缺参考录音') : 'ZipVoice 未安装'
+      });
+      items.push({
+        label: '快速合成',
+        on: !!st.param,
+        title: st.param ? '参数音库已蒸馏，运行时不加载语音模型' : '参数音库未蒸馏：运行 node tools/distill-voice.js'
       });
     } else {
       items.push({ label: '本地模型需桌面端', on: false, title: '未连上桌面端，本地引擎状态未知' });
@@ -1206,24 +1235,30 @@
     var snap = snapshot || (api ? api.catalog() : null);
     var st = snap ? snap.status : null;
     var text;
-    if (spec && spec.effect === 'mecha') {
-      text = mechaMode() === 'ai'
-        ? '机械音 · AI 控制：模型按语义插入停顿、变速与句尾拖音；标记只影响朗读，不会显示在气泡里。'
-        : '机械音 · 直接朗读：整句原样读出，不解析任何节奏标记。';
+    if (prosodyEngine(spec)) {
+      var isParam = spec.engine === 'param';
+      var extra = isParam ? '参数合成不加载大语音模型，由 LLM 的语速 / 停顿 / 音调 / 重音参数直接驱动波形。' : '';
+      var ability = isParam ? '停顿、变速、音调与重音' : '停顿、变速与句尾拖音';
+      text = aiCtrlMode() === 'ai'
+        ? extra + 'AI 语音控制：模型按语义插入' + ability + '；标记只影响朗读，不会显示在气泡里。'
+        : extra + '直接朗读：整句原样读出，不解析任何节奏标记。';
     } else if (spec) {
       if (spec.engine === 'zipvoice' && st && !st.clone) {
-        text = 'ZipVoice 还缺参考录音：到「语音设置 → 声音克隆」录一段 5-15 秒清晰人声，在此之前会退回系统语音；本地模型音调不生效。';
+        text = 'ZipVoice 还缺参考录音：到「语音设置 → 声音克隆」录一段 5-15 秒清晰人声，在此之前会退回系统语音；该音色暂不支持 AI 节奏控制。';
       } else if (st && !st.probed) {
-        text = '本地引擎状态未知：确认桌面端与运行时已启动，再点「检测」；本地模型音调不生效。';
+        text = '本地引擎状态未知：确认桌面端与运行时已启动，再点「检测」；该音色暂不支持 AI 节奏控制。';
+      } else if (spec.engine === 'zipvoice') {
+        text = '该音色暂不支持 AI 节奏控制；可在「语音设置」换成 Piper、Kokoro、MeloTTS 或角色音色。';
       } else {
         text = '本地模型按自身音色朗读，只有语速生效，音调已停用。';
       }
     } else if (!own && cur) {
-      text = '未单独选择，跟随默认音色：' + (api ? api.label(cur) : cur) + '。';
+      text = '未单独选择，跟随默认音色：' + (api ? api.label(cur) : cur) +
+        '。系统语音不支持 AI 节奏控制，换成 Piper / Kokoro / MeloTTS / 角色音色即可。';
     } else if (!snap || !(snap.system || []).length) {
       text = '没有检测到系统语音：可在「语音设置 / 模型商店」下载本地模型，或安装系统语音包。';
     } else {
-      text = '系统语音可调语速与音调；本地模型下载后会自动出现在这里。';
+      text = '系统语音可调语速与音调，但不支持 AI 节奏控制；下载本地音色后即可启用。';
     }
     el.textContent = text;
   }
@@ -1341,7 +1376,8 @@
     var payload = { text: clean, engine: spec.engine, rate: rate };
     if (spec.engine === 'kokoro') payload.sid = spec.sid;
     else if (spec.engine === 'piper') payload.voice = spec.voice;
-    if (spec.effect) payload.effect = spec.effect;
+    else if (spec.engine === 'param') payload.pitch = clamp(Number(tts.pitch) || 1, 0.7, 1.5);
+
     S.rig.speaking = true;
     S.rig.ttsUntil = S.rig.t + Math.min(30, Math.max(1.4, clean.length / (5.4 * rate)));
     fetch(base + '/tts/speak', {
@@ -1383,8 +1419,8 @@
       .replace(/\s+/g, ' ')
       .trim();
     var spec = localVoiceSpec();
-    /* 机械音「直接朗读」不解析节奏标记：先剥掉，免得标记被断句念出来 */
-    if (spec && spec.effect === 'mecha' && mechaMode() === 'direct') clean = stripProsody(clean);
+    /* AI 控制关闭、系统语音或引擎不支持韵律时，先剥掉标记，免得被断句念出来 */
+    if (!aiCtrlOn()) clean = stripProsody(clean);
     if (!clean) return;
     try {
       stopSpeech();
@@ -1734,6 +1770,17 @@
               cm.setPartOpacityById(S.hiddenParts[hi], 0);
             }
           }
+          if (S.shownParts && S.shownParts.length) {
+            for (var si = 0; si < S.shownParts.length; si++) {
+              cm.setPartOpacityById(S.shownParts[si], 1);
+            }
+          }
+          /* 衣柜的换装参数：写绝对值，压住动作 / pose 的覆盖 */
+          if (S.outfitParams) {
+            Object.keys(S.outfitParams).forEach(function (pid) {
+              cm.setParameterValueById(pid, S.outfitParams[pid]);
+            });
+          }
           /* 说话时轻轻点头：叠加在模型自己算出的头部角度上 */
           if (Math.abs(st.nod) > 0.01) {
             var z = cm.getParameterValueById('ParamAngleZ') || 0;
@@ -1821,8 +1868,10 @@
     S.models.forEach(function (m) { if (m.id === id) hit = m; });
     if (!hit || !S.rig.ready) { syncModelUI(); return; }
     S.modelId = id;
-    /* 手动换皮套：上一条搭配的部件 id 不再适用 */
+    /* 手动换皮套：上一条搭配的部件 / 参数 id 不再适用 */
     S.hiddenParts = [];
+    S.shownParts = [];
+    S.outfitParams = {};
     saveState();
     syncModelUI();
     hideSay();
@@ -1831,12 +1880,23 @@
     toast('已换上皮套：' + (hit.name || hit.id));
   }
 
-  /* 衣柜点「穿上」时调用：换皮套 + 隐藏部件，数字人开着就即时生效 */
+  /* 衣柜点「穿上」时调用：换皮套 + 隐藏部件 + 换装参数，数字人开着就即时生效 */
   function applyOutfit(outfit) {
     if (!S || !outfit) return false;
     S.hiddenParts = Array.isArray(outfit.hidden) ? outfit.hidden.filter(function (x) {
       return typeof x === 'string' && x;
     }).slice(0, 300) : [];
+    S.shownParts = Array.isArray(outfit.shown) ? outfit.shown.filter(function (x) {
+      return typeof x === 'string' && x;
+    }).slice(0, 300) : [];
+    var params = {};
+    if (outfit.params && typeof outfit.params === 'object') {
+      Object.keys(outfit.params).forEach(function (k) {
+        var v = Number(outfit.params[k]);
+        if (k && isFinite(v)) params[k] = v;
+      });
+    }
+    S.outfitParams = params;
     var mid = typeof outfit.modelId === 'string' && outfit.modelId ? outfit.modelId : S.modelId;
     if (mid !== S.modelId) {
       S.modelId = mid;

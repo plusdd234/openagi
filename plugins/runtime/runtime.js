@@ -150,6 +150,9 @@ function ttsStatus() {
     refText = fs.readFileSync(path.join(ZIPVOICE_DIR, 'ref.txt'), 'utf8').trim();
     cloneReady = zipReady && fs.existsSync(path.join(ZIPVOICE_DIR, 'ref.wav')) && !!refText;
   }catch(e){ cloneReady = false; }
+  /* 参数合成音库：离线蒸馏产物，运行时只做拼接，不加载任何模型 */
+  let param = { ready: false, units: 0, chars: 0, rate: 0, source: '' };
+  try { param = paramStatus(dir ? path.join(dir, 'param') : ''); } catch (e) { /* 索引损坏时保持未就绪 */ }
   return {
     ok: !!(dir && fs.existsSync(exe)),
     engine: !!(dir && fs.existsSync(exe)),
@@ -159,6 +162,11 @@ function ttsStatus() {
     vits: vitsReady,
     zipvoice: zipReady,
     clone: cloneReady,
+    param: !!param.ready,
+    paramUnits: Number(param.units) || 0,
+    paramChars: Number(param.chars) || 0,
+    paramRate: Number(param.rate) || 0,
+    paramSource: String(param.source || ''),
     refText: refText.slice(0, 200)
   };
 }
@@ -193,11 +201,13 @@ function speakTts(req, res) {
     if (!text) { sendJson(res, 400, { error: '没有要朗读的文本' }); return; }
     /* engine 缺省按 piper：老版本前端只发 voice，不认这个字段 */
     const engine = String(body.engine || 'piper');
-    /* 韵律标记目前只在 VITS 角色音色上生效（数字人 / 机械音走这条）。
+    /* 参数合成自己解析 [[r]]/[[p]]/[[f]]/[[e]]/[[t]]，不走逐段子进程那条路 */
+    if (engine === 'param') { speakParam(res, body, text); return; }
+    /* 韵律标记对所有支持分段语速的本地引擎生效（Piper / Kokoro / MeloTTS / VITS）。
      * 没带标记时仍然走原来的单次合成，不增加任何开销。 */
-    if (engine === 'vits') {
+    if (PROSODY_ENGINES[engine]) {
       const plan = parseProsody(text, Number(body.rate) || 1);
-      if (plan.used && plan.segments.length) { speakVitsProsody(res, body, plan); return; }
+      if (plan.used && plan.segments.length) { speakProsody(res, body, plan, engine); return; }
     }
     if (engine === 'kokoro') speakKokoro(res, body, text);
     else if (engine === 'melo') speakMelo(res, body, text);
@@ -207,119 +217,145 @@ function speakTts(req, res) {
   });
 }
 
-function speakPiper(res, body, text) {
+/* 语速统一语义：rate 越大越快，引擎的 length_scale 越大越慢。
+ * 单次合成和逐段合成都用这一份换算，避免两条链路语速不一致。 */
+function ttsRateScale(rate) {
+  const r = Math.max(0.5, Math.min(2, Number(rate) || 1));
+  return Math.round((1 / r) * 100) / 100;
+}
+
+function ttsFail(status, msg) {
+  const e = new Error(msg);
+  e.status = status;
+  throw e;
+}
+
+function sendTtsError(res, e) {
+  sendJson(res, (e && e.status) || 500, { error: (e && e.message) || '语音合成失败' });
+}
+
+function ttsTemp(prefix) {
+  return path.join(os.tmpdir(), 'openagi-' + prefix + '-' + process.pid + '-' + Date.now() +
+    '-' + Math.random().toString(36).slice(2, 7) + '.wav');
+}
+
+/* 各引擎的公共参数（模型 / 词典 / 线程）只算一次：
+ * 单次合成补一个 length_scale 和输出路径，韵律分段则每段补一次。 */
+function piperSetup(body) {
   const voice = path.basename(String(body.voice || ''));
-  if (!/\.onnx$/i.test(voice)) { sendJson(res, 400, { error: '语音文件名不合法' }); return; }
-  if (!TTS_DIR) { sendJson(res, 404, { error: '本地语音未启用：请用桌面端启动' }); return; }
+  if (!/\.onnx$/i.test(voice)) ttsFail(400, '语音文件名不合法');
+  if (!TTS_DIR) ttsFail(404, '本地语音未启用：请用桌面端启动');
   const model = path.join(TTS_DIR, 'voices', voice);
   const exe = path.join(TTS_DIR, 'piper', 'piper.exe');
-  if (!fs.existsSync(model)) { sendJson(res, 404, { error: '没有找到语音权重，请先在模型商店下载' }); return; }
-  if (!fs.existsSync(exe)) { sendJson(res, 404, { error: '本地语音引擎未安装，请重新下载任一语音' }); return; }
-
-  const out = path.join(os.tmpdir(), 'openagi-tts-' + process.pid + '-' + Date.now() + '.wav');
-  const rate = Math.max(0.5, Math.min(2, Number(body.rate) || 1));
-  const args = ['--model', model, '--output_file', out];
+  if (!fs.existsSync(model)) ttsFail(404, '没有找到语音权重，请先在模型商店下载');
+  if (!fs.existsSync(exe)) ttsFail(404, '本地语音引擎未安装，请重新下载任一语音');
+  const baseArgs = ['--model', model];
   const cfg = model + '.json';
-  if (fs.existsSync(cfg)) args.push('--config', cfg);
-  /* Piper 的 length_scale 越大越慢：rate=1.25 对应 0.8。 */
-  args.push('--length_scale', String(Math.round((1 / rate) * 100) / 100));
+  if (fs.existsSync(cfg)) baseArgs.push('--config', cfg);
+  return { exe: exe, cwd: path.join(TTS_DIR, 'piper'), baseArgs: baseArgs, stdin: true, timeout: 30000 };
+}
 
-  runTts(res, exe, args, text, path.join(TTS_DIR, 'piper'), out, 30000);
+function speakPiper(res, body, text) {
+  let s;
+  try { s = piperSetup(body); } catch (e) { sendTtsError(res, e); return; }
+  const out = ttsTemp('piper');
+  const args = s.baseArgs.concat(['--output_file', out, '--length_scale', String(ttsRateScale(body.rate))]);
+  runTts(res, s.exe, args, text, s.cwd, out, s.timeout);
 }
 
 /* Kokoro 通过 sherpa-onnx 的离线 TTS 命令行合成：音色只是 --sid 不同，
  * 模型/声纹/音素表都指向同一份共享文件。RTF 约 1.5（2 秒音频约 3 秒合成），
  * 所以超时放宽到 60s，长句也不会被误杀。 */
-function speakKokoro(res, body, text) {
-  if (!TTS_DIR || !SHERPA_EXE || !KOKORO_DIR) {
-    sendJson(res, 404, { error: 'Kokoro 本地语音未启用：请用桌面端启动' });
-    return;
-  }
+function kokoroSetup(body) {
+  if (!TTS_DIR || !SHERPA_EXE || !KOKORO_DIR) ttsFail(404, 'Kokoro 本地语音未启用：请用桌面端启动');
   const model = path.join(KOKORO_DIR, 'model.int8.onnx');
   const voices = path.join(KOKORO_DIR, 'voices.bin');
   const tokens = path.join(KOKORO_DIR, 'tokens.txt');
-  if (!fs.existsSync(SHERPA_EXE)) { sendJson(res, 404, { error: 'Kokoro 引擎未安装，请先在模型商店下载超自然音色' }); return; }
+  if (!fs.existsSync(SHERPA_EXE)) ttsFail(404, 'Kokoro 引擎未安装，请先在模型商店下载超自然音色');
   if (!fs.existsSync(model) || !fs.existsSync(voices) || !fs.existsSync(tokens)) {
-    sendJson(res, 404, { error: 'Kokoro 共享模型不完整，请在模型商店重新下载' });
-    return;
+    ttsFail(404, 'Kokoro 共享模型不完整，请在模型商店重新下载');
   }
   const sid = Math.max(0, Math.min(200, parseInt(body.sid, 10) || 0));
-  const rate = Math.max(0.5, Math.min(2, Number(body.rate) || 1));
-  /* length_scale 与语速反向：rate=1.25 → 0.8（和 Piper 保持同一套语义）。 */
-  const scale = Math.round((1 / rate) * 100) / 100;
-  const out = path.join(os.tmpdir(), 'openagi-kokoro-' + process.pid + '-' + Date.now() + '.wav');
   const threads = Math.max(1, Math.min(4, (os.cpus() || []).length || 2));
   const lexicons = [
     path.join(KOKORO_DIR, 'lexicon-us-en.txt'),
     path.join(KOKORO_DIR, 'lexicon-zh.txt')
   ].filter(p => fs.existsSync(p)).join(',');
-  const args = [
+  const baseArgs = [
     '--kokoro-model=' + model,
     '--kokoro-voices=' + voices,
     '--kokoro-tokens=' + tokens
   ];
-  if (lexicons) args.push('--kokoro-lexicon=' + lexicons);
-  args.push(
-    '--sid=' + sid,
-    '--num-threads=' + threads,
-    '--kokoro-length-scale=' + scale,
+  if (lexicons) baseArgs.push('--kokoro-lexicon=' + lexicons);
+  baseArgs.push('--sid=' + sid, '--num-threads=' + threads);
+  return { exe: SHERPA_EXE, cwd: path.dirname(SHERPA_EXE), baseArgs: baseArgs, timeout: 60000 };
+}
+
+function speakKokoro(res, body, text) {
+  let s;
+  try { s = kokoroSetup(body); } catch (e) { sendTtsError(res, e); return; }
+  const out = ttsTemp('kokoro');
+  const args = s.baseArgs.concat([
+    '--kokoro-length-scale=' + ttsRateScale(body.rate),
     '--output-filename=' + out,
     text
-  );
+  ]);
   /* cwd 必须是 exe 所在目录：sherpa 的 shared 包把 onnxruntime.dll 放在 exe 旁边，
    * 从别处启动会找不到 DLL。 */
-  runTts(res, SHERPA_EXE, args, '', path.dirname(SHERPA_EXE), out, 60000);
+  runTts(res, s.exe, args, '', s.cwd, out, s.timeout);
 }
 
 /* MeloTTS zh_en（VITS）：单女声，中英混读更稳。
  * 规则 fst 的命名各版本不完全一致（date.fst / date-zh.fst），所以按 *.fst 收集，
  * 传空也不会让引擎报错。 */
-function speakMelo(res, body, text) {
-  if (!TTS_DIR || !SHERPA_EXE || !MELO_DIR) {
-    sendJson(res, 404, { error: 'MeloTTS 本地语音未启用：请用桌面端启动' });
-    return;
-  }
+function meloSetup() {
+  if (!TTS_DIR || !SHERPA_EXE || !MELO_DIR) ttsFail(404, 'MeloTTS 本地语音未启用：请用桌面端启动');
   /* 官方包叫 model.onnx，量化包可能带 int8 后缀，两种都认 */
   const model = ['model.onnx', 'model.int8.onnx']
     .map(f => path.join(MELO_DIR, f)).filter(p => fs.existsSync(p))[0] || '';
   const tokens = path.join(MELO_DIR, 'tokens.txt');
   const lexicon = path.join(MELO_DIR, 'lexicon.txt');
-  if (!fs.existsSync(SHERPA_EXE)) { sendJson(res, 404, { error: 'MeloTTS 引擎未安装，请先在模型商店下载' }); return; }
+  if (!fs.existsSync(SHERPA_EXE)) ttsFail(404, 'MeloTTS 引擎未安装，请先在模型商店下载');
   if (!model || !fs.existsSync(tokens) || !fs.existsSync(lexicon)) {
-    sendJson(res, 404, { error: 'MeloTTS 模型不完整，请在模型商店重新下载' });
-    return;
+    ttsFail(404, 'MeloTTS 模型不完整，请在模型商店重新下载');
   }
-  const rate = Math.max(0.5, Math.min(2, Number(body.rate) || 1));
-  const scale = Math.round((1 / rate) * 100) / 100;
-  const out = path.join(os.tmpdir(), 'openagi-melo-' + process.pid + '-' + Date.now() + '.wav');
   const threads = Math.max(1, Math.min(4, (os.cpus() || []).length || 2));
   let fsts = '';
   try{
     fsts = fs.readdirSync(MELO_DIR).filter(f => /\.fst$/i.test(f)).sort()
       .map(f => path.join(MELO_DIR, f)).join(',');
   }catch(e){ fsts = ''; }
-  const args = [
+  const baseArgs = [
     '--vits-model=' + model,
     '--vits-lexicon=' + lexicon,
     '--vits-tokens=' + tokens,
-    '--vits-length-scale=' + scale,
     '--num-threads=' + threads
   ];
-  if (fsts) args.push('--tts-rule-fsts=' + fsts);
-  args.push('--output-filename=' + out, text);
-  runTts(res, SHERPA_EXE, args, '', path.dirname(SHERPA_EXE), out, 60000);
+  if (fsts) baseArgs.push('--tts-rule-fsts=' + fsts);
+  return { exe: SHERPA_EXE, cwd: path.dirname(SHERPA_EXE), baseArgs: baseArgs, timeout: 60000 };
 }
 
-/* 二次元机械音效果器与朗读韵律都单独成模块，方便纯逻辑测试。 */
-const { mechaizeWav } = require('./tts-mecha');
+function speakMelo(res, body, text) {
+  let s;
+  try { s = meloSetup(); } catch (e) { sendTtsError(res, e); return; }
+  const out = ttsTemp('melo');
+  const args = s.baseArgs.concat([
+    '--vits-length-scale=' + ttsRateScale(body.rate),
+    '--output-filename=' + out,
+    text
+  ]);
+  runTts(res, s.exe, args, '', s.cwd, out, s.timeout);
+}
+
+/* 朗读韵律与参数合成各自独立成模块，方便脱离 HTTP 服务做纯逻辑测试。 */
 const { parseProsody, concatWavs } = require('./tts-prosody');
+const { paramStatus, synth: synthParam } = require('./tts-param');
 
 /* VITS 角色音色（社区模型）：onnx 文件名随模型变化，按目录里的 *.onnx 取；
  * lexicon/tokens 必需，规则 fst（date/number/phone/heteronym）有则一起交给引擎。 */
 function vitsSetup() {
-  const fail = (status, msg) => { const e = new Error(msg); e.status = status; throw e; };
-  if (!TTS_DIR || !SHERPA_EXE || !VITS_DIR) fail(404, '角色音色未启用：请用桌面端启动');
-  if (!fs.existsSync(SHERPA_EXE)) fail(404, '角色音色引擎未安装，请先在模型商店下载');
+  if (!TTS_DIR || !SHERPA_EXE || !VITS_DIR) ttsFail(404, '角色音色未启用：请用桌面端启动');
+  if (!fs.existsSync(SHERPA_EXE)) ttsFail(404, '角色音色引擎未安装，请先在模型商店下载');
   let model = '';
   try{
     const f = fs.readdirSync(VITS_DIR).filter(n => /\.onnx$/i.test(n))[0];
@@ -328,7 +364,7 @@ function vitsSetup() {
   const tokens = path.join(VITS_DIR, 'tokens.txt');
   const lexicon = path.join(VITS_DIR, 'lexicon.txt');
   if (!model || !fs.existsSync(tokens) || !fs.existsSync(lexicon)) {
-    fail(404, '角色音色模型不完整，请在模型商店重新下载');
+    ttsFail(404, '角色音色模型不完整，请在模型商店重新下载');
   }
   const threads = Math.max(1, Math.min(4, (os.cpus() || []).length || 2));
   let fsts = '';
@@ -346,54 +382,82 @@ function vitsSetup() {
   return { exe: SHERPA_EXE, cwd: path.dirname(SHERPA_EXE), baseArgs: baseArgs, timeout: 60000 };
 }
 
-/* 语速与 length_scale 反向：rate=1.25 → 0.8（和 Piper / Kokoro 同一套语义） */
-function vitsRateScale(rate) {
-  return Math.round((1 / rate) * 100) / 100;
-}
-
 function speakVits(res, body, text) {
   let s;
-  try { s = vitsSetup(); } catch (e) { sendJson(res, e.status || 500, { error: e.message }); return; }
-  const rate = Math.max(0.5, Math.min(2, Number(body.rate) || 1));
-  const out = path.join(os.tmpdir(), 'openagi-vits-' + process.pid + '-' + Date.now() + '.wav');
+  try { s = vitsSetup(); } catch (e) { sendTtsError(res, e); return; }
+  const out = ttsTemp('vits');
   const args = s.baseArgs.concat([
-    '--vits-length-scale=' + vitsRateScale(rate),
+    '--vits-length-scale=' + ttsRateScale(body.rate),
     '--output-filename=' + out,
     text
   ]);
-  /* effect=mecha：同一份模型，合成后加机械音效果；原声请求不带这个字段。 */
-  runTts(res, s.exe, args, '', s.cwd, out, s.timeout,
-    String(body.effect || '') === 'mecha' ? 'mecha' : '');
+  runTts(res, s.exe, args, '', s.cwd, out, s.timeout);
 }
 
-/* 带韵律标记的 VITS 合成：逐段合成，按段间静音拼成一个 WAV。
+/* 支持韵律标记的引擎：它们都能按段设置 length_scale，逐段合成后再拼成一个 WAV。
+ * ZipVoice 的语速参数与 VITS 不同，暂不参与，前端也不会给它注入标记。 */
+const PROSODY_ENGINES = { piper: 1, kokoro: 1, melo: 1, vits: 1 };
+
+function prosodySetup(engine, body) {
+  if (engine === 'piper') return piperSetup(body);
+  if (engine === 'kokoro') return kokoroSetup(body);
+  if (engine === 'melo') return meloSetup();
+  return vitsSetup();
+}
+
+/* 单段参数：Piper 把文本写 stdin，其它三个把文本放命令行末尾。 */
+function segmentArgs(engine, setup, text, rate, out) {
+  const scale = ttsRateScale(rate);
+  if (engine === 'piper') {
+    return setup.baseArgs.concat(['--output_file', out, '--length_scale', String(scale)]);
+  }
+  if (engine === 'kokoro') {
+    return setup.baseArgs.concat(['--kokoro-length-scale=' + scale, '--output-filename=' + out, text]);
+  }
+  return setup.baseArgs.concat(['--vits-length-scale=' + scale, '--output-filename=' + out, text]);
+}
+
+/* 带韵律标记的合成：逐段合成，按段间静音拼成一个 WAV。
  * 段数由解析器限制在 16 段以内，避免一句话触发几十次子进程。 */
-function speakVitsProsody(res, body, plan) {
-  let s;
-  try { s = vitsSetup(); } catch (e) { sendJson(res, e.status || 500, { error: e.message }); return; }
+function speakProsody(res, body, plan, engine) {
   (async () => {
+    const s = prosodySetup(engine, body);
     const items = [];
     for (let i = 0; i < plan.segments.length; i++) {
       const seg = plan.segments[i];
-      items.push({ buf: await runVitsSegment(s, seg.text, seg.rate), after: seg.after });
+      const out = ttsTemp(engine);
+      const args = segmentArgs(engine, s, seg.text, seg.rate, out);
+      const buf = await runTtsBuffer(s.exe, args, s.stdin ? seg.text : '', s.cwd, out, s.timeout);
+      items.push({ buf: buf, after: seg.after });
     }
-    let wav = concatWavs(items, plan.lead);
-    if (String(body.effect || '') === 'mecha') {
-      try { wav = mechaizeWav(wav); } catch (e) { /* 效果器失败退回原声 */ }
-    }
-    sendWavBuffer(res, wav);
-  })().catch(e => sendJson(res, e.status || 500, { error: e.message || '语音合成失败' }));
+    sendWavBuffer(res, concatWavs(items, plan.lead));
+  })().catch(e => sendTtsError(res, e));
 }
 
-function runVitsSegment(setup, text, rate) {
-  const out = path.join(os.tmpdir(), 'openagi-vits-' + process.pid + '-' + Date.now() +
-    '-' + Math.random().toString(36).slice(2, 7) + '.wav');
-  const args = setup.baseArgs.concat([
-    '--vits-length-scale=' + vitsRateScale(rate),
-    '--output-filename=' + out,
-    text
-  ]);
-  return runTtsBuffer(setup.exe, args, '', setup.cwd, out, setup.timeout);
+/* 参数合成：运行时不碰神经网络，直接查蒸馏音库并用 PSOLA 拼 WAV。
+ * 音库由 tools/distill-voice.js 离线生成；没有音库时明确告诉前端去蒸馏，
+ * 不要静默退回别的引擎（音色会变，快问快答的预期也就断了）。 */
+function speakParam(res, body, text) {
+  const dir = TTS_DIR ? path.join(TTS_DIR, 'param') : '';
+  let wav = null;
+  try {
+    wav = synthParam(text, {
+      dir: dir,
+      rate: body.rate,
+      pitch: body.pitch,
+      gain: body.gain
+    });
+  } catch (e) {
+    sendJson(res, 500, { error: '参数合成失败：' + ((e && e.message) || '音库读取异常') });
+    return;
+  }
+  if (!wav) {
+    sendJson(res, 404, {
+      error: '参数音库还没生成：在模型商店装好角色音色后，运行 node tools/distill-voice.js 蒸馏一次'
+    });
+    return;
+  }
+  sendWavBuffer(res, wav);
 }
 
 /* ZipVoice 零样本克隆：参考音频与参考文本由设置页写入 zipvoice/ref.wav + ref.txt。
@@ -485,7 +549,7 @@ function runTtsBuffer(exe, args, stdinText, cwd, out, timeoutMs) {
 
 /* Piper / Kokoro 共用的子进程回收：超时、错误、非零退出都转成 JSON 错误，
  * 成功则把 WAV 整块回传并删临时文件。stdinText 为空表示不写 stdin（Kokoro 走命令行参数）。 */
-function runTts(res, exe, args, stdinText, cwd, out, timeoutMs, effect) {
+function runTts(res, exe, args, stdinText, cwd, out, timeoutMs) {
   let stderr = '';
   let done = false;
   const child = spawn(exe, args, { cwd, windowsHide: true });
@@ -513,10 +577,6 @@ function runTts(res, exe, args, stdinText, cwd, out, timeoutMs, effect) {
       try { fs.unlink(out, () => {}); } catch (e) {}
       sendJson(res, 500, { error: '语音合成失败' + (stderr ? '：' + stderr.trim().slice(-300) : '') });
       return;
-    }
-    /* 效果器失败只退回原声：不能让一句「机械音」把整次朗读变成 500。 */
-    if (effect === 'mecha') {
-      try { fs.writeFileSync(out, mechaizeWav(fs.readFileSync(out))); } catch (e) {}
     }
     sendWav(res, out);
   });

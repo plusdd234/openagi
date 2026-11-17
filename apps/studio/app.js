@@ -19,7 +19,7 @@
   /* ---------------- 常量 ---------------- */
   const SAVE_KEY = 'hf_studio_project_v1';
   const SNAP_KEY = 'hf_studio_snaps_v1';
-  const SAVE_VER = 2;
+  const SAVE_VER = 3;
   const SNAP_MAX = 5;
   const SNAP_MS = 5 * 60 * 1000;
   const RULER_H = 26;
@@ -66,6 +66,7 @@
   const $ = (id) => document.getElementById(id);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const round2 = (v) => Math.round(v * 100) / 100;
+  const round3 = (v) => Math.round(v * 1000) / 1000;
   let seq = 0;
   const uid = (p) => p + Date.now().toString(36) + (seq++).toString(36);
   const svgWrap = (inner) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + inner + '</svg>';
@@ -118,12 +119,74 @@
     if (v >= 1024) return (v / 1024).toFixed(0) + ' KB';
     return v + ' B';
   }
-  function cssFilter(id) {
-    const f = FILTERS.find((x) => x.id === id);
-    return (f && f.css) || 'none';
+  /* 效果栈：可叠加 / 可排序 / 可逐项开关。
+     预览（DOM style.filter）与导出（ctx.filter）只允许通过 effectsCss 取串，
+     避免出现第二套效果拼装逻辑。 */
+  const EFFECT_MAX = 8;
+  const ADJUST_DEFS = [
+    { key: 'brightness', name: '亮度', min: 0.3, max: 2, step: 0.01 },
+    { key: 'contrast', name: '对比度', min: 0.3, max: 2, step: 0.01 },
+    { key: 'saturate', name: '饱和度', min: 0, max: 2.5, step: 0.01 }
+  ];
+  function presetOf(id) {
+    return FILTERS.find(function (x) { return x.id === id; }) || null;
+  }
+  function normalizeEffects(raw, legacy) {
+    const out = [];
+    (Array.isArray(raw) ? raw : []).forEach(function (e) {
+      if (!e || typeof e !== 'object' || out.length >= EFFECT_MAX) return;
+      if (e.type === 'preset') {
+        const f = presetOf(e.preset);
+        if (!f || f.id === 'none') return;
+        out.push({ id: String(e.id || uid('fx')), type: 'preset', preset: f.id, enabled: e.enabled !== false });
+      } else if (e.type === 'adjust') {
+        const src = e.params || {};
+        const params = {};
+        ADJUST_DEFS.forEach(function (d) {
+          const n = Number(src[d.key]);
+          params[d.key] = isFinite(n) ? clamp(n, d.min, d.max) : 1;
+        });
+        out.push({ id: String(e.id || uid('fx')), type: 'adjust', enabled: e.enabled !== false, params: params });
+      } else if (e.type === 'blur') {
+        const n = Number((e.params || {}).px);
+        out.push({ id: String(e.id || uid('fx')), type: 'blur', enabled: e.enabled !== false, params: { px: isFinite(n) ? clamp(n, 0, 40) : 4 } });
+      }
+    });
+    if (!out.length && legacy && legacy !== 'none') {
+      const f = presetOf(legacy);
+      if (f) out.push({ id: uid('fx'), type: 'preset', preset: f.id, enabled: true });
+    }
+    return out;
+  }
+  function effectName(e) {
+    if (!e) return '';
+    if (e.type === 'preset') { const f = presetOf(e.preset); return f ? f.name : '滤镜'; }
+    if (e.type === 'adjust') return '调色';
+    if (e.type === 'blur') return '模糊';
+    return '效果';
+  }
+  function effectsCss(c) {
+    const parts = [];
+    ((c && c.effects) || []).forEach(function (e) {
+      if (!e || e.enabled === false) return;
+      if (e.type === 'preset') {
+        const f = presetOf(e.preset);
+        if (f && f.css && f.css !== 'none') parts.push(f.css);
+      } else if (e.type === 'adjust') {
+        const p = e.params || {};
+        const b = Number(p.brightness), ct = Number(p.contrast), sa = Number(p.saturate);
+        if (isFinite(b) && Math.abs(b - 1) > 0.005) parts.push('brightness(' + round3(b) + ')');
+        if (isFinite(ct) && Math.abs(ct - 1) > 0.005) parts.push('contrast(' + round3(ct) + ')');
+        if (isFinite(sa) && Math.abs(sa - 1) > 0.005) parts.push('saturate(' + round3(sa) + ')');
+      } else if (e.type === 'blur') {
+        const px = Number((e.params || {}).px);
+        if (isFinite(px) && px > 0) parts.push('blur(' + round3(px) + 'px)');
+      }
+    });
+    return parts.length ? parts.join(' ') : 'none';
   }
 
-  /* ---------------- 项目模型（v2） ---------------- */
+  /* ---------------- 项目模型（v3） ---------------- */
   function defaultTracks() {
     return DEFAULT_TRACKS.map(function (t) {
       return {
@@ -215,22 +278,34 @@
     }).sort(function (a, b) { return a.t - b.t; });
   }
 
-  /* v1 → v2：补齐轨道、标记、关键帧容器。对 v2 是恒等操作，可重复调用。 */
+  /* v1 → v2：补齐轨道、标记、关键帧容器。
+     v2 → v3：把单值 filter 迁进 effects 栈，删除旧字段。
+     分版本增量迁移，对当前版本是恒等操作，可重复调用。 */
   function migrateProject(raw) {
     if (!raw || typeof raw !== 'object') return null;
     const ver = Number(raw.v) || 1;
     if (ver >= SAVE_VER) return raw;
     const out = JSON.parse(JSON.stringify(raw));
+    if (ver < 2) {
+      out.sampleRate = 48000;
+      out.tracks = defaultTracks();
+      out.markers = [];
+      out.meta = { createdAt: 0, updatedAt: 0, app: 'studio' };
+      out.clips = (Array.isArray(out.clips) ? out.clips : []).map(function (c) {
+        if (!c || typeof c !== 'object') return c;
+        if (!c.kf) c.kf = {};
+        return c;
+      });
+    }
+    if (ver < 3) {
+      out.clips = (Array.isArray(out.clips) ? out.clips : []).map(function (c) {
+        if (!c || typeof c !== 'object') return c;
+        c.effects = normalizeEffects(c.effects, c.filter);
+        delete c.filter;
+        return c;
+      });
+    }
     out.v = SAVE_VER;
-    out.sampleRate = 48000;
-    out.tracks = defaultTracks();
-    out.markers = [];
-    out.meta = { createdAt: 0, updatedAt: 0, app: 'studio' };
-    out.clips = (Array.isArray(out.clips) ? out.clips : []).map(function (c) {
-      if (!c || typeof c !== 'object') return c;
-      if (!c.kf) c.kf = {};
-      return c;
-    });
     return out;
   }
 
@@ -255,7 +330,7 @@
       muted: !!c.muted,
       fadeIn: c.fadeIn == null ? 0 : Number(c.fadeIn),
       fadeOut: c.fadeOut == null ? 0 : Number(c.fadeOut),
-      filter: c.filter || 'none',
+      effects: normalizeEffects(c.effects, c.filter),
       kf: normalizeKf(c.kf),
       text: {
         content: (c.text && c.text.content) || '标题文字',
@@ -402,7 +477,20 @@
     snapshots: [],
     lastSnapAt: 0,
     snapStep: 0,
-    trackSig: ''
+    trackSig: '',
+    /* 序列入出点（null = 未设置） */
+    rngIn: null,
+    rngOut: null,
+    /* 播放速率与方向：J 倒放时 dir = -1，L 连按提速到 4× */
+    rate: 1,
+    dir: 1,
+    /* 片段剪贴板：{ base, items } */
+    clipboard: null,
+    /* 音频峰值缓存与并发解码任务 */
+    peaks: new Map(),
+    peakJobs: new Map(),
+    marquee: null,
+    lastReverseSeek: 0
   };
 
   function tracks() { return S.project.tracks; }
@@ -601,10 +689,10 @@
     S.saveTimer = setTimeout(saveNow, 650);
   }
 
-  /* ---------------- 历史 ---------------- */
+  /* ---------------- 历史（语义化：每条带动作名） ---------------- */
   function snap() { return JSON.stringify(S.project); }
-  function pushHistory() {
-    S.hist.push(snap());
+  function pushHistory(label) {
+    S.hist.push({ label: String(label || '编辑'), snap: snap() });
     if (S.hist.length > MAX_HIST) S.hist.shift();
     S.future.length = 0;
     S.steps += 1;
@@ -616,15 +704,26 @@
   }
   function undo() {
     if (!S.hist.length) return false;
-    S.future.push(snap());
-    S.project = normalizeProject(JSON.parse(S.hist.pop()));
+    const item = S.hist.pop();
+    S.future.push({ label: item.label, snap: snap() });
+    S.project = normalizeProject(JSON.parse(item.snap));
     afterRestore();
     return true;
   }
   function redo() {
     if (!S.future.length) return false;
-    S.hist.push(snap());
-    S.project = normalizeProject(JSON.parse(S.future.pop()));
+    const item = S.future.pop();
+    S.hist.push({ label: item.label, snap: snap() });
+    S.project = normalizeProject(JSON.parse(item.snap));
+    afterRestore();
+    return true;
+  }
+  /* 历史面板跳转：回到第 i 条历史之前的状态（i = 0 表示最初） */
+  function goHistory(i) {
+    if (i < 0 || i >= S.hist.length) return false;
+    S.future.push({ label: '回到：' + S.hist[i].label, snap: snap() });
+    S.project = normalizeProject(JSON.parse(S.hist[i].snap));
+    S.hist = S.hist.slice(0, i);
     afterRestore();
     return true;
   }
@@ -634,7 +733,11 @@
     Array.from(S.multi).forEach(function (id) {
       if (!alive.has(id)) S.multi.delete(id);
     });
-    S.time = clamp(S.time, 0, Math.max(0, projectDuration(S.project)));
+    const dur = Math.max(0, projectDuration(S.project));
+    S.time = clamp(S.time, 0, dur);
+    if (S.rngIn != null) S.rngIn = clamp(S.rngIn, 0, dur);
+    if (S.rngOut != null) S.rngOut = clamp(S.rngOut, 0, dur);
+    if (S.rngIn != null && S.rngOut != null && S.rngOut <= S.rngIn) S.rngOut = null;
     renderAll();
     applyTime();
     scheduleSave();
@@ -645,6 +748,14 @@
     const r = $('stRedo');
     if (u) u.disabled = !S.hist.length;
     if (r) r.disabled = !S.future.length;
+    const box = $('stHistList');
+    if (!box) return;
+    const rows = S.hist.slice(-8).map(function (h, k) {
+      const idx = S.hist.length - Math.min(8, S.hist.length) + k;
+      return '<button class="st-histrow" data-hist="' + idx + '" title="回到这一步之前">' +
+        '<span>' + escHtml(h.label) + '</span><em>#' + (idx + 1) + '</em></button>';
+    }).reverse().join('');
+    box.innerHTML = rows || '<div class="st-hint">还没有可撤销的动作</div>';
   }
 
   /* ---------------- 提示 ---------------- */
@@ -847,6 +958,7 @@
       AUD.master = master;
       AUD.monitor = monitor;
       AUD.recDest = dest;
+      hookAnalyser();
     } catch (e) { return null; }
     return AUD.ctx;
   }
@@ -869,6 +981,125 @@
   function applyMonitorGain() {
     if (!AUD.monitor) return;
     AUD.monitor.gain.value = (S.muted || S.exportSession) ? 0 : 1;
+  }
+  /* 主输出电平表：master 旁挂一个 AnalyserNode，只观察不参与链路。 */
+  function hookAnalyser() {
+    if (AUD.analyser || !AUD.ctx || !AUD.master) return;
+    try {
+      const an = AUD.ctx.createAnalyser();
+      an.fftSize = 512;
+      an.smoothingTimeConstant = 0.45;
+      AUD.master.connect(an);
+      AUD.analyser = an;
+      AUD.levelBuf = new Uint8Array(an.fftSize);
+    } catch (e) { AUD.analyser = null; }
+  }
+  function paintLevel() {
+    const box = $('stLevel');
+    if (!box) return;
+    const bar = box.querySelector('i');
+    let peak = 0;
+    if (AUD.analyser && S.playing && S.dir > 0) {
+      try {
+        AUD.analyser.getByteTimeDomainData(AUD.levelBuf);
+        for (let i = 0; i < AUD.levelBuf.length; i++) {
+          const d = Math.abs(AUD.levelBuf[i] - 128) / 128;
+          if (d > peak) peak = d;
+        }
+      } catch (e) { peak = 0; }
+    }
+    const pct = Math.round(clamp(peak * 130, 0, 100));
+    if (bar) bar.style.height = pct + '%';
+    box.classList.toggle('hot', pct > 88);
+  }
+
+  /* ---------------- 音频波形 ----------------
+   * 只保留每秒 100 点的峰值，解码缓冲用完即丢；解码失败静默降级为空波形。 */
+  const PEAK_RATE = 100;
+  function peaksOf(mediaId) {
+    const p = S.peaks.get(mediaId);
+    return p && p.data ? p : null;
+  }
+  function ensureVisiblePeaks() {
+    if (!S.inited) return;
+    const ids = new Set();
+    S.project.clips.forEach(function (c) {
+      if (c.kind === 'audio' && c.mediaId) ids.add(c.mediaId);
+    });
+    ids.forEach(function (id) { loadPeaks(id); });
+  }
+  function loadPeaks(mediaId) {
+    if (S.peaks.has(mediaId)) {
+      const p = peaksOf(mediaId);
+      return Promise.resolve(p ? p.data.length : 0);
+    }
+    /* 同一素材并发请求复用同一个任务，避免重复解码。 */
+    if (S.peakJobs.has(mediaId)) return S.peakJobs.get(mediaId);
+    const m = mediaOf(mediaId);
+    if (!m || !m.url || m.kind === 'image') return Promise.resolve(0);
+    const ctx = ensureAudio();
+    if (!ctx || !window.fetch) { S.peaks.set(mediaId, { data: null }); return Promise.resolve(0); }
+    const job = fetch(m.url)
+      .then(function (r) { return r.ok ? r.arrayBuffer() : null; })
+      .then(function (buf) {
+        if (!buf) throw new Error('fetch failed');
+        return new Promise(function (res, rej) {
+          const p = ctx.decodeAudioData(buf.slice(0), res, rej);
+          if (p && p.catch) p.catch(rej);
+        });
+      })
+      .then(function (audio) {
+        const n = Math.max(1, Math.ceil(audio.duration * PEAK_RATE));
+        const data = new Float32Array(n);
+        const ch = audio.getChannelData(0);
+        const step = Math.max(1, Math.floor(ch.length / n));
+        for (let i = 0; i < n; i++) {
+          let peak = 0;
+          const s = i * step;
+          const e = Math.min(ch.length, s + step);
+          for (let j = s; j < e; j++) {
+            const a = Math.abs(ch[j]);
+            if (a > peak) peak = a;
+          }
+          data[i] = peak;
+        }
+        S.peaks.set(mediaId, { data: data, dur: audio.duration });
+        paintWaves();
+        return n;
+      })
+      .catch(function () { S.peaks.set(mediaId, { data: null }); return 0; });
+    S.peakJobs.set(mediaId, job);
+    job.then(function () { S.peakJobs.delete(mediaId); });
+    return job;
+  }
+  function paintWaves() {
+    const nodes = document.querySelectorAll('#stRows .st-clip[data-kind="audio"]');
+    nodes.forEach(function (node) {
+      const c = clipOf(node.dataset.id);
+      const cv = node.querySelector('canvas.st-wave');
+      if (!c || !cv) return;
+      const fullW = Math.max(1, Math.round(c.dur * S.pps));
+      /* Canvas 单边有上限：超长片段按比例降采样，避免 width 赋值失败后画不出来。 */
+      const w = Math.min(4096, fullW);
+      const scale = w / fullW;
+      const h = Math.max(10, node.clientHeight);
+      if (cv.width !== w) cv.width = w;
+      if (cv.height !== h) cv.height = h;
+      const g = cv.getContext('2d');
+      if (!g) return;
+      g.clearRect(0, 0, w, h);
+      const pk = peaksOf(c.mediaId);
+      if (!pk) return;
+      g.fillStyle = 'rgba(224,255,244,.6)';
+      for (let x = 0; x < w; x++) {
+        const clipPx = x / scale;
+        const srcT = c.in + (clipPx / Math.max(1, S.pps)) * c.speed;
+        const idx = Math.floor(srcT * PEAK_RATE);
+        if (idx < 0 || idx >= pk.data.length) continue;
+        const bh = Math.max(1, Math.min(1, pk.data[idx] * 1.6) * (h - 6));
+        g.fillRect(x, (h - bh) / 2, 1, bh);
+      }
+    });
   }
 
   /* ---------------- 预览同步 ---------------- */
@@ -908,7 +1139,7 @@
     el.style.transform = 'translate(' + dx.toFixed(1) + 'px,' + dy.toFixed(1) + 'px) scale(' +
       v.scale.toFixed(3) + ') rotate(' + v.rot + 'deg)';
     el.style.opacity = String(clamp(v.opacity * fadeFactor(c, t), 0, 1));
-    el.style.filter = cssFilter(c.filter);
+    el.style.filter = effectsCss(c);
   }
 
   function hideVisual(pool) {
@@ -960,7 +1191,7 @@
       if (mediaDur) srcT = clamp(srcT, 0, Math.max(0, mediaDur - 0.03));
       else srcT = Math.max(0, srcT);
       const vol = propAt(c, 'volume', t);
-      v.playbackRate = clamp(c.speed, 0.25, 4);
+      v.playbackRate = clamp(c.speed * (S.dir > 0 ? S.rate : 1), 0.25, 4);
       v.volume = clamp(vol * S.vol * fade, 0, 1);
       v.muted = !!c.muted || !!tk.muted || vol <= 0;
       if (playing) {
@@ -1009,7 +1240,7 @@
     const mediaDur = isFinite(a.duration) && a.duration > 0 ? a.duration : 0;
     let srcT = (t - c.start) * c.speed + c.in;
     if (mediaDur) srcT = clamp(srcT, 0, Math.max(0, mediaDur - 0.03));
-    a.playbackRate = clamp(c.speed, 0.25, 4);
+    a.playbackRate = clamp(c.speed * (S.dir > 0 ? S.rate : 1), 0.25, 4);
     a.volume = clamp(vol * S.vol * fade, 0, 1);
     a.muted = !!c.muted || !!tk.muted || vol <= 0;
     if (playing) {
@@ -1134,8 +1365,8 @@
 
   function applyTime() {
     tracks().forEach(function (t) {
-      if (t.kind === 'video') syncVisual(t.id, S.time, S.playing);
-      else if (t.kind === 'audio') syncAudio(t.id, S.time, S.playing);
+      if (t.kind === 'video') syncVisual(t.id, S.time, S.playing && S.dir > 0);
+      else if (t.kind === 'audio') syncAudio(t.id, S.time, S.playing && S.dir > 0);
     });
     paintTexts(false);
     paintPlayhead();
@@ -1151,13 +1382,61 @@
 
   function seekBy(d) { seek(S.time + d); }
 
+  /* 入出点：null 表示未设置。区间优先级高于整片。 */
+  function playStart() {
+    const d = projectDuration(S.project);
+    return S.rngIn == null ? 0 : clamp(S.rngIn, 0, d);
+  }
+  function playEnd() {
+    const d = projectDuration(S.project);
+    return S.rngOut == null ? d : clamp(S.rngOut, 0, d);
+  }
+  function setRangeEdge(edge, t) {
+    const d = projectDuration(S.project);
+    const v = clamp(Number(t), 0, d);
+    if (edge === 'in') {
+      S.rngIn = round2(v);
+      if (S.rngOut != null && S.rngOut <= S.rngIn) S.rngOut = null;
+    } else {
+      S.rngOut = round2(v);
+      if (S.rngIn != null && S.rngIn >= S.rngOut) S.rngIn = null;
+    }
+    paintRange();
+    paintStatus();
+    return edge === 'in' ? S.rngIn : S.rngOut;
+  }
+  function clearInOut() {
+    S.rngIn = null;
+    S.rngOut = null;
+    paintRange();
+    paintStatus();
+  }
+  function paintRange() {
+    const el = $('stRange');
+    if (!el) return;
+    const has = S.rngIn != null || S.rngOut != null;
+    el.classList.toggle('hidden', !has);
+    if (!has) return;
+    const a = S.rngIn == null ? 0 : clamp(S.rngIn, 0, projectDuration(S.project));
+    const b = S.rngOut == null ? projectDuration(S.project) : clamp(S.rngOut, 0, projectDuration(S.project));
+    el.style.left = (a * S.pps) + 'px';
+    el.style.width = Math.max(2, (b - a) * S.pps) + 'px';
+    const i = el.querySelector('.st-range-in');
+    const o = el.querySelector('.st-range-out');
+    if (i) i.classList.toggle('hidden', S.rngIn == null);
+    if (o) o.classList.toggle('hidden', S.rngOut == null);
+  }
+
   function play() {
     const dur = projectDuration(S.project);
     if (dur <= 0.05) { toast('时间线还是空的，先把素材拖进轨道'); return; }
-    if (S.time >= dur - 0.02) S.time = 0;
     ensureAudio();
     resumeAudio();
     applyMonitorGain();
+    S.dir = 1;
+    const end = playEnd();
+    if (S.time >= end - 0.02) S.time = playStart();
+    else if (S.rngIn != null && S.time < S.rngIn) S.time = playStart();
     S.playing = true;
     S.last = 0;
     paintPlayIcon();
@@ -1166,8 +1445,38 @@
     applyTime();
   }
 
+  /* JKL：L 播放并逐次提速，K 停止复位，J 倒放（逐帧回退）。 */
+  function shuttle(dir) {
+    if (dir < 0) {
+      const dur = projectDuration(S.project);
+      if (dur <= 0.05) { toast('时间线还是空的，先把素材拖进轨道'); return; }
+      if (S.time <= (S.rngIn == null ? 0 : S.rngIn) + 0.02 && S.rngOut == null) { toast('已经在开头'); return; }
+      ensureAudio();
+      applyMonitorGain();
+      S.dir = -1;
+      S.rate = 1;
+      S.playing = true;
+      S.last = 0;
+      paintPlayIcon();
+      cancelAnimationFrame(S.raf);
+      S.raf = requestAnimationFrame(tick);
+      applyTime();
+      return;
+    }
+    if (!S.playing || S.dir < 0) {
+      S.rate = 1;
+      play();
+      return;
+    }
+    S.rate = S.rate >= 4 ? 1 : S.rate * 2;
+    applyTime();
+    paintStatus();
+  }
+
   function pause() {
     S.playing = false;
+    S.dir = 1;
+    S.rate = 1;
     if (S.raf) cancelAnimationFrame(S.raf);
     S.raf = 0;
     S.last = 0;
@@ -1178,6 +1487,7 @@
       if (p && p.audio) { try { p.audio.pause(); } catch (e) {} }
     });
     applyTime();
+    paintLevel();
   }
 
   function togglePlay() { if (S.playing) pause(); else play(); }
@@ -1188,17 +1498,31 @@
     let dt = (now - S.last) / 1000;
     S.last = now;
     if (dt > 0.3) dt = 0.3;
-    const dur = projectDuration(S.project);
-    S.time += dt;
-    if (S.time >= dur) {
+    /* 倒放不做解码播放，逐帧回退；限制 seek 频率，避免高码率素材拖死主线程。 */
+    if (S.dir < 0 && now - S.lastReverseSeek < 30) {
+      S.raf = requestAnimationFrame(tick);
+      return;
+    }
+    if (S.dir < 0) S.lastReverseSeek = now;
+    const start = S.exportSession ? S.exportSession.a : playStart();
+    const end = S.exportSession ? S.exportSession.b : playEnd();
+    const speed = S.dir < 0 ? 1 : Math.max(0.25, S.rate || 1);
+    S.time += dt * speed * S.dir;
+    if (S.dir < 0 && S.time <= start) {
+      S.time = start;
+      applyTime();
+      pause();
+      return;
+    }
+    if (S.time >= end) {
       if (S.loop && !S.exportSession) {
-        S.time = 0;
+        S.time = start;
         S.last = 0;
         applyTime();
         S.raf = requestAnimationFrame(tick);
         return;
       }
-      S.time = dur;
+      S.time = end;
       applyTime();
       if (S.exportSession) { finishExportTick(); return; }
       pause();
@@ -1206,6 +1530,7 @@
       return;
     }
     applyTime();
+    paintLevel();
     if (S.exportSession) {
       drawExportFrame();
       paintExportProgress();
@@ -1280,12 +1605,15 @@
     const width = Math.max(14, c.dur * S.pps);
     const showMeta = width > 78;
     const kfCount = Object.keys(c.kf || {}).length;
+    const fxCount = (c.effects || []).length;
     const meta = showMeta ? '<span class="st-clip-meta">' + fmtDur(c.dur) +
       (c.speed !== 1 ? ' · ' + c.speed.toFixed(2) + 'x' : '') +
+      (fxCount ? ' · fx' + fxCount : '') +
       (kfCount ? ' · ◆' + kfCount : '') + '</span>' : '';
     return '<div class="st-clip' + (isSelClip(c) ? ' sel' : '') + '" data-id="' + c.id +
       '" data-kind="' + c.kind + '" style="left:' + left.toFixed(1) + 'px;width:' + width.toFixed(1) + 'px" title="' +
       escHtml(c.name) + '">' +
+      (c.kind === 'audio' ? '<canvas class="st-wave"></canvas>' : '') +
       '<b class="st-clip-pattern"></b>' +
       '<span class="st-clip-name">' + escHtml(c.name) + '</span>' + meta +
       '<b class="st-trim" data-edge="l"></b><b class="st-trim" data-edge="r"></b></div>';
@@ -1306,6 +1634,8 @@
         .forEach(function (c) { row.insertAdjacentHTML('beforeend', clipEl(c)); });
     });
     updateCounts();
+    ensureVisiblePeaks();
+    paintWaves();
   }
 
   function updateCounts() {
@@ -1319,6 +1649,7 @@
   function renderTimeline() {
     renderRuler();
     renderRows();
+    paintRange();
   }
 
   function liveClipEl(c) {
@@ -1443,7 +1774,7 @@
       toast('这里已经有标记');
       return null;
     }
-    pushHistory();
+    pushHistory('添加标记');
     const m = { t: round2(t), name: '标记 ' + (S.project.markers.length + 1), color: '#f0b429' };
     S.project.markers.push(m);
     S.project.markers.sort(function (a, b) { return a.t - b.t; });
@@ -1457,7 +1788,7 @@
   function removeMarker(t) {
     const hit = S.project.markers.some(function (m) { return Math.abs(m.t - Number(t)) < 0.02; });
     if (!hit) return false;
-    pushHistory();
+    pushHistory('删除标记');
     S.project.markers = S.project.markers.filter(function (m) {
       return Math.abs(m.t - Number(t)) >= 0.02;
     });
@@ -1513,7 +1844,7 @@
   }
 
   function addTrack(kind) {
-    pushHistory();
+    pushHistory('新建轨道');
     const t = insertTrack(kind);
     rebuildTracks();
     toast('已新增轨道：' + t.name);
@@ -1527,7 +1858,7 @@
     if (S.project.clips.some(function (c) { return c.track === id; })) {
       toast('轨道上还有片段，先删掉片段'); return false;
     }
-    pushHistory();
+    pushHistory('删除轨道');
     S.project.tracks = S.project.tracks.filter(function (x) { return x.id !== id; });
     if (S.sel && !clipOf(S.sel)) S.sel = '';
     rebuildTracks();
@@ -1538,7 +1869,7 @@
   function setTrackFlag(id, key) {
     const t = trackOf(id);
     if (!t || ['locked', 'muted', 'solo', 'hidden'].indexOf(key) < 0) return;
-    pushHistory();
+    pushHistory('切换轨道开关');
     t[key] = !t[key];
     buildTrackHeads();
     applyTime();
@@ -1568,7 +1899,7 @@
     }
     const needTrack = !tr;
     const dur = m.kind === 'image' ? 5 : Math.max(MIN_CLIP, m.dur || 5);
-    pushHistory();
+    pushHistory('添加片段');
     if (needTrack) tr = insertTrack(wantKind).id;
     const at = start == null ? trackEnd(tr) : Math.max(0, start);
     const c = makeClip({
@@ -1594,7 +1925,7 @@
     const st = p.style;
     const at = opts && opts.start != null ? opts.start : S.time;
     const needTrack = !tracksOfKind('text').length;
-    pushHistory();
+    pushHistory('添加文字');
     const trackId = needTrack ? insertTrack('text').id : tracksOfKind('text')[0].id;
     if (trackLocked(trackId)) { dropHistory(); toast('文字轨道已锁定'); return null; }
     const c = makeClip({
@@ -1640,32 +1971,62 @@
     return splitClip(target, t);
   }
 
+  /* 关键帧按局部时间段切片：from/to 都是相对片段起点的时间。 */
+  function kfSlice(kf, from, to) {
+    const out = {};
+    Object.keys(kf || {}).forEach(function (prop) {
+      const arr = kf[prop] || [];
+      const pts = arr.map(function (k) {
+        return { t: round2(k.t - from), v: k.v, ease: k.ease };
+      }).filter(function (k) { return k.t >= -0.001 && k.t <= (to - from) + 0.001; });
+      if (pts.length) out[prop] = pts;
+    });
+    return out;
+  }
+
+  /* 纯数据切割：不改历史、不重绘，供分割 / 覆盖 / 粘贴共用。 */
+  function cutClip(target, t) {
+    if (!target) return null;
+    const leftDur = t - target.start;
+    const right = JSON.parse(JSON.stringify(target));
+    right.id = uid('c');
+    right.start = round2(t);
+    right.dur = round2(target.dur - leftDur);
+    right.in = round2(target.in + leftDur * target.speed);
+    right.kf = kfSlice(target.kf, leftDur, target.dur);
+    target.kf = kfSlice(target.kf, 0, leftDur);
+    target.dur = round2(leftDur);
+    S.project.clips.push(right);
+    return right;
+  }
+
+  /* 在播放头一次切开所有未锁定轨道；一次历史、一次重绘。 */
+  function splitAllAt(t) {
+    const at = t == null ? S.time : Number(t);
+    const targets = S.project.clips.filter(function (c) {
+      return !trackLocked(c.track) && at > c.start + 0.04 && at < c.start + c.dur - 0.04;
+    });
+    if (!targets.length) { toast('播放头没有可切割的片段'); return 0; }
+    pushHistory('在播放头切开所有轨道');
+    const made = targets.map(function (c) { return cutClip(c, at); }).filter(Boolean);
+    S.multi = new Set(made.map(function (c) { return c.id; }));
+    if (S.multi.size < 2) S.multi.clear();
+    S.sel = made.length ? made[made.length - 1].id : '';
+    renderTimeline();
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    toast('已切开 ' + made.length + ' 个片段');
+    return made.length;
+  }
+
   /* 把指定片段在时间 t 处切成两段（播放头分割与剃刀工具共用）。 */
   function splitClip(target, t) {
     if (!target) return null;
     if (t <= target.start + 0.04 || t >= target.start + target.dur - 0.04) return null;
     if (trackLocked(target.track)) { toast('轨道已锁定，先解锁'); return null; }
-    pushHistory();
-    const leftDur = t - target.start;
-    const right = JSON.parse(JSON.stringify(target));
-    right.id = uid('c');
-    right.start = t;
-    right.dur = target.dur - leftDur;
-    right.in = round2(target.in + leftDur * target.speed);
-    /* 关键帧按分割点切成两段，右段的时间轴归零 */
-    right.kf = {};
-    Object.keys(target.kf || {}).forEach(function (prop) {
-      const arr = target.kf[prop];
-      const left = arr.filter(function (k) { return k.t <= leftDur + 0.001; });
-      const rightPts = arr.map(function (k) {
-        return { t: round2(k.t - leftDur), v: k.v, ease: k.ease };
-      }).filter(function (k) { return k.t >= -0.001; });
-      if (left.length) target.kf[prop] = left;
-      else delete target.kf[prop];
-      if (rightPts.length) right.kf[prop] = rightPts;
-    });
-    target.dur = round2(leftDur);
-    S.project.clips.push(right);
+    pushHistory('分割片段');
+    const right = cutClip(target, t);
     S.sel = right.id;
     S.multi.clear();
     renderTimeline();
@@ -1680,7 +2041,7 @@
     const ids = selectedIds();
     const group = ids.map(clipOf).filter(Boolean);
     if (!group.length) { toast('先选中片段'); return null; }
-    pushHistory();
+    pushHistory('复制片段');
     const end = Math.max.apply(null, group.map(function (c) { return c.start + c.dur; }));
     const minStart = Math.min.apply(null, group.map(function (c) { return c.start; }));
     const made = [];
@@ -1719,7 +2080,7 @@
       toast('选中片段所在轨道已锁定');
       return false;
     }
-    pushHistory();
+    pushHistory(ripple ? '波纹删除片段' : '删除片段');
     const removedByTrack = {};
     group.forEach(function (c) {
       (removedByTrack[c.track] = removedByTrack[c.track] || []).push(c);
@@ -1742,6 +2103,127 @@
     scheduleSave();
     toast(ripple ? '已波纹删除 ' + group.length + ' 个片段' : '已删除 ' + group.length + ' 个片段');
     return true;
+  }
+
+  /* ---------------- 覆盖 / 插入 / 剪贴板 ---------------- */
+  /* 清空某轨在 [a,b) 内的内容：完全覆盖的删除，部分覆盖的裁切，跨中间的切开。 */
+  function clearRange(trackId, a, b) {
+    if (!(b > a)) return 0;
+    let touched = 0;
+    S.project.clips.slice().forEach(function (c) {
+      if (c.track !== trackId) return;
+      const s = c.start;
+      const e = c.start + c.dur;
+      if (e <= a + 1e-4 || s >= b - 1e-4) return;
+      touched += 1;
+      if (s >= a - 1e-4 && e <= b + 1e-4) {
+        S.project.clips = S.project.clips.filter(function (x) { return x.id !== c.id; });
+        return;
+      }
+      if (s < a - 1e-4 && e > b + 1e-4) cutClip(c, b);
+      if (s < a - 1e-4) {
+        c.kf = kfSlice(c.kf, 0, a - s);
+        c.dur = round2(a - s);
+      } else {
+        const shift = b - s;
+        c.kf = kfSlice(c.kf, shift, c.dur);
+        c.start = round2(b);
+        c.in = round2(c.in + shift * c.speed);
+        c.dur = round2(e - b);
+      }
+    });
+    return touched;
+  }
+
+  /* 插入编辑：先切开跨越插入点的片段，再把插入点之后的片段整体后移（同步锁语义）。 */
+  function shiftAllTracksAfter(at, dur) {
+    if (!dur) return;
+    S.project.clips.slice().forEach(function (c) {
+      if (trackLocked(c.track)) return;
+      if (c.start < at - 1e-4 && c.start + c.dur > at + 1e-4) cutClip(c, at);
+    });
+    S.project.clips.forEach(function (c) {
+      if (trackLocked(c.track)) return;
+      if (c.start >= at - 1e-4) c.start = round2(c.start + dur);
+    });
+  }
+
+  /* 素材落点：insert = 撑开空隙，overwrite = 清空目标区间。 */
+  function placeMedia(mediaId, mode) {
+    const m = mediaOf(mediaId);
+    if (!m) return null;
+    const want = m.kind === 'text' ? 'text' : m.kind === 'audio' ? 'audio' : 'video';
+    const tr0 = preferredTrack(want);
+    if (tr0 && trackLocked(tr0)) { toast('目标轨道已锁定，先解锁'); return null; }
+    const dur = round2(m.kind === 'image' ? 5 : Math.max(MIN_CLIP, m.dur || 5));
+    const at = round2(S.time);
+    pushHistory(mode === 'insert' ? '插入素材' : '覆盖素材');
+    const tr = tr0 || insertTrack(want).id;
+    if (mode === 'insert') shiftAllTracksAfter(at, dur);
+    else clearRange(tr, at, at + dur);
+    const c = makeClip({
+      track: tr,
+      kind: m.kind,
+      mediaId: m.id,
+      name: m.name,
+      start: at,
+      dur: Math.min(dur, maxDurFor({ kind: m.kind, mediaId: m.id, speed: 1 }, 0)),
+      volume: m.kind === 'audio' ? 0.9 : 1
+    });
+    S.project.clips.push(c);
+    S.sel = c.id;
+    S.multi.clear();
+    renderTimeline();
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    toast((mode === 'insert' ? '已插入：' : '已覆盖：') + m.name);
+    return c;
+  }
+
+  function copySelected() {
+    const group = selectedIds().map(clipOf).filter(Boolean);
+    if (!group.length) { toast('先选中片段'); return 0; }
+    const base = Math.min.apply(null, group.map(function (c) { return c.start; }));
+    S.clipboard = { base: round2(base), items: JSON.parse(JSON.stringify(group)) };
+    toast('已复制 ' + group.length + ' 个片段，Ctrl+V 粘贴到播放头');
+    return group.length;
+  }
+
+  function pasteAt(t) {
+    if (!S.clipboard || !S.clipboard.items.length) { toast('剪贴板是空的'); return 0; }
+    const cb = S.clipboard;
+    const anchor = Math.max(0, t == null ? S.time : Number(t));
+    const offset = Math.max(anchor - cb.base, -cb.base);
+    const made = [];
+    let skipped = 0;
+    pushHistory('粘贴片段');
+    cb.items.forEach(function (src) {
+      const c = JSON.parse(JSON.stringify(src));
+      const want = c.kind === 'text' ? 'text' : c.kind === 'audio' ? 'audio' : 'video';
+      const tr = trackOf(c.track) ? c.track : preferredTrack(want);
+      if (!tr || trackLocked(tr)) { skipped += 1; return; }
+      c.id = uid('c');
+      c.track = tr;
+      c.start = round2(Math.max(0, src.start + offset));
+      clearRange(tr, c.start, c.start + c.dur);
+      S.project.clips.push(c);
+      made.push(c);
+    });
+    if (!made.length) {
+      dropHistory();
+      toast('没有可粘贴的轨道');
+      return 0;
+    }
+    S.multi = new Set(made.map(function (c) { return c.id; }));
+    if (S.multi.size < 2) S.multi.clear();
+    S.sel = made[made.length - 1].id;
+    renderTimeline();
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    toast('已粘贴 ' + made.length + ' 个片段' + (skipped ? '，跳过 ' + skipped + ' 个锁定轨道' : ''));
+    return made.length;
   }
 
   /* ---------------- 右键菜单 / 分离音频 ---------------- */
@@ -1767,7 +2249,7 @@
     let tr = preferredTrack('audio');
     if (tr && trackLocked(tr)) { toast('音频轨道已锁定，先解锁'); return null; }
     const needTrack = !tr;
-    pushHistory();
+    pushHistory('分离音频');
     if (needTrack) tr = insertTrack('audio').id;
     const a = makeClip({
       track: tr,
@@ -1816,7 +2298,7 @@
     }
     if (!r || !r.url) { toast('配音失败：没有返回音频'); return null; }
     const dur = Math.max(MIN_CLIP, (await probeDuration(r.url, 'audio')) || 5);
-    pushHistory();
+    pushHistory('生成配音');
     const media = {
       id: 'tts:' + uid('m'),
       name: '配音 · ' + (c.name || '文字'),
@@ -1908,6 +2390,30 @@
     });
   }
 
+  function openMediaMenu(m, x, y) {
+    closeClipMenu();
+    if (!m) return;
+    const menu = document.createElement('div');
+    menu.className = 'st-ctx';
+    menu.id = 'stCtx';
+    menu.setAttribute('role', 'menu');
+    menu.innerHTML =
+      '<button type="button" role="menuitem" data-mi="append">追加到时间线</button>' +
+      '<button type="button" role="menuitem" data-mi="insert">插入到播放头（波纹）</button>' +
+      '<button type="button" role="menuitem" data-mi="overwrite">覆盖到播放头</button>';
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = Math.max(6, Math.min(x, window.innerWidth - rect.width - 8)) + 'px';
+    menu.style.top = Math.max(6, Math.min(y, window.innerHeight - rect.height - 8)) + 'px';
+    menu.addEventListener('click', function (e) {
+      const b = e.target.closest('[data-mi]');
+      if (!b) return;
+      closeClipMenu();
+      if (b.dataset.mi === 'append') addMediaClip(m.id, null, null);
+      else placeMedia(m.id, b.dataset.mi);
+    });
+  }
+
   function setClipProps(id, patch) {
     const c = clipOf(id);
     if (!c) return null;
@@ -1937,7 +2443,7 @@
     if (trackLocked(c.track)) { toast('轨道已锁定，先解锁'); return null; }
     const local = clamp((atT == null ? S.time : atT) - c.start, 0, c.dur);
     const v = propAt(c, prop, c.start + local);
-    pushHistory();
+    pushHistory('添加关键帧');
     c.kf = c.kf || {};
     const arr = (c.kf[prop] || []).filter(function (k) { return Math.abs(k.t - local) > 0.02; });
     arr.push({ t: round2(local), v: Math.round(v * 1000) / 1000, ease: 'linear' });
@@ -1954,7 +2460,7 @@
   function clearKeyframes(id, prop) {
     const c = clipOf(id);
     if (!c) return false;
-    pushHistory();
+    pushHistory('清除关键帧');
     if (prop) delete c.kf[prop];
     else c.kf = {};
     renderRows();
@@ -2062,6 +2568,61 @@
   }
 
   /* ---------------- 时间线拖拽 ---------------- */
+  function paintMarquee() {
+    const el = $('stMarquee');
+    const m = S.marquee;
+    if (!el) return;
+    if (!m) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.style.left = Math.min(m.x0, m.x1) + 'px';
+    el.style.top = Math.min(m.y0, m.y1) + 'px';
+    el.style.width = Math.abs(m.x1 - m.x0) + 'px';
+    el.style.height = Math.abs(m.y1 - m.y0) + 'px';
+  }
+  /* 框选命中：时间区间相交 + 轨道行区间相交。 */
+  function marqueeHits(m) {
+    const a = Math.min(m.x0, m.x1) / S.pps;
+    const b = Math.max(m.x0, m.x1) / S.pps;
+    const y0 = Math.min(m.y0, m.y1) - RULER_H;
+    const y1 = Math.max(m.y0, m.y1) - RULER_H;
+    const hits = [];
+    let top = 0;
+    tracks().forEach(function (t) {
+      const bottom = top + t.height;
+      if (Math.min(y1, bottom) > Math.max(y0, top)) {
+        S.project.clips.forEach(function (c) {
+          if (c.track !== t.id) return;
+          if (c.start + c.dur < a || c.start > b) return;
+          hits.push(c);
+        });
+      }
+      top = bottom;
+    });
+    return hits;
+  }
+  function paintMarqueeSel() {
+    const m = S.marquee;
+    if (!m) return;
+    const hit = marqueeHits(m);
+    const base = S.drag && S.drag.baseSel ? S.drag.baseSel : [];
+    S.multi = new Set(base);
+    hit.forEach(function (c) { S.multi.add(c.id); });
+    if (S.multi.size < 2) S.multi.clear();
+    S.sel = hit.length ? hit[0].id : (S.multi.size ? Array.from(S.multi).pop() : '');
+    paintSel();
+  }
+  /* 拖到时间线边缘时自动滚动：跟随指针移动事件，不做后台动画。 */
+  function autoScroll(cx, cy) {
+    const sc = $('stScroll');
+    if (!sc) return;
+    const r = sc.getBoundingClientRect();
+    const zone = 44;
+    if (cx < r.left + zone) sc.scrollLeft = Math.max(0, sc.scrollLeft - Math.ceil((r.left + zone - cx) / 3));
+    else if (cx > r.right - zone) sc.scrollLeft += Math.ceil((cx - (r.right - zone)) / 3);
+    if (cy < r.top + zone) sc.scrollTop = Math.max(0, sc.scrollTop - Math.ceil((r.top + zone - cy) / 3));
+    else if (cy > r.bottom - zone) sc.scrollTop += Math.ceil((cy - (r.bottom - zone)) / 3);
+  }
+
   function onTimelineDown(e) {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     const trim = e.target.closest('.st-trim');
@@ -2069,8 +2630,21 @@
     const row = e.target.closest('.st-row');
     if (!clipNode) {
       if (!row) return;
-      selectClip('');
-      S.drag = { mode: 'scrub', pointerId: e.pointerId };
+      const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+      if (!additive) selectClip('');
+      const inner = $('stInner');
+      const ir = inner ? inner.getBoundingClientRect() : { left: 0, top: 0 };
+      S.drag = {
+        mode: 'scrub',
+        pointerId: e.pointerId,
+        x0: e.clientX,
+        y0: e.clientY,
+        ix0: e.clientX - ir.left,
+        iy0: e.clientY - ir.top,
+        baseSel: Array.from(S.multi),
+        moved: false
+      };
+      try { $('stRows').setPointerCapture(e.pointerId); } catch (err) {}
       seek(timeAtX(e.clientX));
       e.preventDefault();
       return;
@@ -2104,7 +2678,12 @@
     else if ((e.ctrlKey || e.metaKey) && !additive) mode = 'slide';
 
     const group = selectedIds().map(clipOf).filter(Boolean);
-    pushHistory();
+    pushHistory(mode === 'blade' ? '切分片段'
+      : mode === 'trim' ? '修剪片段'
+      : mode === 'roll' ? '滚动剪辑'
+      : mode === 'slip' ? '滑移片段'
+      : mode === 'slide' ? '滑动片段'
+      : '移动片段');
     S.drag = {
       mode: mode,
       id: c.id,
@@ -2126,12 +2705,28 @@
   function onPointerMove(e) {
     const d = S.drag;
     if (!d) return;
-    if (d.mode === 'scrub') { seek(timeAtX(e.clientX)); return; }
+    if (d.mode === 'scrub') {
+      const dist = Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0);
+      if (!d.moved && dist < 6) return;
+      const inner = $('stInner');
+      const ir = inner ? inner.getBoundingClientRect() : { left: 0, top: 0 };
+      if (!d.moved) {
+        d.moved = true;
+        S.marquee = { x0: d.ix0, y0: d.iy0, x1: d.ix0, y1: d.iy0 };
+      }
+      S.marquee.x1 = e.clientX - ir.left;
+      S.marquee.y1 = e.clientY - ir.top;
+      paintMarquee();
+      paintMarqueeSel();
+      autoScroll(e.clientX, e.clientY);
+      return;
+    }
     if (d.mode === 'height') {
       setTrackHeight(d.id, d.h0 + (e.clientY - d.y0));
       d.changed = true;
       return;
     }
+    autoScroll(e.clientX, e.clientY);
     const c = clipOf(d.id);
     if (!c) { S.drag = null; return; }
     const dx = (e.clientX - d.x0) / S.pps;
@@ -2179,7 +2774,17 @@
     const d = S.drag;
     if (!d) return;
     S.drag = null;
-    if (d.mode === 'scrub') return;
+    if (d.mode === 'scrub') {
+      if (d.moved) {
+        S.marquee = null;
+        paintMarquee();
+        renderInspector();
+        paintFxSel();
+        const n = S.multi.size || (S.sel ? 1 : 0);
+        if (n > 1) toast('已框选 ' + n + ' 个片段');
+      }
+      return;
+    }
     if (!d.changed) { dropHistory(); return; }
     renderRows();
     renderInspector();
@@ -2321,7 +2926,7 @@
       .filter(function (x) { return !!x.kind; });
     if (!usable.length) { toast('没有可用的视频 / 音频 / 图片文件'); return []; }
     toast('正在导入 ' + usable.length + ' 个素材…');
-    pushHistory();
+    pushHistory('导入素材');
     const out = [];
     for (const item of usable) {
       const url = URL.createObjectURL(item.f);
@@ -2342,6 +2947,102 @@
     scheduleSave();
     toast('已导入 ' + out.length + ' 个素材，双击可加入时间线（文件素材不会写进项目存档）');
     return out;
+  }
+
+  /* ---------------- 字幕：SRT / VTT ----------------
+   * 解析与生成是纯函数，导入/导出只负责落到文字轨与下载。 */
+  function parseSubs(text) {
+    if (!text) return [];
+    let src = String(text).replace(/\r\n?/g, '\n').replace(/^\uFEFF/, '');
+    src = src.replace(/^WEBVTT[^\n]*\n/i, '').replace(/^NOTE\b[\s\S]*?\n\n/gm, '');
+    const out = [];
+    const re = /(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})[^\n]*\n?([\s\S]*?)(?=\n\s*\n|$)/g;
+    let m;
+    while ((m = re.exec(src))) {
+      const a = (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) + Number('0.' + m[4]);
+      const b = (+m[5]) * 3600 + (+m[6]) * 60 + (+m[7]) + Number('0.' + m[8]);
+      const body = m[9]
+        .split('\n')
+        .filter(function (ln) { return !/^\s*$/.test(ln); })
+        .join('\n')
+        .replace(/<[^>]+>/g, '')
+        .trim();
+      if (!body || !(b > a)) continue;
+      out.push({ start: round2(a), end: round2(b), text: body });
+    }
+    return out;
+  }
+  function srtTime(sec) {
+    const ms = Math.max(0, Math.round(Number(sec) * 1000));
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    const r = ms % 1000;
+    const two = function (n) { return String(n).padStart(2, '0'); };
+    return two(h) + ':' + two(m) + ':' + two(s) + ',' + String(r).padStart(3, '0');
+  }
+  function buildSrt(clips) {
+    const list = (clips || []).filter(function (c) {
+      return c && c.kind === 'text' && String((c.text && c.text.content) || '').trim();
+    }).slice().sort(function (a, b) { return a.start - b.start; });
+    return list.map(function (c, i) {
+      return (i + 1) + '\n' + srtTime(c.start) + ' --> ' + srtTime(c.start + c.dur) + '\n' +
+        String(c.text.content).trim() + '\n';
+    }).join('\n');
+  }
+  function importSubs(text) {
+    const cues = parseSubs(text);
+    if (!cues.length) { toast('没有解析到字幕条目'); return 0; }
+    pushHistory('导入字幕');
+    let tr = tracksOfKind('text')[0];
+    if (tr && trackLocked(tr.id)) { dropHistory(); toast('字幕轨道已锁定，先解锁'); return 0; }
+    if (!tr) tr = insertTrack('text');
+    const made = [];
+    cues.forEach(function (q, i) {
+      const c = makeClip({
+        track: tr.id,
+        kind: 'text',
+        name: '字幕 ' + (i + 1),
+        start: q.start,
+        dur: Math.max(0.3, round2(q.end - q.start)),
+        y: 32,
+        text: {
+          content: q.text,
+          size: 54,
+          color: '#ffffff',
+          bg: 'rgba(0,0,0,0.35)',
+          bold: true,
+          align: 'center'
+        }
+      });
+      S.project.clips.push(c);
+      made.push(c);
+    });
+    S.sel = made[0].id;
+    S.multi.clear();
+    renderAll();
+    applyTime();
+    scheduleSave();
+    toast('已导入 ' + made.length + ' 条字幕');
+    return made.length;
+  }
+  function subsText() {
+    return buildSrt(S.project.clips.filter(function (c) { return c.kind === 'text'; }));
+  }
+  function exportSubs() {
+    const txt = subsText();
+    if (!txt) { toast('时间线上没有文字片段'); return ''; }
+    const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = String(S.project.name || '字幕').replace(/[\\/:*?"<>|]+/g, '_') + '.srt';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) {} }, 4000);
+    toast('已导出 SRT 字幕');
+    return txt;
   }
 
   /* ---------------- 素材弹层：视频库 / 图库 ---------------- */
@@ -2625,15 +3326,21 @@
       '<label class="st-field wide"><span>帧率</span><select data-proj="fps">' + fps + '</select></label>' +
       '<div class="st-insp-empty">素材 ' + S.project.media.length + ' 个 · 片段 ' + S.project.clips.length +
       ' 条 · 标记 ' + S.project.markers.length + ' 个</div></div>' +
-      trackPanel() + snapshotPanel() +
+      trackPanel() + snapshotPanel() + histPanel() +
       '<div class="st-insp-sec"><h4>操作提示</h4><div class="st-insp-empty"><ul>' +
-      '<li>拖素材到轨道，或双击素材自动追加</li>' +
+      '<li>拖素材到轨道，或双击素材自动追加；右键素材可插入 / 覆盖到播放头</li>' +
       '<li>Alt+拖边缘＝波纹裁剪，Ctrl+拖边缘＝滚动剪辑</li>' +
       '<li>Alt+拖片段＝滑移，Ctrl+拖片段＝滑动</li>' +
-      '<li>Shift/Ctrl+点选多选，拖任意一个整体移动</li>' +
-      '<li>空格播放，S 分割，M 打标记，Delete 删除</li>' +
-      '<li>Shift+Delete 波纹删除，Ctrl+Z / Ctrl+Shift+Z 撤销重做</li>' +
+      '<li>空白处拖拽＝框选，Shift/Ctrl+点选多选</li>' +
+      '<li>J/K/L 倒放 / 停 / 播放加速，I / O 设入出点，X 清除区间</li>' +
+      '<li>空格播放，S 分割，Ctrl+K 切开全部轨道，M 打标记</li>' +
+      '<li>Ctrl+C / Ctrl+V 以播放头粘贴，Shift+Delete 波纹删除</li>' +
       '</ul></div></div>';
+  }
+
+  function histPanel() {
+    return '<div class="st-insp-sec"><h4>历史<em>点条目回退</em></h4>' +
+      '<div class="st-histlist" id="stHistList"></div></div>';
   }
 
   function kfPanel(c) {
@@ -2655,7 +3362,7 @@
     const box = $('stInspector');
     if (!box) return;
     const c = selected();
-    if (!c) { box.innerHTML = projectPanel(); paintStatus(); return; }
+    if (!c) { box.innerHTML = projectPanel(); paintStatus(); paintUndo(); return; }
     const isText = c.kind === 'text';
     const isVisual = c.kind === 'video' || c.kind === 'image';
     const m = c.mediaId ? mediaOf(c.mediaId) : null;
@@ -2705,10 +3412,7 @@
         rng('旋转', 'rot', Math.round(c.rot), -180, 180, 1, Math.round(c.rot) + '°') +
         rng('透明', 'opacityPct', Math.round(c.opacity * 100), 0, 100, 1, Math.round(c.opacity * 100) + '%');
       if (isVisual) {
-        html += '<label class="st-field wide"><span>滤镜</span><select data-prop="filter">' +
-          FILTERS.map(function (f) {
-            return '<option value="' + f.id + '"' + (f.id === c.filter ? ' selected' : '') + '>' + f.name + '</option>';
-          }).join('') + '</select></label>';
+        html += fxStackPanel(c);
       }
       html += '</div>';
     }
@@ -2736,10 +3440,121 @@
     paintStatus();
   }
 
+  /* 效果栈面板：顺序即渲染顺序，开关只影响该条。 */
+  function fxStackPanel(c) {
+    const list = c.effects || [];
+    const rows = list.map(function (e) {
+      let params = '';
+      if (e.type === 'adjust') {
+        params = ADJUST_DEFS.map(function (d) {
+          const v = Number(e.params[d.key]);
+          return '<label class="st-field"><span>' + d.name + '</span>' +
+            '<input type="range" data-fxparam="' + e.id + ':' + d.key + '" min="' + d.min + '" max="' + d.max +
+            '" step="' + d.step + '" value="' + v + '"><i class="st-fval">' + v.toFixed(2) + '</i></label>';
+        }).join('');
+      } else if (e.type === 'blur') {
+        params = '<label class="st-field"><span>半径</span>' +
+          '<input type="range" data-fxparam="' + e.id + ':px" min="0" max="40" step="1" value="' + e.params.px +
+          '"><i class="st-fval">' + e.params.px + 'px</i></label>';
+      }
+      return '<div class="st-fxrow' + (e.enabled === false ? ' off' : '') + '" data-fxrow="' + e.id + '">' +
+        '<label class="st-fxtoggle"><input type="checkbox" data-fxtoggle="' + e.id + '"' +
+        (e.enabled !== false ? ' checked' : '') + '></label>' +
+        '<b>' + escHtml(effectName(e)) + '</b>' +
+        '<span class="st-fxrow-act">' +
+        '<button type="button" data-fxmove="-1" data-fxid="' + e.id + '" title="上移">↑</button>' +
+        '<button type="button" data-fxmove="1" data-fxid="' + e.id + '" title="下移">↓</button>' +
+        '<button type="button" data-fxdel="' + e.id + '" title="移除">×</button></span>' +
+        (params ? '<div class="st-fxparams">' + params + '</div>' : '') + '</div>';
+    }).join('');
+    return '<div class="st-insp-sec" data-g="visual"><h4>效果栈<em>' + list.length + ' / ' + EFFECT_MAX + '</em></h4>' +
+      (rows || '<div class="st-hint">还没有效果。可在「滤镜」面板添加，或点下面按钮。</div>') +
+      '<div class="st-fxadd"><button type="button" class="st-ghost" data-fxadd="adjust">+ 调色</button>' +
+      '<button type="button" class="st-ghost" data-fxadd="blur">+ 模糊</button></div></div>';
+  }
+
+  function addEffect(id, type) {
+    const c = clipOf(id);
+    if (!c) return null;
+    if (trackLocked(c.track)) { toast('轨道已锁定，先解锁'); return null; }
+    if ((c.effects || []).length >= EFFECT_MAX) { toast('效果最多 ' + EFFECT_MAX + ' 个'); return null; }
+    pushHistory(type === 'blur' ? '添加模糊' : '添加调色');
+    const e = type === 'blur'
+      ? { id: uid('fx'), type: 'blur', enabled: true, params: { px: 4 } }
+      : { id: uid('fx'), type: 'adjust', enabled: true, params: { brightness: 1, contrast: 1, saturate: 1 } };
+    c.effects = (c.effects || []).concat([e]);
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    return e;
+  }
+  function setEffectEnabled(id, fxId, on) {
+    const c = clipOf(id);
+    if (!c || trackLocked(c.track)) return false;
+    const e = (c.effects || []).filter(function (x) { return x.id === fxId; })[0];
+    if (!e) return false;
+    e.enabled = !!on;
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    return true;
+  }
+  function moveEffect(id, fxId, dir) {
+    const c = clipOf(id);
+    if (!c || trackLocked(c.track)) return false;
+    const list = c.effects || [];
+    const i = list.findIndex(function (x) { return x.id === fxId; });
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return false;
+    const tmp = list[i];
+    list[i] = list[j];
+    list[j] = tmp;
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    return true;
+  }
+  function removeEffect(id, fxId) {
+    const c = clipOf(id);
+    if (!c || trackLocked(c.track)) return false;
+    const before = (c.effects || []).length;
+    c.effects = (c.effects || []).filter(function (x) { return x.id !== fxId; });
+    if (c.effects.length === before) return false;
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    return true;
+  }
+  function setFxParam(pair, value) {
+    const parts = String(pair || '').split(':');
+    const c = selected();
+    if (!c || !parts[0]) return false;
+    const e = (c.effects || []).filter(function (x) { return x.id === parts[0]; })[0];
+    if (!e || !e.params) return false;
+    if (e.type === 'adjust') {
+      const d = ADJUST_DEFS.filter(function (x) { return x.key === parts[1]; })[0];
+      if (!d) return false;
+      e.params[d.key] = clamp(Number(value) || 0, d.min, d.max);
+    } else if (e.type === 'blur') {
+      e.params.px = clamp(Number(value) || 0, 0, 40);
+    }
+    const out = document.querySelector('[data-fxparam="' + pair + '"]');
+    if (out && out.parentNode) {
+      const fv = out.parentNode.querySelector('.st-fval');
+      if (fv) fv.textContent = e.type === 'blur' ? e.params.px + 'px' : Number(e.params[parts[1]]).toFixed(2);
+    }
+    applyTime();
+    scheduleSave();
+    return true;
+  }
+
   function paintFxSel() {
     const c = selected();
+    const used = c ? (c.effects || []).filter(function (e) {
+      return e.type === 'preset' && e.enabled !== false;
+    }).map(function (e) { return e.preset; }) : [];
     document.querySelectorAll('#stFxGrid .st-fxcard').forEach(function (n) {
-      n.classList.toggle('on', !!c && c.filter === n.dataset.fx);
+      n.classList.toggle('on', used.indexOf(n.dataset.fx) >= 0);
     });
   }
 
@@ -2762,6 +3577,7 @@
     const target = e.target;
     if (!target || !target.dataset) return;
     if (target.dataset.proj) { onProjectInput(target); return; }
+    if (target.dataset.fxparam) { setFxParam(target.dataset.fxparam, target.value); return; }
     const prop = target.dataset.prop;
     if (!prop) return;
     const c = selected();
@@ -2782,7 +3598,6 @@
       case 'speed': c.speed = clamp(Number(v) || 1, 0.25, 4); break;
       case 'fadeIn': c.fadeIn = clamp(Number(v) || 0, 0, 5); break;
       case 'fadeOut': c.fadeOut = clamp(Number(v) || 0, 0, 5); break;
-      case 'filter': c.filter = String(v); break;
       case 'textContent': c.text.content = String(v); break;
       case 'textSize': c.text.size = clamp(Number(v) || 64, 10, 220); break;
       case 'textColor': c.text.color = String(v); break;
@@ -2802,8 +3617,12 @@
   function onInspectorChange(e) {
     const target = e.target;
     if (!target || !target.dataset) return;
+    if (target.dataset.fxtoggle) {
+      setEffectEnabled(S.sel, target.dataset.fxtoggle, target.checked);
+      return;
+    }
     if (S.inspSnap && snap() !== S.inspSnap) {
-      S.hist.push(S.inspSnap);
+      S.hist.push({ label: '调整参数', snap: S.inspSnap });
       if (S.hist.length > MAX_HIST) S.hist.shift();
       S.future.length = 0;
       paintUndo();
@@ -2998,6 +3817,12 @@
       if (!m) return;
       addMediaClip(m.id, null, null);
     });
+    grid.addEventListener('contextmenu', function (e) {
+      const card = e.target.closest('.st-mcard');
+      if (!card) return;
+      e.preventDefault();
+      openMediaMenu(mediaOf(card.dataset.id), e.clientX, e.clientY);
+    });
     grid.addEventListener('dragstart', function (e) {
       const card = e.target.closest('.st-mcard');
       if (!card) return;
@@ -3026,9 +3851,28 @@
     if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redo(); return; }
     if (mod && (e.key === 'd' || e.key === 'D')) { e.preventDefault(); duplicateSelected(); return; }
     if (mod && (e.key === 'a' || e.key === 'A')) { e.preventDefault(); selectAllClips(); return; }
+    if (mod && (e.key === 'c' || e.key === 'C')) { e.preventDefault(); copySelected(); return; }
+    if (mod && (e.key === 'v' || e.key === 'V')) { e.preventDefault(); pasteAt(S.time); return; }
+    if (mod && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); splitAllAt(S.time); return; }
     if (mod && (e.key === 's' || e.key === 'S')) { e.preventDefault(); saveNow(); toast('项目已保存到本机'); return; }
     if (mod) return;
     if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
+    if (e.key === 'j' || e.key === 'J') { e.preventDefault(); shuttle(-1); return; }
+    if (e.key === 'k' || e.key === 'K') { e.preventDefault(); pause(); return; }
+    if (e.key === 'l' || e.key === 'L') { e.preventDefault(); shuttle(1); return; }
+    if (e.key === 'i' || e.key === 'I') {
+      e.preventDefault();
+      if (e.altKey) { S.rngIn = null; paintRange(); paintStatus(); }
+      else setRangeEdge('in', S.time);
+      return;
+    }
+    if (e.key === 'o' || e.key === 'O') {
+      e.preventDefault();
+      if (e.altKey) { S.rngOut = null; paintRange(); paintStatus(); }
+      else setRangeEdge('out', S.time);
+      return;
+    }
+    if (e.key === 'x' || e.key === 'X') { e.preventDefault(); clearInOut(); return; }
     if (e.key === 'v' || e.key === 'V') { e.preventDefault(); setTool('select'); return; }
     if (e.key === 'b' || e.key === 'B') { e.preventDefault(); setTool('blade'); return; }
     if (e.key === 'f' || e.key === 'F') { e.preventDefault(); fitTimeline(); return; }
@@ -3062,11 +3906,14 @@
 
   /* ---------------- 菜单栏 / 快捷键面板 ---------------- */
   const SHORTCUTS = [
-    ['空格', '播放 / 暂停'],
+    ['空格 / K', '播放 / 停止'],
+    ['J / L', '倒放 / 播放（连按 L 加速 2×、4×）'],
     ['V / B', '选择工具 / 剃刀工具'],
-    ['S', '在播放头处分割'],
+    ['S / Ctrl+K', '分割选中片段 / 切开所有轨道'],
+    ['I / O / X', '设入点 / 设出点 / 清除区间'],
     ['Ctrl+Z / Ctrl+Shift+Z', '撤销 / 重做'],
-    ['Ctrl+D', '复制片段'],
+    ['Ctrl+C / Ctrl+V', '复制片段 / 粘贴到播放头'],
+    ['Ctrl+D', '复制片段（紧随其后）'],
     ['Delete / Shift+Delete', '删除 / 波纹删除'],
     ['Ctrl+A', '全选片段'],
     ['M', '在播放头打标记'],
@@ -3079,6 +3926,7 @@
     ['Alt+边缘 / Ctrl+边缘', '波纹裁剪 / 滚动剪辑'],
     ['Alt+片段 / Ctrl+片段', '滑移 / 滑动'],
     ['Shift+点击 / Ctrl+点击', '多选片段'],
+    ['空白处拖拽', '框选片段'],
     ['Esc', '关闭菜单 / 取消选中']
   ];
 
@@ -3098,14 +3946,18 @@
         { label: '导出项目', run: function () { $('stProjExport').click(); } },
         { sep: true },
         { label: '导入素材…', run: function () { $('stImport').click(); } },
-        { label: '导出视频…', run: function () { $('stExport').click(); } }
+        { label: '导出视频…', run: function () { $('stExport').click(); } },
+        { label: '导出当前帧（PNG）', run: exportStill }
       ] },
       { id: 'edit', items: [
         { label: '撤销', hint: 'Ctrl+Z', disabled: !S.hist.length, run: undo },
         { label: '重做', hint: 'Ctrl+Shift+Z', disabled: !S.future.length, run: redo },
         { sep: true },
         { label: '在播放头处分割', hint: 'S', run: function () { splitAt(); } },
+        { label: '切开所有轨道', hint: 'Ctrl+K', run: function () { splitAllAt(S.time); } },
         { label: '复制片段', hint: 'Ctrl+D', run: duplicateSelected },
+        { label: '复制到剪贴板', hint: 'Ctrl+C', run: copySelected },
+        { label: '粘贴到播放头', hint: 'Ctrl+V', run: function () { pasteAt(S.time); } },
         { label: '删除', hint: 'Del', run: function () { deleteSelected(false); } },
         { label: '波纹删除', hint: 'Shift+Del', run: function () { deleteSelected(true); } },
         { sep: true },
@@ -3117,7 +3969,13 @@
         { label: '缩小时间线', hint: '−', run: function () { setZoom(S.pps / 1.25); } },
         { sep: true },
         { label: '磁吸对齐', hint: '开 / 关', checked: S.snap, run: function () { $('stSnap').click(); } },
-        { label: '循环播放', checked: S.loop, run: function () { setLoop(!S.loop); } }
+        { label: '循环播放', checked: S.loop, run: function () { setLoop(!S.loop); } },
+        { sep: true },
+        { label: '设入点', hint: 'I', checked: S.rngIn != null, run: function () { setRangeEdge('in', S.time); } },
+        { label: '设出点', hint: 'O', checked: S.rngOut != null, run: function () { setRangeEdge('out', S.time); } },
+        { label: '清除入出点', hint: 'X', run: clearInOut },
+        { label: '循环播放选区', hint: '开 / 关', checked: S.loop && S.rngIn != null && S.rngOut != null,
+          run: function () { if (S.rngIn == null || S.rngOut == null) { toast('先按 I / O 设入出点'); return; } setLoop(true); seek(S.rngIn); } }
       ] },
       { id: 'help', items: [
         { label: '快捷键一览', run: openHelp },
@@ -3239,7 +4097,7 @@
       if (!grip) return;
       const t = trackOf(grip.dataset.grip);
       if (!t) return;
-      pushHistory();
+      pushHistory('调整轨道高度');
       S.drag = { mode: 'height', id: t.id, y0: e.clientY, h0: t.height, changed: false, pointerId: e.pointerId };
       try { grip.setPointerCapture(e.pointerId); } catch (err) {}
       e.preventDefault();
@@ -3306,6 +4164,18 @@
     bindMediaGrid($('stMediaGrid'));
     bindMediaGrid($('stAudioGrid'));
 
+    $('stSrtImport').addEventListener('click', function () { $('stSrtFile').click(); });
+    $('stSrtExport').addEventListener('click', exportSubs);
+    $('stSrtFile').addEventListener('change', function (e) {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = function () { importSubs(String(reader.result || '')); };
+      reader.onerror = function () { toast('字幕文件读取失败'); };
+      reader.readAsText(f, 'utf-8');
+    });
+
     $('stTextPresets').addEventListener('click', function (e) {
       const b = e.target.closest('[data-preset]');
       if (b) addTextClip(b.dataset.preset);
@@ -3314,13 +4184,27 @@
     $('stFxGrid').addEventListener('click', function (e) {
       const card = e.target.closest('.st-fxcard');
       if (!card) return;
+      const fxId = card.dataset.fx;
       const c = selected();
       if (!c || (c.kind !== 'video' && c.kind !== 'image')) {
         toast('先选中一个视频 / 图片片段');
         return;
       }
-      pushHistory();
-      c.filter = card.dataset.fx;
+      if (trackLocked(c.track)) { toast('轨道已锁定，先解锁'); return; }
+      if (fxId === 'none') {
+        pushHistory('清除滤镜');
+        c.effects = [];
+      } else {
+        const has = (c.effects || []).some(function (e) { return e.type === 'preset' && e.preset === fxId; });
+        if (has) {
+          pushHistory('移除滤镜');
+          c.effects = (c.effects || []).filter(function (e) { return !(e.type === 'preset' && e.preset === fxId); });
+        } else {
+          if ((c.effects || []).length >= EFFECT_MAX) { toast('效果最多 ' + EFFECT_MAX + ' 个'); return; }
+          pushHistory('添加滤镜');
+          c.effects = normalizeEffects((c.effects || []).concat([{ type: 'preset', preset: fxId, enabled: true }]));
+        }
+      }
       renderInspector();
       applyTime();
       scheduleSave();
@@ -3425,6 +4309,14 @@
       if (tkf) { setTrackFlag(tkf.dataset.tk, tkf.dataset.tkf); return; }
       const tkdel = e.target.closest('[data-tkdel]');
       if (tkdel) { removeTrack(tkdel.dataset.tkdel); return; }
+      const fxAdd = e.target.closest('[data-fxadd]');
+      if (fxAdd) { if (S.sel) addEffect(S.sel, fxAdd.dataset.fxadd); return; }
+      const fxDel = e.target.closest('[data-fxdel]');
+      if (fxDel) { if (S.sel) removeEffect(S.sel, fxDel.dataset.fxdel); return; }
+      const fxMove = e.target.closest('[data-fxmove]');
+      if (fxMove) { if (S.sel) moveEffect(S.sel, fxMove.dataset.fxid, Number(fxMove.dataset.fxmove)); return; }
+      const histBtn = e.target.closest('[data-hist]');
+      if (histBtn) { goHistory(Number(histBtn.dataset.hist)); return; }
       const b = e.target.closest('[data-act]');
       if (!b) return;
       if (b.dataset.act === 'dup') duplicateSelected();
@@ -3616,6 +4508,13 @@
       return;
     }
     const opts = readExportOpts();
+    /* 入出点是会话级状态，可能残留在已缩短的时间线上：先夹到当前时长再判断。 */
+    const rIn = S.rngIn == null ? null : clamp(S.rngIn, 0, dur);
+    const rOut = S.rngOut == null ? null : clamp(S.rngOut, 0, dur);
+    const wantRange = rIn != null && rOut != null && rOut - rIn > 0.05 &&
+      !!($('stExRange') && $('stExRange').checked);
+    const a = wantRange ? rIn : 0;
+    const b = wantRange ? rOut : dur;
     const canvas = document.createElement('canvas');
     canvas.width = opts.w;
     canvas.height = opts.h;
@@ -3627,7 +4526,9 @@
     S.playing = false;
     if (S.raf) cancelAnimationFrame(S.raf);
     S.raf = 0;
-    S.time = 0;
+    S.dir = 1;
+    S.rate = 1;
+    S.time = a;
     S.last = 0;
     applyTime();
     $('stExProg').classList.remove('hidden');
@@ -3658,7 +4559,9 @@
       opts: opts,
       ctx: ctx,
       canvas: canvas,
-      dur: dur,
+      a: a,
+      b: b,
+      dur: Math.max(0.05, b - a),
       chunks: [],
       rec: rec,
       stream: stream,
@@ -3674,7 +4577,7 @@
     try { rec.start(200); } catch (e) { toast('录制启动失败：' + (e.message || e)); S.exportSession = null; resetExportUI(); return; }
 
     applyMonitorGain();
-    S.time = 0;
+    S.time = a;
     applyTime();
     S.playing = true;
     S.last = 0;
@@ -3691,7 +4594,7 @@
     if (cancel) cancel.textContent = '取消';
   }
 
-  function drawEl(ctx, el, c, W, H, kind) {
+  function drawEl(ctx, el, c, W, H, kind, t) {
     if (!el) return;
     if (kind === 'image') {
       if (!el.complete || !el.naturalWidth) return;
@@ -3702,12 +4605,12 @@
     const mh = kind === 'image' ? el.naturalHeight : el.videoHeight;
     if (!mw || !mh) return;
     const fit = Math.min(W / mw, H / mh);
-    const view = visualOf(c, S.time);
+    const view = visualOf(c, t);
     const dw = mw * fit * view.scale;
     const dh = mh * fit * view.scale;
     ctx.save();
-    ctx.globalAlpha = clamp(view.opacity * fadeFactor(c, S.time), 0, 1);
-    const f = cssFilter(c.filter);
+    ctx.globalAlpha = clamp(view.opacity * fadeFactor(c, t), 0, 1);
+    const f = effectsCss(c);
     if (f && f !== 'none') ctx.filter = f;
     ctx.translate(W / 2 + (view.x / 100) * W, H / 2 + (view.y / 100) * H);
     ctx.rotate((view.rot * Math.PI) / 180);
@@ -3741,8 +4644,7 @@
     return out;
   }
 
-  function drawExportTexts(ctx, W, H) {
-    const t = S.time;
+  function drawTexts(ctx, W, H, t) {
     activeTextsAt(t).forEach(function (c) {
       const view = visualOf(c, t);
       const fs = c.text.size * (W / S.project.w) * view.scale;
@@ -3780,29 +4682,56 @@
     });
   }
 
-  function drawExportFrame() {
-    const v = S.exportSession;
-    if (!v) return;
-    const W = v.opts.w;
-    const H = v.opts.h;
-    const ctx = v.ctx;
+  /* 唯一合成入口：预览抓帧、导出、当前帧 PNG 都走这里。
+     参数只依赖 (W,H,t)，不读全局时间，保证任意帧可重放。 */
+  function renderFrame(ctx, W, H, t) {
     ctx.save();
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
     /* 轨道数组自上而下是「上层 → 下层」，绘制时反过来：下层先画、上层后盖 */
-    const visualTracks = tracksOfKind('video').slice().reverse();
-    visualTracks.forEach(function (tk) {
+    tracksOfKind('video').slice().reverse().forEach(function (tk) {
       if (!trackActive(tk)) return;
-      const c = activeClipOn(tk.id, S.time);
+      const c = activeClipOn(tk.id, t);
       if (!c) return;
       const m = mediaOf(c.mediaId);
       const pool = S.pool[tk.id];
       if (!m || !pool) return;
       const el = m.kind === 'image' ? pool.img : pool.video;
-      drawEl(ctx, el, c, W, H, m.kind);
+      drawEl(ctx, el, c, W, H, m.kind, t);
     });
-    drawExportTexts(ctx, W, H);
+    drawTexts(ctx, W, H, t);
     ctx.restore();
+  }
+
+  function grabFrame(t) {
+    const W = S.project.w || 1280;
+    const H = S.project.h || 720;
+    const cv = document.createElement('canvas');
+    cv.width = W;
+    cv.height = H;
+    const g = cv.getContext('2d');
+    if (!g) return '';
+    renderFrame(g, W, H, t == null ? S.time : t);
+    try { return cv.toDataURL('image/png'); } catch (e) { return ''; }
+  }
+
+  function exportStill() {
+    const url = grabFrame(S.time);
+    if (!url) { toast('当前帧抓取失败'); return ''; }
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '剪辑台-帧-' + String(round2(S.time)).replace('.', '_') + '.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('已导出当前帧');
+    return url;
+  }
+
+  function drawExportFrame() {
+    const v = S.exportSession;
+    if (!v) return;
+    renderFrame(v.ctx, v.opts.w, v.opts.h, S.time);
   }
 
   function paintExportProgress() {
@@ -3811,12 +4740,12 @@
     const now = performance.now();
     if (now - v.lastPaint < 120) return;
     v.lastPaint = now;
-    const pct = clamp((S.time / v.dur) * 100, 0, 100);
+    const pct = clamp(((S.time - v.a) / v.dur) * 100, 0, 100);
     const bar = $('stExBar');
     if (bar) bar.style.width = pct.toFixed(1) + '%';
     const txt = $('stExTxt');
     if (txt) {
-      txt.textContent = '正在渲染 ' + fmtMmss(S.time) + ' / ' + fmtMmss(v.dur) + ' · ' + pct.toFixed(0) + '%';
+      txt.textContent = '正在渲染 ' + fmtMmss(S.time - v.a) + ' / ' + fmtMmss(v.dur) + ' · ' + pct.toFixed(0) + '%';
     }
   }
 
@@ -3945,7 +4874,12 @@
           future: S.future.length,
           exporting: !!S.exportSession,
           frameW: S.frameW,
-          frameH: S.frameH
+          frameH: S.frameH,
+          rngIn: S.rngIn,
+          rngOut: S.rngOut,
+          rate: S.rate,
+          dir: S.dir,
+          clipboard: S.clipboard ? S.clipboard.items.length : 0
         };
       },
       project: function () { return JSON.parse(JSON.stringify(S.project)); },
@@ -3961,7 +4895,7 @@
           source: 'file',
           libId: ''
         };
-        pushHistory();
+        pushHistory('加入素材');
         S.project.media.push(item);
         renderAll();
         scheduleSave();
@@ -4056,6 +4990,80 @@
       selectAll: selectAllClips,
       fit: fitTimeline,
       bladeAt: function (id, t) { return splitClip(clipOf(id), Number(t)); },
+      splitAll: function (t) { return splitAllAt(t == null ? S.time : t); },
+      effects: function (id) {
+        const c = clipOf(id);
+        return c ? JSON.parse(JSON.stringify(c.effects || [])) : null;
+      },
+      effectsCss: function (id) {
+        const c = clipOf(id);
+        return c ? effectsCss(c) : '';
+      },
+      setEffects: function (id, list) {
+        const c = clipOf(id);
+        if (!c) return null;
+        c.effects = normalizeEffects(list, '');
+        renderInspector();
+        applyTime();
+        scheduleSave();
+        return JSON.parse(JSON.stringify(c.effects));
+      },
+      addEffect: function (id, type) {
+        const e = addEffect(id, type);
+        return e ? JSON.parse(JSON.stringify(e)) : null;
+      },
+      toggleEffect: function (id, fxId, on) { return setEffectEnabled(id, fxId, on); },
+      fxParam: function (id, fxId, key, v) {
+        const c = clipOf(id);
+        if (!c) return null;
+        const e = (c.effects || []).filter(function (x) { return x.id === fxId; })[0];
+        if (!e || !e.params) return null;
+        e.params[key] = Number(v);
+        applyTime();
+        scheduleSave();
+        return JSON.parse(JSON.stringify(e.params));
+      },
+      moveEffect: function (id, fxId, dir) { return moveEffect(id, fxId, dir); },
+      grabFrame: function (t) { return grabFrame(t); },
+      exportStill: exportStill,
+      setRange: function (edge, t) { return setRangeEdge(edge, t); },
+      range: function () { return { in: S.rngIn, out: S.rngOut }; },
+      clearRange: function () { clearInOut(); return true; },
+      trimRange: function (trackId, a, b) {
+        const n = clearRange(trackId, a, b);
+        renderAll();
+        applyTime();
+        scheduleSave();
+        return n;
+      },
+      copy: function () { return copySelected(); },
+      paste: function (t) { return pasteAt(t); },
+      place: function (mediaId, mode) {
+        const c = placeMedia(mediaId, mode);
+        return c ? c.id : null;
+      },
+      parseSubs: parseSubs,
+      buildSrt: function () { return subsText(); },
+      importSubs: function (text) { return importSubs(text); },
+      history: function () { return S.hist.map(function (h) { return h.label; }); },
+      goHistory: function (i) { return goHistory(i); },
+      peaks: function (mediaId) {
+        const p = peaksOf(mediaId);
+        if (!p) return null;
+        let max = 0;
+        for (let i = 0; i < p.data.length; i++) if (p.data[i] > max) max = p.data[i];
+        return { n: p.data.length, max: max };
+      },
+      loadPeaks: function (mediaId) { return loadPeaks(mediaId); },
+      level: function () {
+        const el = $('stLevel');
+        const bar = el && el.querySelector('i');
+        return bar ? bar.style.height || '0%' : '';
+      },
+      shuttle: function (dir) { shuttle(dir); return { rate: S.rate, dir: S.dir, playing: S.playing }; },
+      pause: pause,
+      playEnd: playEnd,
+      playStart: playStart,
       openMenu: function (name) {
         const b = document.querySelector('#stMenuBar [data-menu="' + name + '"]');
         if (!b) return false;

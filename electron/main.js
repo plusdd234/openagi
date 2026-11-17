@@ -839,7 +839,8 @@ async function createWindow(){
     relay: 'http://127.0.0.1:' + (pluginPorts.relay || 8787),
     tripo: 'http://127.0.0.1:' + (pluginPorts.tripo || 8790),
     chat: 'http://127.0.0.1:' + chatPort,
-    runtime: 'http://127.0.0.1:' + (pluginPorts.runtime || 8794)
+    runtime: 'http://127.0.0.1:' + (pluginPorts.runtime || 8794),
+    tunnel: 'http://127.0.0.1:' + (pluginPorts.tunnel || 8796)
   }).toString();
 
   win.once('ready-to-show', () => {

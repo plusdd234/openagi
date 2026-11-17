@@ -11,6 +11,8 @@ const path = require('path');
 const zlib = require('zlib');
 const { execFileSync } = require('child_process');
 const { URL } = require('url');
+const { imapFetch } = require('./mail');
+const { smtpSend } = require('./smtp');
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -505,6 +507,78 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.url === '/mail/imap') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: '只支持 POST' });
+      return;
+    }
+    const chunks = [];
+    let size = 0;
+    let aborted = false;
+    req.on('data', c => {
+      if (aborted) return;
+      size += c.length;
+      if (size > 64 * 1024) {
+        aborted = true;
+        sendJson(res, 413, { ok: false, error: '请求体过大' });
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      if (aborted) return;
+      let payload = null;
+      try {
+        payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: '请求体不是合法 JSON' });
+        return;
+      }
+      imapFetch(payload).then(out => {
+        sendJson(res, 200, { ok: true, count: out.count, messages: out.messages });
+      }).catch(e => {
+        sendJson(res, 502, { ok: false, error: (e && e.message) || 'IMAP 收信失败' });
+      });
+    });
+    return;
+  }
+
+  if (req.url === '/mail/smtp') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: '只支持 POST' });
+      return;
+    }
+    const chunks = [];
+    let size = 0;
+    let aborted = false;
+    req.on('data', c => {
+      if (aborted) return;
+      size += c.length;
+      if (size > 64 * 1024) {
+        aborted = true;
+        sendJson(res, 413, { ok: false, error: '请求体过大' });
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      if (aborted) return;
+      let payload = null;
+      try {
+        payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: '请求体不是合法 JSON' });
+        return;
+      }
+      smtpSend(payload).then(out => {
+        sendJson(res, 200, { ok: true, accepted: out.accepted });
+      }).catch(e => {
+        sendJson(res, 502, { ok: false, error: (e && e.message) || 'SMTP 发信失败' });
+      });
+    });
+    return;
+  }
+
   if (req.url.startsWith('/store.js')) {
     const js = 'window.__OPENAGI_STORE=' + JSON.stringify(loadStore()) + ';';
     res.writeHead(200, Object.assign({
@@ -828,6 +902,7 @@ process.on('exit', () => { if (storeTimer) flushStore(); });
 process.on('SIGINT', () => { if (storeTimer) flushStore(); process.exit(0); });
 
 server.listen(PORT, HOST, () => {
-  console.log('Open AGI relay running: http://' + HOST + ':' + PORT);
+  // PORT=0 时由系统分配，日志必须打印真实端口（测试靠它拿到地址）
+  console.log('Open AGI relay running: http://' + HOST + ':' + server.address().port);
   console.log('请在页面 设置 -> 本地中转 中启用，并保持本窗口运行。');
 });

@@ -22,10 +22,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
  * 纯展示的装饰元素不加进来——那种删了不影响功能，加进来只会让测试变脆。 */
 const MUST = {
   overview: ['setHomeGrid', 'setHomePaths'],
-  llm: ['llmKey', 'llmBaseUrl', 'llmModel', 'btnLoadModels', 'modelStatus', 'testLLM', 'llmPresetLinks'],
+  llm: ['llmKey', 'llmBaseUrl', 'llmModel', 'btnLoadModels', 'modelStatus', 'testLLM', 'llmPresetLinks',
+    'llmPoolList', 'llmPoolAdd', 'llmPoolMsg'],
   image: ['genEngine', 'imgKey', 'imgBaseUrl', 'imgModel', 'btnLoadImgModels', 'imgEndpoint', 'imgSize', 'respPath', 'sendImage', 'testIMG'],
   tts: ['ttsVoiceSel', 'ttsVoiceReload', 'ttsVoiceHint', 'ttsStatus', 'ttsStore', 'ttsText', 'ttsRate', 'ttsRateVal', 'ttsPlay', 'ttsStop', 'ttsPlayMsg',
-    'ttsMechaState', 'ttsMechaUse', 'ttsMechaPlay', 'ttsMechaMsg',
+    'ttsParamState', 'ttsParamUse', 'ttsParamPlay', 'ttsParamMsg',
     'ttsCloneText', 'ttsClonePick', 'ttsClonePlay', 'ttsCloneClear', 'ttsCloneStatus'],
   search: ['wsProvider', 'wsBase', 'wsKey', 'wsCount', 'btnTestSearch', 'wsStatus'],
   relay: ['relayUrl', 'relayOn', 'btnTestRelay', 'relayStatus'],
@@ -85,39 +86,39 @@ const MUST = {
     check(missing.length === 0, pane + ' 分组', missing.length ? '缺 ' + missing.join(',') : ids.length + ' 个 id 全在');
   }
 
-  console.log('\n=== 2b. 音色分类与机械音朗读方式 ===');
-  const mecha = await page.evaluate(() => {
+  console.log('\n=== 2b. 音色分类与快速合成朗读方式 ===');
+  const fast = await page.evaluate(() => {
     openSettings('tts');
     const root = document.querySelector('.settings2');
     if (!root) return null;
     const tab = sel => root.querySelector('[data-tts-tab="' + sel + '"]');
     const pane = sel => root.querySelector('[data-tts-pane="' + sel + '"]');
-    if (!tab('mecha') || !pane('mecha') || !tab('human') || !pane('human')) return null;
-    tab('mecha').click();
-    const toMecha = {
-      mecha: !pane('mecha').classList.contains('hidden'),
+    if (!tab('fast') || !pane('fast') || !tab('human') || !pane('human')) return null;
+    tab('fast').click();
+    const toFast = {
+      fast: !pane('fast').classList.contains('hidden'),
       human: !pane('human').classList.contains('hidden')
     };
-    const direct = root.querySelector('[data-mecha-mode="direct"]');
+    const direct = root.querySelector('[data-ai-mode="direct"]');
     direct.click();
     const afterDirect = {
       on: direct.classList.contains('on'),
       checked: direct.getAttribute('aria-checked'),
-      aiOn: root.querySelector('[data-mecha-mode="ai"]').classList.contains('on')
+      aiOn: root.querySelector('[data-ai-mode="ai"]').classList.contains('on')
     };
-    root.querySelector('[data-mecha-mode="ai"]').click();
+    root.querySelector('[data-ai-mode="ai"]').click();
     tab('human').click();
     const toHuman = {
       human: !pane('human').classList.contains('hidden'),
-      mecha: !pane('mecha').classList.contains('hidden')
+      fast: !pane('fast').classList.contains('hidden')
     };
-    return { toMecha, afterDirect, toHuman };
+    return { toFast, afterDirect, toHuman };
   });
-  check(!!mecha, '机械音页签与两个面板都在');
-  check(mecha && mecha.toMecha.mecha && !mecha.toMecha.human, '点「机械音」只显示机械音面板');
-  check(mecha && mecha.afterDirect.on && mecha.afterDirect.checked === 'true' && !mecha.afterDirect.aiOn,
-    '点「直接朗读」切到单选态', mecha ? JSON.stringify(mecha.afterDirect) : 'null');
-  check(mecha && mecha.toHuman.human && !mecha.toHuman.mecha, '点「超拟人」切回超拟人面板');
+  check(!!fast, '快速合成页签与两个面板都在');
+  check(fast && fast.toFast.fast && !fast.toFast.human, '点「快速合成」只显示对应面板');
+  check(fast && fast.afterDirect.on && fast.afterDirect.checked === 'true' && !fast.afterDirect.aiOn,
+    '点「直接朗读」切到单选态', fast ? JSON.stringify(fast.afterDirect) : 'null');
+  check(fast && fast.toHuman.human && !fast.toHuman.fast, '点「超拟人」切回超拟人面板');
 
   console.log('\n=== 3. 总览卡片 ===');
   await page.evaluate(() => openSettings());

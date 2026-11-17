@@ -50,6 +50,19 @@
       "userDataEnv": {
         "TTS_DIR": "tts"
       }
+    },
+    "tunnel": {
+      "name": "分享与反馈（内网穿透）",
+      "description": "把本机变成可上传资源、可提交反馈的站点，并用 Cloudflare 免费隧道暴露到公网。",
+      "entry": "tunnel.js",
+      "port": 8796,
+      "args": [],
+      "env": {
+        "HOST": "127.0.0.1"
+      },
+      "userDataEnv": {
+        "TUNNEL_DIR": "tunnel"
+      }
     }
   }
 }

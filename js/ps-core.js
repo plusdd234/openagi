@@ -121,6 +121,24 @@ const PS = (function () {
     return doc;
   }
 
+  function normalizeLocks(raw, legacyLocked) {
+    var src = raw && typeof raw === 'object' ? raw : {};
+    var out = {
+      transparent: src.transparent === true,
+      image: src.image === true,
+      position: src.position === true,
+      all: src.all === true
+    };
+    if (legacyLocked) out.position = true;
+    return out;
+  }
+
+  function hasLock(layer, kind) {
+    if (!layer || !layer.locks) return false;
+    if (layer.locks.all) return true;
+    return layer.locks[kind] === true;
+  }
+
   function createLayer(doc, opts) {
     opts = opts || {};
     var l = {
@@ -130,13 +148,14 @@ const PS = (function () {
       visible: opts.visible !== false,
       opacity: typeof opts.opacity === 'number' ? opts.opacity : 1,
       blend: opts.blend || 'normal',
-      /* 锁定后移动工具拖不动；默认背景层为 true */
-      locked: opts.locked === true,
+      /* 四种锁定和 PS 一致：透明像素 / 图像像素 / 位置 / 全部 */
+      locks: normalizeLocks(opts.locks, opts.locked === true),
       x: opts.x || 0,
       y: opts.y || 0,
       width: Math.max(1, Math.round(opts.width || doc.width)),
       height: Math.max(1, Math.round(opts.height || doc.height)),
       tiles: new Map(),
+      mask: null,
       adjust: opts.adjust || null,
       shapes: opts.shapes ? opts.shapes.map(cloneShape) : null,
       version: 0,
@@ -201,6 +220,168 @@ const PS = (function () {
     return arr;
   }
 
+  /* ---------------- 图层蒙版 ----------------
+   * 蒙版和图层共用瓦片网格；瓦片 alpha 表示「隐藏量」，缺省瓦片 = 完全可见。
+   * 这样只有真正画过的区域才占内存，合成时用 destination-in 把内容裁掉。
+   */
+  function createMask(layer) {
+    return {
+      enabled: true,
+      width: layer.width,
+      height: layer.height,
+      tiles: new Map(),
+      version: 0
+    };
+  }
+
+  function ensureMaskTile(mask, tx, ty, create) {
+    if (!mask) return null;
+    if (create === undefined) create = true;
+    var key = tileKey(tx, ty);
+    var t = mask.tiles.get(key);
+    if (t) return t;
+    if (!create) return null;
+    var x = tx * TILE;
+    var y = ty * TILE;
+    var w = Math.min(TILE, mask.width - x);
+    var h = Math.min(TILE, mask.height - y);
+    if (w <= 0 || h <= 0) return null;
+    var cv = makeCanvas(w, h);
+    t = { key: key, tx: tx, ty: ty, x: x, y: y, w: w, h: h, canvas: cv.canvas, ctx: cv.ctx };
+    mask.tiles.set(key, t);
+    return t;
+  }
+
+  function maskTileOfLocal(mask, lx, ly) {
+    if (!mask || lx < 0 || ly < 0 || lx >= mask.width || ly >= mask.height) return null;
+    return mask.tiles.get(tileKey(Math.floor(lx / TILE), Math.floor(ly / TILE))) || null;
+  }
+
+  function maskEmpty(mask) {
+    return !mask || !mask.tiles.size;
+  }
+
+  /* 整层灰度画布：白=可见，黑=隐藏。用于存档与缩略图。 */
+  function maskCanvas(mask) {
+    var cv = makeCanvas(Math.max(1, mask.width), Math.max(1, mask.height));
+    cv.ctx.fillStyle = '#ffffff';
+    cv.ctx.fillRect(0, 0, cv.canvas.width, cv.canvas.height);
+    mask.tiles.forEach(function (t) {
+      cv.ctx.drawImage(t.canvas, t.x, t.y);
+    });
+    return cv.canvas;
+  }
+
+  function maskPreview(mask, size) {
+    size = size || 34;
+    var s = Math.min(size / Math.max(1, mask.width), size / Math.max(1, mask.height), 1);
+    var cv = makeCanvas(Math.max(1, Math.round(mask.width * s)), Math.max(1, Math.round(mask.height * s)));
+    cv.ctx.fillStyle = '#ffffff';
+    cv.ctx.fillRect(0, 0, cv.canvas.width, cv.canvas.height);
+    mask.tiles.forEach(function (t) {
+      cv.ctx.drawImage(t.canvas, t.x * s, t.y * s, t.w * s, t.h * s);
+    });
+    return cv.canvas;
+  }
+
+  /* 把蒙版烘焙进图层像素（应用蒙版 / 合并前），返回是否有像素变化 */
+  function bakeMaskToLayerTiles(layer) {
+    var mask = layer.mask;
+    if (!mask) return false;
+    if (!mask.enabled || !mask.tiles.size) return false;
+    layer.tiles.forEach(function (t) {
+      var mt = mask.tiles.get(t.key);
+      if (!mt) return;
+      var img = t.ctx.getImageData(0, 0, t.w, t.h);
+      var mi = mt.ctx.getImageData(0, 0, mt.w, mt.h);
+      var d = img.data, m = mi.data;
+      for (var i = 3; i < d.length; i += 4) {
+        var hide = m[i] / 255;
+        d[i] = Math.round(d[i] * (1 - hide));
+      }
+      t.ctx.putImageData(img, 0, 0);
+    });
+    return true;
+  }
+
+  function addLayerMask(doc, layer) {
+    if (!doc || !layer || layer.type !== 'pixel') return null;
+    if (layer.mask) return layer.mask;
+    var mask = createMask(layer);
+    layer.mask = mask;
+    layer.version++;
+    doc.version++;
+    pushEntry(doc, {
+      label: '添加图层蒙版',
+      touched: [layer],
+      undo: function () { layer.mask = null; layer.version++; doc.version++; },
+      redo: function () { layer.mask = mask; layer.version++; doc.version++; }
+    });
+    return mask;
+  }
+
+  function removeLayerMask(doc, layer) {
+    if (!doc || !layer || !layer.mask) return false;
+    var mask = layer.mask;
+    layer.mask = null;
+    layer.version++;
+    doc.version++;
+    pushEntry(doc, {
+      label: '删除图层蒙版',
+      touched: [layer],
+      undo: function () { layer.mask = mask; layer.version++; doc.version++; },
+      redo: function () { layer.mask = null; layer.version++; doc.version++; }
+    });
+    return true;
+  }
+
+  function setLayerMaskEnabled(doc, layer, enabled) {
+    if (!doc || !layer || !layer.mask) return false;
+    if (layer.mask.enabled === enabled) return false;
+    layer.mask.enabled = enabled;
+    layer.version++;
+    doc.version++;
+    pushEntry(doc, {
+      label: enabled ? '启用图层蒙版' : '停用图层蒙版',
+      touched: [layer],
+      undo: function () { layer.mask.enabled = !enabled; layer.version++; doc.version++; },
+      redo: function () { layer.mask.enabled = enabled; layer.version++; doc.version++; }
+    });
+    return true;
+  }
+
+  function applyLayerMask(doc, layer) {
+    if (!doc || !layer || !layer.mask) return false;
+    var mask = layer.mask;
+    var tx = beginTx(doc, '应用图层蒙版');
+    layer.tiles.forEach(function (t) { snapTile(tx, layer, t); });
+    bakeMaskToLayerTiles(layer);
+    layer.mask = null;
+    layer.version++;
+    tx.undoOps.push(function () { layer.mask = mask; layer.version++; });
+    tx.redoOps.push(function () { layer.mask = null; layer.version++; });
+    endTx(tx);
+    doc.version++;
+    requestMips(doc);
+    return true;
+  }
+
+  function alphaLocked(layer) {
+    return hasLock(layer, 'transparent');
+  }
+
+  /* 透明像素锁：把事务里每个瓦片的 alpha 还原为落笔前 */
+  function restoreTileAlpha(tx) {
+    if (!tx) return;
+    tx.tiles.forEach(function (rec) {
+      var now = rec.tile.ctx.getImageData(0, 0, rec.tile.w, rec.tile.h);
+      var before = rec.before.data;
+      var d = now.data;
+      for (var i = 3; i < d.length; i += 4) d[i] = before[i];
+      rec.tile.ctx.putImageData(now, 0, 0);
+    });
+  }
+
   function tileOfLocal(layer, lx, ly) {
     if (lx < 0 || ly < 0 || lx >= layer.width || ly >= layer.height) return null;
     return layer.tiles.get(tileKey(Math.floor(lx / TILE), Math.floor(ly / TILE))) || null;
@@ -216,7 +397,8 @@ const PS = (function () {
   function cloneShape(s) {
     if (!s) return s;
     var out = { kind: s.kind, fill: s.fill || null, stroke: s.stroke || null,
-      strokeWidth: s.strokeWidth || 0, opacity: s.opacity == null ? 1 : s.opacity };
+      strokeWidth: s.strokeWidth || 0, opacity: s.opacity == null ? 1 : s.opacity,
+      op: s.op || 'add' };
     if (s.kind === 'path') {
       out.closed = !!s.closed;
       out.pts = (s.pts || []).map(function (p) {
@@ -253,6 +435,66 @@ const PS = (function () {
       x1 = Math.max(s.x, s.x + s.w); y1 = Math.max(s.y, s.y + s.h);
     }
     return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
+
+  /* 图层内容的文档坐标包围盒（移动对齐 / 参考线用）。
+   * 像素层按实际 alpha 判断，空瓦片与全透明区域不计入；
+   * 结果按 layer.version 缓存，连续拖动不会每帧重扫像素。 */
+  function layerContentBounds(layer) {
+    if (!layer) return null;
+    if (layer.type === 'shape') {
+      var sx0 = Infinity, sy0 = Infinity, sx1 = -Infinity, sy1 = -Infinity;
+      (layer.shapes || []).forEach(function (s) {
+        var b = shapeBounds(s);
+        if (!b) return;
+        sx0 = Math.min(sx0, b.x); sy0 = Math.min(sy0, b.y);
+        sx1 = Math.max(sx1, b.x + b.w); sy1 = Math.max(sy1, b.y + b.h);
+      });
+      if (!isFinite(sx0)) return null;
+      return {
+        x: layer.x + sx0, y: layer.y + sy0,
+        w: sx1 - sx0, h: sy1 - sy0
+      };
+    }
+    if (layer.type !== 'pixel' || !layer.tiles) return null;
+    var cache = layer._boundsCache;
+    if (cache && cache.version === layer.version) {
+      return {
+        x: layer.x + cache.rel.x, y: layer.y + cache.rel.y,
+        w: cache.rel.w, h: cache.rel.h
+      };
+    }
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    layer.tiles.forEach(function (t) {
+      var data;
+      try {
+        data = t.ctx.getImageData(0, 0, t.w, t.h).data;
+      } catch (err) {
+        return;
+      }
+      var minX = t.w, minY = t.h, maxX = -1, maxY = -1;
+      for (var y = 0; y < t.h; y++) {
+        for (var x = 0; x < t.w; x++) {
+          if (data[(y * t.w + x) * 4 + 3]) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      if (maxX < 0) return;
+      x0 = Math.min(x0, t.x + minX); y0 = Math.min(y0, t.y + minY);
+      x1 = Math.max(x1, t.x + maxX + 1); y1 = Math.max(y1, t.y + maxY + 1);
+    });
+    if (!isFinite(x0)) {
+      // 全透明层：退回图层框，仍可参与位置对齐
+      layer._boundsCache = { version: layer.version, rel: { x: 0, y: 0, w: layer.width, h: layer.height } };
+      return { x: layer.x, y: layer.y, w: layer.width, h: layer.height };
+    }
+    var rel = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    layer._boundsCache = { version: layer.version, rel: rel };
+    return { x: layer.x + x0, y: layer.y + y0, w: rel.w, h: rel.h };
   }
 
   /* 把形状写进当前路径（调用方负责 beginPath / fill / stroke）。 */
@@ -317,13 +559,126 @@ const PS = (function () {
     ctx.restore();
   }
 
+  /* ---------------- 矢量布尔运算 ----------------
+   * 形状按数组顺序组合，op 决定它如何作用到前面已合成的结果：
+   *   add      合并（source-over）
+   *   subtract 减去（destination-out）
+   *   intersect 相交（destination-in）
+   *   exclude  排除重叠（xor）
+   * 纯 Canvas 没有路径布尔，所以用离屏缓冲逐条复合；只有出现非 add 时才走缓冲，
+   * 普通形状仍走原来的直接绘制路径，性能不受影响。
+   */
+  var SHAPE_OPS = { add: 1, subtract: 1, intersect: 1, exclude: 1 };
+  var SHAPE_OP_NAMES = { add: '合并', subtract: '减去', intersect: '相交', exclude: '排除' };
+  var _shapeBuf = null;
+
+  function shapeOp(s) {
+    return s && SHAPE_OPS[s.op] ? s.op : 'add';
+  }
+
+  function shapeComposite(op) {
+    return op === 'subtract' ? 'destination-out'
+      : op === 'intersect' ? 'destination-in'
+        : op === 'exclude' ? 'xor' : 'source-over';
+  }
+
+  function shapeBuffer(w, h) {
+    w = Math.max(1, Math.ceil(w));
+    h = Math.max(1, Math.ceil(h));
+    if (!_shapeBuf || _shapeBuf.w < w || _shapeBuf.h < h) {
+      _shapeBuf = makeCanvas(Math.max(w, _shapeBuf ? _shapeBuf.w : 0), Math.max(h, _shapeBuf ? _shapeBuf.h : 0));
+    }
+    var b = _shapeBuf;
+    b.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    b.ctx.globalAlpha = 1;
+    b.ctx.globalCompositeOperation = 'source-over';
+    b.ctx.clearRect(0, 0, b.w, b.h);
+    return b;
+  }
+
+  /* 视觉包围盒：把贝塞尔控制柄和描边宽度算进去，避免缓冲裁掉曲线外弧。 */
+  function shapeVisualBounds(s) {
+    var b = shapeBounds(s);
+    if (!b) return null;
+    var x0 = b.x;
+    var y0 = b.y;
+    var x1 = b.x + b.w;
+    var y1 = b.y + b.h;
+    if (s.kind === 'path') {
+      (s.pts || []).forEach(function (p) {
+        if (p.hix != null) { x0 = Math.min(x0, p.hix); x1 = Math.max(x1, p.hix); }
+        if (p.hiy != null) { y0 = Math.min(y0, p.hiy); y1 = Math.max(y1, p.hiy); }
+        if (p.hox != null) { x0 = Math.min(x0, p.hox); x1 = Math.max(x1, p.hox); }
+        if (p.hoy != null) { y0 = Math.min(y0, p.hoy); y1 = Math.max(y1, p.hoy); }
+      });
+    }
+    var pad = Math.max(2, (s.strokeWidth || 0) * 0.75 + 1);
+    return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + pad * 2, h: y1 - y0 + pad * 2 };
+  }
+
+  function paintShapeWithOp(ctx, s, op) {
+    if (!s) return;
+    var alpha = s.opacity == null ? 1 : s.opacity;
+    if (alpha <= 0) return;
+    ctx.save();
+    ctx.globalAlpha *= alpha;
+    ctx.globalCompositeOperation = shapeComposite(op);
+    ctx.beginPath();
+    shapePath(ctx, s);
+    if (s.fill && s.kind !== 'line') {
+      ctx.fillStyle = s.fill;
+      ctx.fill();
+    }
+    if (s.stroke && s.strokeWidth > 0) {
+      ctx.strokeStyle = s.stroke;
+      ctx.lineWidth = s.strokeWidth;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function hasShapeBoolean(shapes) {
+    for (var i = 0; i < shapes.length; i++) if (shapeOp(shapes[i]) !== 'add') return true;
+    return false;
+  }
+
+  /* 在任意已定位的上下文里画一组带布尔关系的形状（缩略图 / 合并 / 栅格化用）。 */
+  function paintShapesBuffered(ctx, shapes) {
+    if (!shapes || !shapes.length) return;
+    if (!hasShapeBoolean(shapes)) {
+      shapes.forEach(function (s) { paintShape(ctx, s); });
+      return;
+    }
+    var x0 = Infinity;
+    var y0 = Infinity;
+    var x1 = -Infinity;
+    var y1 = -Infinity;
+    shapes.forEach(function (s) {
+      var b = shapeVisualBounds(s);
+      if (!b) return;
+      x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
+      x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h);
+    });
+    if (!isFinite(x0)) return;
+    var bw = Math.max(1, x1 - x0);
+    var bh = Math.max(1, y1 - y0);
+    var buf = shapeBuffer(bw, bh);
+    buf.ctx.translate(-x0, -y0);
+    for (var i = 0; i < shapes.length; i++) {
+      paintShapeWithOp(buf.ctx, shapes[i], i === 0 ? 'add' : shapeOp(shapes[i]));
+    }
+    ctx.drawImage(buf.canvas, 0, 0, bw, bh, x0, y0, bw, bh);
+  }
+
   /* 在任意 2D 上下文里按 scale 画一个形状图层的全部形状（缩略图 / 合并用）。 */
   function drawShapesInto(ctx, layer, scale) {
     if (!layer || !layer.shapes || !layer.shapes.length) return;
     ctx.save();
     ctx.scale(scale || 1, scale || 1);
     ctx.translate(layer.x || 0, layer.y || 0);
-    layer.shapes.forEach(function (s) { paintShape(ctx, s); });
+    paintShapesBuffered(ctx, layer.shapes);
     ctx.restore();
   }
 
@@ -368,6 +723,55 @@ const PS = (function () {
     return l;
   }
 
+  /* 把新形状追加到已有形状层（布尔组合需要同一层里的多条路径）。 */
+  function appendShape(doc, layer, shape, opts) {
+    opts = opts || {};
+    if (!layer || layer.type !== 'shape') return null;
+    if (!layer.shapes) layer.shapes = [];
+    var item = cloneShape(shape);
+    layer.shapes.push(item);
+    layer.version++;
+    var index = layer.shapes.length - 1;
+    var prevActive = doc.activeId;
+    doc.activeId = layer.id;
+    pushEntry(doc, {
+      label: opts.label || '添加矢量形状',
+      touched: [layer],
+      undo: function () {
+        var i = layer.shapes.indexOf(item);
+        if (i >= 0) layer.shapes.splice(i, 1);
+        layer.version++;
+        doc.activeId = prevActive;
+        doc.version++;
+      },
+      redo: function () {
+        if (layer.shapes.indexOf(item) < 0) layer.shapes.splice(Math.min(index, layer.shapes.length), 0, item);
+        layer.version++;
+        doc.activeId = layer.id;
+        doc.version++;
+      }
+    });
+    doc.version++;
+    return layer;
+  }
+
+  /* 修改单个形状的布尔运算，可撤销。 */
+  function setShapeOp(doc, layer, shape, op) {
+    if (!layer || !shape || !SHAPE_OPS[op]) return false;
+    var before = shapeOp(shape);
+    if (before === op) return true;
+    shape.op = op;
+    layer.version++;
+    pushEntry(doc, {
+      label: '布尔运算 · ' + SHAPE_OP_NAMES[op],
+      touched: [layer],
+      undo: function () { shape.op = before; layer.version++; doc.version++; },
+      redo: function () { shape.op = op; layer.version++; doc.version++; }
+    });
+    doc.version++;
+    return true;
+  }
+
   /* 矢量图层栅格化：把形状烘焙进瓦片，之后可以继续画笔 / 滤镜 / 涂抹。
    * 图层不透明度与混合模式保留在图层层，不重复烘进像素。 */
   function rasterizeShapeLayer(doc, layer) {
@@ -379,7 +783,7 @@ const PS = (function () {
       t.ctx.save();
       t.ctx.clearRect(0, 0, t.w, t.h);
       t.ctx.translate(-t.x, -t.y);
-      prevShapes.forEach(function (s) { paintShape(t.ctx, s); });
+      paintShapesBuffered(t.ctx, prevShapes);
       t.ctx.restore();
     });
     layer.type = 'pixel';
@@ -405,8 +809,8 @@ const PS = (function () {
     return true;
   }
 
-  /* 路径选择工具的命中测试：先找锚点，再找边，最后找填充内部。
-   * 返回 { layer, shape, anchor }（anchor 为 -1 表示命中形状本体）。 */
+  /* 路径选择工具的命中测试：先找锚点，再找控制柄端点，再找边，最后找填充内部。
+   * 返回 { layer, shape, anchor, handle }（anchor 为 -1 表示命中形状本体；handle 为 'in'/'out'/null）。 */
   function hitShapeLayer(doc, x, y, tol) {
     tol = tol || 6;
     for (var i = doc.layers.length - 1; i >= 0; i--) {
@@ -418,13 +822,44 @@ const PS = (function () {
         var s = layer.shapes[k];
         var b = shapeBounds(s);
         if (!b) continue;
+        // 控制柄可能伸到路径包围盒之外，命中测试时把包围盒扩到控制柄端点
+        if (s.kind === 'path') {
+          (s.pts || []).forEach(function (hp) {
+            if (hp.hix != null) {
+              var x1 = b.x + b.w;
+              b.x = Math.min(b.x, hp.hix);
+              b.w = Math.max(x1, hp.hix) - b.x;
+              var y1 = b.y + b.h;
+              b.y = Math.min(b.y, hp.hiy);
+              b.h = Math.max(y1, hp.hiy) - b.y;
+            }
+            if (hp.hox != null) {
+              var x1b = b.x + b.w;
+              b.x = Math.min(b.x, hp.hox);
+              b.w = Math.max(x1b, hp.hox) - b.x;
+              var y1b = b.y + b.h;
+              b.y = Math.min(b.y, hp.hoy);
+              b.h = Math.max(y1b, hp.hoy) - b.y;
+            }
+          });
+        }
         var pad = tol + (s.strokeWidth || 0) / 2;
         if (lx < b.x - pad || ly < b.y - pad || lx > b.x + b.w + pad || ly > b.y + b.h + pad) continue;
         if (s.kind === 'path') {
           var pts = s.pts || [];
           for (var a = 0; a < pts.length; a++) {
             if (Math.hypot(lx - pts[a].x, ly - pts[a].y) <= pad) {
-              return { layer: layer, shape: s, shapeIndex: k, anchor: a };
+              return { layer: layer, shape: s, shapeIndex: k, anchor: a, handle: null };
+            }
+          }
+          // 锚点优先于控制柄：先遍历完所有锚点，再判断是否点中控制柄端点
+          for (var h = 0; h < pts.length; h++) {
+            var hp = pts[h];
+            if (hp.hix != null && Math.hypot(lx - hp.hix, ly - hp.hiy) <= pad) {
+              return { layer: layer, shape: s, shapeIndex: k, anchor: h, handle: 'in' };
+            }
+            if (hp.hox != null && Math.hypot(lx - hp.hox, ly - hp.hoy) <= pad) {
+              return { layer: layer, shape: s, shapeIndex: k, anchor: h, handle: 'out' };
             }
           }
           for (var e = 0; e < pts.length - (s.closed ? 0 : 1); e++) {
@@ -740,9 +1175,9 @@ const PS = (function () {
     return { doc: doc, label: label || '编辑', tiles: new Map(), undoOps: [], redoOps: [], bytes: 0 };
   }
 
-  function snapTile(tx, layer, tile) {
+  function snapTile(tx, layer, tile, isMask) {
     if (!tile) return null;
-    var k = layer.id + '|' + tile.key;
+    var k = (isMask ? 'M|' : 'P|') + layer.id + '|' + tile.key;
     var hit = tx.tiles.get(k);
     if (hit) return hit;
     var before = tile.ctx.getImageData(0, 0, tile.w, tile.h);
@@ -886,6 +1321,10 @@ const PS = (function () {
       visible: layer.visible,
       opacity: layer.opacity,
       blend: layer.blend,
+      locks: {
+        transparent: layer.locks.transparent, image: layer.locks.image,
+        position: layer.locks.position, all: layer.locks.all
+      },
       adjust: layer.adjust ? { kind: layer.adjust.kind, params: { value: layer.adjust.params.value } } : null,
       shapes: layer.shapes ? layer.shapes.map(cloneShape) : null
     });
@@ -894,6 +1333,15 @@ const PS = (function () {
         var nt = ensureTile(copy, t.tx, t.ty, true);
         if (nt) nt.ctx.drawImage(t.canvas, 0, 0);
       });
+      if (layer.mask) {
+        var nm = createMask(copy);
+        layer.mask.tiles.forEach(function (mt) {
+          var nt2 = ensureMaskTile(nm, mt.tx, mt.ty, true);
+          if (nt2) nt2.ctx.drawImage(mt.canvas, 0, 0);
+        });
+        nm.enabled = layer.mask.enabled;
+        copy.mask = nm;
+      }
     }
     var index = doc.layers.indexOf(copy);
     var prevActive = doc.activeId;
@@ -929,7 +1377,7 @@ const PS = (function () {
       t.ctx.globalCompositeOperation = blendOp(src.blend);
       if (src.type === 'shape') {
         t.ctx.translate(src.x - docX, src.y - docY);
-        (src.shapes || []).forEach(function (sh) { paintShape(t.ctx, sh); });
+        paintShapesBuffered(t.ctx, src.shapes || []);
       } else {
         src.tiles.forEach(function (st) {
           var sx = src.x + st.x - docX;
@@ -948,6 +1396,15 @@ const PS = (function () {
     if (dst.type !== 'pixel') return false;
     var tx = beginTx(doc, '向下合并');
     ensureAllTiles(dst).forEach(function (t) { snapTile(tx, dst, t); });
+    /* 蒙版不跟随合并：先把可见结果烘焙进上层像素，撤销时再连蒙版一起还原 */
+    if (layer.mask) {
+      var savedMask = layer.mask;
+      layer.tiles.forEach(function (t) { snapTile(tx, layer, t); });
+      bakeMaskToLayerTiles(layer);
+      layer.mask = null;
+      tx.undoOps.push(function () { layer.mask = savedMask; layer.version++; });
+      tx.redoOps.push(function () { layer.mask = null; layer.version++; });
+    }
     mergeLayerInto(doc, layer, dst);
     touch(dst);
     // 合并后把上层从文档里拿掉，但对象留给撤销
@@ -1144,7 +1601,7 @@ const PS = (function () {
     ctx.globalCompositeOperation = blendOp(layer.blend);
 
     // 缩得很小时优先用 mip：一次 drawImage 顶替几十个瓦片
-    if (view.useMips !== false && z < 0.5 && layer.mipReady && layer.mips.length) {
+    if (view.useMips !== false && z < 0.5 && !(layer.mask && layer.mask.enabled && layer.mask.tiles.size) && layer.mipReady && layer.mips.length) {
       var level = Math.min(mipLevelFor(z), layer.mips.length - 1);
       if (level >= 0) {
         var mip = layer.mips[level];
@@ -1206,6 +1663,85 @@ const PS = (function () {
     ctx.restore();
   }
 
+  /* 有蒙版时的合成：先把图层画进离屏缓冲，再按蒙版 destination-in 裁剪，
+   * 最后按不透明度/混合模式落到主画布。缓冲随画布尺寸复用，不每帧分配。 */
+  function ensureViewBuffer(view, key, w, h) {
+    var b = view[key];
+    if (!b || b.w !== w || b.h !== h) {
+      b = makeCanvas(w, h);
+      view[key] = b;
+    }
+    return b;
+  }
+
+  function applyMaskToBuffer(view, layer, target, w, h) {
+    var mask = layer.mask;
+    var mb = ensureViewBuffer(view, '_maskBuf', w, h);
+    var mctx = mb.ctx;
+    var z = view.zoom;
+    var dpr = view.dpr || 1;
+    var D = function (v) { return Math.round(v * dpr); };
+    mctx.setTransform(1, 0, 0, 1, 0, 0);
+    mctx.globalCompositeOperation = 'source-over';
+    mctx.clearRect(0, 0, w, h);
+    mctx.fillStyle = '#ffffff';
+    mctx.fillRect(0, 0, w, h);
+    mctx.globalCompositeOperation = 'destination-out';
+    mask.tiles.forEach(function (t) {
+      var x0 = D(view.panX + (layer.x + t.x) * z);
+      var y0 = D(view.panY + (layer.y + t.y) * z);
+      var x1 = D(view.panX + (layer.x + t.x + t.w) * z);
+      var y1 = D(view.panY + (layer.y + t.y + t.h) * z);
+      if (x1 <= x0 || y1 <= y0) return;
+      mctx.drawImage(t.canvas, 0, 0, t.w, t.h, x0, y0, x1 - x0, y1 - y0);
+    });
+    mctx.globalCompositeOperation = 'source-over';
+    target.save();
+    target.setTransform(1, 0, 0, 1, 0, 0);
+    target.globalCompositeOperation = 'destination-in';
+    target.drawImage(mb.canvas, 0, 0);
+    target.restore();
+  }
+
+  function drawMaskedLayer(ctx, doc, layer, view, stats, scratch) {
+    var w = ctx.canvas.width;
+    var h = ctx.canvas.height;
+    var buf = ensureViewBuffer(view, '_layerBuf', w, h);
+    var bctx = buf.ctx;
+    bctx.setTransform(1, 0, 0, 1, 0, 0);
+    bctx.globalAlpha = 1;
+    bctx.globalCompositeOperation = 'source-over';
+    bctx.clearRect(0, 0, w, h);
+
+    var opacity = layer.opacity;
+    var blend = layer.blend;
+    layer.opacity = 1;
+    layer.blend = 'normal';
+    if (layer.type === 'pixel') drawPixelLayer(bctx, doc, layer, view, stats);
+    else if (layer.type === 'shape') drawShapeLayer(bctx, doc, layer, view, stats);
+    else if (scratch) {
+      // 调整层：先复制下方已合成的画面，再整幅滤镜，最后交给蒙版裁剪
+      scratch.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      scratch.ctx.clearRect(0, 0, scratch.w, scratch.h);
+      scratch.ctx.drawImage(ctx.canvas, 0, 0);
+      bctx.save();
+      bctx.filter = adjustString(layer);
+      bctx.drawImage(scratch.canvas, 0, 0);
+      bctx.filter = 'none';
+      bctx.restore();
+    }
+    layer.opacity = opacity;
+    layer.blend = blend;
+
+    applyMaskToBuffer(view, layer, bctx, w, h);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = layer.opacity;
+    ctx.globalCompositeOperation = blendOp(layer.blend);
+    ctx.drawImage(buf.canvas, 0, 0);
+    ctx.restore();
+  }
+
   function composite(ctx, doc, view) {
     var stats = { tiles: 0, mips: 0, shapes: 0 };
     if (!doc) return stats;
@@ -1224,6 +1760,10 @@ const PS = (function () {
     for (var i = 0; i < doc.layers.length; i++) {
       var layer = doc.layers[i];
       if (!layer.visible || layer.opacity <= 0) continue;
+      if (layer.mask && layer.mask.enabled && layer.mask.tiles.size) {
+        drawMaskedLayer(ctx, doc, layer, view, stats, scratch);
+        continue;
+      }
       if (layer.type === 'pixel') drawPixelLayer(ctx, doc, layer, view, stats);
       else if (layer.type === 'shape') drawShapeLayer(ctx, doc, layer, view, stats);
       else drawAdjustLayer(ctx, doc, layer, view, scratch);
@@ -1237,16 +1777,42 @@ const PS = (function () {
     var z = view.zoom;
     var dpr = view.dpr || 1;
     var D = function (v) { return Math.round(v * dpr); };
-    ctx.save();
-    ctx.globalAlpha = layer.opacity;
-    ctx.globalCompositeOperation = blendOp(layer.blend);
-    ctx.setTransform(z * dpr, 0, 0, z * dpr, D(view.panX), D(view.panY));
-    ctx.translate(layer.x, layer.y);
-    // 矢量在设备像素空间重画，任意缩放倍率下边缘都保持锐利
-    for (var i = 0; i < layer.shapes.length; i++) {
-      paintShape(ctx, layer.shapes[i]);
+    var bool = hasShapeBoolean(layer.shapes);
+    if (!bool) {
+      ctx.save();
+      ctx.globalAlpha = layer.opacity;
+      ctx.globalCompositeOperation = blendOp(layer.blend);
+      ctx.setTransform(z * dpr, 0, 0, z * dpr, D(view.panX), D(view.panY));
+      ctx.translate(layer.x, layer.y);
+      // 矢量在设备像素空间重画，任意缩放倍率下边缘都保持锐利
+      for (var i = 0; i < layer.shapes.length; i++) {
+        paintShape(ctx, layer.shapes[i]);
+        stats.shapes++;
+      }
+      ctx.restore();
+      return;
+    }
+    // 布尔形状：先按当前视口分辨率在离屏缓冲里逐条复合，再整块贴回。
+    // 缓冲与画布同尺寸（设备像素），因此缩放时边缘仍然锐利。
+    var w = ctx.canvas.width;
+    var h = ctx.canvas.height;
+    var buf = ensureViewBuffer(view, '_shapeBuf', w, h);
+    var bctx = buf.ctx;
+    bctx.setTransform(1, 0, 0, 1, 0, 0);
+    bctx.globalAlpha = 1;
+    bctx.globalCompositeOperation = 'source-over';
+    bctx.clearRect(0, 0, w, h);
+    bctx.setTransform(z * dpr, 0, 0, z * dpr, D(view.panX), D(view.panY));
+    bctx.translate(layer.x, layer.y);
+    for (var j = 0; j < layer.shapes.length; j++) {
+      paintShapeWithOp(bctx, layer.shapes[j], j === 0 ? 'add' : shapeOp(layer.shapes[j]));
       stats.shapes++;
     }
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = layer.opacity;
+    ctx.globalCompositeOperation = blendOp(layer.blend);
+    ctx.drawImage(buf.canvas, 0, 0);
     ctx.restore();
   }
 
@@ -1268,7 +1834,7 @@ const PS = (function () {
     var cv = makeCanvas(layer.width, layer.height);
     cv.ctx.globalAlpha = Math.max(0, Math.min(1, typeof layer.opacity === 'number' ? layer.opacity : 1));
     if (layer.type === 'shape') {
-      (layer.shapes || []).forEach(function (s) { paintShape(cv.ctx, s); });
+      paintShapesBuffered(cv.ctx, layer.shapes || []);
     } else if (layer.type !== 'adjust') {
       layer.tiles.forEach(function (t) { cv.ctx.drawImage(t.canvas, t.x, t.y); });
     }
@@ -1522,7 +2088,7 @@ const PS = (function () {
    * 历史记录不落盘：工程打开后从空历史开始，撤销不会把载入的内容撤掉。
    */
   var PROJECT_FORMAT = 'ilab-project';
-  var PROJECT_VERSION = 1;
+  var PROJECT_VERSION = 2;
 
   async function serializeDoc(doc) {
     var payload = {
@@ -1544,7 +2110,11 @@ const PS = (function () {
       var item = {
         name: l.name, type: l.type, x: l.x, y: l.y,
         width: l.width, height: l.height,
-        opacity: l.opacity, blend: l.blend, visible: l.visible, locked: !!l.locked
+        opacity: l.opacity, blend: l.blend, visible: l.visible,
+        locks: {
+          transparent: !!l.locks.transparent, image: !!l.locks.image,
+          position: !!l.locks.position, all: !!l.locks.all
+        }
       };
       if (l.type === 'pixel') {
         if (l.tiles.size) {
@@ -1553,6 +2123,13 @@ const PS = (function () {
           item.tiles = Array.from(l.tiles.keys());
         } else {
           item.empty = true;
+        }
+        if (l.mask && l.mask.tiles.size) {
+          item.mask = {
+            enabled: l.mask.enabled !== false,
+            png: await canvasDataURL(maskCanvas(l.mask), 'image/png'),
+            tiles: Array.from(l.mask.tiles.keys())
+          };
         }
       } else if (l.type === 'shape') {
         item.shapes = l.shapes || [];
@@ -1594,6 +2171,7 @@ const PS = (function () {
         opacity: typeof it.opacity === 'number' ? it.opacity : 1,
         blend: it.blend || 'normal',
         visible: it.visible !== false,
+        locks: it.locks || null,
         locked: it.locked === true
       };
       if (it.type === 'shape') {
@@ -1647,6 +2225,49 @@ const PS = (function () {
         loaded.release();
         touch(layer);
       }
+      if (it.mask && it.mask.png) {
+        var mloaded = null;
+        try { mloaded = await loadBitmap(it.mask.png); } catch (e2) { mloaded = null; }
+        if (mloaded) {
+          var mask = createMask(layer);
+          mask.enabled = it.mask.enabled !== false;
+          var mkeys = Array.isArray(it.mask.tiles) && it.mask.tiles.length ? it.mask.tiles : null;
+          var mtargets = [];
+          if (mkeys) {
+            mkeys.forEach(function (key) {
+              var parts = String(key).split(',');
+              var mt = ensureMaskTile(mask, Math.round(Number(parts[0]) || 0), Math.round(Number(parts[1]) || 0), true);
+              if (mt) mtargets.push(mt);
+            });
+          } else {
+            var mcols = tileCols(layer);
+            var mrows = tileRows(layer);
+            for (var my = 0; my < mrows; my++) {
+              for (var mx = 0; mx < mcols; mx++) {
+                var mt2 = ensureMaskTile(mask, mx, my, true);
+                if (mt2) mtargets.push(mt2);
+              }
+            }
+          }
+          mtargets.forEach(function (mt) {
+            var sx = (mt.x / lw) * mloaded.width;
+            var sy = (mt.y / lh) * mloaded.height;
+            var sw = Math.max(0.01, (mt.w / lw) * mloaded.width);
+            var sh = Math.max(0.01, (mt.h / lh) * mloaded.height);
+            mt.ctx.drawImage(mloaded.bitmap, sx, sy, sw, sh, 0, 0, mt.w, mt.h);
+            var mi = mt.ctx.getImageData(0, 0, mt.w, mt.h);
+            var md = mi.data;
+            /* 灰度 PNG → 隐藏量 alpha；RGB 清零，合成时只看 alpha */
+            for (var q = 0; q < md.length; q += 4) {
+              md[q + 3] = 255 - md[q];
+              md[q] = 0; md[q + 1] = 0; md[q + 2] = 0;
+            }
+            mt.ctx.putImageData(mi, 0, 0);
+          });
+          mloaded.release();
+          layer.mask = mask;
+        }
+      }
     }
     if (!doc.layers.length) createLayer(doc, { name: '图层 1' });
     var ai = Math.max(0, Math.min(doc.layers.length - 1, Math.round(Number(meta.activeIndex) || 0)));
@@ -1678,7 +2299,7 @@ const PS = (function () {
     } else if (layer.type === 'shape') {
       cv.ctx.save();
       cv.ctx.scale(s, s);
-      (layer.shapes || []).forEach(function (sh) { paintShape(cv.ctx, sh); });
+      paintShapesBuffered(cv.ctx, layer.shapes || []);
       cv.ctx.restore();
     } else {
       layer.tiles.forEach(function (t) {
@@ -1698,6 +2319,7 @@ const PS = (function () {
         return;
       }
       bytes += l.tiles.size * TILE * TILE * 4;
+      if (l.mask) bytes += l.mask.tiles.size * TILE * TILE * 4;
       l.mips.forEach(function (m) { bytes += canvasW(m) * canvasH(m) * 4; });
     });
     var h = doc.history;
@@ -2039,6 +2661,21 @@ const PS = (function () {
     ensureTile: ensureTile,
     ensureAllTiles: ensureAllTiles,
     existingTiles: existingTiles,
+    normalizeLocks: normalizeLocks,
+    hasLock: hasLock,
+    createMask: createMask,
+    ensureMaskTile: ensureMaskTile,
+    maskTileOfLocal: maskTileOfLocal,
+    maskEmpty: maskEmpty,
+    maskCanvas: maskCanvas,
+    maskPreview: maskPreview,
+    bakeMaskToLayerTiles: bakeMaskToLayerTiles,
+    addLayerMask: addLayerMask,
+    removeLayerMask: removeLayerMask,
+    setLayerMaskEnabled: setLayerMaskEnabled,
+    applyLayerMask: applyLayerMask,
+    alphaLocked: alphaLocked,
+    restoreTileAlpha: restoreTileAlpha,
     tileOfLocal: tileOfLocal,
     layerDocRect: layerDocRect,
     fillLayer: fillLayer,
@@ -2095,9 +2732,15 @@ const PS = (function () {
     floodFillLayer: floodFillLayer,
     magicWand: magicWand,
     addShapeLayer: addShapeLayer,
+    appendShape: appendShape,
+    setShapeOp: setShapeOp,
+    shapeOp: shapeOp,
+    SHAPE_OPS: SHAPE_OPS,
+    SHAPE_OP_NAMES: SHAPE_OP_NAMES,
     rasterizeShapeLayer: rasterizeShapeLayer,
     hitShapeLayer: hitShapeLayer,
     shapeBounds: shapeBounds,
+    layerContentBounds: layerContentBounds,
     shapePath: shapePath,
     drawShapesInto: drawShapesInto,
     cloneShape: cloneShape,

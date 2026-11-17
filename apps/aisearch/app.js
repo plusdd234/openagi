@@ -164,6 +164,34 @@
     /* 以下三条由实测补：只查 ai / readability 时找不到爬虫与正文抽取项目。 */
     [/爬虫/, 'crawler'], [/正文/, 'content'], [/抽取/, 'extract']
   ];
+  /* 「找人 / 要邮箱」类问题：中文检索很难把 YouTube 频道页顶上来，
+     这里把问题里的中文概念翻成英文，供相关性判断与英文检索式复用。 */
+  var CONTACT_WORDS = [
+    [/油管|youtube/i, 'youtube'],
+    [/策略|strategy/i, 'strategy'],
+    [/主播|博主|达人|streamer|youtuber/i, 'streamer'],
+    [/邮箱|邮件|e-?mail/i, 'email'],
+    [/游戏|game/i, 'game']
+  ];
+  /* 「策略游戏」在 YouTube 上不只叫 strategy game：grand strategy / total war
+     都是同一品类的常用说法，检索与相关性判断都要认这些词。 */
+  var CONTACT_SYNONYM = [
+    [/strategy\s*games?|策略/i, ['grand strategy', 'total war', '4x strategy']]
+  ];
+  function contactSyn(q) {
+    var out = [];
+    CONTACT_SYNONYM.forEach(function (p) {
+      if (!p[0].test(q)) return;
+      p[1].forEach(function (w) { if (out.indexOf(w) < 0) out.push(w); });
+    });
+    return out;
+  }
+  /* 联系方式任务的排序标志：频道页、榜单页、含联系方式的页面优先。 */
+  var CONTACT_HINT = /(youtube|youtu\.be|频道|主播|博主|up主|邮箱|邮件|contact|business|合作|联系)/i;
+  /* 判「是否真的答上」要严得多：只有出现联系方式、邮箱或真正的频道页才算，
+     否则一篇「游戏主播营销策略」也会被当成结果，把英文检索轮次直接掐掉。 */
+  var CONTACT_ANSWER = /(邮箱|邮件|e-?mail|contact|business|商务|合作|联系|@[a-z0-9.-]+\.[a-z]{2,})/i;
+  var YT_CHANNEL = /youtube\.com\/(@[^/?#]+|channel\/|c\/|user\/)/i;
   /* GitHub 检索是 AND 语义，词越多命中越少，所以准备三档检索式：
      ① 主档：完整组合；② 核心档：去掉 template / framework 这类修饰词；
      ③ 宽松档：再去掉最短的实词（通常是 2d / ai 这种限定词）。
@@ -369,6 +397,9 @@
     });
     var out = [];
     var used = 0;
+    /* 一个词都没命中（常见于英文频道页 vs 中文提问）时，别只丢第一段，
+       否则模型只能看到频道名，没法判断这个频道到底播什么。 */
+    if (!scored.length || !scored[0].score) return String(text || '').slice(0, maxLen);
     for (var j = 0; j < scored.length; j++) {
       if (!scored[j].score && out.length) continue;
       if (used + scored[j].p.length + 1 > maxLen) continue;
@@ -457,6 +488,7 @@
         return html;
       });
       return p.then(function (html) {
+        if (S.intentKind === 'contact') recordEmails(html, { idx: 0, title: c.title, url: c.url });
         var page = extractPage(html);
         harvestKeywords(page.text, S.query).forEach(function (k) { kw[k] = (kw[k] || 0) + 1; });
         links = links.concat(extractLinks(html, c.url));
@@ -635,6 +667,8 @@
     ghQuery: '',
     ghRateLimited: false,
     pageCache: Object.create(null),
+    emails: [],
+    intentKind: '',
     answer: '',
     error: '',
     note: '',
@@ -740,6 +774,13 @@
   function relevantTokens(q) {
     var out = distinctiveTokens(q);
     GH_WORDS.forEach(function (p) { if (p[0].test(q)) out.push(p[1]); });
+    /* 联系方式任务必须承认英文频道页 / 榜单页，否则它们会被当成「与问题无关」整批丢掉。 */
+    if (inferIntent(q).kind === 'contact') {
+      CONTACT_WORDS.forEach(function (p) {
+        if (p[0].test(q) && out.indexOf(p[1]) < 0) out.push(p[1]);
+      });
+      contactSyn(q).forEach(function (w) { if (out.indexOf(w) < 0) out.push(w); });
+    }
     return out;
   }
   function relevantTo(r, tokens) {
@@ -757,13 +798,18 @@
     var dropped = [];
     var seen = Object.create(null);
     var seenUrl = Object.create(null);
+    var seenTitle = Object.create(null);
     var tokens = relevantTokens(q);
+    var contact = inferIntent(q).kind === 'contact';
     (list || []).forEach(function (raw) {
       var url = String(raw && raw.url || '').trim();
       var title = clip(raw.title || hostOf(url), 120);
       var why = blockedReason({ url: url, title: title });
       if (why) { dropped.push({ url: url, title: title, why: why }); return; }
-      if (!relevantTo({ title: title, snippet: raw.snippet, url: url }, tokens)) {
+      /* 联系人任务里，YouTube 频道页本身就是答案载体：频道名往往不含问题里的
+         「strategy」，但它是按对应检索式拿到的，不能按字面相关度丢掉。 */
+      var isChannel = contact && YT_CHANNEL.test(url);
+      if (!isChannel && !relevantTo({ title: title, snippet: raw.snippet, url: url }, tokens)) {
         dropped.push({ url: url, title: title, why: '与问题无关' });
         return;
       }
@@ -773,6 +819,13 @@
       var key = hostOf(url).toLowerCase() + '|' + title.replace(/[\s\-_|｜:：]+/g, '').toLowerCase();
       if (seen[key]) { dropped.push({ url: url, title: title, why: '重复结果' }); return; }
       seen[key] = 1;
+      /* 找人任务里，同一篇「如何找主播」会被搬运到十几个站，标题一字不差；
+         只按站点去重会让 6 个精读名额全被同一篇文章占满。 */
+      if (contact) {
+        var tk = title.replace(/[\s\-_|｜:：,，。.!！?？"'“”‘’()（）\[\]【】]+/g, '').toLowerCase();
+        if (tk && seenTitle[tk]) { dropped.push({ url: url, title: title, why: '重复标题' }); return; }
+        if (tk) seenTitle[tk] = 1;
+      }
       kept.push({
         title: title,
         url: url,
@@ -783,11 +836,23 @@
         /* 备用源（360）的结果链接都指向 so.com 跳转：这个标记必须带下去，
            否则排序时会被当成同一个站点，10 条只留下 2 条。 */
         alt: !!raw.alt,
+        /* 频道检索结果里直接带出了简介邮箱：留在结果上，排序与作答都要用。 */
+        email: raw.email || '',
         trusted: trustedHost(hostOf(url))
       });
     });
-    /* 排序：人工种子 > 仓库 > 可信站 > 其他；同级保持搜索源名次。 */
-    function rank(x) { return x.seed ? 3 : (x.repo ? 2 : (x.trusted ? 1 : 0)); }
+    /* 排序：人工种子 > 仓库 > 可信站 > 其他；同级保持搜索源名次。
+       联系方式任务把「榜单 / 频道 / 邮箱」类结果整体提到前面，「如何找主播」这类教程往后放。 */
+    function rank(x) {
+      var base = x.seed ? 3 : (x.repo ? 2 : (x.trusted ? 1 : 0));
+      if (contact) {
+        var t = String(x.title || '') + ' ' + String(x.snippet || '') + ' ' + String(x.url || '');
+        if (CONTACT_HINT.test(t)) base += 4;
+        if (/(best|top|榜单|排行|频道|channels|邮箱|e-?mail|contact)/i.test(t)) base += 3;
+        if (/(如何|怎么|教程|攻略|指南|推广策略)/.test(t)) base -= 3;
+      }
+      return base;
+    }
     kept.sort(function (a, b) { return rank(b) - rank(a); });
     return { kept: kept, dropped: dropped };
   }
@@ -851,15 +916,33 @@
     return t.length < 1500 && LOGIN_WALL.test(t);
   }
 
+  /* YouTube 在浏览器指纹下会回超大响应头，本地中转解析不了（502 Header overflow）；
+     Jina Reader 能把频道页转成纯文本，/about 里的商务邮箱仍然保留。
+     联系人任务只读 YouTube 频道页，这里统一绕行。 */
+  var JINA = 'https://r.jina.ai/';
+  function isYouTube(url) {
+    return /(^|\.)youtube\.com$/i.test(hostOf(url));
+  }
+  function readViaJina(url, signal) {
+    return fetchPage(JINA + url, signal);
+  }
+
   function fetchPage(url, signal, depth) {
     depth = depth || 0;
+    if (S.intentKind === 'contact' && isYouTube(url) && String(url).indexOf(JINA) !== 0) {
+      url = JINA + url;
+    }
     /* 已经在限流冷却里的站直接跳过，别让整轮精读都卡在同一个被封的域名上。 */
     var cooling = hostCooling(url);
     if (cooling) return Promise.reject(new Error('站点按 IP 限流，约 ' + cooling + ' 后再试'));
     return new Promise(function (resolve, reject) {
       var ctrl = new AbortController();
       var timedOut = false;
-      var timer = setTimeout(function () { timedOut = true; ctrl.abort(); }, PAGE_TIMEOUT);
+      /* YouTube 频道检索 / 关于页都有大段内联 JSON，默认超时经常卡在下载中途；
+         Jina Reader 这边还要先回源抓取 YouTube，再给更宽的时间。 */
+      var wait = String(url).indexOf(JINA) === 0 ? PAGE_TIMEOUT * 4
+        : (/(^|\.)youtube\.com\//i.test(url) ? PAGE_TIMEOUT * 2 : PAGE_TIMEOUT);
+      var timer = setTimeout(function () { timedOut = true; ctrl.abort(); }, wait);
       function onAbort() { ctrl.abort(); }
       if (signal) {
         if (signal.aborted) { clearTimeout(timer); reject(abortErr()); return; }
@@ -907,12 +990,17 @@
           if (ct && !/text\/html|application\/xhtml|text\/plain/.test(ct)) throw new Error('不是网页正文');
           return res.text();
         }).then(function (html) {
-          /* 有些搜索站用 JS 跳转（window.location.replace）而不是 302，
-             只回一张几百字节的空壳。识别出真实地址后再抓一次。 */
-          var m = String(html || '').length < 1600
-            ? /location\.(?:replace|href)\s*=\s*["']([^"']+)["']/i.exec(html)
+          /* 有些搜索站用 JS 跳转（window.location.replace(...)）而不是 302，
+             只回一张几百字节的空壳。识别出真实地址后再抓一次。
+             注意 replace 是函数调用，不是赋值：旧正则只认 location.replace = "..."，
+             结果 360 的 /link 空壳一直没被跟进去，线索从源头就断了。 */
+          var htmls = String(html || '');
+          var m = htmls.length < 1600
+            ? (/location\.(?:replace|assign)\s*\(\s*["']([^"']+)["']\s*\)/i.exec(htmls)
+              || /location(?:\.href)?\s*=\s*["']([^"']+)["']/i.exec(htmls)
+              || /http-equiv=["']refresh["'][^>]*content=["'][^"']*?url=([^"'>\s]+)/i.exec(htmls))
             : null;
-          if (m && depth < 1 && /^https?:\/\//i.test(m[1])) {
+          if (m && m[1] && depth < 2 && /^https?:\/\//i.test(m[1])) {
             clearTimeout(timer);
             if (signal) signal.removeEventListener('abort', onAbort);
             fetchPage(m[1], signal, depth + 1).then(resolve, reject);
@@ -923,7 +1011,7 @@
           if (ctrl.signal.aborted) {
             /* 超时和用户点「停止」都会 abort，必须分开：前者算「这篇没读到」，
                后者要整轮退出。混在一起会让超时的那篇永远停在「等待读取」。 */
-            finish(timedOut ? new Error('站点在 ' + Math.round(PAGE_TIMEOUT / 1000) + ' 秒内没有响应') : abortErr());
+            finish(timedOut ? new Error('站点在 ' + Math.round(wait / 1000) + ' 秒内没有响应') : abortErr());
             return;
           }
           if (i + 1 < attempts.length) next(i + 1);
@@ -1047,6 +1135,18 @@
 
   function extractPage(html) {
     var raw = String(html || '');
+    /* Jina Reader 输出的是 markdown：正文前面压着大量导航、头像与「Subscribe」，
+       直接按前 5200 字截断会把频道简介（邮箱通常就在里面）挤掉，这里先清一遍噪音。 */
+    if (raw.indexOf('Markdown Content:') >= 0) {
+      raw = raw.split('\n').filter(function (line) {
+        var t = line.trim();
+        if (!t) return false;
+        if (/^(Skip navigation|Search|Search with your voice|Sign in|Subscribe|Back|Show more|NaN \/ NaN|Live|Home|Shorts|Subscriptions)$/i.test(t)) return false;
+        if (/accounts\.google\.com|yt3\.ggpht\.com|encrypted-tbn\d*\.gstatic\.com|googleusercontent/.test(t)) return false;
+        if (/^\[?!\[Image \d+\]/i.test(t)) return false;
+        return true;
+      }).join('\n');
+    }
     var title = '';
     var tm = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(raw);
     if (tm) title = clip(decodeEnt(tm[1].replace(/<[^>]+>/g, ' ')), 120);
@@ -1162,6 +1262,117 @@
     }).catch(function () { return []; });
   }
 
+  /* 英文检索式在中文索引里经常只得到词典释义；DDG 的 html 出口对
+     「best strategy game youtubers」这类榜单式英文查询稳定得多，作为联系人任务的备用源。 */
+  function ddgSearch(q, signal) {
+    var url = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q);
+    function real(href) {
+      var h = decodeEnt(href || '').trim();
+      var m = /[?&]uddg=([^&]+)/.exec(h);
+      if (m) { try { return decodeURIComponent(m[1]); } catch (e) { /* ignore */ } }
+      if (h.indexOf('//') === 0) return 'https:' + h;
+      return h;
+    }
+    return fetchPage(url, signal).then(function (html) {
+      var out = [];
+      String(html || '').split(/<div class="result results_links/).slice(1).forEach(function (blk) {
+        var a = /<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(blk);
+        if (!a) return;
+        var link = real(a[1]);
+        if (!/^https?:\/\//i.test(link) || /duckduckgo\.com\/y\.js/i.test(link)) return;
+        var title = clip(stripTags(a[2]), 120);
+        if (!title) return;
+        var sn = /class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i.exec(blk);
+        out.push({
+          title: title,
+          url: link,
+          snippet: clip(stripTags(sn ? sn[1] : ''), 360),
+          host: hostOf(link),
+          alt: false,
+          ddg: true
+        });
+      });
+      return out.slice(0, 10);
+    }).catch(function () { return []; });
+  }
+
+  /* 直接问 YouTube：用频道筛选（sp=EgIQAg==）搜「strategy game youtuber」，
+     结果就是频道本身，绕开英文搜索站的反爬验证页。浏览器 UA 直连会 502，
+     所以统一经 Jina Reader 转成文本；频道名 / @handle 从 markdown 链接里取。 */
+  function youtubeChannels(q, signal) {
+    var url = 'https://www.youtube.com/results?search_query=' + encodeURIComponent(q) + '&sp=EgIQAg%253D%253D';
+    function push(list, seen, name, link, email, desc) {
+      var n = String(name || '').trim();
+      /* Jina 的链接文字会把头像 alt 与频道名拼在一起（「X X」），折半去重。 */
+      var half = Math.floor(n.length / 2);
+      if (n.length % 2 === 0 && half > 1 && n.slice(0, half) === n.slice(half)) n = n.slice(0, half);
+      if (!n || n.length < 2 || /^!/.test(n)) return;
+      var base = String(link || '').replace(/^http:/, 'https:')
+        .replace(/\/(videos|shorts|streams|playlists)$/i, '')
+        .replace(/\/about\/?$/i, '')
+        .replace(/\/$/, '');
+      if (!base || seen[base]) return;
+      seen[base] = 1;
+      list.push({
+        title: clip(n, 80),
+        url: base + '/about',
+        /* 频道简介能说明「播什么」，判断是不是策略游戏主播全靠它。 */
+        snippet: clip(n + (desc ? ' · ' + desc : '') + ' · YouTube 频道', 180),
+        host: 'www.youtube.com',
+        alt: false,
+        yt: true,
+        email: email || ''
+      });
+    }
+    function parseMarkdown(text) {
+      var out = [];
+      var seen = Object.create(null);
+      var re = /\[([^\]\n]{2,260})\]\((https?:\/\/(?:www\.|m\.)?youtube\.com\/(?:@[A-Za-z0-9_.-]+|channel\/UC[A-Za-z0-9_-]+))(?:[^)]*)\)/g;
+      var m;
+      while ((m = re.exec(String(text || '')))) {
+        var txt = decodeEnt(m[1]).replace(/^\s*!\[[^\]]*\]\([^)]*\)\s*/, '');
+        var name = txt
+          .replace(/\s+@[A-Za-z0-9_.-]+[\s\S]*$/, '')
+          .replace(/\s*•[\s\S]*$/, '');
+        var desc = txt.replace(/^[\s\S]*?subscribers\s*/i, '').replace(/\[[^\]]*\]\([^)]*\)/g, ' ').trim();
+        /* 频道简介里的邮箱就是频道的对外联系方式：不再要求附近出现
+           business / email 字样（很多频道只写「Incredibly uninformed. xxx@…」）。 */
+        var em = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.exec(m[1]);
+        var email = em && emailUsable(em[0]) ? em[0].toLowerCase() : '';
+        push(out, seen, name, m[2], email, clip(desc, 120));
+      }
+      return out;
+    }
+    function parseHtml(html) {
+      var out = [];
+      var seen = Object.create(null);
+      var re = /"channelRenderer":\{"channelId":"(UC[^"]+)"[\s\S]{0,700}?"title":\{"simpleText":"([^"]+)"/g;
+      var m;
+      while ((m = re.exec(String(html || '')))) {
+        var seg = html.slice(m.index, m.index + 1800);
+        var h = /"canonicalBaseUrl":"(\/@[^"]+)"/.exec(seg);
+        var name = decodeEnt(m[2]).replace(/\\u([0-9a-f]{4})/gi, function (_, x) {
+          return String.fromCharCode(parseInt(x, 16));
+        }).replace(/\\"/g, '"');
+        push(out, seen, name, h ? 'https://www.youtube.com' + h[1] : 'https://www.youtube.com/channel/' + m[1]);
+      }
+      return out;
+    }
+    return readViaJina(url, signal).then(function (text) {
+      var out = parseMarkdown(text);
+      if (!out.length) out = parseHtml(text);
+      /* 检索结果页里的邮箱已经和频道名绑好了，先记下来；
+         后续 /about 抓取成功时再按邮箱去重补充来源编号。 */
+      out.forEach(function (r) {
+        if (!r.email || S.emails.some(function (x) { return x.email === r.email; })) return;
+        S.emails.push({ email: r.email, idx: 0, title: r.title, url: r.url, yt: true });
+      });
+      /* 带着公开邮箱的频道优先排进来，别在截断处被普通频道挤掉。 */
+      out.sort(function (a, b) { return (b.email ? 1 : 0) - (a.email ? 1 : 0); });
+      return out.slice(0, 12);
+    }).catch(function () { return []; });
+  }
+
   /* ---------------- 候选池扫描（程序筛 + AI 判） ----------------
    * 搜索源一次只给十来条，而真正的答案常藏在「工具清单 / 对比帖 / 资源汇总」的外链里。
    * 这里不做整篇精读，而是把每个候选页压成一份「词表」：
@@ -1262,6 +1473,8 @@
         var u = String(r.url || '').replace(/#.*$/, '');
         if (!u || seen[u]) return;
         if (blockedReason({ url: u, title: r.title })) return;
+        /* 找人任务：YouTube 频道页体积大、扫描价值低，统一交给 crawlSources 走 /about 取邮箱。 */
+        if (S.intentKind === 'contact' && /(^|\.)youtube\.com$/i.test(hostOf(u))) return;
         var text = (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.link ? '' : u)).toLowerCase();
         var hit = tokens.some(function (t) { return t && text.indexOf(t) >= 0; });
         if (!hit && !r.seed && !r.repo && !r.link && !trustedHost(hostOf(u)) && !isCommunity(u)) return;
@@ -1386,12 +1599,23 @@
   function rankPool(list, q) {
     var tokens = relevantTokens(q);
     var kws = (S.skim && S.skim.keywords) || [];
+    var contact = inferIntent(q).kind === 'contact';
     var seen = Object.create(null);
+    var seenTitle = Object.create(null);
     var scored = [];
     (list || []).forEach(function (r, i) {
       var u = String(r.url || '').replace(/#.*$/, '');
       if (!u || seen[u]) return;
       seen[u] = 1;
+      /* 外链候选没经过 cleanResults：同一篇教程被多个搬运站收录时标题一字不差，
+         按标题再去一次，避免精读名额被同一篇文章占满。 */
+      var tk = String(r.title || '').replace(/[\s\-_|｜:：,，。.!！?？"'“”‘’()（）\[\]【】]+/g, '').toLowerCase();
+      if (tk.length > 8) {
+        /* 用前缀做键：搬运站会截断长标题，后半段不同但其实是同一篇。 */
+        var key = tk.slice(0, 30);
+        if (seenTitle[key]) return;
+        seenTitle[key] = 1;
+      }
       var host = r.host || hostOf(u);
       var text = (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + u).toLowerCase();
       var score = 0;
@@ -1403,6 +1627,14 @@
       if (isCommunity(u)) score += 1;
       /* 筛读阶段被 AI 判为「值得读」的，优先进入结果与精读名单。 */
       if (r.pick) score += 6;
+      /* 找人 / 邮箱：频道页、榜单页、含联系方式的页面优先，否则会被泛新闻挤出精读名额。 */
+      if (contact) {
+        if (CONTACT_HINT.test(text)) score += 7;
+        if (/(best|top|榜单|排行|频道|channels|邮箱|e-?mail|contact)/i.test(text)) score += 4;
+        if (/(如何|怎么|教程|攻略|指南|推广策略)/.test(text)) score -= 4;
+        /* 简介里已经写明商务邮箱的频道，就是最直接的答案。 */
+        if (r.email) score += 8;
+      }
       score += Math.max(0, 4 - Math.floor(i / 4));
       /* 外链候选没有搜索名次，必须自己挣到相关性，否则会混进一堆导航链接。 */
       if (r.link && score < 3) return;
@@ -1412,11 +1644,14 @@
     var out = [];
     var siteCount = Object.create(null);
     scored.forEach(function (x) {
-      if (out.length >= MAX_RESULTS) return;
+      /* 找人任务要读一串频道，10 条不够把「像目标品类」和「有公开邮箱」两类都覆盖到。 */
+      if (out.length >= (contact ? 12 : MAX_RESULTS)) return;
       var site = siteOf(x.host);
       /* 备用源（360）的结果链接都指向 so.com 跳转，不能按站点配额压掉。
          仓库页不设小配额：搜「开源 xx 模板」时，真正的答案就是这一串仓库。 */
       var cap = x.r.alt ? MAX_RESULTS : (/(^|\.)github\.com$/.test(site) ? MAX_RESULTS : 2);
+      /* 找主播邮箱时，多个频道页同属 youtube.com，每个频道都是一条独立答案。 */
+      if (contact && /(^|\.)youtube\.com$/.test(site)) cap = 12;
       if ((siteCount[site] || 0) >= cap) return;
       siteCount[site] = (siteCount[site] || 0) + 1;
       out.push(x.r);
@@ -1433,6 +1668,11 @@
       if (cursor >= list.length) return Promise.resolve();
       var s = list[cursor++];
       if (signal.aborted) return Promise.resolve();
+      /* 找人任务抓到的是频道主页：主页没有商务邮箱，直接改抓同一频道的 /about。 */
+      if (S.intentKind === 'contact') {
+        var about = channelAbout(s.url);
+        if (about) s.url = about;
+      }
       s.status = 'loading';
       renderSources();
       var ready = S.pageCache[s.url];
@@ -1441,6 +1681,7 @@
         return html;
       });
       return page.then(function (html) {
+        if (S.intentKind === 'contact') recordEmails(html, s);
         var ex = extractPage(html);
         s.links = extractLinks(html, s.url);
         /* 知乎 / 百科在未登录时会给一整页「登录后查看」：不能当正文，也不能拿去抽词。 */
@@ -1480,11 +1721,25 @@
     return parts.slice(-2).join('.');
   }
 
+  /* YouTube 频道主页不会直接暴露商务邮箱，/about 页才会；
+     顺着榜单页找到频道链接后，统一补成 /about 再抓一次。 */
+  function channelAbout(u) {
+    if (!/(^|\.)youtube\.com$/i.test(hostOf(u))) return '';
+    var p = '';
+    try { p = new URL(u).pathname || ''; } catch (e) { return ''; }
+    if (/\/about\/?$/i.test(p)) return 'https://www.youtube.com' + p.replace(/\/$/, '');
+    if (/^\/(@[^/]+|channel\/[^/]+|c\/[^/]+|user\/[^/]+)\/?$/i.test(p)) {
+      return 'https://www.youtube.com' + p.replace(/\/$/, '') + '/about';
+    }
+    return '';
+  }
+
   /* 顺着线索再读两篇：从已读页面的出站链接里挑与问题最相关、且不在已读站点内的，
      再抓一轮。很多工具站不会直接出现在搜索结果里，但会出现在「XX 工具清单」页的链接里。 */
   function followTrail(q, signal) {
     var tokens = relevantTokens(q);
     var kwTokens = (S.skim && S.skim.keywords) || [];
+    var contact = inferIntent(q).kind === 'contact';
     var hosts = Object.create(null);
     var sites = Object.create(null);
     var urls = Object.create(null);
@@ -1509,11 +1764,20 @@
     pools.forEach(function (s) {
       (s.links || []).forEach(function (l) {
         var u = String(l.url || '').replace(/#.*$/, '');
-        if (!u || urls[u]) return;
-        var host = hostOf(u);
-        if (!host || hosts[host] || sites[siteOf(host)]) return;
-        if (pickedSites[siteOf(host)]) return;
-        if (blockedReason({ url: u, title: l.text })) return;
+        if (!u) return;
+        /* 联系方式任务：频道根路径直接改抓 /about；其余链接按原逻辑走。 */
+        var about = contact ? channelAbout(u) : '';
+        var target = about || u;
+        if (urls[target]) return;
+        var host = hostOf(target);
+        if (!host) return;
+        /* 找人任务只跟频道 /about，不跟视频页（视频页没有联系方式且体积极大）。 */
+        if (contact && /(^|\.)youtube\.com$/i.test(host) && !about) return;
+        /* 普通任务按站点去重；找人任务允许多个 YouTube 频道同站并存。 */
+        if (!contact && (hosts[host] || sites[siteOf(host)])) return;
+        if (contact && !about && (hosts[host] || sites[siteOf(host)])) return;
+        if (!contact && pickedSites[siteOf(host)]) return;
+        if (blockedReason({ url: target, title: l.text })) return;
         var low = (l.text + ' ' + u).toLowerCase();
         var score = 0;
         tokens.forEach(function (t) { if (low.indexOf(t) >= 0) score += t.length > 3 ? 3 : 2; });
@@ -1522,14 +1786,15 @@
         /* 官网链接的锚文本常常只写品牌名（Meshy / Tripo / OpenRA），不含问题里的词。
            这类链接恰恰是我们要找的，所以可信域名单独给分，不强制词命中。 */
         if (trustedHost(host)) score += 3;
+        if (about) score += 8;
         if (!score) return;
-        urls[u] = 1;
-        pickedSites[siteOf(host)] = 1;
-        cands.push({ url: u, text: l.text, host: host, score: score });
+        urls[target] = 1;
+        if (!contact) pickedSites[siteOf(host)] = 1;
+        cands.push({ url: target, text: l.text, host: host, score: score });
       });
     });
     cands.sort(function (a, b) { return b.score - a.score; });
-    var picks = cands.slice(0, 2);
+    var picks = cands.slice(0, contact ? 3 : 2);
     if (!picks.length) return Promise.resolve();
     var extra = picks.map(function (c, i) {
       return {
@@ -1564,7 +1829,10 @@
       + '4. 资料互相矛盾时并列说明分歧，不要强行统一。\n'
       + '5. 不复述原文超过两句，用转述；不写「根据资料」「以下是」这类空话。\n'
       + '6. 不要输出网址列表（来源卡片由界面负责），正文里只保留编号引用。\n'
-      + '7. 今天是 ' + today() + '；涉及时效的信息要注明资料的日期或「资料未注明日期」。';
+      + '7. 今天是 ' + today() + '；涉及时效的信息要注明资料的日期或「资料未注明日期」。'
+      + (S.intentKind === 'contact'
+        ? '\n8. 用户要的是具体人物 / 团队的联系方式：只列与目标人物或频道明确绑定的公开邮箱，并标来源编号；不要把平台客服、站点投稿、无关公司的邮箱当作答案；找不到就直说「没有找到公开邮箱」。'
+        : '');
   }
 
   function userPrompt(q, sources) {
@@ -1576,18 +1844,26 @@
         var site = mediaSite(s.host);
         head += '平台：' + (site ? site.name : s.host) + '｜页面判定：' + MEDIA_STATUS[s.media || 'unknown'] + '\n';
       }
-      var base = pickRelevant(s.text, q, PROMPT_PER_SOURCE);
+      var base = pickRelevant(s.text, q, PROMPT_PER_SOURCE,
+        S.intentKind === 'contact' ? relevantTokens(q) : []);
       /* 补充精读：粗读捞到的关键词再做一遍段落检索，把「同义但没出现问题词」的部分补上。 */
       var extra = kw.length ? supplementText(s.text, base, kw, PROMPT_EXTRA) : '';
       return head + s.url + '\n' + base + (extra ? '\n（补充摘录）\n' + extra : '');
     }).join('\n\n');
-    return '用户问题：' + q + '\n\n资料（共 ' + usable.length + ' 篇，已去除广告与导航）：\n' + list;
+    return '用户问题：' + q + '\n\n资料（共 ' + usable.length + ' 篇，已去除广告与导航）：\n' + list + (S.intentKind === 'contact' ? emailBlock() : '');
   }
 
   /* 没有模型时的降级：不假装给了答案，只把正文摘录摆出来，并说明如何配置。 */
   function fallbackAnswer(sources) {
     var usable = sources.filter(function (s) { return s.text; });
     var out = ['**未能生成 AI 摘要：语言模型未配置或暂时不可用。**', '', '下面是已抓取到的网页正文摘录，可直接点来源核对：'];
+    if (S.intentKind === 'contact' && S.emails.length) {
+      out.push('', '**程序从页面抽到的公开邮箱：**');
+      S.emails.forEach(function (x) {
+        var n = emailIdx(x);
+        out.push('- ' + x.email + ' ← ' + (n ? '[' + n + '] ' : '') + x.title);
+      });
+    }
     usable.forEach(function (s) {
       out.push('');
       out.push('**[' + s.idx + '] ' + s.title + '**');
@@ -1603,11 +1879,88 @@
     return null;
   }
 
+  /* ---------------- 邮箱抽取 ----------------
+   * 找人任务真正要交付的是「哪个频道 → 哪个邮箱」。模型只能读摘要，
+   * 所以程序先把页面里的公开邮箱抽出来，连同来源一起交给模型判断归属。 */
+  function cfEmails(raw) {
+    var out = [];
+    var re = /data-cfemail="([0-9a-f]+)"/gi;
+    var m;
+    while ((m = re.exec(raw))) {
+      try {
+        var k = parseInt(m[1].slice(0, 2), 16);
+        var s = '';
+        for (var i = 2; i < m[1].length; i += 2) {
+          s += String.fromCharCode(parseInt(m[1].slice(i, i + 2), 16) ^ k);
+        }
+        out.push({ email: s, at: m.index });
+      } catch (e) { /* ignore */ }
+    }
+    return out;
+  }
+  function emailUsable(e) {
+    e = String(e || '').toLowerCase().replace(/^mailto:/, '');
+    if (!/^[a-z0-9][a-z0-9._%+-]*@[a-z0-9.-]+\.[a-z]{2,}$/.test(e)) return false;
+    if (/\.(png|jpe?g|gif|webp|svg|css|js|woff2?)$/.test(e)) return false;
+    var domain = e.split('@')[1];
+    /* 平台客服 / 法务邮箱不是主播邮箱，留着只会污染答案。 */
+    if (/^(youtube\.com|google\.com|gstatic\.com|bilibili\.com|douyin\.com|facebook\.com|twitter\.com|x\.com|instagram\.com|tiktok\.com)$/.test(domain)) return false;
+    var local = e.split('@')[0];
+    if (/^(noreply|no-reply|donotreply|privacy|abuse|postmaster|webmaster|dmca)$/.test(local)) return false;
+    return true;
+  }
+  function recordEmails(html, s) {
+    if (!html || !s) return;
+    var raw = String(html);
+    var found = [];
+    var re = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+    var m;
+    while ((m = re.exec(raw))) found.push({ email: m[0], at: m.index });
+    cfEmails(raw).forEach(function (x) { found.push(x); });
+    found.forEach(function (f) {
+      var email = String(f.email || '').toLowerCase();
+      if (!emailUsable(email)) return;
+      var ctx = raw.slice(Math.max(0, f.at - 140), f.at + email.length + 140);
+      var contactish = /business|contact|inquir|合作|商务|联系|邮箱|e-?mail|mailto/i.test(ctx);
+      if (!contactish) return;
+      if (S.emails.some(function (x) { return x.email === email; })) return;
+      S.emails.push({
+        email: email,
+        idx: s.idx || 0,
+        title: s.title || hostOf(s.url) || '',
+        url: s.url || '',
+        yt: /(^|\.)youtube\.com$/i.test(hostOf(s.url) || '')
+      });
+    });
+  }
+  /* 频道检索阶段记下的邮箱还没有来源编号：按 URL 回 S.sources 里找对应编号。 */
+  function emailIdx(x) {
+    if (x.idx) return x.idx;
+    var u = String(x.url || '').replace(/\/about\/?$/i, '');
+    var hit = (S.sources || []).filter(function (s) {
+      return s && String(s.url || '').replace(/\/about\/?$/i, '') === u;
+    })[0];
+    return hit ? hit.idx : 0;
+  }
+  function emailBlock() {
+    if (!S.emails.length) return '';
+    var seen = Object.create(null);
+    var lines = [];
+    S.emails.forEach(function (x) {
+      if (seen[x.email]) return;
+      seen[x.email] = 1;
+      var n = emailIdx(x);
+      lines.push('- ' + x.email + ' ← ' + (n ? '[' + n + '] ' : '') + x.title + (x.yt ? '（YouTube 频道页）' : ''));
+    });
+    return '\n\n程序从抓取页面中抽到的公开邮箱（可能混有站点邮箱，只保留属于目标人物的）：\n' + lines.join('\n');
+  }
+
   /* ---------------- 意图理解 ----------------
    * 「找工具」和「查报错」需要完全不同的检索式与线索来源：
    * 找工具要多问「工具 / 推荐」，资源类要落到 GitHub，排错要找具体报错和解决帖。
    * 这一步决定接下来用哪种说法再问一次，而不是盲目短语料。 */
   var INTENTS = [
+    { kind: 'contact', label: '找人 / 联系方式', re: /(邮箱|邮件|联系方式|商务合作|合作邮箱|contact|e-?mail|inquir)/i, adds: ['商务合作 邮箱'] },
     { kind: 'tool', label: '找工具 / 选型', re: /(工具|网站|平台|软件|生成器|在线|推荐|哪个|好用|替代)/i, adds: ['工具', '推荐'] },
     { kind: 'trouble', label: '排查 / 解决', re: /(报错|错误|失败|无法|不能|解决|修复|崩溃|闪退)/i, adds: ['解决', '教程'] },
     { kind: 'learn', label: '学习 / 上手', re: /(怎么|如何|教程|入门|学习|配置|安装|使用)/i, adds: ['教程', '入门'] },
@@ -1620,6 +1973,31 @@
       }
     }
     return { kind: 'general', label: '通用资料', adds: ['经验'] };
+  }
+
+  /* 「找主播邮箱」这类任务，中文检索只能拿到平台新闻；真正有邮箱的是
+     YouTube 频道 /about 页，所以先把品类译成英文，再用榜单式检索式找频道。 */
+  var CONTACT_SUBJECT = [
+    [/策略游戏|策略类|strategy\s*games?/i, 'strategy game'],
+    [/射击游戏|shooter/i, 'shooter game'],
+    [/角色扮演|rpg/i, 'rpg'],
+    [/沙盒|sandbox/i, 'sandbox game'],
+    [/赛车|racing/i, 'racing game'],
+    [/游戏|game/i, 'game']
+  ];
+  function contactQueries(q) {
+    var subj = '';
+    for (var i = 0; i < CONTACT_SUBJECT.length; i++) {
+      if (CONTACT_SUBJECT[i][0].test(q)) { subj = CONTACT_SUBJECT[i][1]; break; }
+    }
+    if (!subj) return [];
+    var role = /(主播|博主|up主|youtuber|streamer|创作者|creator)/i.test(q) ? 'youtuber' : 'creator';
+    return [
+      'best ' + subj + ' ' + role + 's',
+      /* 去掉 best、用单数，YouTube 反而更认品类词：会回这个品类本身的频道，
+         而不是被「best」带偏到泛游戏 / 手游频道。 */
+      subj + ' ' + role
+    ].concat(contactSyn(q).map(function (w) { return w + ' ' + role; })).slice(0, 4);
   }
 
   /* 社区页（贴吧 / 知乎 / 豆瓣 / Reddit / V2EX / Stack Overflow）的价值不在正文，
@@ -1639,6 +2017,16 @@
     (list || []).forEach(function (r) {
       if (relevantTo({ title: r.title, snippet: r.snippet, url: r.url }, tokens)) hit++;
     });
+    /* 联系方式任务不能只按中文字面判命中：一篇「主播新闻」也会命中「主播」，
+       但它给不了邮箱。必须看到频道 / 邮箱 / 联系这类信号才算真的答上。 */
+    if (inferIntent(q).kind === 'contact') {
+      var strong = 0;
+      (list || []).forEach(function (r) {
+        var t = String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.url || '');
+        if (CONTACT_ANSWER.test(t) || YT_CHANNEL.test(String(r.url || ''))) strong++;
+      });
+      return { total: (list || []).length, hit: strong, ok: strong >= 2 || (strong >= 1 && (list || []).length <= 2) };
+    }
     var ok = hit >= 2 || (hit >= 1 && list.length <= 2);
     return { total: (list || []).length, hit: hit, ok: ok };
   }
@@ -1722,6 +2110,8 @@
     S.ghQuery = '';
     S.ghRateLimited = false;
     S.pageCache = Object.create(null);
+    S.emails = [];
+    S.intentKind = '';
     S.answer = '';
     S.error = '';
     S.note = '';
@@ -1749,6 +2139,7 @@
       var base = primaryQuery(q);
       var alt = retryQuery(q);
       var intent = inferIntent(q);
+      S.intentKind = intent.kind;
       var web = [];
 
       trace({
@@ -1779,13 +2170,30 @@
           })
           .catch(function () { return []; });
       }
-      function ask(qq, kind) {
+      function ask(qq, kind, useDdg) {
         var gap = Math.max(0, 400 - (Date.now() - lastAsk));
         var viaRss = false;
         var viaAlt = false;
+        var viaDdg = false;
+        var viaYt = false;
         lastAsk = Date.now() + gap;
         return delay(gap)
           .then(function () { return fetchOnce(qq); })
+          .then(function (list) {
+            if (ctrl.signal.aborted || !useDdg) return list;
+            /* 联系人任务：主源给的往往还是「怎么找主播」这类教程；真正带邮箱的是
+               频道页，所以不管主源有没有结果，都再问一次 YouTube 频道检索并合并。 */
+            return youtubeChannels(qq, ctrl.signal).then(function (yt) {
+              viaYt = yt.length > 0;
+              var merged = (list || []).concat(yt || []);
+              if (merged.length) return merged;
+              diag('主源与 YouTube 频道检索都没结果', '英文查询在中文索引里被当成词典词', '改问 DDG 英文结果');
+              return ddgSearch(qq, ctrl.signal).then(function (ddg) {
+                viaDdg = ddg.length > 0;
+                return ddg;
+              });
+            });
+          })
           .then(function (list) {
             if (ctrl.signal.aborted || list.length) return list;
             /* 主出口空手：先换 RSS 出口，通常能立刻拿到结果。 */
@@ -1830,7 +2238,7 @@
             var j = judge(list, q);
             trace({
               kind: kind || '网页',
-              text: qq + (viaRss ? '（RSS 备用源）' : viaAlt ? '（360 备用源）' : ''),
+              text: qq + (viaYt ? '（YouTube 频道检索）' : viaDdg ? '（DDG 备用源）' : viaRss ? '（RSS 备用源）' : viaAlt ? '（360 备用源）' : ''),
               res: j.total + ' 条 · 相关 ' + j.hit + ' 条',
               ok: j.ok
             });
@@ -1862,6 +2270,14 @@
       /* 每一轮给出不同的检索式组合；同一轮里最多问 2 条。 */
       function roundQueries(round) {
         var list = [];
+        if (intent.kind === 'contact') {
+          var cq = contactQueries(q);
+          if (cq.length) {
+            /* 第一轮把品类词与同义词一次问完：只问一条会捞到同一类频道。 */
+            var pick = round === 0 ? cq.slice(0, 4) : cq.slice(round * 2 + 2, round * 2 + 4);
+            if (pick.length) return pick;
+          }
+        }
         if (round === 0) {
           (intent.adds || []).forEach(function (w) { list.push((base + ' ' + w).trim()); });
         } else if (round === 1) {
@@ -1878,7 +2294,7 @@
       }
       /* 第 3 轮换 360 索引：Bing 给了但都不相关时，换一个索引往往才有答案。 */
       function askRound(qq, round) {
-        if (round < 2) return ask(qq, '智搜');
+        if (round < 2) return ask(qq, '智搜', intent.kind === 'contact');
         return delay(400).then(function () {
           return soSearch(qq, ctrl.signal).then(function (list) {
             if (list && list.length) searchCachePut(qq, list);
@@ -1910,7 +2326,9 @@
               res: (list || []).length + ' 条' + (j.ok ? ' · 命中' : ' · 仍不相关'),
               ok: j.ok
             });
-            if (j.ok) return got;
+            /* 联系人任务第一条就能「命中」频道，但一个查询只会捞到同一类频道；
+               先把这一轮两条问完，再决定停手。 */
+            if (j.ok && !(intent.kind === 'contact' && round === 0)) return got;
             return step(i + 1);
           });
         }
@@ -1999,7 +2417,8 @@
             res: '候选池 ' + (S.results.length + exp.links.length) + ' 条',
             ok: true
           });
-        } else {
+        } else if (S.intentKind !== 'contact') {
+          /* 联系人任务本来就跳过 YouTube 扫描（频道页统一在精读阶段读），不是反爬。 */
           diag('候选页一页都没读出来', '目标站反爬、超时或需要登录', '改用搜索摘要，继续用仓库与种子');
         }
         /* 被 AI 判为「值得读」的，排到前面；其余仍按相关度排。 */
@@ -2012,7 +2431,8 @@
         if (pool.length) S.results = pool;
         renderResults();
 
-        var picks = pickForRead(S.results, MAX_SOURCES);
+        /* 找人任务要读的是「一串频道」：只读 6 个频道经常一个邮箱都碰不到。 */
+        var picks = pickForRead(S.results, S.intentKind === 'contact' ? 12 : MAX_SOURCES);
         S.sources = picks.map(function (item, i) {
           return {
             idx: i + 1, title: item.title, url: item.url, host: item.host,
@@ -2063,6 +2483,16 @@
                 res: added ? added + ' 篇' : '跳过',
                 ok: !!added
               });
+              if (S.intentKind === 'contact') {
+                trace({
+                  kind: '邮箱',
+                  text: S.emails.length
+                    ? '从频道 / 联系页抽到 ' + S.emails.length + ' 个公开邮箱'
+                    : '没有抽到公开邮箱',
+                  res: S.emails.length ? '已并入作答' : '保留频道页供核对',
+                  ok: S.emails.length > 0
+                });
+              }
             });
           });
         });
@@ -2180,12 +2610,28 @@
   }
 
   /* 线索来源按可靠性排序：粗读捞到的重复词 → 已读正文里的重复词 → 标题 / 摘要里的重复说法。
-     正文常因登录墙或反爬读不到，那时如果只认正文，「进一步搜索」就会变成一个点了没反应的按钮。 */
+     正文常因登录墙或反爬读不到，那时如果只认正文，「进一步搜索」就会变成一个点了没反应的按钮。
+     但摘要里混着大量广告词：不筛掉就会把「唯美 / 礼包」当线索，越挖越偏。 */
+  var CLUE_NOISE = /(唯美|礼包|福利|充值|首充|折扣|私服|破解|免费看|高清全集|抖音|快手|小说|漫画|广告|下载)/;
+  var CLUE_HOSTS = /^(so|baidu|bing|duckduckgo|bilibili|douyin|163|sina|qq|youtube|google)\.(com|cn)$/i;
+  var CLUE_STOP = /^(www|com|cn|http|https|html|php|net|org|the|and|for|with|from)$/;
+  function clueUsable(k, contact) {
+    k = String(k || '').toLowerCase().trim();
+    if (k.length < 2 || CLUE_NOISE.test(k) || CLUE_HOSTS.test(k) || CLUE_STOP.test(k)) return false;
+    /* 找人任务只认「实体 / 联系方式」类线索：英文频道名、域名、邮箱词、合作词；
+       中文广告二元组（三国 / 唯美）一律不进检索式。 */
+    if (contact) {
+      if (/^(youtube|google|bilibili|douyin|facebook|twitter|instagram)$/.test(k)) return false;
+      return /^[a-z0-9][a-z0-9._@+-]*$/.test(k) || /(邮箱|邮件|联系|商务|合作|频道|主播|博主|作者|达人)/.test(k);
+    }
+    return true;
+  }
   function collectClues(q0) {
+    var contact = inferIntent(q0).kind === 'contact';
     var out = [];
     function add(k) {
       k = String(k || '').toLowerCase().trim();
-      if (k.length >= 2 && out.indexOf(k) < 0) out.push(k);
+      if (clueUsable(k, contact) && out.indexOf(k) < 0) out.push(k);
     }
     if (S.skim && S.skim.keywords) S.skim.keywords.forEach(add);
     harvestKeywords(S.sources.map(function (s) { return s.text || ''; }).join('\n'), q0).forEach(add);

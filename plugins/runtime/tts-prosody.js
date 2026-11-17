@@ -4,7 +4,9 @@
  *   [[r=0.9]]  后面的话放慢到 0.9 倍（0.7~1.4）
  *   [[p=0.4]]  在这里停 0.4 秒（0~2）
  *   [[t=0.3]]  句尾再拖 0.3 秒（0~1.5）
- * 长短两种写法都认：r/rate、p/pause、t/tail。
+ *   [[f=1.1]]  后面的话音调提高到 1.1 倍（0.7~1.5，参数合成引擎生效）
+ *   [[e=1.2]]  后面的话加重到 1.2 倍音量（0.8~1.5，参数合成引擎生效）
+ * 长短两种写法都认：r/rate、p/pause、t/tail、f/f0/pitch、e/emph/gain。
  *
  * 设计取舍：
  *   · 引擎本身不吃 SSML，所以由我们把标记编译成「分段 + 每段语速 + 段间静音」，
@@ -28,10 +30,17 @@ function round2(n) {
 function clampRate(n) {
   return round2(clamp(n || 1, 0.7, 1.4));
 }
+/* 音调 / 重音只给参数合成引擎用；对逐段调用神经引擎的链路没有副作用。 */
+function clampPitch(n) {
+  return round2(clamp(n || 1, 0.7, 1.5));
+}
+function clampGain(n) {
+  return round2(clamp(n || 1, 0.8, 1.5));
+}
 
 /* 把带标记的文本编译成可执行计划：
  *   lead      —— 开头就要留的静音（秒）
- *   segments  —— [{ text, rate, after }]，after 是该段之后要补的静音（秒）
+ *   segments  —— [{ text, rate, pitch, gain, after }]，after 是该段之后要补的静音（秒）
  *   used      —— 是否出现过标记；没出现时调用方可以走原来的单次合成，零额外开销
  */
 function parseProsody(raw, baseRate) {
@@ -41,6 +50,8 @@ function parseProsody(raw, baseRate) {
   const segments = [];
   let buf = '';
   let rate = clampRate(baseRate || 1);
+  let pitch = 1;
+  let gain = 1;
   let after = 0;
   let lead = 0;
   let pos = 0;
@@ -50,7 +61,7 @@ function parseProsody(raw, baseRate) {
     const text = buf.replace(ANY_TAG_RE, '').trim();
     buf = '';
     if (text) {
-      segments.push({ text: text, rate: rate, after: round2(after) });
+      segments.push({ text: text, rate: rate, pitch: pitch, gain: gain, after: round2(after) });
       after = 0;
     } else if (segments.length && after) {
       const last = segments[segments.length - 1];
@@ -72,6 +83,12 @@ function parseProsody(raw, baseRate) {
     if (key === 'r' || key === 'rate') {
       flush();
       rate = clampRate(val);
+    } else if (key === 'f' || key === 'f0' || key === 'pitch') {
+      flush();
+      pitch = clampPitch(val);
+    } else if (key === 'e' || key === 'emph' || key === 'gain') {
+      flush();
+      gain = clampGain(val);
     } else if (key === 'p' || key === 'pause') {
       /* 停顿标记本身就是段落边界：先记停顿，再把当前文本收束成一段 */
       after = round2(clamp(after + clamp(val, 0, 2), 0, 3));

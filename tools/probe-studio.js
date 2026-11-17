@@ -9,7 +9,9 @@
  *   ④ 文字预设与滤镜写回片段；
  *   ⑤ 检查器联动、?nostore=1 不写真实存储；
  *   ⑥ 真实导出产出一个 blob: 链接；
- *   ⑦ 关窗再开，布局不重建、时间线状态保留，全程无 pageerror。
+ *   ⑦ 覆盖 / 插入 / 剪贴板 / 全轨切分 / 入出点 / JKL 的编辑语义；
+ *   ⑧ 效果栈、统一合成器抓帧、框选、SRT 字幕、音频波形与语义化历史；
+ *   ⑨ 关窗再开，布局不重建、时间线状态保留，全程无 pageerror。
  *
  * 素材一律用页面内 canvas 生成的 dataURL，不读用户文件、不联网。
  */
@@ -228,11 +230,12 @@ const check = (ok, name, extra) => {
     await page.waitForTimeout(100);
     await page.click('#stFxGrid .st-fxcard[data-fx="bw"]');
     await page.waitForTimeout(150);
-    const filterNow = await page.evaluate(id => {
-      const c = window.studioApp.__test.project().clips.find(x => x.id === id);
-      return c ? c.filter : '';
+    const fxNow = await page.evaluate(id => {
+      const t = window.studioApp.__test;
+      return { list: t.effects(id), css: t.effectsCss(id) };
     }, rightId);
-    check(filterNow === 'bw', '点滤镜写到选中片段', filterNow);
+    check(fxNow.list.length === 1 && fxNow.list[0].preset === 'bw' && fxNow.css.indexOf('grayscale') >= 0,
+      '点滤镜写入效果栈并参与效果链', JSON.stringify(fxNow));
 
     /* 11. 项目面板改名联动顶栏 */
     await page.evaluate(() => window.studioApp.__test.select(''));
@@ -320,26 +323,39 @@ const check = (ok, name, extra) => {
       '重开窗口布局不重建', JSON.stringify(reopened));
     check(reopened.clips === 3, '重开后时间线状态保留', reopened.clips + ' 片段');
 
-    /* 15. 数据模型 v2：迁移 / 幂等 / 关键帧采样 */
+    /* 15. 数据模型 v3：迁移 / 幂等 / 关键帧采样 */
     const model = await page.evaluate(() => {
       const t = window.studioApp.__test;
       const v1 = {
         v: 1, name: '旧项目', w: 1280, h: 720, fps: 25, media: [],
         clips: [{ id: 'old1', track: 'v1', kind: 'text', start: 0, dur: 2, text: { content: '旧' } }]
       };
+      const v2 = {
+        v: 2, name: 'v2 项目', w: 1280, h: 720, fps: 25, sampleRate: 48000, media: [],
+        tracks: [{ id: 'v1', kind: 'video', name: '视频 1', height: 56, locked: false, muted: false, hidden: false }],
+        markers: [], meta: { createdAt: 0, updatedAt: 0, app: 'studio' },
+        clips: [{ id: 'old2', track: 'v1', kind: 'video', start: 0, dur: 2, filter: 'warm', kf: {} }]
+      };
       const m1 = t.migrate(v1);
       const m2 = t.migrate(m1);
+      const m3 = t.migrate(v2);
       const keys = [{ t: 0, v: 0, ease: 'linear' }, { t: 2, v: 10, ease: 'linear' }];
       return {
         ver: m1.v, tracks: m1.tracks.length, markers: m1.markers.length, kf: !!m1.clips[0].kf,
         idem: JSON.stringify(m1) === JSON.stringify(m2),
+        v2ver: m3.v,
+        legacyFx: m3.clips[0].effects,
+        legacyField: Object.prototype.hasOwnProperty.call(m3.clips[0], 'filter'),
         mid: t.sample(keys, 1), head: t.sample(keys, -1), tail: t.sample(keys, 5),
         empty: t.sample([], 1)
       };
     });
-    check(model.ver === 2 && model.tracks === 4 && model.markers === 0 && model.kf,
-      'v1 项目迁移到 v2（补轨道 / 标记 / 关键帧容器）', JSON.stringify(model));
+    check(model.ver === 3 && model.tracks === 4 && model.markers === 0 && model.kf,
+      'v1 项目迁移到 v3（补轨道 / 标记 / 关键帧容器）', JSON.stringify(model));
     check(model.idem, '迁移可重复执行（幂等）');
+    check(model.v2ver === 3 && !model.legacyField && model.legacyFx.length === 1 &&
+      model.legacyFx[0].type === 'preset' && model.legacyFx[0].preset === 'warm',
+      'v2 的 filter 迁入效果栈并删除旧字段', JSON.stringify(model.legacyFx));
     check(model.mid === 5 && model.head === 0 && model.tail === 10 && model.empty === null,
       '关键帧线性采样与端点钳制', 'mid=' + model.mid + ' head=' + model.head + ' tail=' + model.tail);
 
@@ -515,7 +531,7 @@ const check = (ok, name, extra) => {
         fileDropped: p.clips.every(c => c.kind === 'text')
       };
     });
-    check(imp.ver === 2 && imp.ok && imp.name === '导入项目测试', '项目文件导出为 v2 并可重新导入', imp.name);
+    check(imp.ver === 3 && imp.ok && imp.name === '导入项目测试', '项目文件导出为 v3 并可重新导入', imp.name);
     check(imp.clips === imp.textCount && imp.fileDropped && imp.media === 0,
       '导入时剔除跨会话失效的文件素材', JSON.stringify(imp));
 
@@ -851,6 +867,208 @@ const check = (ok, name, extra) => {
       }, ttsTextId);
       check(voiceMenu, '文字片段右键有「生成配音」');
     }
+
+    /* 30. 覆盖 / 插入 / 剪贴板 / 全轨切分 */
+    await page.click('#stNew');
+    await page.click('#stConfirmYes');
+    await page.waitForTimeout(220);
+    const ops = await page.evaluate(() => {
+      const t = window.studioApp.__test;
+      const mk = (name, color) => {
+        const c = document.createElement('canvas');
+        c.width = 160; c.height = 90;
+        const x = c.getContext('2d');
+        x.fillStyle = color; x.fillRect(0, 0, 160, 90);
+        return t.addMedia({ name, kind: 'image', url: c.toDataURL('image/png'), dur: 6 }).id;
+      };
+      const a = mk('A', '#334455');
+      const b = mk('B', '#884422');
+      t.seek(0);
+      const c1 = t.place(a, 'overwrite');
+      t.seek(2);
+      const c2 = t.place(b, 'overwrite');
+      const afterOverwrite = t.project().clips.filter(c => c.track === 'v1')
+        .map(c => ({ id: c.id, start: c.start, dur: c.dur })).sort((x, y) => x.start - y.start);
+      t.seek(4);
+      const c3 = t.place(a, 'insert');
+      const afterInsert = t.project().clips.filter(c => c.track === 'v1')
+        .map(c => ({ id: c.id, start: c.start, dur: c.dur })).sort((x, y) => x.start - y.start);
+      t.select(c2);
+      const copied = t.copy();
+      const pasted = t.paste(20);
+      const all = t.project().clips.filter(c => c.track === 'v1');
+      const last = all.slice().sort((x, y) => x.start - y.start).pop();
+      return { c1, c2, c3, afterOverwrite, afterInsert, copied, pasted, pastedStart: last.start };
+    });
+    check(ops.afterOverwrite.length === 2 && ops.afterOverwrite[0].dur === 2 &&
+      ops.afterOverwrite[1].start === 2, '覆盖编辑把头尾片段切开并保住新片段',
+      JSON.stringify(ops.afterOverwrite));
+    check(ops.afterInsert.length === 4 && ops.afterInsert[2].start === 4 && ops.afterInsert[2].dur === 5 &&
+      ops.afterInsert[3].start === 9, '插入编辑撑开空隙并后移后续片段',
+      JSON.stringify(ops.afterInsert));
+    check(ops.copied === 1 && ops.pasted === 1 && ops.pastedStart === 20,
+      '复制片段并在播放头粘贴', 'frames=' + ops.pastedStart + 's');
+
+    const splitAllRes = await page.evaluate(() => {
+      const t = window.studioApp.__test;
+      const before = t.project().clips.length;
+      t.seek(5);
+      const made = t.splitAll(5);
+      return { made, before, after: t.project().clips.length };
+    });
+    check(splitAllRes.made === 1 && splitAllRes.after === splitAllRes.before + 1,
+      'Ctrl+K 语义：一次切开播放头处所有轨道',
+      splitAllRes.before + ' → ' + splitAllRes.after);
+
+    /* 31. 入出点 / JKL */
+    const range = await page.evaluate(() => {
+      const t = window.studioApp.__test;
+      t.setRange('in', 1);
+      t.setRange('out', 3);
+      const r = t.range();
+      const out = { r, end: t.playEnd(), start: t.playStart() };
+      t.clearRange();
+      out.cleared = t.range();
+      return out;
+    });
+    check(range.r.in === 1 && range.r.out === 3 && range.start === 1 && range.end === 3,
+      '入出点写入序列并驱动播放区间', JSON.stringify(range.r));
+    check(range.cleared.in === null && range.cleared.out === null, 'X 清除入出点');
+
+    const jkl = await page.evaluate(() => {
+      const t = window.studioApp.__test;
+      t.seek(10);
+      const rev = t.shuttle(-1);
+      t.pause();
+      const f1 = t.shuttle(1);
+      const f2 = t.shuttle(1);
+      const f3 = t.shuttle(1);
+      t.pause();
+      return { rev, f1, f2, f3 };
+    });
+    check(jkl.rev.dir === -1 && jkl.rev.playing, 'J 进入倒放预览', JSON.stringify(jkl.rev));
+    check(jkl.f1.rate === 1 && jkl.f2.rate === 2 && jkl.f3.rate === 4,
+      '连按 L 逐级加速 1× → 2× → 4×', [jkl.f1.rate, jkl.f2.rate, jkl.f3.rate].join(' → '));
+
+    /* 32. 效果栈 / 统一合成器抓帧 */
+    const fx = await page.evaluate(() => {
+      const t = window.studioApp.__test;
+      const c = t.project().clips.filter(x => x.kind !== 'text').sort((a, b) => a.start - b.start)[0];
+      t.seek(c.start + 0.5);
+      t.select(c.id);
+      t.setEffects(c.id, []);
+      const plain = t.grabFrame(c.start + 0.5);
+      const plain2 = t.grabFrame(c.start + 0.5);
+      const list = t.setEffects(c.id, [
+        { type: 'preset', preset: 'bw' },
+        { type: 'adjust', params: { brightness: 1.4 } }
+      ]);
+      const css1 = t.effectsCss(c.id);
+      const filt = t.grabFrame(c.start + 0.5);
+      const firstId = list[0].id;
+      t.toggleEffect(c.id, firstId, false);
+      const css2 = t.effectsCss(c.id);
+      t.toggleEffect(c.id, firstId, true);
+      const moved = t.moveEffect(c.id, firstId, 1);
+      const css3 = t.effectsCss(c.id);
+      const blur = t.addEffect(c.id, 'blur');
+      return {
+        png: plain.indexOf('data:image/png') === 0, stable: plain === plain2,
+        differs: plain !== filt, css1, css2, css3, moved, blur,
+        count: t.effects(c.id).length
+      };
+    });
+    check(fx.png && fx.stable, '统一 renderFrame 抓帧为稳定 PNG');
+    check(fx.css1.indexOf('grayscale') >= 0 && fx.css1.indexOf('brightness(1.4)') >= 0,
+      '效果栈按顺序拼进同一条效果链', fx.css1);
+    check(fx.differs, '效果开关改变输出像素（预览与导出同源）');
+    check(fx.css2.indexOf('grayscale') < 0, '逐条关闭效果只影响该条', fx.css2);
+    check(fx.moved && fx.css3.indexOf('grayscale') > fx.css3.indexOf('brightness'),
+      '效果可排序，顺序即渲染顺序', fx.css3);
+    check(fx.count === 3 && fx.blur && fx.blur.params.px === 4, '可追加模糊效果',
+      fx.count + ' 条');
+
+    /* 33. 框选：在空轨道上起手，拖过上方多个片段 */
+    const clipBox = await page.locator('#stRows .st-clip').first().boundingBox();
+    const emptyRow = await page.locator('#stRows .st-row').last().boundingBox();
+    const scBox = await page.locator('#stScroll').boundingBox();
+    let marqueeCount = -1;
+    let marqueeShown = false;
+    if (emptyRow && clipBox && scBox) {
+      await page.mouse.move(scBox.x + scBox.width - 70, emptyRow.y + emptyRow.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(clipBox.x + 4, clipBox.y + 4, { steps: 12 });
+      marqueeShown = await page.evaluate(() =>
+        !document.getElementById('stMarquee').classList.contains('hidden'));
+      await page.mouse.up();
+      await page.waitForTimeout(200);
+      marqueeCount = await page.evaluate(() => document.querySelectorAll('#stRows .st-clip.sel').length);
+    }
+    check(marqueeShown, '拖拽中出现框选虚线框');
+    check(marqueeCount >= 2, '空白处拖拽框选多个片段', marqueeCount + ' 个');
+
+    /* 34. 字幕：SRT / VTT 解析、导入与导出 */
+    const subs = await page.evaluate(() => {
+      const t = window.studioApp.__test;
+      const srt = '1\n00:00:01,000 --> 00:00:02,500\n第一句\n\n2\n00:00:03,000 --> 00:00:04,250\n第二句\n';
+      const vtt = 'WEBVTT\n\n00:00:05.000 --> 00:00:06.000\nVTT 字幕\n';
+      const p1 = t.parseSubs(srt);
+      const p2 = t.parseSubs(vtt);
+      const added = t.importSubs(srt + '\n' + vtt);
+      const out = t.buildSrt();
+      const round = t.parseSubs(out);
+      return {
+        p1, p2, added, out, round: round.length,
+        first: round[0] && round[0].text,
+        textClips: t.project().clips.filter(c => c.kind === 'text').length
+      };
+    });
+    check(subs.p1.length === 2 && subs.p1[0].start === 1 && subs.p1[0].end === 2.5,
+      '解析 SRT 时间码（毫秒精度）', JSON.stringify(subs.p1[0]));
+    check(subs.p2.length === 1 && subs.p2[0].text === 'VTT 字幕', '解析 WebVTT 头与点号时间码');
+    check(subs.added === 3 && subs.textClips === 3, '导入字幕落到文字轨', subs.added + ' 条');
+    check(subs.round === 3 && subs.first === '第一句' &&
+      subs.out.indexOf('00:00:01,000 --> 00:00:02,500') >= 0, '导出的 SRT 可被自身解析器读回');
+
+    /* 35. 音频波形：页面内 1 秒正弦波 */
+    const wave = await page.evaluate(async () => {
+      const t = window.studioApp.__test;
+      const sr = 8000, n = sr;
+      const buf = new ArrayBuffer(44 + n * 2);
+      const v = new DataView(buf);
+      const w = (p, s) => { for (let i = 0; i < s.length; i++) v.setUint8(p + i, s.charCodeAt(i)); };
+      w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+      v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+      w(36, 'data'); v.setUint32(40, n * 2, true);
+      for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.round(Math.sin((i / sr) * 2 * Math.PI * 440) * 12000), true);
+      let bin = '';
+      const u = new Uint8Array(buf);
+      for (let i = 0; i < u.length; i++) bin += String.fromCharCode(u[i]);
+      const url = 'data:audio/wav;base64,' + btoa(bin);
+      const m = t.addMedia({ name: '正弦波', kind: 'audio', url: url, dur: 1 });
+      t.seek(30);
+      const cid = t.place(m.id, 'overwrite');
+      const loaded = await t.loadPeaks(m.id);
+      const canvas = document.querySelector('#stRows .st-clip[data-kind="audio"] canvas.st-wave');
+      return { cid, loaded, peaks: t.peaks(m.id), canvas: !!canvas && canvas.width > 0, level: !!document.getElementById('stLevel') };
+    });
+    check(wave.cid && wave.loaded > 10 && wave.peaks && wave.peaks.max > 0.05,
+      '解码音频并压成有界峰值数组', wave.loaded + ' 点 / peak=' + (wave.peaks ? wave.peaks.max.toFixed(2) : '-'));
+    check(wave.canvas && wave.level, '音频片段出现波形，传输栏出现电平表');
+
+    /* 36. 语义化历史：标签可读，可跳回 */
+    const hist = await page.evaluate(() => {
+      const t = window.studioApp.__test;
+      const labels = t.history();
+      const before = t.project().clips.length;
+      const ok = t.goHistory(0);
+      return { labels, before, ok, after: t.project().clips.length };
+    });
+    check(hist.labels.some(x => x === '覆盖素材') && hist.labels.some(x => x === '插入素材') &&
+      hist.labels.indexOf('粘贴片段') >= 0 && hist.labels.indexOf('导入字幕') >= 0,
+      '历史记录带语义标签', hist.labels.slice(-5).join(' / '));
+    check(hist.ok && hist.after === 0, '历史面板可跳回动作之前', hist.before + ' → ' + hist.after);
 
     check(errors.length === 0, '无 pageerror', errors.join(' | '));
   } catch (e) {

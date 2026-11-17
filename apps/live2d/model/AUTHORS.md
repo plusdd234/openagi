@@ -48,6 +48,17 @@ Live2D 作者同意转载，并不解除角色形象本身的许可条件。所�
 | PIXI.js 6.5.10（`pixi.min.js`） | MIT |
 | pixi-live2d-display 0.4.0（`cubism4.min.js`） | MIT |
 
+## Haru（`apps/live2d/model/haru/`）
+
+| 角色 | 署名 |
+| --- | --- |
+| 插画 / 建模 | **Live2D Inc.**（<https://www.live2d.com/>） |
+| 语音（本项目未使用） | 癒月 |
+
+来源：Live2D 官方免费示例数据 <https://www.live2d.com/download/sample-data/>（`haru_ja.zip`）。
+许可：一般用户 / 小规模事业者可商用，中大规模仅限非公开测试；本项目按非商业演示使用，
+署名 **Live2D Inc.**。原 ReadMe 与逐文件说明见 [`PROVENANCE.md`](PROVENANCE.md)。
+
 ## 想用这个模型做别的东西？
 
 先去 B 站找 **氵六青**（模型）与 **上善无形 / ZipZipPipe**（角色形象）确认授权范围，

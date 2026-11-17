@@ -1,8 +1,8 @@
 /* 衣柜 App 的窗口 DOM（app-scan 会把它排在 app.js 之前内联）。
  *
- * 三栏：左边套装、中间皮套预览、右边部件清单。
+ * 三栏：左边套装、中间皮套预览、右边「衣橱」槽位（高级里可逐部件微调）。
  * 皮套来自 apps/live2d/model/，由 tools/pack-live2d.js 预打包；
- * 预览运行时在同目录 rig.js 里（window.WD_RIG）。
+ * 预览运行时在同目录 rig.js 里（window.WD_RIG），槽位定义在 presets.js。
  */
 window.WD_BODY = `
 <div class="wd-app" id="wdApp">
@@ -16,7 +16,7 @@ window.WD_BODY = `
       </span>
       <div class="wd-brand-txt">
         <b>衣柜</b>
-        <span>给数字人换皮套、挑部件、存套装</span>
+        <span>作者预留的配饰 / 道具 / 配色开关</span>
       </div>
     </div>
     <div class="wd-tools">
@@ -35,11 +35,11 @@ window.WD_BODY = `
         <span class="wd-pane-num" id="wdOutfitCount">0</span>
       </div>
       <div class="wd-new">
-        <input type="text" id="wdOutfitName" maxlength="12" placeholder="套装名，如 校服" spellcheck="false">
+        <input type="text" id="wdOutfitName" maxlength="12" placeholder="套装名，如 眼镜马尾" spellcheck="false">
         <button type="button" class="wd-btn" id="wdSaveOutfit">保存当前</button>
       </div>
       <div class="wd-outfits" id="wdOutfits"></div>
-      <p class="wd-hint">套装 = 皮套 + 隐藏的部件。点卡片试穿，点「穿上」同步给数字人。</p>
+      <p class="wd-hint">套装 = 皮套 + 衣橱选择 + 部件微调。点卡片试穿，点「穿上」同步给数字人。</p>
     </aside>
 
     <section class="wd-stage" id="wdStage">
@@ -58,7 +58,7 @@ window.WD_BODY = `
       <div class="wd-hud">
         <span class="wd-chip" id="wdChip">等待皮套…</span>
         <span class="wd-hud-gap"></span>
-        <button type="button" class="wd-mini" id="wdShowAll">全部显示</button>
+        <button type="button" class="wd-mini" id="wdResetLook">恢复默认搭配</button>
         <span class="wd-part-total" id="wdPartCount"></span>
       </div>
 
@@ -67,14 +67,23 @@ window.WD_BODY = `
 
     <aside class="wd-right">
       <div class="wd-pane-head">
-        <h3>部件</h3>
-        <span class="wd-pane-num" id="wdHiddenCount">隐藏 0</span>
+        <h3>衣橱</h3>
+        <span class="wd-pane-num" id="wdSlotCount"></span>
       </div>
-      <div class="wd-search">
-        <input type="text" id="wdSearch" placeholder="搜索部件名 / ID" spellcheck="false">
-        <button type="button" class="wd-btn" id="wdReset" title="取消所有隐藏">重置</button>
-      </div>
-      <div class="wd-parts" id="wdParts"></div>
+      <p class="wd-note" id="wdNote"></p>
+      <div class="wd-slots" id="wdSlots"></div>
+
+      <details class="wd-adv" id="wdAdv">
+        <summary>
+          <span>高级：部件微调</span>
+          <i id="wdHiddenCount">隐藏 0</i>
+        </summary>
+        <div class="wd-search">
+          <input type="text" id="wdSearch" placeholder="搜索部件名 / ID" spellcheck="false">
+          <button type="button" class="wd-btn" id="wdReset" title="清空所有微调">重置</button>
+        </div>
+        <div class="wd-parts" id="wdParts"></div>
+      </details>
     </aside>
   </div>
 </div>

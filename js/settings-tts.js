@@ -10,8 +10,9 @@
  *      ⚠ 不要加进 config.js 的 CFG：页面加载时下拉里还没有选项，saveAll()
  *      会把已存的音色覆盖成空值。
  *   ② 试听语速存 hf_ttsRate，只作用于本页试听；数字人朗读的语速在人设里。
- *   ③ 本地音色（piper: / kokoro: / melo: / vits: / zipvoice:）不在系统语音列表里，
- *      必须交给本地引擎桥合成；zipvoice 还依赖「声音克隆」小节里的参考录音。
+ *   ③ 本地音色（piper: / kokoro: / melo: / vits: / zipvoice: / param:）不在系统语音列表里，
+ *      必须交给本地引擎桥合成；zipvoice 还依赖「声音克隆」小节里的参考录音，
+ *      param（参数合成）依赖离线蒸馏好的音库。
  * ============================================================ */
 (function () {
   'use strict';
@@ -21,7 +22,7 @@
   var audioUrl = '';
   var bound = false;
   var busy = false;
-  var status = { sys: 0, piper: false, kokoro: false, melo: false, vits: false, zipvoice: false, clone: false, probed: false };
+  var status = { sys: 0, piper: false, kokoro: false, melo: false, vits: false, zipvoice: false, param: false, clone: false, probed: false };
 
   var FALLBACK_TEXT = '你好，这是当前默认音色的试听。';
 
@@ -47,13 +48,14 @@
     try { localStorage.setItem('hf_ttsRate', String(n)); } catch (e) { /* 同上 */ }
   }
 
-  /* 机械音的朗读方式：ai = 模型用 [[p]]/[[r]]/[[t]] 控制节奏；direct = 原样整句朗读 */
-  function readMechaMode() {
-    try { return localStorage.getItem('hf_ttsMechaMode') === 'direct' ? 'direct' : 'ai'; }
+  /* AI 语音控制方式：ai = 模型用 [[p]]/[[r]]/[[f]]/[[e]]/[[t]] 控制节奏与音调；
+   * direct = 原样整句朗读。 */
+  function readAiMode() {
+    try { return localStorage.getItem('hf_ttsAiMode') === 'direct' ? 'direct' : 'ai'; }
     catch (e) { return 'ai'; }
   }
-  function writeMechaMode(m) {
-    try { localStorage.setItem('hf_ttsMechaMode', m === 'direct' ? 'direct' : 'ai'); } catch (e) { /* 同上 */ }
+  function writeAiMode(m) {
+    try { localStorage.setItem('hf_ttsAiMode', m === 'direct' ? 'direct' : 'ai'); } catch (e) { /* 同上 */ }
     emitChanged();
   }
   function stripProsody(s) {
@@ -61,8 +63,8 @@
   }
 
   /* AI 控制没现成标记时给一句带节奏的示例，否则试听听不出和直接朗读的区别 */
-  var MECHA_SAMPLE = '[[p=0.35]]系统自检完成……[[r=0.88]]你好，我是深海机娘。[[t=0.3]]今天也一起把问题解决掉吧。';
-  var MECHA_SAMPLE_PLAIN = '系统自检完成……你好，我是深海机娘。今天也一起把问题解决掉吧。';
+  var FAST_SAMPLE = '[[p=0.25]]你好，我是快速合成。[[r=0.92]]今天的回答会很快。[[e=1.15]]重点在这里。[[t=0.2]]';
+  var FAST_SAMPLE_PLAIN = '你好，我是快速合成。今天的回答会很快。重点在这里。';
 
   /* ---------------- 音色描述 ---------------- */
 
@@ -97,11 +99,11 @@
       return 'MeloTTS · ' + (m ? m.name : '中英混读女声');
     }
     if (s.indexOf('vits:') === 0) {
-      if (s === 'vits:mecha') return '深海机娘 · 二次元机械音';
       var v = (typeof catalogGet === 'function') ? catalogGet('vits-theresa') : null;
       return v ? ('VITS · ' + v.name) : '角色音色';
     }
     if (s.indexOf('zipvoice:') === 0) return 'ZipVoice · 我的克隆声音';
+    if (s.indexOf('param:') === 0) return '参数合成 · 快问快答';
     return '';
   }
 
@@ -118,9 +120,10 @@
       return isFinite(sid) ? { engine: 'kokoro', sid: sid } : null;
     }
     if (s.indexOf('melo:') === 0) return { engine: 'melo' };
-    if (s === 'vits:mecha') return { engine: 'vits', effect: 'mecha' };
     if (s.indexOf('vits:') === 0) return { engine: 'vits' };
     if (s.indexOf('zipvoice:') === 0) return { engine: 'zipvoice' };
+    /* 参数合成不吃权重：运行时只查蒸馏音库，所以没有额外参数 */
+    if (s.indexOf('param:') === 0) return { engine: 'param' };
     return null;
   }
 
@@ -161,6 +164,7 @@
           melo: !!j.melo,
           vits: !!j.vits,
           zipvoice: !!j.zipvoice,
+          param: !!j.param,
           clone: !!j.clone,
           refText: String(j.refText || ''),
           probed: true
@@ -175,7 +179,7 @@
     if (!d) return Promise.resolve(null);
     var out = {
       sys: systemVoices().length, piper: false, kokoro: false,
-      melo: false, vits: false, zipvoice: false, clone: false, refText: '', probed: true
+      melo: false, vits: false, zipvoice: false, param: false, clone: false, refText: '', probed: true
     };
     var jobs = [];
     if (typeof d.storeTtsList === 'function') {
@@ -213,7 +217,7 @@
     return bridgeStatus().then(function (s) { return s || desktopStatus(); }).then(function (s) {
       status = s || {
         sys: systemVoices().length, piper: false, kokoro: false,
-        melo: false, vits: false, zipvoice: false, clone: false, refText: '', probed: false
+        melo: false, vits: false, zipvoice: false, param: false, clone: false, refText: '', probed: false
       };
       paintStatus();
       fillVoices();
@@ -232,29 +236,30 @@
     parts.push('MeloTTS ' + (status.melo ? '就绪' : '未安装'));
     parts.push('角色音色 ' + (status.vits ? '就绪' : '未安装'));
     parts.push('ZipVoice ' + (status.zipvoice ? (status.clone ? '就绪' : '缺参考录音') : '未安装'));
+    parts.push('参数合成 ' + (status.param ? '就绪' : '未蒸馏'));
     el.textContent = parts.join(' · ');
     el.classList.toggle('is-err', !status.probed);
-    paintMecha();
+    paintFast();
   }
 
-  /* ---------------- 机械音 ---------------- */
+  /* ---------------- 快速合成 ---------------- */
 
-  function mechaMsg(text) {
-    var el = $('ttsMechaMsg');
+  function fastMsg(text) {
+    var el = $('ttsParamMsg');
     if (el) el.textContent = text || '';
   }
 
-  function mechaTextFor(typed, mode) {
+  function fastTextFor(typed, mode) {
     var s = String(typed || '').trim().slice(0, 80);
-    if (mode === 'direct') return stripProsody(s) || MECHA_SAMPLE_PLAIN;
-    if (!s) return MECHA_SAMPLE;
-    /* 用户自己写了标记就照着读；没写就套一层最轻的停顿 + 拖尾，保证听得出差异 */
-    return /\[\[/.test(s) ? s : ('[[p=0.3]]' + s + '[[t=0.25]]');
+    if (mode === 'direct') return stripProsody(s) || FAST_SAMPLE_PLAIN;
+    if (!s) return FAST_SAMPLE;
+    /* 用户自己写了标记就照着读；没写就套一层最轻的停顿 + 重音，保证听得出差异 */
+    return /\[\[/.test(s) ? s : ('[[p=0.25]]' + s + '[[e=1.12]]');
   }
 
-  function mechaText() {
+  function fastText() {
     var el = $('ttsText');
-    return mechaTextFor(el && el.value ? el.value : '', readMechaMode());
+    return fastTextFor(el && el.value ? el.value : '', readAiMode());
   }
 
   /* 设置面板与数字人同处一个 document，选择器限定 .settings2 免得互相串台 */
@@ -262,41 +267,43 @@
     return document.querySelector('.settings2') || document;
   }
 
-  function paintMecha() {
-    var stateEl = $('ttsMechaState');
-    var useBtn = $('ttsMechaUse');
-    var playBtn = $('ttsMechaPlay');
+  function paintFast() {
+    var stateEl = $('ttsParamState');
+    var useBtn = $('ttsParamUse');
+    var playBtn = $('ttsParamPlay');
     if (!stateEl && !useBtn) return;
-    var mode = readMechaMode();
-    var active = readVoice() === 'vits:mecha';
-    var ready = !!status.vits;
+    var mode = readAiMode();
+    var active = readVoice() === 'param:fast';
+    var ready = !!status.param;
 
     if (stateEl) {
-      stateEl.textContent = ready ? '已安装' : '未安装';
+      stateEl.textContent = ready ? '已蒸馏' : '未蒸馏';
       stateEl.classList.toggle('is-on', ready);
     }
 
-    var btns = ttsScope().querySelectorAll('[data-mecha-mode]');
+    var btns = ttsScope().querySelectorAll('[data-ai-mode]');
     for (var i = 0; i < btns.length; i++) {
-      var on = btns[i].getAttribute('data-mecha-mode') === mode;
+      var on = btns[i].getAttribute('data-ai-mode') === mode;
       btns[i].classList.toggle('on', on);
       btns[i].setAttribute('aria-checked', on ? 'true' : 'false');
     }
 
     if (useBtn) {
-      useBtn.textContent = active ? '使用中' : (ready ? '使用机械音' : '去安装');
+      useBtn.textContent = active ? '使用中' : (ready ? '使用快速合成' : '去蒸馏');
       useBtn.classList.toggle('primary', !active);
       useBtn.disabled = active;
     }
     if (playBtn) playBtn.disabled = !ready;
 
     if (!ready) {
-      mechaMsg('机械音复用「角色音色」模型，不额外占磁盘：先在模型商店安装一次。');
+      fastMsg(status.vits
+        ? '音库还没生成：在项目目录运行 node tools/distill-voice.js，完成后再点「检测」。'
+        : '先到模型商店安装「角色音色」，再用 node tools/distill-voice.js 蒸馏音库。');
     } else if (active) {
-      mechaMsg(mode === 'ai' ? '当前默认音色：模型会按语义插入停顿、变速与拖音。'
+      fastMsg(mode === 'ai' ? '当前默认音色：模型用 [[r]]/[[p]]/[[f]]/[[e]]/[[t]] 控制语速、停顿、音调与重音。'
         : '当前默认音色：原样朗读，不解析任何节奏标记。');
     } else {
-      mechaMsg(mode === 'ai' ? 'AI 控制：模型用 [[p]]/[[r]]/[[t]] 控制节奏，试听即为示例。'
+      fastMsg(mode === 'ai' ? 'AI 控制：运行时不加载语音模型，由 LLM 的参数直接驱动波形。'
         : '直接朗读：整句原样读出，不处理标记。');
     }
   }
@@ -417,14 +424,16 @@
       } else if (it.engine === 'melo' && status.melo) {
         local.push({ value: 'melo:zh_en', name: 'MeloTTS · ' + it.name });
       } else if (it.engine === 'vits' && status.vits) {
-        /* 机械音单独在「机械音」页签里选，不混进超拟人下拉 */
-        if (it.effect === 'mecha') return;
-        local.push({ value: 'vits:' + (it.effect || 'theresa'), name: 'VITS · ' + it.name });
+        local.push({ value: 'vits:theresa', name: 'VITS · ' + it.name });
       } else if (it.engine === 'zipvoice' && status.clone) {
         /* 只有参考录音齐了才允许选：否则选了也只会合成失败 */
         local.push({ value: 'zipvoice:clone', name: 'ZipVoice · 我的克隆声音' });
       }
     });
+    /* 参数合成音库是蒸馏产物，不在模型商店的下载清单里；有就自动出现 */
+    if (status.param) {
+      local.push({ value: 'param:fast', name: '参数合成 · 快问快答' });
+    }
 
     sel.innerHTML = '';
     var def = document.createElement('option');
@@ -457,7 +466,7 @@
 
     /* 已选的本地音色可能还没被状态探测到（模型刚下完 / 引擎刚重启）：
      * 补一项占位，别让下拉悄悄退回「系统默认」并覆盖用户的选择。 */
-    if (cur && cur !== 'vits:mecha' && !local.some(function (v) { return v.value === cur; }) && cur.indexOf(':') !== -1) {
+    if (cur && !local.some(function (v) { return v.value === cur; }) && cur.indexOf(':') !== -1) {
       var keep = document.createElement('option');
       keep.value = cur;
       keep.textContent = (localLabel(cur) || cur) + (status.probed ? '（未就绪）' : '');
@@ -467,14 +476,13 @@
     sel.value = cur;
     if (sel.value !== cur) {
       sel.value = '';
-      /* 机械音不在「超拟人」下拉里：它属于另一个页签，不能当作失效音色清空 */
-      if (cur !== 'vits:mecha') writeVoice('');
+      writeVoice('');
     }
 
     var hint = $('ttsVoiceHint');
     if (hint) {
       hint.textContent = '系统语音 ' + list.length + ' 个 · 本地音色 ' + local.length +
-        ' 个。本地音色在模型商店下载后会自动出现在这里。';
+        ' 个。本地音色在模型商店下载后会自动出现在这里；Piper / Kokoro / MeloTTS / 角色音色 / 参数合成支持 AI 语音控制。';
     }
   }
 
@@ -577,32 +585,32 @@
     var cur = readVoice();
     var spec = localSpec(cur);
     if (spec) {
-      /* 机械音按所选方式处理：直接朗读剥掉标记；AI 控制没标记时补一层示范节奏 */
-      if (spec.effect === 'mecha') text = mechaTextFor(text, readMechaMode());
+      /* 快速合成按所选方式处理：直接朗读剥掉标记；AI 控制没标记时补一层示范节奏 */
+      if (spec.engine === 'param') text = fastTextFor(text, readAiMode());
       playLocal(text, spec, rate);
     } else playSystem(text, cur, rate);
   }
 
-  function mechaUse() {
-    if (!status.vits) {
-      mechaMsg('角色音色模型还没安装，正在打开模型商店…');
-      if (typeof closeSettings === 'function') closeSettings();
-      if (typeof openDeskApp === 'function') openDeskApp('store');
+  function fastUse() {
+    if (!status.param) {
+      fastMsg(status.vits
+        ? '音库还没生成：在项目目录运行 node tools/distill-voice.js。'
+        : '先安装角色音色，再运行 node tools/distill-voice.js 蒸馏音库。');
       return;
     }
-    writeVoice('vits:mecha');
+    writeVoice('param:fast');
     emitChanged();
     fillVoices();
-    paintMecha();
-    mechaMsg('已设为默认音色：试听与数字人朗读都会使用机械音。');
+    paintFast();
+    fastMsg('已设为默认音色：试听与数字人朗读都会使用快速合成。');
   }
 
-  function mechaPlay() {
+  function fastPlay() {
     stop();
     var rateEl = $('ttsRate');
     var rate = Number(rateEl && rateEl.value) || 1;
     rate = Math.min(1.4, Math.max(0.7, rate));
-    playLocal(mechaText(), { engine: 'vits', effect: 'mecha' }, rate);
+    playLocal(fastText(), { engine: 'param' }, rate);
   }
 
   /* ---------------- 渲染与绑定 ---------------- */
@@ -629,24 +637,24 @@
       });
     }
 
-    /* 音色分类页签 + 机械音的朗读方式 */
+    /* 音色分类页签 + 快速合成的朗读方式 */
     var tabs = ttsScope().querySelectorAll('[data-tts-tab]');
     for (var i = 0; i < tabs.length; i++) {
       tabs[i].addEventListener('click', function () {
         paintTabs(this.getAttribute('data-tts-tab'));
       });
     }
-    var modeBtns = ttsScope().querySelectorAll('[data-mecha-mode]');
+    var modeBtns = ttsScope().querySelectorAll('[data-ai-mode]');
     for (var j = 0; j < modeBtns.length; j++) {
       modeBtns[j].addEventListener('click', function () {
-        writeMechaMode(this.getAttribute('data-mecha-mode'));
-        paintMecha();
+        writeAiMode(this.getAttribute('data-ai-mode'));
+        paintFast();
       });
     }
-    var mechaUseBtn = $('ttsMechaUse');
-    if (mechaUseBtn) mechaUseBtn.addEventListener('click', mechaUse);
-    var mechaPlayBtn = $('ttsMechaPlay');
-    if (mechaPlayBtn) mechaPlayBtn.addEventListener('click', mechaPlay);
+    var fastUseBtn = $('ttsParamUse');
+    if (fastUseBtn) fastUseBtn.addEventListener('click', fastUse);
+    var fastPlayBtn = $('ttsParamPlay');
+    if (fastPlayBtn) fastPlayBtn.addEventListener('click', fastPlay);
 
     var rate = $('ttsRate');
     if (rate) {
@@ -703,8 +711,8 @@
     paintStatus();
     fillVoices();
     paintClone();
-    /* 默认音色是机械音时直接落在「机械音」页签，省得用户以为自己选丢了 */
-    paintTabs(readVoice() === 'vits:mecha' ? 'mecha' : 'human');
+    /* 默认音色是快速合成时直接落在对应页签，省得用户以为自己选丢了 */
+    paintTabs(readVoice() === 'param:fast' ? 'fast' : 'human');
     refreshStatus();
   }
 
@@ -731,8 +739,8 @@
         local.push({ value: 'melo:zh_en', name: 'MeloTTS · ' + it.name, engine: 'melo', local: true, ready: !!status.melo });
       } else if (it.engine === 'vits') {
         local.push({
-          value: 'vits:' + (it.effect || 'theresa'), name: 'VITS · ' + it.name,
-          engine: 'vits', effect: it.effect || '', local: true, ready: !!status.vits
+          value: 'vits:theresa', name: 'VITS · ' + it.name,
+          engine: 'vits', local: true, ready: !!status.vits
         });
       } else if (it.engine === 'zipvoice') {
         local.push({
@@ -742,12 +750,16 @@
         });
       }
     });
+    /* 参数合成不是下载项：音库蒸馏完成后直接进清单，供数字人等 App 选用 */
+    if (status.param) {
+      local.push({ value: 'param:fast', name: '参数合成 · 快问快答', engine: 'param', local: true, ready: true });
+    }
     return {
       system: sys,
       local: local,
       status: {
         sys: sys.length, piper: !!status.piper, kokoro: !!status.kokoro, melo: !!status.melo,
-        vits: !!status.vits, zipvoice: !!status.zipvoice, clone: !!status.clone,
+        vits: !!status.vits, zipvoice: !!status.zipvoice, param: !!status.param, clone: !!status.clone,
         refText: status.refText, probed: !!status.probed
       },
       defaultVoice: readVoice(),
@@ -796,8 +808,12 @@
       var payload = { text: String(text || '').slice(0, 2000), rate: rate };
       if (spec.engine === 'kokoro') { payload.engine = 'kokoro'; payload.sid = spec.sid; }
       else if (spec.engine === 'melo') payload.engine = 'melo';
-      else if (spec.engine === 'vits') { payload.engine = 'vits'; if (spec.effect) payload.effect = spec.effect; }
+      else if (spec.engine === 'vits') payload.engine = 'vits';
       else if (spec.engine === 'zipvoice') payload.engine = 'zipvoice';
+      else if (spec.engine === 'param') {
+        payload.engine = 'param';
+        payload.pitch = Math.min(1.5, Math.max(0.7, Number(o.pitch) || 1));
+      }
       else { payload.engine = 'piper'; payload.voice = spec.voice; }
       return fetch(base + '/tts/speak', {
         method: 'POST',

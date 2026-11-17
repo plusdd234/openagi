@@ -99,16 +99,13 @@ ok(ttsZip.length === 1 && ttsZip[0].shared === 'zipvoice', 'ZipVoice 标记为�
 ok(ttsZip.every(m => m.clone === true), 'ZipVoice 条目声明是声音克隆');
 ok(ttsZip.every(m => !m.voice && !m.urls && !m.voiceFile), 'ZipVoice 不冒充系统语音，也不带独立下载地址');
 
-/* 角色音色：DeepSeek 风格二次元声线的本地近似（社区 VITS）+ 共享模型的机械音效果器 */
+/* 角色音色：DeepSeek 风格二次元声线的本地近似（社区 VITS）；机械音已下线 */
 const ttsVits = ttsDl.filter(m => m.engine === 'vits');
-ok(ttsVits.length === 2, '角色音色提供原声与机械音两条', 'got=' + ttsVits.length);
-const theresa = ttsVits.filter(m => !m.effect)[0] || {};
-const mecha = ttsVits.filter(m => m.effect === 'mecha')[0] || {};
+ok(ttsVits.length === 1, '角色音色只剩原声一条', 'got=' + ttsVits.length);
+const theresa = ttsVits[0] || {};
 ok(theresa.shared === 'vits' && theresa.sizeGB > 0 && theresa.sizeGB <= 0.2, '原声是百 MB 量级的共享模型');
-ok(mecha.shared === 'vits' && mecha.sizeGB === 0, '机械音复用同一份模型，不额外占磁盘');
-ok(mecha.id === 'vits-mecha' && /机械音/.test(mecha.name), '机械音条目 id 与名字可区分');
 ok(ttsVits.every(m => !m.voice && !m.urls && !m.voiceFile), '角色音色不冒充系统语音，也不带独立下载地址');
-ok(ttsVits.every(m => /近似|效果器/.test(m.desc)), '角色音色说明里写清近似来源');
+ok(ttsVits.every(m => /近似/.test(m.desc)), '角色音色说明里写清近似来源');
 
 ok(ttsDl.every(m => m.sizeGB >= 0 && m.sizeGB <= 0.2 && m.vramGB === 0),
   '本地音色体积在百 MB 量级，且不占显存', ttsDl.map(m => m.id + '=' + m.sizeGB + 'GB').join(' '));
@@ -744,11 +741,10 @@ function stateOf(env){ return vm.runInContext('msState', env); }
   const melo = env.catalogGet('melo-zh-en');
   const zip = env.catalogGet('zipvoice-clone');
   const vits = env.catalogGet('vits-theresa');
-  const mecha = env.catalogGet('vits-mecha');
   ok(!!melo && melo.engine === 'melo' && melo.shared === 'melo', '目录里有 MeloTTS 中英混读');
   ok(!!zip && zip.engine === 'zipvoice' && zip.clone === true, '目录里有 ZipVoice 声音克隆');
   ok(!!vits && vits.engine === 'vits' && vits.shared === 'vits', '目录里有二次元角色音色');
-  ok(!!mecha && mecha.engine === 'vits' && mecha.effect === 'mecha', '目录里有二次元机械音');
+  ok(!env.catalogGet('vits-mecha'), '二次元机械音已下线');
 
   await env.msInstall(melo);
   eq(calls.melo, 1, '安装 MeloTTS 走专用 IPC');
@@ -760,11 +756,6 @@ function stateOf(env){ return vm.runInContext('msState', env); }
   eq(env.__ls.getItem('hf_ttsVoice'), 'vits:theresa', '角色音色启用值固定为 vits:theresa');
   ok(env.msIsInstalled(vits), '角色音色共享模型就绪后判为已安装');
   ok(/角色音色（二次元）/.test(env.__els.mcStore.innerHTML), '引擎面板列出角色音色');
-
-  /* 机械音复用同一份模型：不需要再下载，启用值换成 vits:mecha 即可 */
-  ok(env.msIsInstalled(mecha), '机械音与原声共用模型，天然已安装');
-  env.msEnable(mecha);
-  eq(env.__ls.getItem('hf_ttsVoice'), 'vits:mecha', '机械音启用值为 vits:mecha');
 
   await env.msInstall(zip);
   eq(calls.zip, 1, '安装 ZipVoice 走专用 IPC');
@@ -791,11 +782,6 @@ function stateOf(env){ return vm.runInContext('msState', env); }
   eq(asked[1].body.engine, 'vits', '角色音色试听带 engine=vits');
   ok(!asked[1].body.voice, '角色音色不传 voice 字段');
   ok(!asked[1].body.effect, '角色音色试听不带效果器');
-  env.msStopPreview();
-
-  await env.msPreview(mecha);
-  eq(asked[2].body.engine, 'vits', '机械音试听仍走 vits 引擎');
-  eq(asked[2].body.effect, 'mecha', '机械音试听带 effect=mecha');
   env.msStopPreview();
 
   await env.msRemove(melo);

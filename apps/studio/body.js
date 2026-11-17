@@ -109,6 +109,12 @@ window.STUDIO_BODY = `
         <section class="st-panel hidden" data-panel="text">
           <div class="st-hint">点一个预设，文字会落在播放头位置。</div>
           <div class="st-presets" id="stTextPresets"></div>
+          <div class="st-hint">字幕：导入 SRT / VTT 自动落到字幕文字轨，导出按文字片段生成 SRT。</div>
+          <div class="st-srtrow">
+            <button type="button" class="st-ghost st-wide" id="stSrtImport">导入字幕（SRT / VTT）</button>
+            <button type="button" class="st-ghost st-wide" id="stSrtExport">导出字幕（SRT）</button>
+          </div>
+          <input type="file" id="stSrtFile" accept=".srt,.vtt,text/plain" aria-label="选择字幕文件" hidden>
         </section>
 
         <section class="st-panel hidden" data-panel="audio">
@@ -178,6 +184,7 @@ window.STUDIO_BODY = `
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3L11 6v12L7 14.5H4z"/><path class="st-ico-wave" d="M14.5 9.2a4 4 0 0 1 0 5.6M17.2 6.8a7.4 7.4 0 0 1 0 10.4"/><path class="st-ico-mute hidden" d="m15 10 4 4m0-4-4 4"/></svg>
           </button>
           <input type="range" class="st-vol" id="stVol" min="0" max="100" step="1" value="100" aria-label="预览音量">
+          <div class="st-level" id="stLevel" title="主输出电平（仅在播放时跳动）" aria-label="主输出电平"><i></i></div>
         </div>
       </div>
     </section>
@@ -236,6 +243,8 @@ window.STUDIO_BODY = `
           <div class="st-ruler" id="stRuler"></div>
           <div class="st-rows" id="stRows"></div>
           <div class="st-drop hidden" id="stDrop"></div>
+          <div class="st-range hidden" id="stRange" aria-hidden="true"><b class="st-range-in"></b><b class="st-range-out"></b></div>
+          <div class="st-marquee hidden" id="stMarquee" aria-hidden="true"></div>
           <div class="st-playhead" id="stPlayhead"><b></b></div>
         </div>
       </div>
@@ -312,6 +321,9 @@ window.STUDIO_BODY = `
             <option value="8" selected>标准 · 8 Mbps</option>
             <option value="4">轻量 · 4 Mbps</option>
           </select>
+        </label>
+        <label class="st-form-row"><span>导出范围</span>
+          <label class="st-check" for="stExRange"><input type="checkbox" id="stExRange"> 仅导出入出点区间</label>
         </label>
         <div class="st-exnote">导出为 WebM（浏览器实时渲染并编码，时长越长等待越久；导出期间不要切走页面）。</div>
         <div class="st-progress hidden" id="stExProg">

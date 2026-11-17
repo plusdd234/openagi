@@ -52,12 +52,13 @@ const ALIASES = {
   gallery: 'tools/probe-library-rename.js',
   library: 'tools/probe-library-rename.js',
   imglab: 'tools/probe-imglab.js',
+  maildesk: 'tools/probe-maildesk.js',
   modeldesk: 'tools/probe-modeldesk.js',
   multiview: 'tools/probe-mv-app.js',
   models: 'tools/model-store.js'
 };
 
-const ALL = ['aisearch', 'browser', 'imglab', 'modeldesk', 'multiview', 'gallery'];
+const ALL = ['aisearch', 'browser', 'imglab', 'maildesk', 'modeldesk', 'multiview', 'gallery'];
 const STATIC = [
   ['app-scan', 'tools/app-scan.js', '--check'],
   ['ns-guard', 'tools/ns-guard.js'],

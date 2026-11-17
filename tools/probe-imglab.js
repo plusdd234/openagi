@@ -24,7 +24,7 @@ const check = (ok, name, extra) => {
   const browser = await chromium.launch({ channel: 'msedge' });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
   const errors = [];
-  page.on('pageerror', e => errors.push(String(e && e.message)));
+  page.on('pageerror', e => errors.push(String((e && e.stack) || (e && e.message))));
   await page.goto(pathToFileURL(path.join(root, 'index.html')).href + '?nostore=1', { waitUntil: 'load' });
   await page.waitForTimeout(1200);
 
@@ -44,7 +44,8 @@ const check = (ok, name, extra) => {
 
   /* 默认背景层锁定：移动工具拖不动（对齐 PS 的背景层行为） */
   const bgLocked = await page.evaluate(() => window.psLab.__test.activeLayer());
-  check(bgLocked && bgLocked.locked === true, '默认背景层已锁定', 'locked=' + (bgLocked && bgLocked.locked));
+  check(bgLocked && bgLocked.locked === true && bgLocked.locks && bgLocked.locks.position === true,
+    '默认背景层锁定位置', 'locked=' + (bgLocked && bgLocked.locked) + ' · locks=' + JSON.stringify(bgLocked && bgLocked.locks));
   const blankView = await page.evaluate(() => {
     const c = document.querySelector('#imgLabWin canvas.ps-canvas');
     const r = c.getBoundingClientRect();
@@ -174,6 +175,18 @@ const check = (ok, name, extra) => {
   });
   const S = (x, y) => ({ x: vp.left + vp.px + x * vp.z, y: vp.top + vp.py + y * vp.z });
 
+  /* 矢量工具只在矢量编辑器里出现：先切模式，再走形状 / 钢笔 / 路径选择 */
+  const modeBefore = await page.evaluate(() => window.psLab.__test.mode());
+  await page.evaluate(() => window.psLab.__test.setMode('vector'));
+  const vecMode = await page.evaluate(() => ({
+    mode: window.psLab.__test.mode(),
+    hasShape: !!document.querySelector('#psTools [data-tool="shape"]'),
+    hasBrush: !!document.querySelector('#psTools [data-tool="brush"]'),
+    tab: window.psLab.__debug().layerTab
+  }));
+  check(modeBefore === 'raster' && vecMode.mode === 'vector' && vecMode.hasShape && !vecMode.hasBrush && vecMode.tab === 'paths',
+    '切换到矢量编辑器并过滤工具箱', JSON.stringify(vecMode));
+
   await page.click('#psTools [data-tool="shape"]');
   const toolNow = await page.evaluate(() => window.psLab.__test.tool());
   check(toolNow === 'shape', '工具栏切换到形状工具', toolNow + ' / ' + JSON.stringify(vp));
@@ -195,6 +208,17 @@ const check = (ok, name, extra) => {
   await page.evaluate(() => window.psLab.__test.undo());
   await page.evaluate(() => window.psLab.__test.undo());
 
+  /* 3.7b 钢笔手感：Backspace 撤回锚点 / Enter 结束成开放路径 / 悬停锚点 / Delete 删锚点 */
+  await page.click('#psTools [data-tool="pen"]');
+  const penB0 = S(500, 560), penB1 = S(560, 600);
+  await page.mouse.click(penB0.x, penB0.y);
+  await page.mouse.click(penB1.x, penB1.y);
+  const penN1 = await page.evaluate(() => window.psLab.__test.penPoints().length);
+  await page.keyboard.press('Backspace');
+  const penN2 = await page.evaluate(() => window.psLab.__test.penPoints().length);
+  check(penN1 === 2 && penN2 === 1, '钢笔 Backspace 撤回锚点', penN1 + '→' + penN2);
+  await page.keyboard.press('Escape');
+
   await page.click('#psTools [data-tool="pen"]');
   const p0 = S(500, 480), p1 = S(650, 480), p2 = S(575, 610);
   for (const q of [p0, p1, p2]) {
@@ -206,7 +230,57 @@ const check = (ok, name, extra) => {
   await page.waitForTimeout(160);
   active = await page.evaluate(() => window.psLab.__test.activeLayer());
   check(active.type === 'shape' && active.shapes === 1, '钢笔落点并回车生成路径图层', active.type + ' · ' + active.shapes + ' 形状');
+  const penInfo = await page.evaluate(() => window.psLab.__test.shapeInfo());
+  check(penInfo.kind === 'path' && penInfo.pts === 3 && penInfo.closed === false,
+    '钢笔 Enter 结束并保留开放路径', JSON.stringify({ pts: penInfo.pts, closed: penInfo.closed }));
+
+  await page.click('#psTools [data-tool="path-select"]');
+  await page.mouse.move(p0.x, p0.y);
+  await page.waitForTimeout(100);
+  const nodeOverlay = await page.evaluate(() => window.psLab.__test.preview());
+  check(nodeOverlay.edit === true && nodeOverlay.path >= 3, '路径选择悬停显示锚点', JSON.stringify(nodeOverlay));
+  await page.mouse.down(); await page.mouse.up();
+  const picked = await page.evaluate(() => window.psLab.__test.pathSelection());
+  await page.keyboard.press('Delete');
+  await page.waitForTimeout(140);
+  const afterDel = await page.evaluate(() => window.psLab.__test.shapeInfo());
+  check(picked && picked.index === 0 && afterDel && afterDel.pts === 2,
+    '路径选择 Delete 删除锚点', JSON.stringify({ picked: picked && picked.index, pts: afterDel && afterDel.pts }));
   await page.evaluate(() => window.psLab.__test.undo());
+  await page.evaluate(() => window.psLab.__test.undo());
+
+  /* 3.7c 路径选择：拖动控制柄改形 */
+  await page.evaluate(() => window.psLab.__test.addShape({
+    kind: 'path', closed: false, fill: null, stroke: '#ff3355', strokeWidth: 2,
+    pts: [
+      { x: 560, y: 560, hix: null, hiy: null, hox: 640, hoy: 560 },
+      { x: 760, y: 560, hix: 680, hiy: 560, hox: null, hoy: null }
+    ]
+  }, '控制柄测试'));
+  await page.click('#psTools [data-tool="path-select"]');
+  const h0 = S(640, 560), h1 = S(640, 620);
+  await page.mouse.move(h0.x, h0.y);
+  await page.waitForTimeout(100);
+  await page.mouse.down();
+  const pickHandle = await page.evaluate(() => window.psLab.__test.pathSelection());
+  await page.mouse.move(h1.x, h1.y, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(140);
+  const handleInfo = await page.evaluate(() => window.psLab.__test.shapeInfo());
+  check(handleInfo && Math.abs(handleInfo.points[0].hoy - 620) < 3,
+    '路径选择拖动控制柄改形', JSON.stringify({ pick: pickHandle, p0: handleInfo && handleInfo.points[0] }));
+  await page.evaluate(() => window.psLab.__test.undo());
+  await page.evaluate(() => window.psLab.__test.undo());
+
+  /* 回到图像编辑器，后续魔棒 / 画笔 / 选项栏 / 羽化都依赖位图工具 */
+  await page.evaluate(() => window.psLab.__test.setMode('raster'));
+  const backMode = await page.evaluate(() => ({
+    mode: window.psLab.__test.mode(),
+    hasBrush: !!document.querySelector('#psTools [data-tool="brush"]'),
+    hasShape: !!document.querySelector('#psTools [data-tool="shape"]')
+  }));
+  check(backMode.mode === 'raster' && backMode.hasBrush && !backMode.hasShape,
+    '切回图像编辑器并恢复位图工具', JSON.stringify(backMode));
 
   await page.click('#psTools [data-tool="magic-wand"]');
   const w0 = S(600, 250);
@@ -332,7 +406,6 @@ const check = (ok, name, extra) => {
   });
 
   /* 3.13 移动工具「自动选择」：点空白处自动切到该处图层 */
-  await page.click('#psTools [data-tool="shape"]');
   const probeLayerId = await page.evaluate(() => window.psLab.__test.addShape(
     { kind: 'rect', x: 30, y: 30, w: 60, h: 60, fill: '#22d3ee', stroke: null, strokeWidth: 0 },
     '自动选择测试'));
@@ -537,6 +610,444 @@ const check = (ok, name, extra) => {
   dbg = await page.evaluate(() => window.psLab.__debug());
   check(dbg.mips > 0, '大图导入后 mip 生成', dbg.mips + ' 层 mip');
   check(dbg.tiles > 0, '大图按瓦片存储', dbg.tiles + ' 瓦片 · ' + Math.round(dbg.memory / 1048576) + ' MB 估算');
+
+  /* 10. 图层蒙版：非破坏性隐藏、撤销、停用、应用、存档往返 */
+  await page.evaluate(() => window.psLab.__test.setOption('size', 40));
+  const maskAdded = await page.evaluate(() => window.psLab.__test.maskAdd());
+  let maskLayer = await page.evaluate(() => window.psLab.__test.activeLayer());
+  check(maskAdded && maskLayer.mask && maskLayer.mask.enabled && maskLayer.mask.tiles === 0,
+    '添加图层蒙版（默认全显示）', JSON.stringify(maskLayer.mask));
+
+  const maskUi = await page.evaluate(() => ({
+    thumb: !!document.querySelector('#psLayerList .ps-lay.is-on .ps-lay-mask'),
+    buttons: document.querySelectorAll('#psLayerProps .ps-mask-row [data-mask-act]').length
+  }));
+  check(maskUi.thumb && maskUi.buttons >= 4, '图层面板出现蒙版缩略图与操作按钮',
+    'thumb=' + maskUi.thumb + ' · buttons=' + maskUi.buttons);
+  await page.click('#psLayerList .ps-lay.is-on .ps-lay-mask');
+  const editOff = await page.evaluate(() => window.psLab.__test.activeLayer().maskEditing);
+  await page.click('#psLayerList .ps-lay.is-on .ps-lay-mask');
+  const editOn = await page.evaluate(() => window.psLab.__test.activeLayer().maskEditing);
+  check(editOff === false && editOn === true, '点击蒙版缩略图切换编辑目标', editOff + ' → ' + editOn);
+
+  const maskPaint = await page.evaluate(() => window.psLab.__test.maskPaintAt(300, 300));
+  await page.waitForTimeout(120);
+  const maskHide = await page.evaluate(() => window.psLab.__test.maskValue(300, 300));
+  const maskShow = await page.evaluate(() => window.psLab.__test.maskValue(900, 900));
+  const flatHidden = await page.evaluate(() => window.psLab.__test.flattenSample(300, 300));
+  const flatVisible = await page.evaluate(() => window.psLab.__test.flattenSample(900, 900));
+  check(maskPaint && maskHide > 0.8 && maskShow < 0.01 && flatHidden.a < 30 && flatVisible.a > 240,
+    '蒙版只隐藏落笔处，其余保持可见',
+    'hide=' + maskHide.toFixed(2) + ' · show=' + maskShow.toFixed(2) + ' · a=' + flatHidden.a + '/' + flatVisible.a);
+
+  await page.evaluate(() => window.psLab.__test.undo());
+  check((await page.evaluate(() => window.psLab.__test.maskValue(300, 300))) < 0.01, '撤销蒙版笔画恢复显示');
+  await page.evaluate(() => window.psLab.__test.redo());
+  check((await page.evaluate(() => window.psLab.__test.maskValue(300, 300))) > 0.8, '重做蒙版笔画再次隐藏');
+
+  const toggledOff = await page.evaluate(() => window.psLab.__test.maskToggle());
+  const flatDisabled = await page.evaluate(() => window.psLab.__test.flattenSample(300, 300));
+  check(toggledOff === false && flatDisabled.a > 240, '停用蒙版后图层完整显示', 'a=' + flatDisabled.a);
+  await page.evaluate(() => window.psLab.__test.maskToggle());
+
+  const applied = await page.evaluate(() => window.psLab.__test.maskApply());
+  maskLayer = await page.evaluate(() => window.psLab.__test.activeLayer());
+  const flatBaked = await page.evaluate(() => window.psLab.__test.flattenSample(300, 300));
+  check(applied && !maskLayer.mask && flatBaked.a < 30, '应用蒙版：结果烘焙进像素且蒙版移除', 'a=' + flatBaked.a);
+  await page.evaluate(() => window.psLab.__test.undo());
+  maskLayer = await page.evaluate(() => window.psLab.__test.activeLayer());
+  check(!!maskLayer.mask && (await page.evaluate(() => window.psLab.__test.flattenSample(300, 300))).a < 30,
+    '撤销应用蒙版：蒙版与像素一起回来');
+  await page.evaluate(() => window.psLab.__test.redo());
+  await page.evaluate(() => window.psLab.__test.undo());
+
+  const project = await page.evaluate(async () => {
+    const doc = window.psLab.__test.doc();
+    const payload = await PS.serializeDoc(doc);
+    const item = payload.layers.find(l => l.mask);
+    const back = await PS.deserializeDoc(payload);
+    const bl = back.layers.find(l => l.mask);
+    let alpha = -1;
+    if (bl && bl.mask) {
+      const mt = bl.mask.tiles.get('1,1');
+      if (mt) alpha = mt.ctx.getImageData(300 - 256, 300 - 256, 1, 1).data[3];
+    }
+    return {
+      version: payload.version,
+      hasPng: !!(item && item.mask && item.mask.png),
+      tiles: item && item.mask ? item.mask.tiles.length : 0,
+      backMask: !!bl,
+      alpha: alpha,
+      locks: payload.layers[0].locks
+    };
+  });
+  check(project.version === 2 && project.hasPng && project.tiles >= 1 && project.backMask && project.alpha > 200,
+    '工程存档往返保留蒙版', JSON.stringify(project));
+
+  const maskDeleted = await page.evaluate(() => window.psLab.__test.maskDelete());
+  maskLayer = await page.evaluate(() => window.psLab.__test.activeLayer());
+  const flatAfterDelete = await page.evaluate(() => window.psLab.__test.flattenSample(300, 300));
+  check(maskDeleted && !maskLayer.mask && flatAfterDelete.a > 240, '删除蒙版恢复完整像素', 'a=' + flatAfterDelete.a);
+  await page.evaluate(() => window.psLab.__test.undo());
+
+  /* 11. 图像像素锁：工具与滤镜都被拦截 */
+  await page.evaluate(() => window.psLab.__test.lockSet('image', true));
+  const lockedPaint = await page.evaluate(() => window.psLab.__test.brushAt(700, 700));
+  await page.evaluate(() => window.psLab.__test.lockSet('image', false));
+  check(lockedPaint === false, '锁定图像像素后画笔被拒绝', 'paint=' + lockedPaint);
+  const unlockedPaint = await page.evaluate(() => window.psLab.__test.brushAt(700, 700));
+  check(unlockedPaint === true, '解锁后画笔恢复', 'paint=' + unlockedPaint);
+
+  /* 透明像素锁：可以改颜色，但不能凭空长出新像素 */
+  await page.evaluate(() => window.psLab.__test.addLayer('透明锁测试'));
+  await page.evaluate(() => window.psLab.__test.lockSet('transparent', true));
+  await page.evaluate(() => window.psLab.__test.brushAt(400, 400));
+  const alphaLockedPx = await page.evaluate(() => window.psLab.__test.layerAlphaAt(400, 400));
+  await page.evaluate(() => window.psLab.__test.lockSet('transparent', false));
+  await page.evaluate(() => window.psLab.__test.brushAt(400, 400));
+  const alphaFreePx = await page.evaluate(() => window.psLab.__test.layerAlphaAt(400, 400));
+  check(alphaLockedPx === 0 && alphaFreePx > 0,
+    '透明像素锁阻止新像素、解锁后可画', 'locked.a=' + alphaLockedPx + ' · free.a=' + alphaFreePx);
+
+  /* 12. 抓手与缩放工具（不再是占位） */
+  const canvasBox = await page.evaluate(() => {
+    const c = document.querySelector('#imgLabWin canvas.ps-canvas');
+    const r = c.getBoundingClientRect();
+    return { left: r.left, top: r.top, w: r.width, h: r.height };
+  });
+  const pan0 = await page.evaluate(() => window.psLab.__debug().pan);
+  await page.click('#psTools [data-tool="hand"]');
+  await page.mouse.move(canvasBox.left + canvasBox.w / 2, canvasBox.top + canvasBox.h / 2);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox.left + canvasBox.w / 2 + 70, canvasBox.top + canvasBox.h / 2 + 30, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(120);
+  const pan1 = await page.evaluate(() => window.psLab.__debug().pan);
+  check(Math.abs(pan1.x - pan0.x - 70) < 6 && Math.abs(pan1.y - pan0.y - 30) < 6,
+    '抓手工具拖拽平移', 'Δ=' + Math.round(pan1.x - pan0.x) + ',' + Math.round(pan1.y - pan0.y));
+
+  const zoom0 = await page.evaluate(() => window.psLab.__debug().zoom);
+  await page.click('#psTools [data-tool="zoom"]');
+  await page.mouse.click(canvasBox.left + canvasBox.w / 2, canvasBox.top + canvasBox.h / 2);
+  await page.waitForTimeout(120);
+  const zoom1 = await page.evaluate(() => window.psLab.__debug().zoom);
+  check(zoom1 > zoom0 * 1.2, '缩放工具单击放大', zoom0.toFixed(2) + ' → ' + zoom1.toFixed(2));
+
+  /* 13. 直方图 */
+  const hist = await page.evaluate(() => window.psLab.__test.histogram());
+  check(hist && hist.w > 100 && hist.alphaSum > 1000, '导航器 RGB 直方图有数据',
+    hist && (hist.w + '×' + hist.h + ' · sum=' + hist.alphaSum));
+
+  /* 14. 通道面板：RGB/R/G/B 四行、缩略图、单独查看、Ctrl+2 返回 */
+  await page.click('#psLayerTabs [data-ltab="channels"]');
+  await page.waitForTimeout(200);
+  const chUi = await page.evaluate(() => ({
+    rows: document.querySelectorAll('#psLayerList .ps-ch-row').length,
+    thumbs: document.querySelectorAll('#psLayerList .ps-ch-thumb').length,
+    count: (document.getElementById('psLayerCount') || {}).textContent
+  }));
+  check(chUi.rows === 4 && chUi.thumbs === 4 && chUi.count === '4',
+    '通道面板列出 RGB/R/G/B 四行', JSON.stringify(chUi));
+
+  await page.click('#psLayerList [data-ch="r"]');
+  await page.waitForTimeout(150);
+  const chR = await page.evaluate(() => ({
+    ch: window.psLab.__test.channel(),
+    mode: document.getElementById('psStatMode').textContent,
+    tab: window.psLab.__debug().layerTab
+  }));
+  check(chR.ch === 'r' && chR.mode.indexOf('红') === 0 && chR.tab === 'channels',
+    '单击红通道进入单通道预览并同步状态栏', JSON.stringify(chR));
+
+  await page.keyboard.press('Control+2');
+  await page.waitForTimeout(150);
+  const chBack = await page.evaluate(() => ({
+    ch: window.psLab.__test.channel(),
+    mode: document.getElementById('psStatMode').textContent
+  }));
+  check(chBack.ch === 'rgb' && chBack.mode === 'RGB · 8 位', 'Ctrl+2 回到 RGB 复合视图', JSON.stringify(chBack));
+
+  /* 15. 路径面板：列出矢量形状、单击选中、眼睛隐藏 */
+  await page.evaluate(() => {
+    window.psLab.__test.addShape(
+      { kind: 'rect', x: 120, y: 120, w: 220, h: 140, fill: '#22d3ee', stroke: null, strokeWidth: 0 }, '路径测试矩形');
+    window.psLab.__test.addShape(
+      { kind: 'ellipse', x: 380, y: 160, w: 170, h: 120, fill: null, stroke: '#ff3355', strokeWidth: 4 }, '路径测试椭圆');
+  });
+  await page.click('#psLayerTabs [data-ltab="paths"]');
+  await page.waitForTimeout(180);
+  const pathUi = await page.evaluate(() => ({
+    heads: document.querySelectorAll('#psLayerList .ps-path-head').length,
+    rows: document.querySelectorAll('#psLayerList .ps-path-row').length,
+    labels: Array.from(document.querySelectorAll('#psLayerList .ps-path-meta b')).map(x => x.textContent).join(',')
+  }));
+  check(pathUi.rows >= 2 && pathUi.heads >= 2
+    && pathUi.labels.indexOf('矩形') >= 0 && pathUi.labels.indexOf('椭圆') >= 0,
+    '路径面板列出矢量形状（矩形 / 椭圆）', JSON.stringify(pathUi));
+
+  const firstPath = await page.evaluate(() => {
+    const row = document.querySelector('#psLayerList .ps-path-row');
+    return row ? { layer: row.dataset.layer, index: Number(row.dataset.index) } : null;
+  });
+  await page.click('#psLayerList .ps-path-row');
+  await page.waitForTimeout(160);
+  const pathPick = await page.evaluate(() => ({
+    active: window.psLab.__debug().doc.active,
+    shapeSel: window.psLab.__test.preview().shapeSel
+  }));
+  check(!!firstPath && pathPick.active === firstPath.layer && pathPick.shapeSel,
+    '路径面板单击选中形状并在画布高亮', JSON.stringify(pathPick) + ' · row=' + JSON.stringify(firstPath));
+
+  const eyeId = await page.evaluate(() => {
+    const head = document.querySelector('#psLayerList .ps-path-head');
+    return head ? head.dataset.pathHead : null;
+  });
+  await page.click('#psLayerList .ps-path-head .ps-path-eye');
+  await page.waitForTimeout(140);
+  const visOff = await page.evaluate(id => {
+    const l = window.psLab.__test.doc().layers.find(x => x.id === id);
+    return l ? l.visible : null;
+  }, eyeId);
+  check(visOff === false, '路径面板眼睛隐藏矢量图层', 'visible=' + visOff);
+  await page.click('#psLayerList .ps-path-head .ps-path-eye');
+
+  /* 16. 菜单：展开状态下横向悬停标题直接切换 */
+  const menuSwitch = await page.evaluate(async () => {
+    const btns = Array.from(document.querySelectorAll('#psMenus .ps-menu'));
+    if (btns.length < 2) return { ok: false };
+    btns[0].click();
+    await new Promise(r => setTimeout(r, 70));
+    const first = document.querySelector('.ps-menu-pop');
+    const firstText = first ? first.textContent : '';
+    btns[1].dispatchEvent(new PointerEvent('pointerenter'));
+    await new Promise(r => setTimeout(r, 70));
+    const second = document.querySelector('.ps-menu-pop');
+    return {
+      open: !!second,
+      changed: !!second && second.textContent !== firstText,
+      onlyOne: document.querySelectorAll('.ps-menu-pop').length === 1
+    };
+  });
+  check(menuSwitch.open && menuSwitch.changed && menuSwitch.onlyOne,
+    '菜单展开时悬停标题可切换', JSON.stringify(menuSwitch));
+  await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+
+  /* 17. 移动对齐辅助：文档中心 / 其他图层边缘吸附、Ctrl 临时关闭、Shift 约束 */
+  await page.click('#psTools [data-tool="move"]');
+  check(await page.evaluate(() => window.psLab.__test.options().moveSnap === true), '移动工具默认开启对齐', '');
+  await page.evaluate(() => {
+    window.psLab.__test.addShape(
+      { kind: 'rect', x: 400, y: 300, w: 200, h: 100, fill: '#22d3ee', stroke: null, strokeWidth: 0 }, '对齐目标');
+    window.psLab.__test.addShape(
+      { kind: 'rect', x: 1200, y: 900, w: 200, h: 100, fill: '#f6c445', stroke: null, strokeWidth: 0 }, '对齐移动');
+  });
+  const vpAlign = await page.evaluate(() => {
+    const c = document.querySelector('#imgLabWin canvas.ps-canvas');
+    const r = c.getBoundingClientRect();
+    const d = window.psLab.__debug();
+    return { left: r.left, top: r.top, px: d.pan.x, py: d.pan.y, z: d.zoom };
+  });
+  const SA = (x, y) => ({ x: vpAlign.left + vpAlign.px + x * vpAlign.z, y: vpAlign.top + vpAlign.py + y * vpAlign.z });
+
+  const centerFrom = SA(1300, 950);
+  const centerTo = SA(1490, 950);
+  await page.mouse.move(centerFrom.x, centerFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(centerTo.x, centerTo.y, { steps: 8 });
+  await page.waitForTimeout(100);
+  const snapCenter = await page.evaluate(() => ({
+    layer: window.psLab.__test.activeLayer(),
+    guides: window.psLab.__debug().guides
+  }));
+  await page.mouse.up();
+  check(snapCenter.layer && snapCenter.layer.bounds
+    && Math.round(snapCenter.layer.bounds.x + snapCenter.layer.bounds.w / 2) === 1500
+    && snapCenter.guides.indexOf('v:1500') >= 0,
+    '移动吸附到文档中心并显示参考线',
+    'bounds=' + JSON.stringify(snapCenter.layer && snapCenter.layer.bounds) + ' · guides=' + JSON.stringify(snapCenter.guides));
+
+  const ctrlFrom = SA(1500, 950);
+  const ctrlTo = SA(1490, 950);
+  await page.mouse.move(ctrlFrom.x, ctrlFrom.y);
+  await page.keyboard.down('Control');
+  await page.mouse.down();
+  await page.mouse.move(ctrlTo.x, ctrlTo.y, { steps: 5 });
+  await page.waitForTimeout(100);
+  const ctrlState = await page.evaluate(() => ({
+    layer: window.psLab.__test.activeLayer(),
+    guides: window.psLab.__debug().guides
+  }));
+  await page.mouse.up();
+  await page.keyboard.up('Control');
+  check(ctrlState.layer && ctrlState.layer.bounds && Math.round(ctrlState.layer.bounds.x) === 1390
+    && ctrlState.guides.length === 0,
+    '按住 Ctrl 临时关闭吸附',
+    'bounds=' + JSON.stringify(ctrlState.layer && ctrlState.layer.bounds) + ' · guides=' + JSON.stringify(ctrlState.guides));
+
+  const edgeFrom = SA(1490, 950);
+  const edgeTo = SA(690, 950);
+  await page.mouse.move(edgeFrom.x, edgeFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(edgeTo.x, edgeTo.y, { steps: 10 });
+  await page.waitForTimeout(100);
+  const snapEdge = await page.evaluate(() => ({
+    layer: window.psLab.__test.activeLayer(),
+    guides: window.psLab.__debug().guides
+  }));
+  await page.mouse.up();
+  check(snapEdge.layer && snapEdge.layer.bounds && Math.round(snapEdge.layer.bounds.x) === 600
+    && snapEdge.guides.indexOf('v:600') >= 0,
+    '移动吸附到其他图层边缘',
+    'bounds=' + JSON.stringify(snapEdge.layer && snapEdge.layer.bounds) + ' · guides=' + JSON.stringify(snapEdge.guides));
+
+  await page.evaluate(() => window.psLab.__test.setOption('moveSnap', false));
+  const shiftFrom = SA(690, 950);
+  const shiftTo = SA(760, 990);
+  await page.mouse.move(shiftFrom.x, shiftFrom.y);
+  await page.keyboard.down('Shift');
+  await page.mouse.down();
+  await page.mouse.move(shiftTo.x, shiftTo.y, { steps: 5 });
+  await page.waitForTimeout(80);
+  const shiftState = await page.evaluate(() => window.psLab.__test.activeLayer());
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  await page.evaluate(() => window.psLab.__test.setOption('moveSnap', true));
+  check(shiftState && shiftState.bounds
+    && Math.round(shiftState.bounds.x) === 670 && Math.round(shiftState.bounds.y) === 900,
+    'Shift 约束为水平移动',
+    'bounds=' + JSON.stringify(shiftState && shiftState.bounds));
+
+  /* 18. 矢量布尔运算：同一形状层里的合并 / 减去 / 相交 / 排除 */
+  const boolState = await page.evaluate(() => {
+    window.psLab.__test.setMode('vector');
+    const doc = window.psLab.__test.doc();
+    const layer = PS.addShapeLayer(doc, [
+      { kind: 'rect', x: 100, y: 100, w: 200, h: 200, fill: '#ff0000', stroke: null, strokeWidth: 0, op: 'add' },
+      { kind: 'rect', x: 200, y: 200, w: 200, h: 200, fill: '#00ff00', stroke: null, strokeWidth: 0, op: 'subtract' }
+    ], { name: '布尔测试' });
+    function read(op) {
+      if (op) PS.setShapeOp(doc, layer, layer.shapes[1], op);
+      const cv = PS.renderLayer(layer);
+      const c = cv.ctx;
+      const px = (x, y) => Array.from(c.getImageData(x, y, 1, 1).data);
+      return { a: px(150, 150), hole: px(250, 250), b: px(350, 350) };
+    }
+    const sub = read();
+    const inter = read('intersect');
+    const excl = read('exclude');
+    const shapes = window.psLab.__test.shapes();
+    const lone = PS.addShapeLayer(doc, [
+      { kind: 'rect', x: 10, y: 10, w: 40, h: 40, fill: '#0000ff', op: 'subtract' }
+    ], { name: '首形状' });
+    const lonePx = Array.from(PS.renderLayer(lone).ctx.getImageData(20, 20, 1, 1).data);
+    return { sub, inter, excl, shapes, lone: lonePx };
+  });
+  check(boolState.shapes.length === 2 && boolState.shapes[1].op === 'exclude',
+    '同一形状层容纳多条布尔路径', JSON.stringify(boolState.shapes));
+  check(boolState.sub.a[3] === 255 && boolState.sub.hole[3] === 0 && boolState.sub.b[3] === 0,
+    '减去：重叠区被挖空', JSON.stringify(boolState.sub));
+  check(boolState.inter.a[3] === 0 && boolState.inter.hole[3] === 255
+    && boolState.inter.b[3] === 0,
+    '相交：只保留重叠区', JSON.stringify(boolState.inter));
+  check(boolState.excl.a[3] === 255 && boolState.excl.hole[3] === 0 && boolState.excl.b[3] === 255,
+    '排除：只保留不重叠区', JSON.stringify(boolState.excl));
+  check(boolState.lone[3] === 255, '首条路径即使标记为减去也按合并绘制', JSON.stringify(boolState.lone));
+
+  const appendState = await page.evaluate(() => {
+    window.psLab.__test.addShape(
+      { kind: 'ellipse', x: 50, y: 50, w: 80, h: 80, fill: '#ffffff' }, '布尔追加');
+    window.psLab.__test.appendShape(
+      { kind: 'ellipse', x: 90, y: 90, w: 80, h: 80, fill: '#111111', op: 'subtract' });
+    const s = window.psLab.__test.shapes();
+    return { count: s.length, ops: s.map(x => x.op) };
+  });
+  check(appendState.count === 2 && appendState.ops.join(',') === 'add,subtract',
+    '追加形状到当前矢量层并保留布尔标记', JSON.stringify(appendState));
+
+  await page.click('#psTools [data-tool="shape"]');
+  await page.waitForTimeout(80);
+  const boolUi = await page.evaluate(() => Array.from(document.querySelectorAll('#psOptions [data-bool-op]'))
+    .map(b => b.dataset.boolOp));
+  await page.click('#psOptions [data-bool-op="subtract"]');
+  const boolOpt = await page.evaluate(() => window.psLab.__test.options().vectorOp);
+  check(boolUi.join(',') === 'add,subtract,intersect,exclude' && boolOpt === 'subtract',
+    '形状选项栏提供四种布尔运算', JSON.stringify(boolUi) + ' · op=' + boolOpt);
+
+  /* 19. PS 风格快捷键：颜色 / 选区切换 / 新建图层 / 笔刷参数 / 填充 */
+  await page.evaluate(() => window.psLab.__test.setMode('raster'));
+  await page.click('#psTools [data-tool="move"]');
+  await page.click('#imgLabWin canvas.ps-canvas');
+
+  const colors0 = await page.evaluate(() => {
+    const d = window.psLab.__debug();
+    return { fg: d.fg, bg: d.bg };
+  });
+  await page.keyboard.press('x');
+  const colorsX = await page.evaluate(() => {
+    const d = window.psLab.__debug();
+    return { fg: d.fg, bg: d.bg };
+  });
+  await page.keyboard.press('d');
+  const colorsD = await page.evaluate(() => {
+    const d = window.psLab.__debug();
+    return { fg: d.fg, bg: d.bg };
+  });
+  check(colorsX.fg === colors0.bg && colorsX.bg === colors0.fg
+    && colorsD.fg === '#000000' && colorsD.bg === '#ffffff',
+    'X 交换前景 / 背景色，D 复位黑白', JSON.stringify({ colors0, colorsX, colorsD }));
+
+  await page.keyboard.press('m');
+  const toolM = await page.evaluate(() => window.psLab.__test.options().tool);
+  await page.keyboard.press('Shift+M');
+  const toolM2 = await page.evaluate(() => window.psLab.__test.options().tool);
+  check(toolM === 'select-rect' && toolM2 === 'select-ellipse',
+    'Shift+M 在矩形 / 椭圆选区之间切换', toolM + ' → ' + toolM2);
+
+  const layersBeforeNew = await page.evaluate(() => window.psLab.__debug().doc.layers);
+  await page.keyboard.press('Control+Shift+N');
+  await page.waitForTimeout(120);
+  const layersAfterNew = await page.evaluate(() => window.psLab.__debug().doc.layers);
+  check(layersAfterNew === layersBeforeNew + 1, 'Ctrl+Shift+N 新建图层',
+    layersBeforeNew + ' → ' + layersAfterNew);
+  await page.evaluate(() => window.psLab.__test.undo());
+
+  await page.keyboard.press('b');
+  const brush0 = await page.evaluate(() => window.psLab.__test.options());
+  await page.keyboard.press('4');
+  await page.keyboard.press('5');
+  const brushOpacity = await page.evaluate(() => window.psLab.__test.options().opacity);
+  await page.keyboard.press('0');
+  const brushOpacity0 = await page.evaluate(() => window.psLab.__test.options().opacity);
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('[');
+  await page.keyboard.up('Shift');
+  const brushHard = await page.evaluate(() => window.psLab.__test.options().hardness);
+  check(brush0.opacity === 92 && brushOpacity === 45 && brushOpacity0 === 100 && brushHard === brush0.hardness - 10,
+    '数字键设定不透明度，Shift+[ 降低硬度',
+    JSON.stringify({ from: brush0.opacity, digits: brushOpacity, zero: brushOpacity0, hard: brush0.hardness + '→' + brushHard }));
+
+  await page.click('#psTools [data-tool="move"]');
+  await page.keyboard.press('5');
+  await page.waitForTimeout(100);
+  const layerOpacity = await page.evaluate(() => window.psLab.__test.activeLayer().opacity);
+  check(Math.abs(layerOpacity - 0.5) < 0.001, '移动工具下数字键改图层不透明度', 'opacity=' + layerOpacity);
+  await page.evaluate(() => window.psLab.__test.undo());
+
+  const fillLayerId = await page.evaluate(() => window.psLab.__test.addLayer('快捷键填充'));
+  await page.keyboard.press('Alt+Backspace');
+  await page.waitForTimeout(150);
+  const filledPx = await page.evaluate(() => window.psLab.__test.flattenSample(40, 40));
+  check(!!fillLayerId && filledPx.r < 24 && filledPx.g < 24 && filledPx.b < 24,
+    'Alt+Backspace 用前景色填充图层', JSON.stringify(filledPx));
+  await page.evaluate(() => window.psLab.__test.undo());
+
+  const modeKeys = await page.evaluate(() => window.psLab.__test.mode());
+  await page.keyboard.press('F3');
+  const modeF3 = await page.evaluate(() => window.psLab.__test.mode());
+  await page.keyboard.press('F2');
+  const modeF2 = await page.evaluate(() => window.psLab.__test.mode());
+  check(modeKeys === 'raster' && modeF3 === 'vector' && modeF2 === 'raster',
+    'F2 / F3 切换位图与矢量编辑器', [modeKeys, modeF3, modeF2].join(' → '));
 
   /* 9. 关闭按钮 */
   const closed = await page.evaluate(() => {

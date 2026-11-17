@@ -27,6 +27,10 @@
     renderer: null, scene: null, camera: null, controls: null, gizmo: null,
     doc: null, node: null, mesh: null, pivot: null,
     running: false, raf: 0, resizeObs: null,
+    /* 按需渲染：没有输入 / 脏块 / 动画时不调 renderer.render。
+     * holdUntil = 还要保持渲染到哪个时间点（指针悬停、拖拽反馈用）；
+     * frameSig = 上一帧的场景指纹，变了才画。 */
+    holdUntil: 0, frameSig: '',
     mode: 'translate', space: 'world', snap: false,
     rightTab: 'props', outlineQuery: '', showGrid: true, gridHelper: null,
     shading: 'shaded-wire', quad: false, quadCams: null, viewName: '透视',
@@ -38,8 +42,16 @@
     isolate: false,
     /* 右侧工具箱两个页签：建模 / 绘画。绘画 = 把笔刷颜色直接画进当前材质槽的基础色贴图 */
     tbKind: 'model',
+    /* 编辑器模式（建模 / 绘制）：两套界面共用同一份 DOM 与状态，只换显隐与工具条。
+     * editorBack = 离开绘制模式时右侧要回到哪个页签（建模 / 属性）。 */
+    editor: 'model', editorBack: 'model',
     paint: {
       brush: 'soft', size: 42, opacity: 90, color: '#d94f4f',
+      /* tool = 绘制模式左侧工具栏选中的工具：brush / pencil / eraser / blur / smudge /
+       * picker / wand。工具只决定手势语义，笔刷的形状与颜色仍由 brush / shape / color 管。 */
+      tool: 'brush',
+      /* lockIsland = 魔棒锁定的 UV 岛（存 faceId）；-1 = 不锁定，按落笔所在的岛裁 */
+      lockIsland: -1,
       /* shape = 笔尖形状：round / square / diamond / star / custom（图片 alpha） */
       shape: 'round',
       /* customBrush = 用户载入的笔尖图：{ img, url, name, rev }；只放内存，不写文档 */
@@ -49,7 +61,10 @@
       /* userSlot = 显式选定的材质槽；-1 = 自动（按落笔面所属槽） */
       userSlot: -1,
       stroke: null, doc: null, slot: -1, tex: null, canvas: null, ctx: null,
-      clipCtx: null, clipped: false, clipPolys: 0
+      clipCtxs: null, clipped: false, clipPolys: 0,
+      /* 脏块：previewBox = 工作副本自上次上传后改过的范围；
+       * inkBox = 这一笔的总范围（入栈时写进层里）；inkFrameBox = 自上次合成后的增量 */
+      previewBox: null, inkBox: null, inkFrameBox: null
     },
     /* V7：四视图可交互 —— quadCtl 每格一个 OrbitControls，只 enable 激活那一个；
      * quadMax 非空时该格全屏；quadDown / quadClick 用来区分单击、拖拽与双击。 */
@@ -342,7 +357,17 @@
     host.innerHTML = [
       '<div class="md-app">',
       '  <div class="md-menu">',
-      '    <div class="md-menu-brand"><b>The seed</b><span>建模</span></div>',
+      '    <div class="md-menu-brand"><b>The seed</b><span id="mdBrandMode">建模</span></div>',
+      /* 编辑器模式开关：整套界面只有这一个真源（st.editor），
+       * 建模模式显示工具架 / 竖条 / 大纲 / 建模工具箱，绘制模式换成笔刷条 + 绘画工具箱。 */
+      '    <div class="md-editorsw" role="group" aria-label="编辑器模式">',
+      '      <button type="button" class="md-edbtn on" data-md-editor-btn="model" title="建模模式：基础体、拓扑算子、UV 与材质槽">' +
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2.8 20 7v10l-8 4.2L4 17V7z"/><path d="M4 7l8 4.2L20 7M12 11.2v10"/></svg>' +
+      '        <span>建模</span></button>',
+      '      <button type="button" class="md-edbtn" data-md-editor-btn="paint" title="绘制模式：笔刷直接画进材质贴图">' +
+      '        <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M14.6 3.4 20.6 8l-9 8.6-4.9-4.6z"/><path d="M5 13.8c1.9-.3 3.5.7 3.8 2.5.3 1.9-.9 3.5-2.8 3.8-1 .2-1.8.1-2.6-.2.9-.6 1.2-1.4 1.2-2.4 0-1.6.5-2.9 1.4-3.7z"/></svg>' +
+      '        <span>绘制</span></button>',
+      '    </div>',
       '    <nav class="md-menu-items">',
       '      <button type="button" class="md-mitem" data-md-menu="文件">文件</button>',
       '      <button type="button" class="md-mitem" data-md-menu="编辑">编辑</button>',
@@ -382,6 +407,30 @@
       '      <span class="md-sep"></span>',
       '      <button type="button" class="md-act" data-md-act="quad" title="渲染前 / 后 / 左 / 右 四视图">四视图</button>',
       '      <button type="button" class="md-act" data-md-act="tex" title="打开 3D 查看器编辑贴图">材质槽</button>',
+      '    </div>',
+      '  </div>',
+      /* 绘制模式的专用工具条：只在绘制模式出现，替代建模模式里那排变换 / 吸附控件。
+       * 这里的大小 / 浓度 / 颜色 / 笔刷都是**同一份 st.paint** 的快捷入口，
+       * 由 updatePaintUi() 双向同步，不是第二套状态。 */
+      '  <div class="md-paintbar" id="mdPaintBar" hidden>',
+      '    <span class="md-pb-title"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M14.6 3.4 20.6 8l-9 8.6-4.9-4.6z"/><path d="M5 13.8c1.9-.3 3.5.7 3.8 2.5.3 1.9-.9 3.5-2.8 3.8-1 .2-1.8.1-2.6-.2.9-.6 1.2-1.4 1.2-2.4 0-1.6.5-2.9 1.4-3.7z"/></svg>绘制</span>',
+      '    <span class="md-pb-sep"></span>',
+      '    <div class="md-pb-group" role="group" aria-label="笔刷类型">',
+      '      <button type="button" class="md-pb-btn on" data-md-pbrush="soft" title="软边笔刷：边缘渐隐">软边</button>',
+      '      <button type="button" class="md-pb-btn" data-md-pbrush="hard" title="硬边笔刷：边缘清晰">硬边</button>',
+      '      <button type="button" class="md-pb-btn" data-md-pbrush="erase" title="橡皮擦：擦回透明">橡皮</button>',
+      '    </div>',
+      '    <span class="md-pb-sep"></span>',
+      '    <label class="md-pb-field" title="笔刷大小"><span>大小</span>' +
+      '      <input type="range" id="mdBrushSizeBar" min="6" max="180" step="1" value="42"><b id="mdBrushSizeBarVal">42</b></label>',
+      '    <label class="md-pb-field" title="笔刷不透明度"><span>浓度</span>' +
+      '      <input type="range" id="mdBrushOpacityBar" min="5" max="100" step="1" value="90"><b id="mdBrushOpacityBarVal">90%</b></label>',
+      '    <input type="color" id="mdBrushColorBar" value="#d94f4f" title="笔刷颜色">',
+      '    <button type="button" class="md-pb-btn" data-md-pmask title="只画进落笔所在的 UV 岛，笔刷不会溢到相邻岛">UV 遮罩</button>',
+      '    <span class="md-pb-meta" id="mdPaintBarMeta">槽：自动</span>',
+      '    <div class="md-pb-right">',
+      '      <button type="button" class="md-act" data-md-act="tex" title="材质槽：管理基础色贴图">材质槽</button>',
+      '      <button type="button" class="md-act" data-md-act="uv" title="UV 编辑器：查看 / 排布 UV 岛">UV 编辑器</button>',
       '    </div>',
       '  </div>',
       '  <div class="md-shelf">',
@@ -430,6 +479,28 @@
       '  </div>',
       '  <div class="md-hb" id="mdHotbox" aria-hidden="true"></div>',
       '  <div class="md-main">',
+      /* 绘制模式的左侧专业工具栏：只在绘制模式出现，替代建模模式的竖条。
+       * 每个按钮都对应一条真实手势（见 md-paint.js 的 tool 分派），不是占位。 */
+      '    <div class="md-paintrail" id="mdPaintRail" hidden role="toolbar" aria-label="绘制工具">',
+      '      <button type="button" class="md-prbtn on" data-md-ptool="brush" title="画笔：按右侧笔刷设置上色">' +
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15.2 3.6l5.2 5.2-8.4 8.4-5.2-5.2z" fill="currentColor" stroke="none"/><path d="M5.4 12.8l5.8 5.8c-1.2 2.2-3.1 3-6.2 3 .9-1 .9-2.3.9-3.6 0-1.9-.5-3.5-.5-5.2z"/></svg></button>',
+      '      <button type="button" class="md-prbtn" data-md-ptool="pencil" title="铅笔：硬边笔尖，边缘不收窄">' +
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20l3.2-.6L20 6.6 17.4 4 4.6 16.8z"/><path d="M14.8 6.6l2.6 2.6M4.6 16.8L4 20l3.2-.6z" fill="currentColor" stroke="none"/></svg></button>',
+      '      <button type="button" class="md-prbtn" data-md-ptool="eraser" title="橡皮：按笔刷形状擦回透明">' +
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8.4 19.6 3.8 15l8.6-8.6 4.6 4.6-6.8 6.8z" fill="currentColor" stroke="none"/><path d="M7.2 19.8h12.4"/><path d="M10.4 8.4l4.6 4.6"/></svg></button>',
+      '      <span class="md-prsep"></span>',
+      '      <button type="button" class="md-prbtn" data-md-ptool="blur" title="模糊工具：糊开笔刷覆盖到的贴图纹素">' +
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3.2c3 3.6 5.2 6.4 5.2 9a5.2 5.2 0 0 1-10.4 0c0-2.6 2.2-5.4 5.2-9z" fill="currentColor" stroke="none" opacity=".85"/><path d="M6.2 18.8c1 .6 2 .9 3 .9M15 19.4c1-.2 1.9-.6 2.7-1.2" stroke-linecap="round"/></svg></button>',
+      '      <button type="button" class="md-prbtn" data-md-ptool="smudge" title="涂抹工具：把落笔处的贴图往笔尖方向带">' +
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4.2 16.6c3.4 0 5.2-1.6 7.6-3.4 2-1.5 4-2.8 6.4-2.8 1.4 0 2.4.5 3 1.2"/><path d="M4.4 20c3.8 0 5.6-1.8 8-3.6" stroke-dasharray="2.4 2.2"/><circle cx="17.4" cy="7.2" r="2.6" fill="currentColor" stroke="none"/></svg></button>',
+      '      <span class="md-prsep"></span>',
+      '      <button type="button" class="md-prbtn" data-md-ptool="picker" title="吸管：从贴图上取颜色作为笔刷色">' +
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15.8 3.8l4.4 4.4-2.2 2.2-4.4-4.4z" fill="currentColor" stroke="none"/><path d="M13 7.4l3.6 3.6-7.8 7.8-4.2 1.2 1.2-4.2z"/><path d="M8.2 15.8l-1.6 1.6"/></svg></button>',
+      '      <button type="button" class="md-prbtn" data-md-ptool="wand" title="魔棒：点模型锁定一整块 UV 岛，笔画只写进这一岛；再点一次解除">' +
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4.4 19.6 14 10l-1.8-1.8L2.6 17.8z" fill="currentColor" stroke="none"/><path d="M17 2.6l.9 2.5 2.5.9-2.5.9-.9 2.5-.9-2.5-2.5-.9 2.5-.9zM19.8 13.4l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z"/></svg></button>',
+      '      <span class="md-prspacer"></span>',
+      '      <span class="md-prsw" id="mdPaintRailSw" title="当前笔刷颜色"></span>',
+      '    </div>',
       '    <div class="md-strip" role="toolbar" aria-label="建模工具">',
       '      <button type="button" class="md-tool" data-md-tool="select" title="选择工具（Q）：点选；按住拖动 = 框选">' + TOOL_ICONS.select + '</button>',
       '      <button type="button" class="md-tool" data-md-tool="lasso" title="套索工具：按住画一圈，圈住的被选中">' + TOOL_ICONS.lasso + '</button>',
@@ -499,7 +570,7 @@
       '      </div>',
       '    </div>',
       '    <aside class="md-right">',
-      '      <div class="md-panel-h md-right-h"><span class="md-tbkinds">' +
+      '      <div class="md-panel-h md-right-h"><span class="md-right-paint-t">绘制工具箱</span><span class="md-tbkinds">' +
       '        <button type="button" class="md-otab on" data-md-tbk="model" title="建模工具箱">建模</button>' +
       '        <button type="button" class="md-otab" data-md-tbk="paint" title="绘画工具箱：笔刷直接画进基础色贴图">绘画</button>' +
       '        <button type="button" class="md-otab" data-md-tbk="props" title="属性编辑器：变换 / 材质槽 / 操作历史">属性</button>' +
@@ -563,7 +634,7 @@
       '          </div>',
       /* 提示放在笔刷卡片下面、纹理混合上面：右栏是整条滚动，
        * 放最后会被长图层列表推到看不见的地方。 */
-      '          <div class="md-paint-hint"><b>操作：</b>左键拖动上色，Alt+左键 / 中键导航；先在「材质槽」里选槽（默认自动 = 落笔面所在槽），笔画只写进选中的槽。</div>',
+      '          <div class="md-paint-hint"><b>操作：</b>左键拖动上色；<b>按住 Shift 拖动 = 模糊笔</b>（糊开笔刷覆盖到的纹素）；Alt+左键 / 中键导航。先在「材质槽」里选槽（默认自动 = 落笔面所在槽），笔画只写进选中的槽。</div>',
       '          <div class="md-paint-mix" id="mdMixBox"></div>',
       '          <input type="file" id="mdBrushFile" accept="image/png,image/webp,image/jpeg" hidden>',
       '        </div>',
@@ -600,6 +671,11 @@
       '  </div>',
       '</div>'
     ].join('\n');
+
+    /* 首次挂载就按 st.editor 落一次模式标记（重开窗口时保留上次所处的模式） */
+    applyEditorChrome(st.editor);
+    /* 重开窗口时把绘制条 / 右侧面板拉回当前笔刷状态（不是 HTML 里的默认值） */
+    updatePaintUi();
 
     st.stage = $('mdStage');
     st.canvas = $('mdCanvas');
@@ -1318,6 +1394,9 @@
   }
 
   function paintAll() {
+    /* 视口的一切可见状态几乎都会走这里重画（选择 / 撤销 / 换对象 / 拓扑），
+     * 按需渲染下它就是「请求下一帧」的统一入口。 */
+    requestRender(0);
     paintOutline();
     paintParams();
     updateHud();
@@ -2028,7 +2107,30 @@
     var n = gestNodes();
     if (!n.brush) return;
     var p = canvasPoint(e);
-    var R = st.tbKind === 'paint' ? Math.max(3, st.paint.size * 0.5) : 22;
+    var R = 22;
+    if (st.tbKind === 'paint') {
+      R = Math.max(3, st.paint.size * 0.5);
+      /* 光圈要跟着「模型上的真实覆盖」走：面板里的圆点只是相对大小，
+       * 实际落笔范围取决于落笔面的 texel 密度（同一个笔在 256² 底座上
+       * 能盖住半张脸）。拖动中不再每帧重新求交 —— 网格射线本来就不便宜，
+       * 沿用落笔时算出的半径。 */
+      var cr = 0;
+      if (!st.paint.stroke && PAINT && PAINT.cursorRadius) {
+        /* 求交是整份网格的线性扫描，跟着每个 pointermove 跑会把悬停拖卡。
+         * 光圈大小随面变化很慢，50ms 更新一次足够，中间沿用上次结果。 */
+        var now = performance.now();
+        if (st.paint.ringSize !== st.paint.size || now - (st.paint.ringAt || 0) > 50) {
+          var c1 = PAINT.cursorRadius(p.x, p.y);
+          st.paint.ringAt = now;
+          st.paint.ringSize = st.paint.size;
+          st.paint.ringR = c1 > 0 ? c1 : 0;
+        }
+        cr = st.paint.ringR || 0;
+      }
+      if (cr > 0) R = cr;
+      else if (st.paint.stroke && st.paint.ringR > 0) R = st.paint.ringR;
+      if (R < 1) R = 1;
+    }
     n.brush.style.display = 'block';
     n.brush.style.width = n.brush.style.height = (R * 2) + 'px';
     n.brush.style.left = (p.x - R) + 'px';
@@ -2101,9 +2203,16 @@
   /* ---------------- 绘画（已拆到 js/md-paint.js） ---------------- */
   /* 外壳只留门面：落笔 / 拖动 / 抬笔 / 取消 / 撤销补丁。
    * 贴图工作区（canvas / 上下文 / 当前槽）仍在共享 st.paint 里，UI 直接改参数。 */
+  /* 预览纹理的唯一上传通道：画笔工作副本与混合合成图共用，只传脏块。
+   * 放在这里而不是各模块内部 new，是为了让「一张纹理只有一个上传者」。 */
+  var UPLOAD = global.MDPaintUpload ? global.MDPaintUpload.create({
+    renderer: function () { return st.renderer; }
+  }) : null;
+
   var PAINT = global.MDPaint.create({
     st: st, THREE: THREE, SeedModel: SeedModel,
     sharedTexture: sharedTexture,
+    upload: UPLOAD,
     setStatus: setStatus, updateChrome: updateChrome,
     rebuildModel: rebuildModel, paintAll: paintAll,
     uvRefreshSolidGeometry: uvRefreshSolidGeometry,
@@ -2121,6 +2230,9 @@
     onPaintInk: function (slot) { if (MIX) MIX.schedule(slot); },
     onPaintReset: function (slot) { if (MIX) MIX.schedule(slot); },
     onPaintSlot: function (slot) { if (MIX) MIX.selectSlot(slot); },
+    /* 吸管 / 魔棒在绘制链内部改状态后回调，让顶部条与右侧面板立刻跟上 */
+    setPaintColor: setPaintColor,
+    updatePaintUi: updatePaintUi,
     /* 显式材质槽：-1 = 自动（落笔面所在槽）。笔迹只写进这一槽，跨槽拖动也不中断。 */
     forceSlot: function () { return st.paint.userSlot; },
     slotName: slotNameAt,
@@ -2150,6 +2262,27 @@
   function paintStrokeEnd() { return PAINT.end(); }
   function paintClipRelease() { return PAINT.cancel(); }
   function applyPaintPatch(patch, side) { return PAINT.applyPatch(patch, side); }
+  /* 落笔期间把 pointermove 合并成一帧一次：高采样率鼠标一秒能发几百个事件，
+   * 每个事件都要对整份网格做一次射线求交，同步全跑会把主线程塞满。
+   * 相邻采样点之间本来就按 UV 插值补段，合并到 rAF 不丢笔迹，只少做几十次求交。 */
+  function paintMoveSchedule(e) {
+    var p = st.paint;
+    p.pendingMove = e;
+    if (p.moveRaf) return;
+    p.moveRaf = global.requestAnimationFrame(function () {
+      p.moveRaf = 0;
+      var ev = p.pendingMove;
+      p.pendingMove = null;
+      if (ev && p.stroke) paintStrokeMove(ev);
+    });
+  }
+  function paintMoveFlush() {
+    var p = st.paint;
+    if (p.moveRaf) { global.cancelAnimationFrame(p.moveRaf); p.moveRaf = 0; }
+    var ev = p.pendingMove;
+    p.pendingMove = null;
+    if (ev && p.stroke) paintStrokeMove(ev);
+  }
 
   /* ---------------- 纹理混合（已拆到 js/md-texmix.js） ----------------
    * 配置真源是模型库同一份 localStorage（openagi_model_tex_v1），
@@ -2163,6 +2296,7 @@
       sharedTexture: sharedTexture,
       applySlotTexture: applySlotTexture,
       liveSlotImage: liveSlotImage,
+      upload: UPLOAD,
       totalBytes: totalBytes, syncBytes: syncBytes, historyBudget: HISTORY_BUDGET,
       paintCanvasFor: function (slot) {
         var p = st.paint;
@@ -2171,6 +2305,21 @@
       paintTexFor: function (slot) {
         var p = st.paint;
         return (st.doc && p.doc === st.doc && p.slot === slot && p.tex) ? p.tex : null;
+      },
+      /* 正在画的这一笔：还没入栈，合成时要单独盖到混合层之上。
+       * type:'blur'（Shift 模糊笔）传的是遮罩 + 模糊半径，合成时按遮罩糊结果。
+       * box = 自上次合成之后新增的像素：混合模块据此只补这一块（整笔范围另存 inkBox）。 */
+      paintInkFor: function (slot) {
+        var p = st.paint;
+        if (!(st.doc && p.doc === st.doc && p.slot === slot && p.ink)) return null;
+        var box = p.inkFrameBox;
+        /* 取走即清空：下一帧的「新增」从这里重新累计 */
+        p.inkFrameBox = null;
+        if (p.inkBlur) {
+          return { canvas: p.ink, mode: 'normal', type: 'blur',
+            radius: Math.max(1, p.blurRad || 1), box: box };
+        }
+        return { canvas: p.ink, mode: p.inkErase ? 'erase' : 'normal', type: 'stroke', box: box };
       },
       /* 3D 遮罩绘制要走和画笔同一套射线：命中槽 / 面 / UV 的口径必须一致 */
       paintRayHit: function (x, y) { return PAINT.rayHit(x, y); },
@@ -2255,7 +2404,7 @@
     if (v.textureConfigKey) m.textureConfigKey = v.textureConfigKey;
     /* 贴图可能整组换过：绘画工作区按旧 URL 建的 canvas 不能继续复用 */
     st.paint.tex = null; st.paint.canvas = null; st.paint.ctx = null;
-    st.paint.clipCtx = null; st.paint.slot = -1; st.paint.doc = null;
+    st.paint.clipCtxs = null; st.paint.slot = -1; st.paint.doc = null;
   }
   function slotEdit(label, fn) {
     if (!st.doc) return false;
@@ -2375,8 +2524,100 @@
   }
   var PAINT_BRUSH_NAME = { soft: '软边', hard: '硬边', erase: '橡皮擦' };
   var PAINT_SHAPE_NAME = { round: '圆形', square: '方形', diamond: '菱形', star: '星形', custom: '自定义' };
+  var PAINT_TOOL_NAME = {
+    brush: '画笔', pencil: '铅笔', eraser: '橡皮',
+    blur: '模糊工具', smudge: '涂抹工具', picker: '吸管', wand: '魔棒'
+  };
+  function setPaintTool(tool) {
+    var v = Object.prototype.hasOwnProperty.call(PAINT_TOOL_NAME, tool) ? tool : 'brush';
+    st.paint.tool = v;
+    st.paint.stampKey = ''; st.paint.stampCv = null;
+    /* 笔刷下拉与工具保持同一套语义：橡皮 / 硬边铅笔要能在面板上看到对应笔尖 */
+    if (v === 'eraser') st.paint.brush = 'erase';
+    else if (v === 'pencil') st.paint.brush = 'hard';
+    else if (st.paint.brush === 'erase') st.paint.brush = 'soft';
+    updatePaintUi();
+    setStatus('绘制工具：' + PAINT_TOOL_NAME[v] +
+      (v === 'wand' ? '（点模型锁定 UV 岛；再点同一岛解除）' : ''));
+  }
+
+  /* 笔刷状态的**唯一写入点**：右侧面板、顶部绘制条、色板、快捷键都走这几个函数，
+   * 再由 updatePaintUi() 反向刷新所有控件，避免两套界面各自记一份值。 */
+  function setPaintBrush(kind) {
+    var v = ['soft', 'hard', 'erase'].indexOf(kind) >= 0 ? kind : 'soft';
+    st.paint.brush = v;
+    st.paint.tool = v === 'erase' ? 'eraser' : 'brush';
+    st.paint.stampKey = ''; st.paint.stampCv = null;
+    updatePaintUi();
+    setStatus('笔刷：' + (PAINT_BRUSH_NAME[v] || '软边') + ' · ' + st.paint.size + ' px');
+  }
+  function setPaintSize(v) {
+    st.paint.size = Math.max(6, Math.min(180, Math.round(Number(v) || 42)));
+    updatePaintUi();
+  }
+  function setPaintOpacity(v) {
+    st.paint.opacity = Math.max(5, Math.min(100, Math.round(Number(v) || 90)));
+    updatePaintUi();
+  }
+  function setPaintColor(v) {
+    st.paint.color = String(v || '').trim() || '#d94f4f';
+    updatePaintUi();
+  }
+  function togglePaintMask() {
+    st.paint.mask = !st.paint.mask;
+    updatePaintUi();
+    setStatus(st.paint.mask
+      ? 'UV 岛遮罩开：笔刷只画进落笔所在的 UV 岛'
+      : 'UV 岛遮罩关：笔刷可画到整张贴图');
+  }
+
   function updatePaintUi() {
     var p = st.paint;
+    /* 绘制条与右侧面板共用同一份状态：这里把控件值拉回状态，
+     * 从任一侧改动都不会让另一侧显示成旧值。 */
+    var brushSel = $('mdBrushSel');
+    if (brushSel && brushSel.value !== p.brush) brushSel.value = p.brush;
+    var shapeSel = $('mdBrushShape');
+    if (shapeSel && shapeSel.value !== p.shape) shapeSel.value = p.shape;
+    var sizeIn = $('mdBrushSize');
+    if (sizeIn && Number(sizeIn.value) !== p.size) sizeIn.value = String(p.size);
+    var sizeVal = $('mdBrushSizeVal');
+    if (sizeVal) sizeVal.textContent = p.size + ' px';
+    var sizeBar = $('mdBrushSizeBar');
+    if (sizeBar && Number(sizeBar.value) !== p.size) sizeBar.value = String(p.size);
+    var sizeBarVal = $('mdBrushSizeBarVal');
+    if (sizeBarVal) sizeBarVal.textContent = String(p.size);
+    var opIn = $('mdBrushOpacity');
+    if (opIn && Number(opIn.value) !== p.opacity) opIn.value = String(p.opacity);
+    var opVal = $('mdBrushOpacityVal');
+    if (opVal) opVal.textContent = p.opacity + '%';
+    var opBar = $('mdBrushOpacityBar');
+    if (opBar && Number(opBar.value) !== p.opacity) opBar.value = String(p.opacity);
+    var opBarVal = $('mdBrushOpacityBarVal');
+    if (opBarVal) opBarVal.textContent = p.opacity + '%';
+    var colIn = $('mdBrushColor');
+    if (colIn && String(colIn.value).toLowerCase() !== String(p.color).toLowerCase()) colIn.value = p.color;
+    var colBar = $('mdBrushColorBar');
+    if (colBar && String(colBar.value).toLowerCase() !== String(p.color).toLowerCase()) colBar.value = p.color;
+    var maskIn = $('mdPaintMask');
+    if (maskIn) maskIn.checked = !!p.mask;
+    document.querySelectorAll('[data-md-pbrush]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.mdPbrush === p.brush);
+    });
+    var maskBtn = document.querySelector('[data-md-pmask]');
+    if (maskBtn) maskBtn.classList.toggle('on', !!p.mask);
+    /* 左侧工具条：选中态跟着同一个 st.paint.tool 走 */
+    document.querySelectorAll('[data-md-ptool]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.mdPtool === p.tool);
+    });
+    var railSw = $('mdPaintRailSw');
+    if (railSw) railSw.style.background = p.color;
+    var barMeta = $('mdPaintBarMeta');
+    if (barMeta) {
+      barMeta.textContent = '槽：' + (p.userSlot >= 0 ? slotNameAt(p.userSlot) : '自动') +
+        (p.lockIsland >= 0 ? ' · 岛锁定' : '');
+    }
+
     var dot = $('mdPaintPrevDot');
     if (dot) {
       /* 6–180 px 映射到 6–40 的预览直径：小笔也能看见，大笔不撑破 52px 的框 */
@@ -2498,6 +2739,43 @@
     return best ? best.id : '';
   }
 
+  /* ---------------- 编辑器模式（建模 / 绘制） ----------------
+   * 两套界面不是两份 DOM：同一套控件，靠 .md-app[data-md-editor] 决定显隐，
+   * 所以切换不丢选择、不丢笔刷、不丢文档。 */
+  function applyEditorChrome(kind) {
+    st.editor = kind === 'paint' ? 'paint' : 'model';
+    var app = document.querySelector('.md-app');
+    if (app) app.dataset.mdEditor = st.editor;
+    document.querySelectorAll('[data-md-editor-btn]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.mdEditorBtn === st.editor);
+    });
+    var brand = $('mdBrandMode');
+    if (brand) brand.textContent = st.editor === 'paint' ? '绘制' : '建模';
+    var bar = $('mdPaintBar');
+    if (bar) bar.hidden = st.editor !== 'paint';
+    var rail = $('mdPaintRail');
+    if (rail) rail.hidden = st.editor !== 'paint';
+  }
+
+  /* 从模式开关进入：绘制模式强制右侧显示绘画工具箱；
+   * 回建模模式时回到离开前的页签（属性编辑器不会被无声丢掉）。 */
+  function setEditor(kind) {
+    if (kind === 'paint') {
+      if (st.tbKind !== 'paint') {
+        st.editorBack = st.tbKind === 'props' ? 'props' : 'model';
+        setTbKind('paint');
+      } else {
+        applyEditorChrome('paint');
+      }
+      updatePaintUi();
+      setStatus('绘制模式：左键拖动上色 · Shift 拖动模糊 · Alt+左键 / 中键导航 · 右侧可换笔刷与材质槽');
+    } else {
+      if (st.tbKind === 'paint') setTbKind(st.editorBack === 'props' ? 'props' : 'model');
+      else applyEditorChrome('model');
+      setStatus('建模模式：F8–F12 切换对象 / 顶点 / 边 / 面 / UV 岛 · 工具架取基础体与算子');
+    }
+  }
+
   /* 右侧栏三个页签共用一行：建模工具箱 / 绘画工具箱 / 属性编辑器。
    * 同时只显示一个，属性编辑器不再跟工具箱上下分摊高度。 */
   function tbModeLabel() {
@@ -2508,6 +2786,9 @@
 
   function setTbKind(kind) {
     st.tbKind = (kind === 'paint' || kind === 'props') ? kind : 'model';
+    /* 记住「离开绘制后回哪个页签」：属性编辑器也是一等入口，不能被绘画页签吞掉 */
+    if (st.tbKind !== 'paint') st.editorBack = st.tbKind === 'props' ? 'props' : 'model';
+    applyEditorChrome(st.tbKind === 'paint' ? 'paint' : 'model');
     var right = document.querySelector('.md-right');
     if (right) right.classList.toggle('is-props', st.tbKind === 'props');
     var sec = document.querySelector('.md-tb');
@@ -2524,6 +2805,8 @@
     syncGizmo();
     if (st.tbKind !== 'paint') {
       st.paint.stroke = null;
+      st.paint.pendingMove = null;
+      if (st.paint.moveRaf) { global.cancelAnimationFrame(st.paint.moveRaf); st.paint.moveRaf = 0; }
       paintClipRelease();
       var n = gestNodes();
       if (n.brush) n.brush.style.cssText = '';
@@ -2537,6 +2820,7 @@
 
   function onPickDown(e) {
     if (st.noPick) return;
+    requestRender(250);
     if (e.button || e.altKey || !st.doc) { st.pickDown = null; return; }
     /* 落手就收掉预选幽灵：点中的元素马上会变成选中态，两个一起画会重影 */
     if (st.hoverPick) clearHoverPick();
@@ -2579,12 +2863,14 @@
   function onPickMove(e) {
     if (st.noPick) return;
     if (!st.doc) return;
+    /* 悬停反馈（光圈 / 预选高亮 / 手柄光标）都不改场景指纹，靠这条保持可画 */
+    requestRender(160);
     st.pointer.x = e.clientX;
     st.pointer.y = e.clientY;
     brushFollow(e);
     /* 绘画笔画进行中：每次移动都按 UV 往画布上补一段，忽略选中/手柄逻辑 */
     if (st.tbKind === 'paint' && st.paint.stroke) {
-      paintStrokeMove(e);
+      paintMoveSchedule(e);
       return;
     }
     /* 预选反馈：选择工具、没在拖动时才算；其余情况把旧幽灵收掉 */
@@ -2631,11 +2917,12 @@
 
   function onPickUp(e) {
     if (st.noPick) return;
+    requestRender(250);
     var d = st.pickDown;
     var g = st.gest;
     st.pickDown = null;
     st.gest = null;
-    if (d && d.paint) { paintStrokeEnd(); gestClear(); return; }
+    if (d && d.paint) { paintMoveFlush(); paintStrokeEnd(); gestClear(); return; }
     if (!d || e.button || e.altKey || !st.doc || !st.mesh || !st.pivot || !st.camera) { gestClear(); return; }
     if (d.gizmo) { gestClear(); return; }
     var r = st.canvas.getBoundingClientRect();
@@ -3040,6 +3327,7 @@
     bindEdgeLoopDblClick();
     st.canvas.addEventListener('pointercancel', function () {
       /* 画笔被打断也要收尾：否则岛剪裁会一直留在上下文里 */
+      paintMoveFlush();
       if (st.paint.stroke) paintStrokeEnd();
       st.gest = null; st.pickDown = null; gestClear();
     });
@@ -3351,11 +3639,14 @@
     st.camera.aspect = w / h;
     st.camera.updateProjectionMatrix();
     if (st.quad) updateQuadCameras(false);
+    requestRender(0);
   }
 
   function resume() {
     if (!st.renderer) return;
     resize();
+    /* 恢复视口时先画两帧，避免「切回来一片空白」等下一条输入 */
+    requestRender(200);
     if (!st.running) { st.running = true; tick(); }
   }
   function pause() {
@@ -3363,6 +3654,42 @@
     if (st.raf) cancelAnimationFrame(st.raf);
     st.raf = 0;
   }
+
+  /* 按需渲染的显式请求：任何「DOM 之外、签名看不出来」的画面变化都调它。
+   * holdMs = 需要持续渲染多久（悬停 / 拖拽反馈），0 = 只画下一帧。 */
+  function requestRender(holdMs) {
+    var now = global.performance ? global.performance.now() : Date.now();
+    var t = now + (holdMs || 0);
+    if (t > st.holdUntil) st.holdUntil = t;
+  }
+
+  /* 场景指纹：画不画由它决定。只取「矩阵 / 版本号 / 开关」这类廉价量，
+   * 不遍历场景 —— 每帧一次的开销必须远小于一次 render。 */
+  function frameSig() {
+    var c = st.camera, s = '';
+    if (c) {
+      var e = c.matrixWorld.elements, p = c.projectionMatrix.elements;
+      s = e[0].toFixed(3) + ',' + e[1].toFixed(3) + ',' + e[2].toFixed(3) + ',' +
+        e[4].toFixed(3) + ',' + e[5].toFixed(3) + ',' + e[6].toFixed(3) + ',' +
+        e[8].toFixed(3) + ',' + e[9].toFixed(3) + ',' + e[10].toFixed(3) + ',' +
+        e[12].toFixed(3) + ',' + e[13].toFixed(3) + ',' + e[14].toFixed(3) +
+        '|' + p[0].toFixed(4) + ',' + p[5].toFixed(4);
+    }
+    var sel = st.sel || { vertexIds: [], edgeIds: [], faceIds: [] };
+    s += '|m' + (st.mesh ? st.mesh.version : -1);
+    s += '|r' + ((st.doc && st.doc.revision && st.doc.revision.current) || 0);
+    s += '|p' + ((st.paint && st.paint.tex && st.paint.tex.version) || 0);
+    s += '|s' + sel.vertexIds.length + ',' + sel.edgeIds.length + ',' + sel.faceIds.length +
+      ',' + (sel.vertexIds[0] || 0) + ',' + (sel.faceIds[0] || 0);
+    s += '|n' + (st.nodeIds ? st.nodeIds.length : 0) + ',' + (st.node ? st.node.id : '') +
+      ',' + (st.selected | 0);
+    s += '|g' + (st.gizmo && st.gizmo.group && st.gizmo.group.visible ? 1 : 0);
+    s += '|v' + st.shading + (st.showGrid ? 1 : 0) + (st.isolate ? 1 : 0) +
+      (st.quad ? 1 : 0) + (st.quadMax || '') + (st.hoverPick ? 1 : 0);
+    s += '|e' + ((st.edgeLines && st.edgeLines.material && st.edgeLines.material.opacity) || 0).toFixed(2);
+    return s;
+  }
+
   function tick() {
     if (!st.running) return;
     st.raf = requestAnimationFrame(tick);
@@ -3372,7 +3699,9 @@
       st.uv.frameSkip = (st.uv.frameSkip + 1) & 1;
       if (st.uv.frameSkip) return;
     }
-    if (st.controls && !st.quad) st.controls.update();
+    var now = global.performance ? global.performance.now() : Date.now();
+    var moving = false;
+    if (st.controls && !st.quad) { if (st.controls.update()) moving = true; }
     if (st.gizmo) st.gizmo.update();
     /* 挤出会话每帧同步专用手柄：参数可能从面板 / 热盒 / 键盘任何一路改 */
     updateExtrudeGizmo();
@@ -3380,14 +3709,26 @@
     if (st.quad) {
       /* 只 update 激活格的 controls（阻尼需要每帧推进），其他格被动也不许被带动 */
       var qctl = st.quadCtl && st.quadCtl[quadKey()];
-      if (qctl) qctl.update();
+      if (qctl && qctl.update()) moving = true;
+    }
+    /* 笔刷刚落的像素还没写进纹理：先按块上传，再决定这一帧画不画 */
+    var paintDirty = !!(PAINT && PAINT.hasPendingUpload && PAINT.hasPendingUpload());
+    if (PAINT && PAINT.flushPreview) PAINT.flushPreview();
+    var interacting = !!(st.gest || st.pickDown || st.paint.stroke ||
+      (st.gizmo && st.gizmo.drag) || st.quadDown || EXGZ.drag || st.busy);
+    var sig = frameSig();
+    /* 场景没变、没有输入、没有待上传像素 → 这一帧什么也不用做。
+     * 静止时 GPU / CPU 都归零，拖动时照旧每帧渲染。 */
+    if (!interacting && !moving && !paintDirty && now > st.holdUntil && sig === st.frameSig) return;
+    st.frameSig = sig;
+    if (st.quad) {
       renderQuad();
     } else {
       st.renderer.setScissorTest(false);
       st.renderer.setViewport(0, 0, st.stage.clientWidth, st.stage.clientHeight);
       st.renderer.render(st.scene, st.camera);
       /* 立方体每帧跟着主相机朝向重画：不订阅 controls 事件，
-       * 因为相机还可能被键盘、滚轮、视图预设改掉，逐帧同步最省心。 */
+       * 因为相机还可能被键盘、滚轮 / 视图预设改掉，逐帧同步最省心。 */
       drawCube();
     }
   }
@@ -3446,26 +3787,33 @@
    * 返回实际挂上的材质数：0 = 视口里没有这个槽的材质（画笔用它提示「画了看不见」）。 */
   function applySlotTexture(slot, tex) {
     var applied = 0;
+    /* 只有「贴图的有无 / 编码 / 翻转」变了才需要重编译着色器。
+     * 同一张贴图换像素靠 texture.needsUpdate 就够 —— 每帧都置
+     * material.needsUpdate 会让 three 反复重编译程序，画起来一闪一卡
+     * （绘画时每帧都会走到这里）。 */
+    var sig = tex ? (tex.encoding || '') + '|' + (tex.flipY === false ? 'n' : 'y') : 'none';
+    function setMap(m) {
+      if (!m) return false;
+      if (!m.userData.mdPaintOrig) m.userData.mdPaintOrig = m.map || null;
+      m.map = tex || null;
+      m.userData.mdBaseMap = tex || null;
+      if (m.userData.mdMapSig !== sig) { m.userData.mdMapSig = sig; m.needsUpdate = true; }
+      return true;
+    }
     eachViewPivot(function (pv) {
       pv.traverse(function (o) {
         if (!o.userData || o.userData.mdPart !== 'solid') return;
         if (o.material) {
           var arr = Array.isArray(o.material) ? o.material : [o.material];
-          var m = arr[slot];
-          if (m) {
-            if (!m.userData.mdPaintOrig) m.userData.mdPaintOrig = m.map || null;
-            m.map = tex || null;
-            m.userData.mdBaseMap = tex || null;
-            m.needsUpdate = true;
-            applied++;
-          }
+          if (setMap(arr[slot])) applied++;
         }
         if (o.userData.mdFlatMats) {
-          var fm = o.userData.mdFlatMats[slot];
-          if (fm) { fm.map = tex || null; fm.userData.mdBaseMap = tex || null; fm.needsUpdate = true; applied++; }
+          if (setMap(o.userData.mdFlatMats[slot])) applied++;
         }
       });
     });
+    /* 换的是材质上的贴图，不是场景结构：指纹看不出来，必须显式请求一帧 */
+    requestRender(0);
     return applied;
   }
 
@@ -5183,23 +5531,16 @@
       drawSoftCurve();
       return;
     }
-    if (el.id === 'mdBrushSize') {
-      st.paint.size = Math.max(6, Math.min(180, Math.round(Number(el.value) || 42)));
-      var bsv = $('mdBrushSizeVal');
-      if (bsv) bsv.textContent = st.paint.size + ' px';
-      updatePaintUi();
+    if (el.id === 'mdBrushSize' || el.id === 'mdBrushSizeBar') {
+      setPaintSize(el.value);
       return;
     }
-    if (el.id === 'mdBrushOpacity') {
-      st.paint.opacity = Math.max(5, Math.min(100, Math.round(Number(el.value) || 90)));
-      var bov = $('mdBrushOpacityVal');
-      if (bov) bov.textContent = st.paint.opacity + '%';
-      updatePaintUi();
+    if (el.id === 'mdBrushOpacity' || el.id === 'mdBrushOpacityBar') {
+      setPaintOpacity(el.value);
       return;
     }
-    if (el.id === 'mdBrushColor') {
-      st.paint.color = el.value || '#d94f4f';
-      updatePaintUi();
+    if (el.id === 'mdBrushColor' || el.id === 'mdBrushColorBar') {
+      setPaintColor(el.value);
       return;
     }
     if (el.dataset.mdPsize != null) {
@@ -5446,10 +5787,7 @@
       return;
     }
     if (el.id === 'mdBrushSel') {
-      st.paint.brush = ['soft', 'hard', 'erase'].indexOf(el.value) >= 0 ? el.value : 'soft';
-      st.paint.stampKey = ''; st.paint.stampCv = null;
-      updatePaintUi();
-      setStatus('笔刷：' + (PAINT_BRUSH_NAME[st.paint.brush] || '软边') + ' · ' + st.paint.size + ' px');
+      setPaintBrush(el.value);
       return;
     }
     if (el.id === 'mdBrushShape') {
@@ -5476,6 +5814,7 @@
     }
     if (el.id === 'mdPaintMask') {
       st.paint.mask = !!el.checked;
+      updatePaintUi();
       setStatus(st.paint.mask
         ? 'UV 岛遮罩开：笔刷只画进落笔所在的 UV 岛'
         : 'UV 岛遮罩关：笔刷可画到整张贴图');
@@ -6284,6 +6623,22 @@
       updateChrome();
       return;
     }
+    if (t.dataset.mdEditorBtn) {
+      setEditor(t.dataset.mdEditorBtn);
+      return;
+    }
+    if (t.dataset.mdPbrush) {
+      setPaintBrush(t.dataset.mdPbrush);
+      return;
+    }
+    if (t.dataset.mdPtool) {
+      setPaintTool(t.dataset.mdPtool);
+      return;
+    }
+    if (t.dataset.mdPmask !== undefined) {
+      togglePaintMask();
+      return;
+    }
     if (t.dataset.mdcmd) {
       mdRun(t.dataset.mdcmd);
       return;
@@ -6327,10 +6682,7 @@
       return;
     }
     if (t.dataset.mdSwatch) {
-      st.paint.color = t.dataset.mdSwatch;
-      var cIn = $('mdBrushColor');
-      if (cIn) cIn.value = st.paint.color;
-      updatePaintUi();
+      setPaintColor(t.dataset.mdSwatch);
       setStatus('笔刷颜色：' + st.paint.color);
       return;
     }
@@ -7199,11 +7551,24 @@
     });
     if (!parts.length) throw new Error('这个模型里没有可编辑的网格');
 
-    var slotNames = [], slotColors = [], slotKeys = [], slotMats = [];
+    var slotNames = [], slotColors = [], slotKeys = [], slotMats = [], slotTexs = [];
+    /* 贴图身份也要进槽的去重 key。多对象模型里「一张图一个对象」非常常见，而材质名和
+     * 底色往往一模一样（Tripo 导出的每个对象都叫 Material_tripo_…、底色都是纯白，
+     * 只有 baseColorTexture 不同）。只按「名字 + 底色」去重会把这些材质并成一个槽，
+     * 于是第二个对象贴上第一张图、第二张图彻底丢失 —— 用户看到的就是「多 object
+     * 带不同贴图时导出贴图错位」。同一个 Texture 实例才算同一张图（GLTFLoader 按
+     * texture 下标复用实例），没有贴图的材质仍按名字合并。 */
+    function slotTexKey(mat) {
+      var tex = mat && mat.map;
+      if (!tex) return '';
+      var k = slotTexs.indexOf(tex);
+      if (k < 0) { k = slotTexs.length; slotTexs.push(tex); }
+      return '#t' + k;
+    }
     function slotOf(mat) {
       var nm = (mat && mat.name) || '默认材质';
       var col = (mat && mat.color && mat.color.isColor) ? '#' + mat.color.getHexString() : '#c9ccd4';
-      var key = nm + '|' + col;
+      var key = nm + '|' + col + '|' + slotTexKey(mat);
       var i = slotKeys.indexOf(key);
       if (i < 0) {
         i = slotKeys.length;
@@ -7296,28 +7661,64 @@
     if (!m3 || typeof m3.load !== 'function') return false;
     var model;
     try { model = await m3.load(dataURL); } catch (e) { return false; }
-    var found = [], byName = Object.create(null);
+    var found = [], byName = Object.create(null), byMesh = Object.create(null);
     model.root.updateMatrixWorld(true);
     model.root.traverse(function (o) {
       if (!o.isMesh || !o.material) return;
-      (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (mm) {
+      var arr = Array.isArray(o.material) ? o.material : [o.material];
+      arr.forEach(function (mm) {
         if (!mm) return;
         var nm = String(mm.name || '');
         if (nm && byName[nm] == null) byName[nm] = found.length;
         found.push(mm);
       });
+      if (o.name && byMesh[o.name] == null) byMesh[o.name] = arr;
     });
     if (!found.length) return false;
+
+    /* 槽 → 材质最可靠的配对是「节点名」。
+     * 材质名在 Tripo 模型里几乎全是同一个（一个对象一份），靠名字只能兜底；
+     * 而 GLTFLoader 返回网格的顺序并不稳定（贴图异步解析，实测同一次导入
+     * 两次运行会翻转），按遍历下标硬配会把别的对象的贴图补进来 ——
+     * 用户看到的就是「贴图错乱」。seed 文档的节点名就是导入时的网格名，
+     * 能一对一定位到那份 GLB 的材质。 */
+    var pickBySlot = [];
+    try {
+      SeedModel.Scene.nodesOf(doc).forEach(function (n) {
+        var list = n && n.name ? byMesh[n.name] : null;
+        if (!list || !list.length) return;
+        var own = [];
+        try { own = SeedModel.Scene.meshSlotsOf(doc, n) || []; } catch (e) { own = []; }
+        own.forEach(function (s, k) {
+          if (pickBySlot[s] === undefined) pickBySlot[s] = list.length === 1 ? list[0] : (list[k] || null);
+        });
+      });
+    } catch (e) { pickBySlot = []; }
 
     var colors = (mats.slotColors || []).slice();
     var maps = (mats.slotMaps || []).slice();
     var picks = [], jobs = [];
+    /* 先按节点名配对；配不上再按材质名，最后按剩余顺序兜底。
+     * 每份材质只能被一个槽占用：否则两个同材质名的槽会拿到同一张贴图。 */
+    var used = Object.create(null);
     for (var i = 0; i < names.length; i++) {
-      var idx = byName[names[i]];
-      var mm = idx != null ? found[idx] : (i < found.length ? found[i] : null);
-      picks.push(mm);
+      var pick = pickBySlot[i] || null;
+      var at = pick ? found.indexOf(pick) : -1;
+      if (at < 0 || used[at]) {
+        pick = null;
+        at = byName[names[i]] != null ? byName[names[i]] : -1;
+        if (at >= 0 && used[at]) at = -1;
+        if (at >= 0) pick = found[at];
+      }
+      if (!pick) {
+        for (var k = 0; k < found.length; k++) {
+          if (!used[k]) { at = k; pick = found[k]; break; }
+        }
+      }
+      if (at >= 0) used[at] = 1;
+      picks.push(pick);
       /* 槽色已经有的不覆盖；贴图缺的仍然补（老文档根本没写过 slotMaps） */
-      if (mm && !maps[i]) jobs.push(i);
+      if (pick && !maps[i]) jobs.push(i);
     }
     /* 贴图抽成 data URL 是异步的，先并发编码再统一写回，避免逐张 await 拖慢打开 */
     var extracted = await Promise.all(jobs.map(function (j) {
@@ -8193,6 +8594,13 @@
      * 页面自己不需要它（ensureSlot 会自动灌一次），但「刷新后笔迹还在不在」
      * 只能靠这条显式路径验证。 */
     rehydrateOps: function (slot) { return MIX ? MIX.rehydrate(slot) : Promise.resolve(0); },
+    /* 性能基准 / 探针用：外部改了 `openagi_model_tex_v1` 之后，按新配置重解码并合成。
+     * 返回 Promise（层解码是异步的），调用方等它 resolve 再测帧时。 */
+    mixRefresh: function (slot) {
+      return MIX ? MIX.refreshSlot(slot | 0, true) : Promise.resolve(0);
+    },
+    /* 性能基准：混合模块的整图合成次数（增量合成不计） */
+    mixStats: function () { return MIX ? MIX.stats() : null; },
     /* M5：基础体面板（菜单 / Shelf / 测试都从这里进） */
     openPrimitive: openPrimitiveDialog,
     createPrimitive: createPrimitive,
@@ -8331,6 +8739,8 @@
         uvView: { cu: st.uv.cu, cv: st.uv.cv, scale: st.uv.scale },
         /* 右侧工具箱页签 + 绘画笔刷（探针用它断言状态，不点 UI 也能读） */
         tbKind: st.tbKind,
+        editor: st.editor,
+        editorBack: st.editorBack,
         brush: st.paint.brush,
         brushShape: st.paint.shape,
         brushCustom: st.paint.customBrush ? st.paint.customBrush.name : '',
@@ -8341,6 +8751,8 @@
         paintUserSlot: st.paint.userSlot,
         paintSlotName: st.paint.slot >= 0 ? slotNameAt(st.paint.slot) : '',
         paintMask: st.paint.mask,
+        paintTool: st.paint.tool,
+        paintLockIsland: st.paint.lockIsland,
         paintClipped: st.paint.clipped,
         paintClipPolys: st.paint.clipPolys
       };
@@ -8418,7 +8830,12 @@
         pivots: st.pivots,
         extrudeGizmo: EXGZ.gizmo,
         uv: st.uv,
-        mesh: st.mesh, doc: st.doc
+        mesh: st.mesh, doc: st.doc,
+        /* 性能基准直接读这两项：上传字节数 / 合成次数不再靠估算 */
+        paint: PAINT, upload: UPLOAD, paintState: st.paint, renderStats: function () {
+          var i = st.renderer && st.renderer.info;
+          return { frame: i ? i.render.frame : 0, tris: i ? i.render.triangles : 0, calls: i ? i.render.calls : 0 };
+        }
       };
     }
   };

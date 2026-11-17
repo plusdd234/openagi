@@ -4,8 +4,12 @@
  *   · 皮套目录与数字人 App 共用 apps/live2d/model/<id>/，运行时也用同一套 vendor；
  *   · 每个模型由 tools/pack-live2d.js 预打包成 pack.js（moc3 → base64、json → 对象），
  *     file:// 下不走 XHR，直接吃包里的数据；
- *   · 换装用「部件透明度」：Cubism 运行时每个部件都有 opacity，压到 0 即停绘。
- *     不沿用动作 / pose 的自然透明度 —— 隐藏时先记下原值，取消隐藏再还回去。
+ *   · 换装的两条真实通道：
+ *     1) 部件透明度：Cubism 运行时每个部件都有 opacity，压到 0 即停绘。
+ *        不沿用动作 / pose 的自然透明度 —— 隐藏时先记下原值，取消隐藏再还回去。
+ *     2) 参数开关：作者预留的互斥参数（如鲸鱼娘的 cc2 / fx1）。
+ *        写绝对值而不是叠 Add，避免 exp3 那种跨帧残留；每帧在 beforeModelUpdate
+ *        写一次，压住动作与 pose 的覆盖。
  *
  * 扩展方式：新 App 想复用舞台，直接 WD_RIG.create(host) 即可；
  * 新的「换装维度」可以在这个模块上加方法，不用改界面。
@@ -125,6 +129,10 @@ window.WD_RIG = (function () {
       want: [],
       hidden: {},
       stash: {},
+      /* 要强制拉满的部件（给「默认 opacity 为 0」的备用部件用；当前皮套没有） */
+      shown: [],
+      /* 界面要求写入的参数（绝对値），每帧写回 */
+      params: {},
       raf: 0,
       last: 0,
       ro: null
@@ -137,7 +145,9 @@ window.WD_RIG = (function () {
         error: st.error,
         modelId: st.modelId,
         parts: st.parts,
-        hidden: Object.keys(st.hidden)
+        hidden: Object.keys(st.hidden),
+        shown: st.shown.slice(),
+        params: Object.assign({}, st.params)
       };
     }
 
@@ -190,6 +200,53 @@ window.WD_RIG = (function () {
       st.want = (ids || []).filter(function (id) { return typeof id === 'string' && id; });
       syncHidden();
       emit();
+    }
+
+    function setShown(ids) {
+      st.shown = (ids || []).filter(function (id) { return typeof id === 'string' && id; });
+      if (st.model) {
+        var cm = st.model.internalModel.coreModel;
+        st.shown.forEach(function (id) {
+          try { cm.setPartOpacityById(id, 1); } catch (e) { /* 部件不在这个模型里 */ }
+        });
+      }
+      emit();
+    }
+
+    /* 参数开关：只写数值型；未知参数由 Cubism 自己忽略，不会报错
+       被移除的旧参数写回 0：这些开关的默认值都是 0，不清会一直留着上次的值 */
+    function syncParams() {
+      if (!st.model) return;
+      var cm = st.model.internalModel.coreModel;
+      Object.keys(st.params).forEach(function (id) {
+        var v = Number(st.params[id]);
+        if (!isFinite(v)) return;
+        try { cm.setParameterValueById(id, v); } catch (e) { /* 参数不在这个模型里 */ }
+      });
+    }
+
+    function setParams(map) {
+      var next = {};
+      Object.keys(map || {}).forEach(function (id) {
+        var v = Number(map[id]);
+        if (id && isFinite(v)) next[id] = v;
+      });
+      if (st.model) {
+        var cm = st.model.internalModel.coreModel;
+        Object.keys(st.params).forEach(function (id) {
+          if (Object.prototype.hasOwnProperty.call(next, id)) return;
+          try { cm.setParameterValueById(id, 0); } catch (e) { /* 忽略 */ }
+        });
+      }
+      st.params = next;
+      syncParams();
+      emit();
+    }
+
+    function paramValue(id) {
+      if (!st.model) return null;
+      try { return st.model.internalModel.coreModel.getParameterValueById(id); }
+      catch (e) { return null; }
     }
 
     function partOpacity(id) {
@@ -258,6 +315,11 @@ window.WD_RIG = (function () {
           var cm = model.internalModel.coreModel;
           var ids = Object.keys(st.hidden);
           for (var i = 0; i < ids.length; i++) cm.setPartOpacityById(ids[i], 0);
+          for (var j = 0; j < st.shown.length; j++) cm.setPartOpacityById(st.shown[j], 1);
+          /* 参数开关同样每帧写回：动作 / pose 会把部件透明度拉起来，参数也可能被覆盖 */
+          Object.keys(st.params).forEach(function (pid) {
+            cm.setParameterValueById(pid, st.params[pid]);
+          });
         });
 
         /* idle 组一般叫 Idle；本项目皮套注册成 idle，有就优先用 */
@@ -268,6 +330,8 @@ window.WD_RIG = (function () {
         st.loading = false;
         fit();
         syncHidden();
+        setShown(st.shown);
+        syncParams();
         if (window.ResizeObserver) {
           st.ro = new ResizeObserver(function () { fit(); });
           st.ro.observe(host);
@@ -347,7 +411,11 @@ window.WD_RIG = (function () {
       load: load,
       dispose: dispose,
       setHidden: setHidden,
+      setShown: setShown,
+      setParams: setParams,
+      paramValue: paramValue,
       partOpacity: partOpacity,
+      model: function () { return st.model; },
       fit: fit,
       info: info,
       parts: function () { return st.parts.slice(); }

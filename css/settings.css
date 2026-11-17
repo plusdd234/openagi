@@ -512,7 +512,7 @@
 .settings2 .tts-actions { margin-top: 2px; }
 .settings2 .tts-actions > .note { margin: 0; }
 
-/* 超拟人 / 机械音：先选类型，再选具体音色；机械音额外选「AI 控制 / 直接朗读」 */
+/* 超拟人 / 快速合成：先选类型，再选具体音色；快速合成额外选「AI 控制 / 直接朗读」 */
 .settings2 .tts-tabs { display: flex; gap: 6px; margin: 4px 0 10px; }
 .settings2 .tts-tab {
   flex: 1 1 0;
@@ -532,7 +532,7 @@
 }
 .settings2 .tts-tabpane.hidden { display: none; }
 
-.settings2 .tts-mecha {
+.settings2 .tts-param {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -541,7 +541,7 @@
   border-radius: 10px;
   background: rgba(0, 0, 0, .015);
 }
-.settings2 .tts-mecha-ico {
+.settings2 .tts-param-ico {
   flex: 0 0 auto;
   width: 30px;
   height: 30px;
@@ -550,11 +550,11 @@
   place-items: center;
   font: 600 13px/1 ui-monospace, Consolas, monospace;
   color: #fff;
-  background: linear-gradient(135deg, #4a5a6a, #20262e);
+  background: linear-gradient(135deg, #3f7a72, #1f3b38);
 }
-.settings2 .tts-mecha-main { flex: 1 1 auto; min-width: 0; }
-.settings2 .tts-mecha-name { font-size: 13px; color: var(--s2-ink, #2f2a22); }
-.settings2 .tts-mecha-desc {
+.settings2 .tts-param-main { flex: 1 1 auto; min-width: 0; }
+.settings2 .tts-param-name { font-size: 13px; color: var(--s2-ink, #2f2a22); }
+.settings2 .tts-param-desc {
   margin-top: 2px;
   font-size: 11.5px;
   line-height: 1.45;
@@ -653,6 +653,86 @@
   font-size: 10.5px;
   color: #4a5058;
 }
+
+/* ---------------- 语言模型池 ---------------- */
+
+.settings2 .llm-pool-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+
+.settings2 .llm-pool-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--s2-line-soft);
+  border-radius: 9px;
+  background: #fafbfc;
+}
+.settings2 .llm-pool-row.is-off { opacity: .62; }
+
+.settings2 .llm-pool-dot {
+  flex: 0 0 auto;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #c3c9d4;
+}
+.settings2 .llm-pool-dot.idle { background: #35a56a; box-shadow: 0 0 0 3px rgba(53, 165, 106, .14); }
+.settings2 .llm-pool-dot.busy { background: #f0b429; box-shadow: 0 0 0 3px rgba(240, 180, 41, .18); }
+.settings2 .llm-pool-dot.cool { background: #e07a3f; }
+.settings2 .llm-pool-dot.off { background: #b8bfca; }
+
+.settings2 .llm-pool-main { flex: 1 1 auto; min-width: 0; }
+.settings2 .llm-pool-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.settings2 .llm-pool-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--s2-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings2 .llm-pool-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  background: #eef1f5;
+  color: #6a7488;
+}
+.settings2 .llm-pool-badge.idle { background: #eaf6ef; color: #1f8a4c; }
+.settings2 .llm-pool-badge.busy { background: #fff5e0; color: #a87000; }
+.settings2 .llm-pool-badge.cool { background: #fdeee6; color: #b1541e; }
+.settings2 .llm-pool-badge.off { background: #eff1f4; color: #8a93a1; }
+.settings2 .llm-pool-src { flex: 0 0 auto; font-size: 10px; color: var(--s2-dim); }
+
+.settings2 .llm-pool-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--s2-muted);
+  font-family: ui-monospace, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings2 .llm-pool-acts {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.settings2 .llm-pool-acts .sf-inline { font-size: 11px; color: var(--s2-muted); }
+
+.settings2 .llm-pool-form { border-top: 1px dashed var(--s2-line); padding-top: 12px; }
+.settings2 .llm-pool-commit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.settings2 .llm-pool-msg { font-size: 11px; color: var(--s2-muted); }
 
 /* ---------------- 底部 ---------------- */
 

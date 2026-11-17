@@ -23,6 +23,16 @@ MIT license correctly).
 - **版权 / Copyright**：**上善无形 / ZipZipPipe / 氵六青** 三位所有，逐项贡献见 [`AUTHORS.md`](AUTHORS.md)，
   逐文件来源与原《使用须知》原文见 [`PROVENANCE.md`](PROVENANCE.md)
 
+## 2.5 Haru 示例模型 / Haru sample model
+
+- **范围 / Scope**：`apps/live2d/model/haru/**`（`haru.moc3`、`haru.1024/texture_*.png`、
+  `motion/*.motion3.json`、`haru.physics3.json`、`haru.pose3.json`、`haru.cdi3.json`）
+- **来源 / Source**：Live2D 官方免费示例数据 <https://www.live2d.com/download/sample-data/>（`haru_ja.zip`）
+- **版权 / Copyright**：插画 / 建模 **Live2D Inc.**
+- **许可 / License**：Live2D 免费提供素材许可（Live2D 原创角色类型）：一般用户与小规模事业者
+  同意规约后可商用，中大规模事业者仅限非公开测试用途。本项目按**非商业**范围使用并署名。
+  语音（癒月）未使用，wav 已删除。
+
 ## 3. 第三方运行时 / Third-party runtime
 
 | 组件 / Component | 许可 / License | 版权 / Copyright |

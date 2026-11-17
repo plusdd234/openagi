@@ -1,6 +1,6 @@
 /* ============================================================
  * 自动生成，别手改 —— node tools/app-scan.js
- * App 清单：aisearch , browser , card , chara , chat , code , comfy , gallery , hello , imglab , live2d , modeldesk , models , multiview , player , store , studio , visionlab , wardrobe
+ * App 清单：aisearch , arm101 , browser , card , chara , chat , code , comfy , gallery , hello , imglab , live2d , maildesk , modeldesk , models , multiview , player , store , studio , tunnel , visionlab , wardrobe
  *
  * 加一个 App = 建 apps/<id>/app.js（参考 apps/hello）+ 跑一次 app-scan。
  * index.html 与 desk-shell.js 都不用碰，所以多路 AI 并行时不会互相踩。
@@ -368,6 +368,34 @@ window.AIS_BODY = `
     /* 以下三条由实测补：只查 ai / readability 时找不到爬虫与正文抽取项目。 */
     [/爬虫/, 'crawler'], [/正文/, 'content'], [/抽取/, 'extract']
   ];
+  /* 「找人 / 要邮箱」类问题：中文检索很难把 YouTube 频道页顶上来，
+     这里把问题里的中文概念翻成英文，供相关性判断与英文检索式复用。 */
+  var CONTACT_WORDS = [
+    [/油管|youtube/i, 'youtube'],
+    [/策略|strategy/i, 'strategy'],
+    [/主播|博主|达人|streamer|youtuber/i, 'streamer'],
+    [/邮箱|邮件|e-?mail/i, 'email'],
+    [/游戏|game/i, 'game']
+  ];
+  /* 「策略游戏」在 YouTube 上不只叫 strategy game：grand strategy / total war
+     都是同一品类的常用说法，检索与相关性判断都要认这些词。 */
+  var CONTACT_SYNONYM = [
+    [/strategy\s*games?|策略/i, ['grand strategy', 'total war', '4x strategy']]
+  ];
+  function contactSyn(q) {
+    var out = [];
+    CONTACT_SYNONYM.forEach(function (p) {
+      if (!p[0].test(q)) return;
+      p[1].forEach(function (w) { if (out.indexOf(w) < 0) out.push(w); });
+    });
+    return out;
+  }
+  /* 联系方式任务的排序标志：频道页、榜单页、含联系方式的页面优先。 */
+  var CONTACT_HINT = /(youtube|youtu\.be|频道|主播|博主|up主|邮箱|邮件|contact|business|合作|联系)/i;
+  /* 判「是否真的答上」要严得多：只有出现联系方式、邮箱或真正的频道页才算，
+     否则一篇「游戏主播营销策略」也会被当成结果，把英文检索轮次直接掐掉。 */
+  var CONTACT_ANSWER = /(邮箱|邮件|e-?mail|contact|business|商务|合作|联系|@[a-z0-9.-]+\.[a-z]{2,})/i;
+  var YT_CHANNEL = /youtube\.com\/(@[^/?#]+|channel\/|c\/|user\/)/i;
   /* GitHub 检索是 AND 语义，词越多命中越少，所以准备三档检索式：
      ① 主档：完整组合；② 核心档：去掉 template / framework 这类修饰词；
      ③ 宽松档：再去掉最短的实词（通常是 2d / ai 这种限定词）。
@@ -573,6 +601,9 @@ window.AIS_BODY = `
     });
     var out = [];
     var used = 0;
+    /* 一个词都没命中（常见于英文频道页 vs 中文提问）时，别只丢第一段，
+       否则模型只能看到频道名，没法判断这个频道到底播什么。 */
+    if (!scored.length || !scored[0].score) return String(text || '').slice(0, maxLen);
     for (var j = 0; j < scored.length; j++) {
       if (!scored[j].score && out.length) continue;
       if (used + scored[j].p.length + 1 > maxLen) continue;
@@ -661,6 +692,7 @@ window.AIS_BODY = `
         return html;
       });
       return p.then(function (html) {
+        if (S.intentKind === 'contact') recordEmails(html, { idx: 0, title: c.title, url: c.url });
         var page = extractPage(html);
         harvestKeywords(page.text, S.query).forEach(function (k) { kw[k] = (kw[k] || 0) + 1; });
         links = links.concat(extractLinks(html, c.url));
@@ -839,6 +871,8 @@ window.AIS_BODY = `
     ghQuery: '',
     ghRateLimited: false,
     pageCache: Object.create(null),
+    emails: [],
+    intentKind: '',
     answer: '',
     error: '',
     note: '',
@@ -944,6 +978,13 @@ window.AIS_BODY = `
   function relevantTokens(q) {
     var out = distinctiveTokens(q);
     GH_WORDS.forEach(function (p) { if (p[0].test(q)) out.push(p[1]); });
+    /* 联系方式任务必须承认英文频道页 / 榜单页，否则它们会被当成「与问题无关」整批丢掉。 */
+    if (inferIntent(q).kind === 'contact') {
+      CONTACT_WORDS.forEach(function (p) {
+        if (p[0].test(q) && out.indexOf(p[1]) < 0) out.push(p[1]);
+      });
+      contactSyn(q).forEach(function (w) { if (out.indexOf(w) < 0) out.push(w); });
+    }
     return out;
   }
   function relevantTo(r, tokens) {
@@ -961,13 +1002,18 @@ window.AIS_BODY = `
     var dropped = [];
     var seen = Object.create(null);
     var seenUrl = Object.create(null);
+    var seenTitle = Object.create(null);
     var tokens = relevantTokens(q);
+    var contact = inferIntent(q).kind === 'contact';
     (list || []).forEach(function (raw) {
       var url = String(raw && raw.url || '').trim();
       var title = clip(raw.title || hostOf(url), 120);
       var why = blockedReason({ url: url, title: title });
       if (why) { dropped.push({ url: url, title: title, why: why }); return; }
-      if (!relevantTo({ title: title, snippet: raw.snippet, url: url }, tokens)) {
+      /* 联系人任务里，YouTube 频道页本身就是答案载体：频道名往往不含问题里的
+         「strategy」，但它是按对应检索式拿到的，不能按字面相关度丢掉。 */
+      var isChannel = contact && YT_CHANNEL.test(url);
+      if (!isChannel && !relevantTo({ title: title, snippet: raw.snippet, url: url }, tokens)) {
         dropped.push({ url: url, title: title, why: '与问题无关' });
         return;
       }
@@ -977,6 +1023,13 @@ window.AIS_BODY = `
       var key = hostOf(url).toLowerCase() + '|' + title.replace(/[\s\-_|｜:：]+/g, '').toLowerCase();
       if (seen[key]) { dropped.push({ url: url, title: title, why: '重复结果' }); return; }
       seen[key] = 1;
+      /* 找人任务里，同一篇「如何找主播」会被搬运到十几个站，标题一字不差；
+         只按站点去重会让 6 个精读名额全被同一篇文章占满。 */
+      if (contact) {
+        var tk = title.replace(/[\s\-_|｜:：,，。.!！?？"'“”‘’()（）\[\]【】]+/g, '').toLowerCase();
+        if (tk && seenTitle[tk]) { dropped.push({ url: url, title: title, why: '重复标题' }); return; }
+        if (tk) seenTitle[tk] = 1;
+      }
       kept.push({
         title: title,
         url: url,
@@ -987,11 +1040,23 @@ window.AIS_BODY = `
         /* 备用源（360）的结果链接都指向 so.com 跳转：这个标记必须带下去，
            否则排序时会被当成同一个站点，10 条只留下 2 条。 */
         alt: !!raw.alt,
+        /* 频道检索结果里直接带出了简介邮箱：留在结果上，排序与作答都要用。 */
+        email: raw.email || '',
         trusted: trustedHost(hostOf(url))
       });
     });
-    /* 排序：人工种子 > 仓库 > 可信站 > 其他；同级保持搜索源名次。 */
-    function rank(x) { return x.seed ? 3 : (x.repo ? 2 : (x.trusted ? 1 : 0)); }
+    /* 排序：人工种子 > 仓库 > 可信站 > 其他；同级保持搜索源名次。
+       联系方式任务把「榜单 / 频道 / 邮箱」类结果整体提到前面，「如何找主播」这类教程往后放。 */
+    function rank(x) {
+      var base = x.seed ? 3 : (x.repo ? 2 : (x.trusted ? 1 : 0));
+      if (contact) {
+        var t = String(x.title || '') + ' ' + String(x.snippet || '') + ' ' + String(x.url || '');
+        if (CONTACT_HINT.test(t)) base += 4;
+        if (/(best|top|榜单|排行|频道|channels|邮箱|e-?mail|contact)/i.test(t)) base += 3;
+        if (/(如何|怎么|教程|攻略|指南|推广策略)/.test(t)) base -= 3;
+      }
+      return base;
+    }
     kept.sort(function (a, b) { return rank(b) - rank(a); });
     return { kept: kept, dropped: dropped };
   }
@@ -1055,15 +1120,33 @@ window.AIS_BODY = `
     return t.length < 1500 && LOGIN_WALL.test(t);
   }
 
+  /* YouTube 在浏览器指纹下会回超大响应头，本地中转解析不了（502 Header overflow）；
+     Jina Reader 能把频道页转成纯文本，/about 里的商务邮箱仍然保留。
+     联系人任务只读 YouTube 频道页，这里统一绕行。 */
+  var JINA = 'https://r.jina.ai/';
+  function isYouTube(url) {
+    return /(^|\.)youtube\.com$/i.test(hostOf(url));
+  }
+  function readViaJina(url, signal) {
+    return fetchPage(JINA + url, signal);
+  }
+
   function fetchPage(url, signal, depth) {
     depth = depth || 0;
+    if (S.intentKind === 'contact' && isYouTube(url) && String(url).indexOf(JINA) !== 0) {
+      url = JINA + url;
+    }
     /* 已经在限流冷却里的站直接跳过，别让整轮精读都卡在同一个被封的域名上。 */
     var cooling = hostCooling(url);
     if (cooling) return Promise.reject(new Error('站点按 IP 限流，约 ' + cooling + ' 后再试'));
     return new Promise(function (resolve, reject) {
       var ctrl = new AbortController();
       var timedOut = false;
-      var timer = setTimeout(function () { timedOut = true; ctrl.abort(); }, PAGE_TIMEOUT);
+      /* YouTube 频道检索 / 关于页都有大段内联 JSON，默认超时经常卡在下载中途；
+         Jina Reader 这边还要先回源抓取 YouTube，再给更宽的时间。 */
+      var wait = String(url).indexOf(JINA) === 0 ? PAGE_TIMEOUT * 4
+        : (/(^|\.)youtube\.com\//i.test(url) ? PAGE_TIMEOUT * 2 : PAGE_TIMEOUT);
+      var timer = setTimeout(function () { timedOut = true; ctrl.abort(); }, wait);
       function onAbort() { ctrl.abort(); }
       if (signal) {
         if (signal.aborted) { clearTimeout(timer); reject(abortErr()); return; }
@@ -1111,12 +1194,17 @@ window.AIS_BODY = `
           if (ct && !/text\/html|application\/xhtml|text\/plain/.test(ct)) throw new Error('不是网页正文');
           return res.text();
         }).then(function (html) {
-          /* 有些搜索站用 JS 跳转（window.location.replace）而不是 302，
-             只回一张几百字节的空壳。识别出真实地址后再抓一次。 */
-          var m = String(html || '').length < 1600
-            ? /location\.(?:replace|href)\s*=\s*["']([^"']+)["']/i.exec(html)
+          /* 有些搜索站用 JS 跳转（window.location.replace(...)）而不是 302，
+             只回一张几百字节的空壳。识别出真实地址后再抓一次。
+             注意 replace 是函数调用，不是赋值：旧正则只认 location.replace = "..."，
+             结果 360 的 /link 空壳一直没被跟进去，线索从源头就断了。 */
+          var htmls = String(html || '');
+          var m = htmls.length < 1600
+            ? (/location\.(?:replace|assign)\s*\(\s*["']([^"']+)["']\s*\)/i.exec(htmls)
+              || /location(?:\.href)?\s*=\s*["']([^"']+)["']/i.exec(htmls)
+              || /http-equiv=["']refresh["'][^>]*content=["'][^"']*?url=([^"'>\s]+)/i.exec(htmls))
             : null;
-          if (m && depth < 1 && /^https?:\/\//i.test(m[1])) {
+          if (m && m[1] && depth < 2 && /^https?:\/\//i.test(m[1])) {
             clearTimeout(timer);
             if (signal) signal.removeEventListener('abort', onAbort);
             fetchPage(m[1], signal, depth + 1).then(resolve, reject);
@@ -1127,7 +1215,7 @@ window.AIS_BODY = `
           if (ctrl.signal.aborted) {
             /* 超时和用户点「停止」都会 abort，必须分开：前者算「这篇没读到」，
                后者要整轮退出。混在一起会让超时的那篇永远停在「等待读取」。 */
-            finish(timedOut ? new Error('站点在 ' + Math.round(PAGE_TIMEOUT / 1000) + ' 秒内没有响应') : abortErr());
+            finish(timedOut ? new Error('站点在 ' + Math.round(wait / 1000) + ' 秒内没有响应') : abortErr());
             return;
           }
           if (i + 1 < attempts.length) next(i + 1);
@@ -1251,6 +1339,18 @@ window.AIS_BODY = `
 
   function extractPage(html) {
     var raw = String(html || '');
+    /* Jina Reader 输出的是 markdown：正文前面压着大量导航、头像与「Subscribe」，
+       直接按前 5200 字截断会把频道简介（邮箱通常就在里面）挤掉，这里先清一遍噪音。 */
+    if (raw.indexOf('Markdown Content:') >= 0) {
+      raw = raw.split('\n').filter(function (line) {
+        var t = line.trim();
+        if (!t) return false;
+        if (/^(Skip navigation|Search|Search with your voice|Sign in|Subscribe|Back|Show more|NaN \/ NaN|Live|Home|Shorts|Subscriptions)$/i.test(t)) return false;
+        if (/accounts\.google\.com|yt3\.ggpht\.com|encrypted-tbn\d*\.gstatic\.com|googleusercontent/.test(t)) return false;
+        if (/^\[?!\[Image \d+\]/i.test(t)) return false;
+        return true;
+      }).join('\n');
+    }
     var title = '';
     var tm = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(raw);
     if (tm) title = clip(decodeEnt(tm[1].replace(/<[^>]+>/g, ' ')), 120);
@@ -1366,6 +1466,117 @@ window.AIS_BODY = `
     }).catch(function () { return []; });
   }
 
+  /* 英文检索式在中文索引里经常只得到词典释义；DDG 的 html 出口对
+     「best strategy game youtubers」这类榜单式英文查询稳定得多，作为联系人任务的备用源。 */
+  function ddgSearch(q, signal) {
+    var url = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q);
+    function real(href) {
+      var h = decodeEnt(href || '').trim();
+      var m = /[?&]uddg=([^&]+)/.exec(h);
+      if (m) { try { return decodeURIComponent(m[1]); } catch (e) { /* ignore */ } }
+      if (h.indexOf('//') === 0) return 'https:' + h;
+      return h;
+    }
+    return fetchPage(url, signal).then(function (html) {
+      var out = [];
+      String(html || '').split(/<div class="result results_links/).slice(1).forEach(function (blk) {
+        var a = /<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(blk);
+        if (!a) return;
+        var link = real(a[1]);
+        if (!/^https?:\/\//i.test(link) || /duckduckgo\.com\/y\.js/i.test(link)) return;
+        var title = clip(stripTags(a[2]), 120);
+        if (!title) return;
+        var sn = /class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i.exec(blk);
+        out.push({
+          title: title,
+          url: link,
+          snippet: clip(stripTags(sn ? sn[1] : ''), 360),
+          host: hostOf(link),
+          alt: false,
+          ddg: true
+        });
+      });
+      return out.slice(0, 10);
+    }).catch(function () { return []; });
+  }
+
+  /* 直接问 YouTube：用频道筛选（sp=EgIQAg==）搜「strategy game youtuber」，
+     结果就是频道本身，绕开英文搜索站的反爬验证页。浏览器 UA 直连会 502，
+     所以统一经 Jina Reader 转成文本；频道名 / @handle 从 markdown 链接里取。 */
+  function youtubeChannels(q, signal) {
+    var url = 'https://www.youtube.com/results?search_query=' + encodeURIComponent(q) + '&sp=EgIQAg%253D%253D';
+    function push(list, seen, name, link, email, desc) {
+      var n = String(name || '').trim();
+      /* Jina 的链接文字会把头像 alt 与频道名拼在一起（「X X」），折半去重。 */
+      var half = Math.floor(n.length / 2);
+      if (n.length % 2 === 0 && half > 1 && n.slice(0, half) === n.slice(half)) n = n.slice(0, half);
+      if (!n || n.length < 2 || /^!/.test(n)) return;
+      var base = String(link || '').replace(/^http:/, 'https:')
+        .replace(/\/(videos|shorts|streams|playlists)$/i, '')
+        .replace(/\/about\/?$/i, '')
+        .replace(/\/$/, '');
+      if (!base || seen[base]) return;
+      seen[base] = 1;
+      list.push({
+        title: clip(n, 80),
+        url: base + '/about',
+        /* 频道简介能说明「播什么」，判断是不是策略游戏主播全靠它。 */
+        snippet: clip(n + (desc ? ' · ' + desc : '') + ' · YouTube 频道', 180),
+        host: 'www.youtube.com',
+        alt: false,
+        yt: true,
+        email: email || ''
+      });
+    }
+    function parseMarkdown(text) {
+      var out = [];
+      var seen = Object.create(null);
+      var re = /\[([^\]\n]{2,260})\]\((https?:\/\/(?:www\.|m\.)?youtube\.com\/(?:@[A-Za-z0-9_.-]+|channel\/UC[A-Za-z0-9_-]+))(?:[^)]*)\)/g;
+      var m;
+      while ((m = re.exec(String(text || '')))) {
+        var txt = decodeEnt(m[1]).replace(/^\s*!\[[^\]]*\]\([^)]*\)\s*/, '');
+        var name = txt
+          .replace(/\s+@[A-Za-z0-9_.-]+[\s\S]*$/, '')
+          .replace(/\s*•[\s\S]*$/, '');
+        var desc = txt.replace(/^[\s\S]*?subscribers\s*/i, '').replace(/\[[^\]]*\]\([^)]*\)/g, ' ').trim();
+        /* 频道简介里的邮箱就是频道的对外联系方式：不再要求附近出现
+           business / email 字样（很多频道只写「Incredibly uninformed. xxx@…」）。 */
+        var em = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.exec(m[1]);
+        var email = em && emailUsable(em[0]) ? em[0].toLowerCase() : '';
+        push(out, seen, name, m[2], email, clip(desc, 120));
+      }
+      return out;
+    }
+    function parseHtml(html) {
+      var out = [];
+      var seen = Object.create(null);
+      var re = /"channelRenderer":\{"channelId":"(UC[^"]+)"[\s\S]{0,700}?"title":\{"simpleText":"([^"]+)"/g;
+      var m;
+      while ((m = re.exec(String(html || '')))) {
+        var seg = html.slice(m.index, m.index + 1800);
+        var h = /"canonicalBaseUrl":"(\/@[^"]+)"/.exec(seg);
+        var name = decodeEnt(m[2]).replace(/\\u([0-9a-f]{4})/gi, function (_, x) {
+          return String.fromCharCode(parseInt(x, 16));
+        }).replace(/\\"/g, '"');
+        push(out, seen, name, h ? 'https://www.youtube.com' + h[1] : 'https://www.youtube.com/channel/' + m[1]);
+      }
+      return out;
+    }
+    return readViaJina(url, signal).then(function (text) {
+      var out = parseMarkdown(text);
+      if (!out.length) out = parseHtml(text);
+      /* 检索结果页里的邮箱已经和频道名绑好了，先记下来；
+         后续 /about 抓取成功时再按邮箱去重补充来源编号。 */
+      out.forEach(function (r) {
+        if (!r.email || S.emails.some(function (x) { return x.email === r.email; })) return;
+        S.emails.push({ email: r.email, idx: 0, title: r.title, url: r.url, yt: true });
+      });
+      /* 带着公开邮箱的频道优先排进来，别在截断处被普通频道挤掉。 */
+      out.sort(function (a, b) { return (b.email ? 1 : 0) - (a.email ? 1 : 0); });
+      return out.slice(0, 12);
+    }).catch(function () { return []; });
+  }
+
   /* ---------------- 候选池扫描（程序筛 + AI 判） ----------------
    * 搜索源一次只给十来条，而真正的答案常藏在「工具清单 / 对比帖 / 资源汇总」的外链里。
    * 这里不做整篇精读，而是把每个候选页压成一份「词表」：
@@ -1466,6 +1677,8 @@ window.AIS_BODY = `
         var u = String(r.url || '').replace(/#.*$/, '');
         if (!u || seen[u]) return;
         if (blockedReason({ url: u, title: r.title })) return;
+        /* 找人任务：YouTube 频道页体积大、扫描价值低，统一交给 crawlSources 走 /about 取邮箱。 */
+        if (S.intentKind === 'contact' && /(^|\.)youtube\.com$/i.test(hostOf(u))) return;
         var text = (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.link ? '' : u)).toLowerCase();
         var hit = tokens.some(function (t) { return t && text.indexOf(t) >= 0; });
         if (!hit && !r.seed && !r.repo && !r.link && !trustedHost(hostOf(u)) && !isCommunity(u)) return;
@@ -1590,12 +1803,23 @@ window.AIS_BODY = `
   function rankPool(list, q) {
     var tokens = relevantTokens(q);
     var kws = (S.skim && S.skim.keywords) || [];
+    var contact = inferIntent(q).kind === 'contact';
     var seen = Object.create(null);
+    var seenTitle = Object.create(null);
     var scored = [];
     (list || []).forEach(function (r, i) {
       var u = String(r.url || '').replace(/#.*$/, '');
       if (!u || seen[u]) return;
       seen[u] = 1;
+      /* 外链候选没经过 cleanResults：同一篇教程被多个搬运站收录时标题一字不差，
+         按标题再去一次，避免精读名额被同一篇文章占满。 */
+      var tk = String(r.title || '').replace(/[\s\-_|｜:：,，。.!！?？"'“”‘’()（）\[\]【】]+/g, '').toLowerCase();
+      if (tk.length > 8) {
+        /* 用前缀做键：搬运站会截断长标题，后半段不同但其实是同一篇。 */
+        var key = tk.slice(0, 30);
+        if (seenTitle[key]) return;
+        seenTitle[key] = 1;
+      }
       var host = r.host || hostOf(u);
       var text = (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + u).toLowerCase();
       var score = 0;
@@ -1607,6 +1831,14 @@ window.AIS_BODY = `
       if (isCommunity(u)) score += 1;
       /* 筛读阶段被 AI 判为「值得读」的，优先进入结果与精读名单。 */
       if (r.pick) score += 6;
+      /* 找人 / 邮箱：频道页、榜单页、含联系方式的页面优先，否则会被泛新闻挤出精读名额。 */
+      if (contact) {
+        if (CONTACT_HINT.test(text)) score += 7;
+        if (/(best|top|榜单|排行|频道|channels|邮箱|e-?mail|contact)/i.test(text)) score += 4;
+        if (/(如何|怎么|教程|攻略|指南|推广策略)/.test(text)) score -= 4;
+        /* 简介里已经写明商务邮箱的频道，就是最直接的答案。 */
+        if (r.email) score += 8;
+      }
       score += Math.max(0, 4 - Math.floor(i / 4));
       /* 外链候选没有搜索名次，必须自己挣到相关性，否则会混进一堆导航链接。 */
       if (r.link && score < 3) return;
@@ -1616,11 +1848,14 @@ window.AIS_BODY = `
     var out = [];
     var siteCount = Object.create(null);
     scored.forEach(function (x) {
-      if (out.length >= MAX_RESULTS) return;
+      /* 找人任务要读一串频道，10 条不够把「像目标品类」和「有公开邮箱」两类都覆盖到。 */
+      if (out.length >= (contact ? 12 : MAX_RESULTS)) return;
       var site = siteOf(x.host);
       /* 备用源（360）的结果链接都指向 so.com 跳转，不能按站点配额压掉。
          仓库页不设小配额：搜「开源 xx 模板」时，真正的答案就是这一串仓库。 */
       var cap = x.r.alt ? MAX_RESULTS : (/(^|\.)github\.com$/.test(site) ? MAX_RESULTS : 2);
+      /* 找主播邮箱时，多个频道页同属 youtube.com，每个频道都是一条独立答案。 */
+      if (contact && /(^|\.)youtube\.com$/.test(site)) cap = 12;
       if ((siteCount[site] || 0) >= cap) return;
       siteCount[site] = (siteCount[site] || 0) + 1;
       out.push(x.r);
@@ -1637,6 +1872,11 @@ window.AIS_BODY = `
       if (cursor >= list.length) return Promise.resolve();
       var s = list[cursor++];
       if (signal.aborted) return Promise.resolve();
+      /* 找人任务抓到的是频道主页：主页没有商务邮箱，直接改抓同一频道的 /about。 */
+      if (S.intentKind === 'contact') {
+        var about = channelAbout(s.url);
+        if (about) s.url = about;
+      }
       s.status = 'loading';
       renderSources();
       var ready = S.pageCache[s.url];
@@ -1645,6 +1885,7 @@ window.AIS_BODY = `
         return html;
       });
       return page.then(function (html) {
+        if (S.intentKind === 'contact') recordEmails(html, s);
         var ex = extractPage(html);
         s.links = extractLinks(html, s.url);
         /* 知乎 / 百科在未登录时会给一整页「登录后查看」：不能当正文，也不能拿去抽词。 */
@@ -1684,11 +1925,25 @@ window.AIS_BODY = `
     return parts.slice(-2).join('.');
   }
 
+  /* YouTube 频道主页不会直接暴露商务邮箱，/about 页才会；
+     顺着榜单页找到频道链接后，统一补成 /about 再抓一次。 */
+  function channelAbout(u) {
+    if (!/(^|\.)youtube\.com$/i.test(hostOf(u))) return '';
+    var p = '';
+    try { p = new URL(u).pathname || ''; } catch (e) { return ''; }
+    if (/\/about\/?$/i.test(p)) return 'https://www.youtube.com' + p.replace(/\/$/, '');
+    if (/^\/(@[^/]+|channel\/[^/]+|c\/[^/]+|user\/[^/]+)\/?$/i.test(p)) {
+      return 'https://www.youtube.com' + p.replace(/\/$/, '') + '/about';
+    }
+    return '';
+  }
+
   /* 顺着线索再读两篇：从已读页面的出站链接里挑与问题最相关、且不在已读站点内的，
      再抓一轮。很多工具站不会直接出现在搜索结果里，但会出现在「XX 工具清单」页的链接里。 */
   function followTrail(q, signal) {
     var tokens = relevantTokens(q);
     var kwTokens = (S.skim && S.skim.keywords) || [];
+    var contact = inferIntent(q).kind === 'contact';
     var hosts = Object.create(null);
     var sites = Object.create(null);
     var urls = Object.create(null);
@@ -1713,11 +1968,20 @@ window.AIS_BODY = `
     pools.forEach(function (s) {
       (s.links || []).forEach(function (l) {
         var u = String(l.url || '').replace(/#.*$/, '');
-        if (!u || urls[u]) return;
-        var host = hostOf(u);
-        if (!host || hosts[host] || sites[siteOf(host)]) return;
-        if (pickedSites[siteOf(host)]) return;
-        if (blockedReason({ url: u, title: l.text })) return;
+        if (!u) return;
+        /* 联系方式任务：频道根路径直接改抓 /about；其余链接按原逻辑走。 */
+        var about = contact ? channelAbout(u) : '';
+        var target = about || u;
+        if (urls[target]) return;
+        var host = hostOf(target);
+        if (!host) return;
+        /* 找人任务只跟频道 /about，不跟视频页（视频页没有联系方式且体积极大）。 */
+        if (contact && /(^|\.)youtube\.com$/i.test(host) && !about) return;
+        /* 普通任务按站点去重；找人任务允许多个 YouTube 频道同站并存。 */
+        if (!contact && (hosts[host] || sites[siteOf(host)])) return;
+        if (contact && !about && (hosts[host] || sites[siteOf(host)])) return;
+        if (!contact && pickedSites[siteOf(host)]) return;
+        if (blockedReason({ url: target, title: l.text })) return;
         var low = (l.text + ' ' + u).toLowerCase();
         var score = 0;
         tokens.forEach(function (t) { if (low.indexOf(t) >= 0) score += t.length > 3 ? 3 : 2; });
@@ -1726,14 +1990,15 @@ window.AIS_BODY = `
         /* 官网链接的锚文本常常只写品牌名（Meshy / Tripo / OpenRA），不含问题里的词。
            这类链接恰恰是我们要找的，所以可信域名单独给分，不强制词命中。 */
         if (trustedHost(host)) score += 3;
+        if (about) score += 8;
         if (!score) return;
-        urls[u] = 1;
-        pickedSites[siteOf(host)] = 1;
-        cands.push({ url: u, text: l.text, host: host, score: score });
+        urls[target] = 1;
+        if (!contact) pickedSites[siteOf(host)] = 1;
+        cands.push({ url: target, text: l.text, host: host, score: score });
       });
     });
     cands.sort(function (a, b) { return b.score - a.score; });
-    var picks = cands.slice(0, 2);
+    var picks = cands.slice(0, contact ? 3 : 2);
     if (!picks.length) return Promise.resolve();
     var extra = picks.map(function (c, i) {
       return {
@@ -1768,7 +2033,10 @@ window.AIS_BODY = `
       + '4. 资料互相矛盾时并列说明分歧，不要强行统一。\n'
       + '5. 不复述原文超过两句，用转述；不写「根据资料」「以下是」这类空话。\n'
       + '6. 不要输出网址列表（来源卡片由界面负责），正文里只保留编号引用。\n'
-      + '7. 今天是 ' + today() + '；涉及时效的信息要注明资料的日期或「资料未注明日期」。';
+      + '7. 今天是 ' + today() + '；涉及时效的信息要注明资料的日期或「资料未注明日期」。'
+      + (S.intentKind === 'contact'
+        ? '\n8. 用户要的是具体人物 / 团队的联系方式：只列与目标人物或频道明确绑定的公开邮箱，并标来源编号；不要把平台客服、站点投稿、无关公司的邮箱当作答案；找不到就直说「没有找到公开邮箱」。'
+        : '');
   }
 
   function userPrompt(q, sources) {
@@ -1780,18 +2048,26 @@ window.AIS_BODY = `
         var site = mediaSite(s.host);
         head += '平台：' + (site ? site.name : s.host) + '｜页面判定：' + MEDIA_STATUS[s.media || 'unknown'] + '\n';
       }
-      var base = pickRelevant(s.text, q, PROMPT_PER_SOURCE);
+      var base = pickRelevant(s.text, q, PROMPT_PER_SOURCE,
+        S.intentKind === 'contact' ? relevantTokens(q) : []);
       /* 补充精读：粗读捞到的关键词再做一遍段落检索，把「同义但没出现问题词」的部分补上。 */
       var extra = kw.length ? supplementText(s.text, base, kw, PROMPT_EXTRA) : '';
       return head + s.url + '\n' + base + (extra ? '\n（补充摘录）\n' + extra : '');
     }).join('\n\n');
-    return '用户问题：' + q + '\n\n资料（共 ' + usable.length + ' 篇，已去除广告与导航）：\n' + list;
+    return '用户问题：' + q + '\n\n资料（共 ' + usable.length + ' 篇，已去除广告与导航）：\n' + list + (S.intentKind === 'contact' ? emailBlock() : '');
   }
 
   /* 没有模型时的降级：不假装给了答案，只把正文摘录摆出来，并说明如何配置。 */
   function fallbackAnswer(sources) {
     var usable = sources.filter(function (s) { return s.text; });
     var out = ['**未能生成 AI 摘要：语言模型未配置或暂时不可用。**', '', '下面是已抓取到的网页正文摘录，可直接点来源核对：'];
+    if (S.intentKind === 'contact' && S.emails.length) {
+      out.push('', '**程序从页面抽到的公开邮箱：**');
+      S.emails.forEach(function (x) {
+        var n = emailIdx(x);
+        out.push('- ' + x.email + ' ← ' + (n ? '[' + n + '] ' : '') + x.title);
+      });
+    }
     usable.forEach(function (s) {
       out.push('');
       out.push('**[' + s.idx + '] ' + s.title + '**');
@@ -1807,11 +2083,88 @@ window.AIS_BODY = `
     return null;
   }
 
+  /* ---------------- 邮箱抽取 ----------------
+   * 找人任务真正要交付的是「哪个频道 → 哪个邮箱」。模型只能读摘要，
+   * 所以程序先把页面里的公开邮箱抽出来，连同来源一起交给模型判断归属。 */
+  function cfEmails(raw) {
+    var out = [];
+    var re = /data-cfemail="([0-9a-f]+)"/gi;
+    var m;
+    while ((m = re.exec(raw))) {
+      try {
+        var k = parseInt(m[1].slice(0, 2), 16);
+        var s = '';
+        for (var i = 2; i < m[1].length; i += 2) {
+          s += String.fromCharCode(parseInt(m[1].slice(i, i + 2), 16) ^ k);
+        }
+        out.push({ email: s, at: m.index });
+      } catch (e) { /* ignore */ }
+    }
+    return out;
+  }
+  function emailUsable(e) {
+    e = String(e || '').toLowerCase().replace(/^mailto:/, '');
+    if (!/^[a-z0-9][a-z0-9._%+-]*@[a-z0-9.-]+\.[a-z]{2,}$/.test(e)) return false;
+    if (/\.(png|jpe?g|gif|webp|svg|css|js|woff2?)$/.test(e)) return false;
+    var domain = e.split('@')[1];
+    /* 平台客服 / 法务邮箱不是主播邮箱，留着只会污染答案。 */
+    if (/^(youtube\.com|google\.com|gstatic\.com|bilibili\.com|douyin\.com|facebook\.com|twitter\.com|x\.com|instagram\.com|tiktok\.com)$/.test(domain)) return false;
+    var local = e.split('@')[0];
+    if (/^(noreply|no-reply|donotreply|privacy|abuse|postmaster|webmaster|dmca)$/.test(local)) return false;
+    return true;
+  }
+  function recordEmails(html, s) {
+    if (!html || !s) return;
+    var raw = String(html);
+    var found = [];
+    var re = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+    var m;
+    while ((m = re.exec(raw))) found.push({ email: m[0], at: m.index });
+    cfEmails(raw).forEach(function (x) { found.push(x); });
+    found.forEach(function (f) {
+      var email = String(f.email || '').toLowerCase();
+      if (!emailUsable(email)) return;
+      var ctx = raw.slice(Math.max(0, f.at - 140), f.at + email.length + 140);
+      var contactish = /business|contact|inquir|合作|商务|联系|邮箱|e-?mail|mailto/i.test(ctx);
+      if (!contactish) return;
+      if (S.emails.some(function (x) { return x.email === email; })) return;
+      S.emails.push({
+        email: email,
+        idx: s.idx || 0,
+        title: s.title || hostOf(s.url) || '',
+        url: s.url || '',
+        yt: /(^|\.)youtube\.com$/i.test(hostOf(s.url) || '')
+      });
+    });
+  }
+  /* 频道检索阶段记下的邮箱还没有来源编号：按 URL 回 S.sources 里找对应编号。 */
+  function emailIdx(x) {
+    if (x.idx) return x.idx;
+    var u = String(x.url || '').replace(/\/about\/?$/i, '');
+    var hit = (S.sources || []).filter(function (s) {
+      return s && String(s.url || '').replace(/\/about\/?$/i, '') === u;
+    })[0];
+    return hit ? hit.idx : 0;
+  }
+  function emailBlock() {
+    if (!S.emails.length) return '';
+    var seen = Object.create(null);
+    var lines = [];
+    S.emails.forEach(function (x) {
+      if (seen[x.email]) return;
+      seen[x.email] = 1;
+      var n = emailIdx(x);
+      lines.push('- ' + x.email + ' ← ' + (n ? '[' + n + '] ' : '') + x.title + (x.yt ? '（YouTube 频道页）' : ''));
+    });
+    return '\n\n程序从抓取页面中抽到的公开邮箱（可能混有站点邮箱，只保留属于目标人物的）：\n' + lines.join('\n');
+  }
+
   /* ---------------- 意图理解 ----------------
    * 「找工具」和「查报错」需要完全不同的检索式与线索来源：
    * 找工具要多问「工具 / 推荐」，资源类要落到 GitHub，排错要找具体报错和解决帖。
    * 这一步决定接下来用哪种说法再问一次，而不是盲目短语料。 */
   var INTENTS = [
+    { kind: 'contact', label: '找人 / 联系方式', re: /(邮箱|邮件|联系方式|商务合作|合作邮箱|contact|e-?mail|inquir)/i, adds: ['商务合作 邮箱'] },
     { kind: 'tool', label: '找工具 / 选型', re: /(工具|网站|平台|软件|生成器|在线|推荐|哪个|好用|替代)/i, adds: ['工具', '推荐'] },
     { kind: 'trouble', label: '排查 / 解决', re: /(报错|错误|失败|无法|不能|解决|修复|崩溃|闪退)/i, adds: ['解决', '教程'] },
     { kind: 'learn', label: '学习 / 上手', re: /(怎么|如何|教程|入门|学习|配置|安装|使用)/i, adds: ['教程', '入门'] },
@@ -1824,6 +2177,31 @@ window.AIS_BODY = `
       }
     }
     return { kind: 'general', label: '通用资料', adds: ['经验'] };
+  }
+
+  /* 「找主播邮箱」这类任务，中文检索只能拿到平台新闻；真正有邮箱的是
+     YouTube 频道 /about 页，所以先把品类译成英文，再用榜单式检索式找频道。 */
+  var CONTACT_SUBJECT = [
+    [/策略游戏|策略类|strategy\s*games?/i, 'strategy game'],
+    [/射击游戏|shooter/i, 'shooter game'],
+    [/角色扮演|rpg/i, 'rpg'],
+    [/沙盒|sandbox/i, 'sandbox game'],
+    [/赛车|racing/i, 'racing game'],
+    [/游戏|game/i, 'game']
+  ];
+  function contactQueries(q) {
+    var subj = '';
+    for (var i = 0; i < CONTACT_SUBJECT.length; i++) {
+      if (CONTACT_SUBJECT[i][0].test(q)) { subj = CONTACT_SUBJECT[i][1]; break; }
+    }
+    if (!subj) return [];
+    var role = /(主播|博主|up主|youtuber|streamer|创作者|creator)/i.test(q) ? 'youtuber' : 'creator';
+    return [
+      'best ' + subj + ' ' + role + 's',
+      /* 去掉 best、用单数，YouTube 反而更认品类词：会回这个品类本身的频道，
+         而不是被「best」带偏到泛游戏 / 手游频道。 */
+      subj + ' ' + role
+    ].concat(contactSyn(q).map(function (w) { return w + ' ' + role; })).slice(0, 4);
   }
 
   /* 社区页（贴吧 / 知乎 / 豆瓣 / Reddit / V2EX / Stack Overflow）的价值不在正文，
@@ -1843,6 +2221,16 @@ window.AIS_BODY = `
     (list || []).forEach(function (r) {
       if (relevantTo({ title: r.title, snippet: r.snippet, url: r.url }, tokens)) hit++;
     });
+    /* 联系方式任务不能只按中文字面判命中：一篇「主播新闻」也会命中「主播」，
+       但它给不了邮箱。必须看到频道 / 邮箱 / 联系这类信号才算真的答上。 */
+    if (inferIntent(q).kind === 'contact') {
+      var strong = 0;
+      (list || []).forEach(function (r) {
+        var t = String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.url || '');
+        if (CONTACT_ANSWER.test(t) || YT_CHANNEL.test(String(r.url || ''))) strong++;
+      });
+      return { total: (list || []).length, hit: strong, ok: strong >= 2 || (strong >= 1 && (list || []).length <= 2) };
+    }
     var ok = hit >= 2 || (hit >= 1 && list.length <= 2);
     return { total: (list || []).length, hit: hit, ok: ok };
   }
@@ -1926,6 +2314,8 @@ window.AIS_BODY = `
     S.ghQuery = '';
     S.ghRateLimited = false;
     S.pageCache = Object.create(null);
+    S.emails = [];
+    S.intentKind = '';
     S.answer = '';
     S.error = '';
     S.note = '';
@@ -1953,6 +2343,7 @@ window.AIS_BODY = `
       var base = primaryQuery(q);
       var alt = retryQuery(q);
       var intent = inferIntent(q);
+      S.intentKind = intent.kind;
       var web = [];
 
       trace({
@@ -1983,13 +2374,30 @@ window.AIS_BODY = `
           })
           .catch(function () { return []; });
       }
-      function ask(qq, kind) {
+      function ask(qq, kind, useDdg) {
         var gap = Math.max(0, 400 - (Date.now() - lastAsk));
         var viaRss = false;
         var viaAlt = false;
+        var viaDdg = false;
+        var viaYt = false;
         lastAsk = Date.now() + gap;
         return delay(gap)
           .then(function () { return fetchOnce(qq); })
+          .then(function (list) {
+            if (ctrl.signal.aborted || !useDdg) return list;
+            /* 联系人任务：主源给的往往还是「怎么找主播」这类教程；真正带邮箱的是
+               频道页，所以不管主源有没有结果，都再问一次 YouTube 频道检索并合并。 */
+            return youtubeChannels(qq, ctrl.signal).then(function (yt) {
+              viaYt = yt.length > 0;
+              var merged = (list || []).concat(yt || []);
+              if (merged.length) return merged;
+              diag('主源与 YouTube 频道检索都没结果', '英文查询在中文索引里被当成词典词', '改问 DDG 英文结果');
+              return ddgSearch(qq, ctrl.signal).then(function (ddg) {
+                viaDdg = ddg.length > 0;
+                return ddg;
+              });
+            });
+          })
           .then(function (list) {
             if (ctrl.signal.aborted || list.length) return list;
             /* 主出口空手：先换 RSS 出口，通常能立刻拿到结果。 */
@@ -2034,7 +2442,7 @@ window.AIS_BODY = `
             var j = judge(list, q);
             trace({
               kind: kind || '网页',
-              text: qq + (viaRss ? '（RSS 备用源）' : viaAlt ? '（360 备用源）' : ''),
+              text: qq + (viaYt ? '（YouTube 频道检索）' : viaDdg ? '（DDG 备用源）' : viaRss ? '（RSS 备用源）' : viaAlt ? '（360 备用源）' : ''),
               res: j.total + ' 条 · 相关 ' + j.hit + ' 条',
               ok: j.ok
             });
@@ -2066,6 +2474,14 @@ window.AIS_BODY = `
       /* 每一轮给出不同的检索式组合；同一轮里最多问 2 条。 */
       function roundQueries(round) {
         var list = [];
+        if (intent.kind === 'contact') {
+          var cq = contactQueries(q);
+          if (cq.length) {
+            /* 第一轮把品类词与同义词一次问完：只问一条会捞到同一类频道。 */
+            var pick = round === 0 ? cq.slice(0, 4) : cq.slice(round * 2 + 2, round * 2 + 4);
+            if (pick.length) return pick;
+          }
+        }
         if (round === 0) {
           (intent.adds || []).forEach(function (w) { list.push((base + ' ' + w).trim()); });
         } else if (round === 1) {
@@ -2082,7 +2498,7 @@ window.AIS_BODY = `
       }
       /* 第 3 轮换 360 索引：Bing 给了但都不相关时，换一个索引往往才有答案。 */
       function askRound(qq, round) {
-        if (round < 2) return ask(qq, '智搜');
+        if (round < 2) return ask(qq, '智搜', intent.kind === 'contact');
         return delay(400).then(function () {
           return soSearch(qq, ctrl.signal).then(function (list) {
             if (list && list.length) searchCachePut(qq, list);
@@ -2114,7 +2530,9 @@ window.AIS_BODY = `
               res: (list || []).length + ' 条' + (j.ok ? ' · 命中' : ' · 仍不相关'),
               ok: j.ok
             });
-            if (j.ok) return got;
+            /* 联系人任务第一条就能「命中」频道，但一个查询只会捞到同一类频道；
+               先把这一轮两条问完，再决定停手。 */
+            if (j.ok && !(intent.kind === 'contact' && round === 0)) return got;
             return step(i + 1);
           });
         }
@@ -2203,7 +2621,8 @@ window.AIS_BODY = `
             res: '候选池 ' + (S.results.length + exp.links.length) + ' 条',
             ok: true
           });
-        } else {
+        } else if (S.intentKind !== 'contact') {
+          /* 联系人任务本来就跳过 YouTube 扫描（频道页统一在精读阶段读），不是反爬。 */
           diag('候选页一页都没读出来', '目标站反爬、超时或需要登录', '改用搜索摘要，继续用仓库与种子');
         }
         /* 被 AI 判为「值得读」的，排到前面；其余仍按相关度排。 */
@@ -2216,7 +2635,8 @@ window.AIS_BODY = `
         if (pool.length) S.results = pool;
         renderResults();
 
-        var picks = pickForRead(S.results, MAX_SOURCES);
+        /* 找人任务要读的是「一串频道」：只读 6 个频道经常一个邮箱都碰不到。 */
+        var picks = pickForRead(S.results, S.intentKind === 'contact' ? 12 : MAX_SOURCES);
         S.sources = picks.map(function (item, i) {
           return {
             idx: i + 1, title: item.title, url: item.url, host: item.host,
@@ -2267,6 +2687,16 @@ window.AIS_BODY = `
                 res: added ? added + ' 篇' : '跳过',
                 ok: !!added
               });
+              if (S.intentKind === 'contact') {
+                trace({
+                  kind: '邮箱',
+                  text: S.emails.length
+                    ? '从频道 / 联系页抽到 ' + S.emails.length + ' 个公开邮箱'
+                    : '没有抽到公开邮箱',
+                  res: S.emails.length ? '已并入作答' : '保留频道页供核对',
+                  ok: S.emails.length > 0
+                });
+              }
             });
           });
         });
@@ -2384,12 +2814,28 @@ window.AIS_BODY = `
   }
 
   /* 线索来源按可靠性排序：粗读捞到的重复词 → 已读正文里的重复词 → 标题 / 摘要里的重复说法。
-     正文常因登录墙或反爬读不到，那时如果只认正文，「进一步搜索」就会变成一个点了没反应的按钮。 */
+     正文常因登录墙或反爬读不到，那时如果只认正文，「进一步搜索」就会变成一个点了没反应的按钮。
+     但摘要里混着大量广告词：不筛掉就会把「唯美 / 礼包」当线索，越挖越偏。 */
+  var CLUE_NOISE = /(唯美|礼包|福利|充值|首充|折扣|私服|破解|免费看|高清全集|抖音|快手|小说|漫画|广告|下载)/;
+  var CLUE_HOSTS = /^(so|baidu|bing|duckduckgo|bilibili|douyin|163|sina|qq|youtube|google)\.(com|cn)$/i;
+  var CLUE_STOP = /^(www|com|cn|http|https|html|php|net|org|the|and|for|with|from)$/;
+  function clueUsable(k, contact) {
+    k = String(k || '').toLowerCase().trim();
+    if (k.length < 2 || CLUE_NOISE.test(k) || CLUE_HOSTS.test(k) || CLUE_STOP.test(k)) return false;
+    /* 找人任务只认「实体 / 联系方式」类线索：英文频道名、域名、邮箱词、合作词；
+       中文广告二元组（三国 / 唯美）一律不进检索式。 */
+    if (contact) {
+      if (/^(youtube|google|bilibili|douyin|facebook|twitter|instagram)$/.test(k)) return false;
+      return /^[a-z0-9][a-z0-9._@+-]*$/.test(k) || /(邮箱|邮件|联系|商务|合作|频道|主播|博主|作者|达人)/.test(k);
+    }
+    return true;
+  }
   function collectClues(q0) {
+    var contact = inferIntent(q0).kind === 'contact';
     var out = [];
     function add(k) {
       k = String(k || '').toLowerCase().trim();
-      if (k.length >= 2 && out.indexOf(k) < 0) out.push(k);
+      if (clueUsable(k, contact) && out.indexOf(k) < 0) out.push(k);
     }
     if (S.skim && S.skim.keywords) S.skim.keywords.forEach(add);
     harvestKeywords(S.sources.map(function (s) { return s.text || ''; }).join('\n'), q0).forEach(add);
@@ -3409,6 +3855,956 @@ window.AIS_BODY = `
       checkEnv();
       setTimeout(function () { focusInput(); }, 80);
     }
+  });
+})();
+
+/* ---- apps/arm101/body.js ---- */
+/* 101 机械臂控制台的窗口 DOM。
+ *
+ * 单独放 body.js 是因为结构比模板 App 长；app-scan 会自动把它排在 app.js 之前内联。
+ * 这里只有骨架：关节行由 app.js 按 JOINTS 生成，三维场景画在 .arm101-canvas 上。
+ */
+window.ARM101_BODY = `
+<div class="arm101-root">
+  <section class="arm101-stage" data-stage>
+    <canvas class="arm101-canvas" data-canvas></canvas>
+
+    <div class="arm101-topbar">
+      <div class="arm101-brand">
+        <span class="arm101-brand-mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4.5 20.5h7"/>
+            <path d="M8 20.5v-2.6"/>
+            <circle cx="8.2" cy="16.2" r="1.7"/>
+            <path d="m9.6 15.1 3.9-4.6"/>
+            <circle cx="14.8" cy="9" r="1.7"/>
+            <path d="m16.1 7.9 2.4-1.9"/>
+            <path d="m18.1 6.4 2.2 2.1"/>
+            <path d="m18.7 6.6-1.2 2.8"/>
+          </svg>
+        </span>
+        <span class="arm101-brand-txt"><b>SO-101</b><i>六轴机械臂 · 数字孪生</i></span>
+      </div>
+      <span class="arm101-conn" data-conn><i></i><b>串口未连接</b></span>
+    </div>
+
+    <div class="arm101-readout">
+      <div class="arm101-stat"><label>TIP X</label><b data-tip-x>—</b><i>mm</i></div>
+      <div class="arm101-stat"><label>TIP Y</label><b data-tip-y>—</b><i>mm</i></div>
+      <div class="arm101-stat"><label>TIP Z</label><b data-tip-z>—</b><i>mm</i></div>
+      <div class="arm101-stat"><label>PACKETS</label><b data-pkts>0</b><i>帧</i></div>
+    </div>
+
+    <div class="arm101-stagefoot">
+      <span class="arm101-hint">拖拽旋转 · 滚轮缩放</span>
+      <button type="button" class="arm101-ghost" data-act="view">重置视角</button>
+    </div>
+
+    <div class="arm101-estop-banner" data-estop hidden>急停已触发 · 舵机力矩已切断</div>
+    <div class="arm101-fallback" data-fallback hidden>当前环境无法创建 WebGL 上下文</div>
+  </section>
+
+  <aside class="arm101-panel">
+    <header class="arm101-phead">
+      <div>
+        <h1>101 机械臂 <span>控制台</span></h1>
+        <p>6 自由度 · STS3215 总线舵机 · 1 Mbps</p>
+      </div>
+      <button type="button" class="arm101-link" data-act="link">断开串口</button>
+    </header>
+
+    <div class="arm101-sechead">
+      <span>关节指令</span>
+      <span class="arm101-secmeta">ID 01–06 · 4096 ticks</span>
+    </div>
+    <div class="arm101-joints" data-joints></div>
+
+    <div class="arm101-speed">
+      <span>运动速度</span>
+      <input type="range" min="1" max="10" step="1" value="5" data-speed aria-label="运动速度">
+      <b data-speed-v>5</b>
+    </div>
+
+    <div class="arm101-actions">
+      <button type="button" class="arm101-btn arm101-btn-main" data-act="send">发送信号</button>
+      <button type="button" class="arm101-btn" data-act="home">回到 Home</button>
+      <button type="button" class="arm101-btn" data-act="demo">演示序列</button>
+      <button type="button" class="arm101-btn arm101-btn-danger" data-act="estop">急停</button>
+    </div>
+
+    <div class="arm101-sechead arm101-sechead-log">
+      <span>信号监视器</span>
+      <span class="arm101-secmeta">SCS · 8N1</span>
+    </div>
+    <div class="arm101-log" data-log aria-live="polite"></div>
+  </aside>
+</div>
+`;
+
+/* ---- apps/arm101/app.js ---- */
+/* 101 机械臂控制台 —— 等比例 3D 孪生 + 总线舵机信号仿真。
+ *
+ * 机型参照开源 SO-101（LeRobot）六轴桌面臂：5 个旋转关节 + 1 个夹爪，
+ * 舵机按 Feetech STS3215 建模，通信按 SCS 总线帧（FF FF ID LEN INSTR ... CHK）。
+ * 这里不连接真实硬件：滑杆 → 目标角 → 位置指令 → 3D 臂平滑跟随，
+ * 信号监视器里能看到实际拼出来的十六进制帧，方便对照真机协议。
+ *
+ * 三维场景用 index.html 里已加载的全局 THREE + OrbitControls（r149）。
+ */
+(function () {
+  'use strict';
+
+  /* ---------- 机型参数 ----------
+   * 关节顺序、行程与零位取自 SO-ARM100 官方 URDF（so101_new_calib.urdf）：
+   * shoulder_pan ±110°、shoulder_lift ±100°、elbow_flex ±96.8°、
+   * wrist_flex ±95°、wrist_roll −157.2°…162.8°、gripper −10°…100°。
+   * 连杆长度：肩→肘 116 mm，肘→腕 135 mm，腕→腕转 61.1 mm，腕转→夹持点 98.1 mm。
+   */
+  var JOINTS = [
+    { key: 'pan',   id: 1, label: '底座回转', en: 'shoulder_pan',  min: -110, max: 110, unit: '°' },
+    { key: 'lift',  id: 2, label: '大臂俯仰', en: 'shoulder_lift', min: -100, max: 100, unit: '°' },
+    { key: 'elbow', id: 3, label: '小臂俯仰', en: 'elbow_flex',    min: -97,  max: 97,  unit: '°' },
+    { key: 'wrist', id: 4, label: '腕部俯仰', en: 'wrist_flex',    min: -95,  max: 95,  unit: '°' },
+    { key: 'roll',  id: 5, label: '腕部旋转', en: 'wrist_roll',    min: -157, max: 163, unit: '°' },
+    { key: 'grip',  id: 6, label: '夹爪开合', en: 'gripper',       min: 0,    max: 100, unit: '%' }
+  ];
+
+  /* 零位是「大臂竖直、小臂水平前伸」的 L 形，肘角为正 = 小臂向下折，lift 为负 = 整条臂上抬。
+   * 下面这些姿态都用官方 URDF 正运动学校核过：HOME 末端在 (277, 153, 0) mm，
+   * 抓取位在 (238, 16, 0) mm 且工具朝下，夹指正好落在 30 mm 工件的两侧。 */
+  var HOME_POSE = { pan: 0, lift: -36, elbow: 24, wrist: 50, roll: 0, grip: 35 };
+
+  var PICK_POSE = { pan: 0, lift: 0, elbow: 26, wrist: 55, roll: 0, grip: 60 };
+
+  /* 夹爪：0% 合拢（夹指内距约 10 mm）、100% 全开约 63 mm；
+   * 夹住 30 mm 工件时舵轴停在 12°（按官方 STL 实测内距≈30 mm） */
+  var GRIP_CLOSED = -7;
+  var GRIP_SPAN = 50;
+  var GRASP_DEG = 12;
+
+  var PIECE_HOME = { x: 0.25, y: 0.015, z: 0 };
+
+  var DEMO = [
+    { label: '观察位 · 抬臂张开夹爪', pose: { pan: 0,   lift: -36, elbow: 24,  wrist: 50, roll: 0, grip: 85 } },
+    { label: '接近工件 · 移至上方',   pose: { pan: 0,   lift: 0,   elbow: 20,  wrist: 62, roll: 0, grip: 85 } },
+    { label: '下探 · 对准夹取点',     pose: { pan: 0,   lift: 0,   elbow: 26,  wrist: 55, roll: 0, grip: 85 } },
+    { label: '夹持 · 闭合夹爪',       pose: PICK_POSE },
+    { label: '抬升 · 保持夹持',       pose: { pan: 0,   lift: 0,   elbow: -10, wrist: 80, roll: 0, grip: 60 } },
+    { label: '转移 · 底座回转',       pose: { pan: -28, lift: 0,   elbow: -10, wrist: 80, roll: 0, grip: 60 } },
+    { label: '下放 · 下降到位',       pose: { pan: -28, lift: 0,   elbow: 26,  wrist: 55, roll: 0, grip: 60 } },
+    { label: '释放 · 张开夹爪',       pose: { pan: -28, lift: 0,   elbow: 26,  wrist: 55, roll: 0, grip: 88 } },
+    { label: '复位 · 回到 Home',      pose: HOME_POSE }
+  ];
+
+  /* ---------- 运行状态 ---------- */
+  var S = {
+    body: null, win: null, stage: null, canvas: null,
+    refs: {}, rig: null, scene: null, camera: null, renderer: null, controls: null,
+    cur: {}, goal: {}, speed: 5,
+    linked: true, estop: false, demo: false, demoStep: 0, demoTimer: 0,
+    packets: 0, lastTs: 0, lastTip: 0, raf: 0, started: false,
+    view0: null, tmp: null, piece: null, held: false
+  };
+
+  /* ---------- 小工具 ---------- */
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function pad4(n) { return ('0000' + n).slice(-4); }
+  function hex8(n) { return ('0' + (n & 255).toString(16).toUpperCase()).slice(-2); }
+  function nowStr() {
+    var d = new Date();
+    return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()) + '.' + ('00' + d.getMilliseconds()).slice(-3);
+  }
+  function ticksFor(j, value) {
+    return Math.round(clamp((value - j.min) / (j.max - j.min), 0, 1) * 4095);
+  }
+
+  /* ---------- SCS 总线帧（Feetech 兼容） ---------- */
+  function frameWrite(id, ticks) {
+    var params = [0x2A, ticks & 255, (ticks >> 8) & 255];
+    var len = params.length + 2;
+    var sum = id + len + 0x03;
+    for (var i = 0; i < params.length; i++) sum += params[i];
+    var all = [0xFF, 0xFF, id, len, 0x03].concat(params, [(~sum) & 255]);
+    return all.map(hex8).join(' ');
+  }
+
+  function frameSync(list) {
+    var params = [0x2A, 0x02];
+    list.forEach(function (x) {
+      params.push(x.id, x.ticks & 255, (x.ticks >> 8) & 255);
+    });
+    var len = params.length + 2;
+    var sum = 0xFE + len + 0x83;
+    for (var i = 0; i < params.length; i++) sum += params[i];
+    var all = [0xFF, 0xFF, 0xFE, len, 0x83].concat(params, [(~sum) & 255]);
+    return all.map(hex8).join(' ');
+  }
+
+  function syncList() {
+    return JOINTS.map(function (j) {
+      return { id: j.id, ticks: ticksFor(j, S.goal[j.key]) };
+    });
+  }
+
+  /* ---------- 信号监视器 ---------- */
+  function log(kind, text) {
+    var el = S.refs.log;
+    if (!el) return;
+    var stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 26;
+    var line = document.createElement('div');
+    line.className = 'arm101-line is-' + kind;
+    var tag = kind === 'tx' ? 'TX' : kind === 'rx' ? 'RX' : kind === 'err' ? 'STOP' : 'SYS';
+    line.innerHTML = '<span class="arm101-time"></span><span class="arm101-tag"></span><span class="arm101-msg"></span>';
+    line.querySelector('.arm101-time').textContent = nowStr();
+    line.querySelector('.arm101-tag').textContent = tag;
+    line.querySelector('.arm101-msg').textContent = text;
+    el.appendChild(line);
+    while (el.children.length > 140) el.removeChild(el.firstChild);
+    if (stick) el.scrollTop = el.scrollHeight;
+  }
+
+  /* ---------- 三维模型 ----------
+   * 打印件与舵机直接用 SO-101 官方 STL（parts.js，int16 量化 0.1 mm）。
+   * 关节原点 / 视件 origin 均按官方 URDF（so101_new_calib.urdf）摆放：
+   *   URDF 是 Z 轴朝上，这里把整机挂在一个绕 X 轴 −90° 的组里，场景仍然是 Y 轴朝上。
+   */
+  var M = null;
+  var ZAXIS = new THREE.Vector3(0, 0, 1);
+  var _q = new THREE.Quaternion();
+
+  function buildMaterials() {
+    return {
+      body:   new THREE.MeshStandardMaterial({ color: 0xeae6dc, roughness: 0.6,  metalness: 0.03 }),
+      body2:  new THREE.MeshStandardMaterial({ color: 0xd6d0c3, roughness: 0.7,  metalness: 0.03 }),
+      servo:  new THREE.MeshStandardMaterial({ color: 0x1b1e24, roughness: 0.44, metalness: 0.32 }),
+      accent: new THREE.MeshStandardMaterial({ color: 0xef9f3c, roughness: 0.4,  metalness: 0.24 }),
+      dark:   new THREE.MeshStandardMaterial({ color: 0x3b414a, roughness: 0.62, metalness: 0.18 }),
+      mat:    new THREE.MeshStandardMaterial({ color: 0x22262d, roughness: 0.94, metalness: 0.04 }),
+      piece:  new THREE.MeshStandardMaterial({ color: 0xd9544a, roughness: 0.52, metalness: 0.08 })
+    };
+  }
+
+  function roundedGeo(w, h, d, r) {
+    var s = new THREE.Shape();
+    var x = -w / 2, y = -h / 2;
+    s.moveTo(x + r, y);
+    s.lineTo(x + w - r, y);
+    s.quadraticCurveTo(x + w, y, x + w, y + r);
+    s.lineTo(x + w, y + h - r);
+    s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    s.lineTo(x + r, y + h);
+    s.quadraticCurveTo(x, y + h, x, y + h - r);
+    s.lineTo(x, y + r);
+    s.quadraticCurveTo(x, y, x + r, y);
+    var geo = new THREE.ExtrudeGeometry(s, {
+      depth: d, bevelEnabled: true,
+      bevelThickness: Math.min(r * 0.55, d * 0.22),
+      bevelSize: Math.min(r * 0.55, 0.0016),
+      bevelSegments: 2, curveSegments: 5
+    });
+    geo.center();
+    return geo;
+  }
+
+  function ring(parent, radius, tube, mat, y) {
+    var m = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 8, 72), mat);
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = y;
+    parent.add(m);
+    return m;
+  }
+
+  /* URDF 的 rpy = Rz(yaw) · Ry(pitch) · Rx(roll) */
+  function quatRpy(r, p, y) {
+    var m = new THREE.Matrix4();
+    m.multiplyMatrices(
+      new THREE.Matrix4().makeRotationZ(y),
+      new THREE.Matrix4().makeRotationY(p)
+    ).multiply(new THREE.Matrix4().makeRotationX(r));
+    return new THREE.Quaternion().setFromRotationMatrix(m);
+  }
+
+  function partAt(parent, xyz, rpy) {
+    var g = new THREE.Group();
+    g.position.set(xyz[0], xyz[1], xyz[2]);
+    if (rpy) g.quaternion.copy(quatRpy(rpy[0], rpy[1], rpy[2]));
+    parent.add(g);
+    return g;
+  }
+
+  /* 关节组：记住初始姿态，后面绕自身 Z 轴叠加转角 */
+  function jointAt(parent, xyz, rpy) {
+    var g = partAt(parent, xyz, rpy);
+    g.userData.base = g.quaternion.clone();
+    return g;
+  }
+
+  function spin(g, deg) {
+    if (!g || !g.userData.base) return;
+    _q.setFromAxisAngle(ZAXIS, deg * Math.PI / 180);
+    g.quaternion.copy(g.userData.base).multiply(_q);
+  }
+
+  /* parts.js 按需加载：只有打开本 App 才付这 2.6 MB 的解析成本 */
+  function loadParts(done) {
+    if (window.ARM101_PARTS) { done(true); return; }
+    var s = document.createElement('script');
+    s.src = 'apps/arm101/parts.js';
+    s.onload = function () { done(!!window.ARM101_PARTS); };
+    s.onerror = function () { done(false); };
+    document.head.appendChild(s);
+  }
+
+  var geoCache = {};
+
+  /* int16（0.1 mm）→ Float32 米制顶点；三角面法线在运行时算一次 */
+  function partGeo(key) {
+    if (geoCache[key]) return geoCache[key];
+    var rec = window.ARM101_PARTS && window.ARM101_PARTS[key];
+    if (!rec) return null;
+    var bin = atob(rec.b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var q = new Int16Array(bytes.buffer);
+    var pos = new Float32Array(q.length);
+    for (var k = 0; k < q.length; k++) pos[k] = q[k] * 0.0001;
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+    geoCache[key] = geo;
+    return geo;
+  }
+
+  /* 按 URDF 视件 origin 摆一个 STL 零件 */
+  function partMesh(parent, key, xyz, rpy, mat) {
+    var geo = partGeo(key);
+    if (!geo) return null;
+    var g = partAt(parent, xyz, rpy);
+    var m = new THREE.Mesh(geo, mat);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    g.add(m);
+    return g;
+  }
+
+  /* ---------- 机体：底座 / 旋转座 / 大臂 / 小臂 / 腕 / 夹爪 ---------- */
+
+  function buildBase(parent, ledMat) {
+    /* base_link：底板 + 电机座 + 底盘舵机 */
+    partMesh(parent, 'base', [-0.00636471, 0, -0.0024], [Math.PI / 2, 0, Math.PI / 2], M.body);
+    partMesh(parent, 'baseHolder', [-0.00636471, -0.0000994414, -0.0024], [Math.PI / 2, 0, Math.PI / 2], M.body2);
+    partMesh(parent, 'servo', [0.0263353, 0, 0.0437], [0, 0, 0], M.servo);
+
+    /* 状态指示灯：嵌在底座前立面，正对默认视角 */
+    var led = new THREE.Mesh(new THREE.SphereGeometry(0.0042, 14, 12), ledMat);
+    led.position.set(0.0645, -0.035, 0.009);
+    parent.add(led);
+    return { led: led };
+  }
+
+  function buildPan(pan) {
+    /* shoulder_link：肩部舵机 + 电机座 + 俯仰拱架 */
+    partMesh(pan, 'motorHolderBase', [-0.0675992, -0.000177759, 0.0158499], [Math.PI / 2, -Math.PI / 2, 0], M.body2);
+    partMesh(pan, 'rotationPitch', [0.0122008, 0.0000222413, 0.0464], [-Math.PI / 2, 0, 0], M.body);
+    partMesh(pan, 'servo', [-0.0303992, 0.000422241, -0.0417], [Math.PI / 2, Math.PI / 2, 0], M.servo);
+  }
+
+  function buildUpperArm(lift) {
+    /* upper_arm_link：142.1 × 24.5 × 67.3 mm 打印件 + 肘部舵机 */
+    partMesh(lift, 'upperArm', [-0.065085, 0.012, 0.0182], [Math.PI, 0, 0], M.body);
+    partMesh(lift, 'servo', [-0.11257, -0.0155, 0.0187], [-Math.PI, 0, -Math.PI / 2], M.servo);
+  }
+
+  function buildLowerArm(elbow) {
+    /* lower_arm_link：小臂打印件 + 腕部电机座 + 腕部舵机 */
+    partMesh(elbow, 'underArm', [-0.0648499, -0.032, 0.0182], [Math.PI, 0, 0], M.body);
+    partMesh(elbow, 'motorHolderWrist', [-0.0648499, -0.032, 0.018], [-Math.PI, 0, 0], M.body2);
+    partMesh(elbow, 'servo', [-0.1224, 0.0052, 0.0187], [-Math.PI, 0, -Math.PI], M.servo);
+  }
+
+  function buildWrist(wrist) {
+    /* wrist_link：俯仰叉架 + 腕转舵机（官方用 no_horn 版，现有 STL 带舵盘，藏在叉架内） */
+    partMesh(wrist, 'wristRollPitch', [0, -0.028, 0.0181], [-Math.PI / 2, -Math.PI / 2, 0], M.body);
+    partMesh(wrist, 'servo', [0, -0.0424, 0.0306], [Math.PI / 2, Math.PI / 2, 0], M.servo);
+  }
+
+  function buildGripper(roll) {
+    /* gripper_link：腕转从动件（含固定夹指）+ 第 6 轴舵机 */
+    partMesh(roll, 'wristRollFollower', [0, -0.000218214, 0.000949706], [-Math.PI, 0, 0], M.body);
+    partMesh(roll, 'servo', [0.0077, 0.0001, -0.0234], [-Math.PI / 2, 0, 0], M.servo);
+
+    /* 指尖参考系：URDF gripper_frame_joint */
+    var tip = new THREE.Object3D();
+    tip.position.set(-0.0079, -0.000218121, -0.0981274);
+    tip.rotation.y = Math.PI;
+    roll.add(tip);
+    return tip;
+  }
+
+  function buildMovingJaw(jaw) {
+    /* 动夹指：绕自身 Z 轴摆动的摇臂 */
+    partMesh(jaw, 'movingJaw', [0, 0, 0.0189], [0, 0, 0], M.body2);
+  }
+
+  function buildRig() {
+    var root = new THREE.Group();
+    var urdf = new THREE.Group();
+    urdf.rotation.x = -Math.PI / 2;          /* URDF Z-up → 场景 Y-up */
+    root.add(urdf);
+
+    var ledMat = new THREE.MeshStandardMaterial({
+      color: 0x36e07f, emissive: 0x36e07f, emissiveIntensity: 2.4, roughness: 0.4
+    });
+
+    buildBase(urdf, ledMat);
+
+    /* shoulder_pan */
+    var pan = jointAt(urdf, [0.0388353, 0, 0.0624], [Math.PI, 0, -Math.PI]);
+    buildPan(pan);
+
+    /* shoulder_lift */
+    var lift = jointAt(pan, [-0.0303992, -0.0182778, -0.0542], [-Math.PI / 2, -Math.PI / 2, 0]);
+    buildUpperArm(lift);
+
+    /* elbow_flex */
+    var elbow = jointAt(lift, [-0.11257, -0.028, 0], [0, 0, Math.PI / 2]);
+    buildLowerArm(elbow);
+
+    /* wrist_flex */
+    var wrist = jointAt(elbow, [-0.1349, 0.0052, 0], [0, 0, -Math.PI / 2]);
+    buildWrist(wrist);
+
+    /* wrist_roll */
+    var roll = jointAt(wrist, [0, -0.0611, 0.0181], [Math.PI / 2, 0.0486795, Math.PI]);
+    var tip = buildGripper(roll);
+
+    /* gripper（动夹指） */
+    var jaw = jointAt(roll, [0.0202, 0.0188, -0.0234], [Math.PI / 2, 0, 0]);
+    buildMovingJaw(jaw);
+
+    return {
+      root: root, urdf: urdf, pan: pan, lift: lift, elbow: elbow,
+      wrist: wrist, roll: roll, jaw: jaw, tip: tip, led: ledMat
+    };
+  }
+
+
+  /* ---------- 场景 ---------- */
+  function initScene() {
+    if (!window.THREE || typeof THREE.WebGLRenderer !== 'function') {
+      showFallback('三维引擎未加载');
+      return;
+    }
+    var stage = S.stage;
+    var canvas = S.canvas;
+    M = buildMaterials();
+
+    try {
+      S.renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+    } catch (e) {
+      showFallback('当前环境无法创建 WebGL 上下文');
+      return;
+    }
+
+    S.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    S.renderer.shadowMap.enabled = true;
+    S.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    if ('outputEncoding' in S.renderer) S.renderer.outputEncoding = THREE.sRGBEncoding;
+    if ('toneMapping' in S.renderer) {
+      S.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      S.renderer.toneMappingExposure = 1.0;
+    }
+
+    S.scene = new THREE.Scene();
+    S.camera = new THREE.PerspectiveCamera(34, 1, 0.01, 20);
+    S.camera.position.set(0.68, 0.46, 0.72);
+
+    S.controls = new THREE.OrbitControls(S.camera, canvas);
+    S.controls.enableDamping = true;
+    S.controls.dampingFactor = 0.075;
+    S.controls.enablePan = false;
+    S.controls.minDistance = 0.35;
+    S.controls.maxDistance = 2.6;
+    S.controls.maxPolarAngle = Math.PI * 0.495;
+    S.controls.target.set(0.2, 0.17, -0.02);
+    S.controls.update();
+
+    S.view0 = { pos: S.camera.position.clone(), target: S.controls.target.clone() };
+
+    /* 灯光 */
+    S.scene.add(new THREE.HemisphereLight(0xf1f5ff, 0x14171c, 0.9));
+
+    var key = new THREE.DirectionalLight(0xfff4e6, 2.05);
+    key.position.set(0.7, 1.2, 0.55);
+    key.castShadow = true;
+    key.shadow.mapSize.set(1024, 1024);
+    key.shadow.camera.near = 0.05;
+    key.shadow.camera.far = 2.6;
+    key.shadow.camera.left = -0.62;
+    key.shadow.camera.right = 0.62;
+    key.shadow.camera.top = 0.8;
+    key.shadow.camera.bottom = -0.12;
+    key.shadow.bias = -0.0005;
+    key.shadow.radius = 3;
+    S.scene.add(key);
+
+    var fill = new THREE.DirectionalLight(0x9db9dd, 0.6);
+    fill.position.set(-0.62, 0.45, -0.52);
+    S.scene.add(fill);
+
+    var rim = new THREE.DirectionalLight(0xffc68a, 0.95);
+    rim.position.set(-0.3, 0.34, 0.7);
+    S.scene.add(rim);
+
+    /* 工作台：半径 500 mm，够放整条臂的伸展范围 */
+    var mat = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.014, 80), M.mat);
+    mat.position.y = -0.007;
+    mat.receiveShadow = true;
+    S.scene.add(mat);
+
+    ring(S.scene, 0.492, 0.0018, M.accent, 0.0014).material = new THREE.MeshStandardMaterial({
+      color: 0xef9f3c, emissive: 0xef9f3c, emissiveIntensity: 0.45, roughness: 0.6
+    });
+    var r1 = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.0008, 6, 96), M.dark);
+    r1.rotation.x = -Math.PI / 2;
+    r1.position.y = 0.0014;
+    S.scene.add(r1);
+
+    /* 工件：抓取点正下方 */
+    var piece = new THREE.Mesh(roundedGeo(0.03, 0.03, 0.03, 0.004), M.piece);
+    piece.position.set(PIECE_HOME.x, PIECE_HOME.y, PIECE_HOME.z);
+    piece.castShadow = true;
+    piece.receiveShadow = true;
+    S.scene.add(piece);
+    S.piece = piece;
+    S.held = false;
+
+    var pad = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.0015, 8, 48), M.accent);
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(PIECE_HOME.x, 0.0016, PIECE_HOME.z);
+    S.scene.add(pad);
+
+    /* 放置位标记：pan −28° 时 TCP 落点 (221, −97) mm */
+    var pad2Mat = new THREE.MeshStandardMaterial({
+      color: 0xef9f3c, emissive: 0xef9f3c, emissiveIntensity: 0.5, roughness: 0.7
+    });
+    var pad2 = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.0012, 8, 48), pad2Mat);
+    pad2.rotation.x = -Math.PI / 2;
+    pad2.position.set(0.221, 0.0016, -0.097);
+    S.scene.add(pad2);
+
+    S.tmp = new THREE.Vector3();
+    resizeCanvas();
+
+    /* 官方 STL 数据体积大，按需加载；加载完再建机关 */
+    loadParts(function (ok) {
+      if (!ok) {
+        log('err', '模型数据 parts.js 加载失败');
+        showFallback('模型数据加载失败');
+        return;
+      }
+      S.rig = buildRig();
+      S.scene.add(S.rig.root);
+      applyPose();
+      updateTip();
+      updateGrab();
+      syncUI();
+    });
+  }
+
+  function showFallback(msg) {
+    var el = S.refs.fallback;
+    if (!el) return;
+    el.hidden = false;
+    el.textContent = msg;
+    if (S.canvas) S.canvas.style.display = 'none';
+  }
+
+  function resizeCanvas() {
+    if (!S.renderer || !S.stage) return;
+    var w = S.stage.clientWidth, h = S.stage.clientHeight;
+    if (!w || !h) return;
+    var size = S.renderer.getSize(new THREE.Vector2());
+    if (Math.round(size.x) === w && Math.round(size.y) === h) return;
+    S.renderer.setSize(w, h, false);
+    S.camera.aspect = w / h;
+    S.camera.updateProjectionMatrix();
+  }
+
+  function applyPose() {
+    if (!S.rig) return;
+    spin(S.rig.pan, S.cur.pan);
+    spin(S.rig.lift, S.cur.lift);
+    spin(S.rig.elbow, S.cur.elbow);
+    spin(S.rig.wrist, S.cur.wrist);
+    spin(S.rig.roll, S.cur.roll);
+    /* 动夹指绕竖直舵轴摆动；夹着工件时停在工件宽度处，不穿模 */
+    var jaw = GRIP_CLOSED + (S.cur.grip / 100) * GRIP_SPAN;
+    if (S.held && jaw < GRASP_DEG) jaw = GRASP_DEG;
+    spin(S.rig.jaw, jaw);
+  }
+
+  /* 夹爪与工件的接触判定：闭合到位且 TCP 靠近工件 → 夹起；张开 → 落到台面 */
+  function updateGrab() {
+    if (!S.rig || !S.piece) return;
+    S.rig.tip.updateWorldMatrix(true, false);
+    S.tmp.setFromMatrixPosition(S.rig.tip.matrixWorld);
+
+    if (!S.held) {
+      /* 只在夹指收到工件宽度附近时判定，避免一进画面就吸住 */
+      if (S.cur.grip < 50 || S.cur.grip > 78) return;
+      var dx = S.tmp.x - S.piece.position.x;
+      var dy = S.tmp.y - S.piece.position.y;
+      var dz = S.tmp.z - S.piece.position.z;
+      if (Math.sqrt(dx * dx + dy * dy + dz * dz) > 0.075) return;
+      S.rig.roll.attach(S.piece);
+      S.held = true;
+      log('sys', '夹爪闭合 · 工件已夹持');
+    } else if (S.cur.grip > 80) {
+      S.scene.attach(S.piece);
+      S.piece.position.y = PIECE_HOME.y;
+      S.held = false;
+      log('sys', '夹爪张开 · 工件落于工作台');
+    }
+  }
+
+  function resetPiece() {
+    if (!S.piece) return;
+    if (S.held) {
+      S.scene.attach(S.piece);
+      S.held = false;
+    }
+    S.piece.position.set(PIECE_HOME.x, PIECE_HOME.y, PIECE_HOME.z);
+    S.piece.rotation.set(0, 0, 0);
+  }
+
+  function updateTip() {
+    if (!S.rig || !S.tmp || !S.refs.tipX) return;
+    S.rig.tip.updateWorldMatrix(true, false);
+    S.tmp.setFromMatrixPosition(S.rig.tip.matrixWorld);
+    S.refs.tipX.textContent = Math.round(S.tmp.x * 1000);
+    S.refs.tipY.textContent = Math.round(S.tmp.y * 1000);
+    S.refs.tipZ.textContent = Math.round(S.tmp.z * 1000);
+  }
+
+  /* ---------- 渲染循环 ---------- */
+  function frame(ts) {
+    S.raf = requestAnimationFrame(frame);
+    var dt = S.lastTs ? Math.min(0.06, (ts - S.lastTs) / 1000) : 0.016;
+    S.lastTs = ts;
+
+    if (S.rig && !S.estop) {
+      var k = 1 - Math.exp(-dt * (4 + S.speed * 1.7));
+      var moving = false;
+      for (var i = 0; i < JOINTS.length; i++) {
+        var key = JOINTS[i].key;
+        var d = S.goal[key] - S.cur[key];
+        if (Math.abs(d) < 0.04) {
+          S.cur[key] = S.goal[key];
+        } else {
+          S.cur[key] += d * k;
+          moving = true;
+        }
+      }
+      if (moving || S.needPose) {
+        applyPose();
+        updateGrab();
+        S.needPose = false;
+      }
+    }
+
+    /* 窗口没有铺开（还在桌面上 / 已关闭）时不渲染，省 GPU */
+    if (!S.stage || !S.stage.clientWidth) return;
+    resizeCanvas();
+    S.controls.update();
+    S.renderer.render(S.scene, S.camera);
+
+    if (ts - S.lastTip > 120) {
+      S.lastTip = ts;
+      updateTip();
+    }
+  }
+
+  /* ---------- 关节行 ---------- */
+  function buildJointRows() {
+    var host = S.refs.joints;
+    S.refs.inputs = {};
+    S.refs.vals = {};
+
+    JOINTS.forEach(function (j) {
+      var row = document.createElement('div');
+      row.className = 'arm101-joint';
+
+      var head = document.createElement('div');
+      head.className = 'arm101-jrow';
+      head.innerHTML = '<span class="arm101-jid">ID ' + pad2(j.id) + '</span>' +
+        '<span class="arm101-jname">' + j.label + '<em>' + j.en + '</em></span>' +
+        '<b class="arm101-jval"><span></span><i>' + j.unit + '</i></b>';
+      row.appendChild(head);
+
+      var input = document.createElement('input');
+      input.type = 'range';
+      input.className = 'arm101-range';
+      input.min = j.min;
+      input.max = j.max;
+      input.step = 1;
+      input.value = HOME_POSE[j.key];
+      input.setAttribute('aria-label', j.label);
+      row.appendChild(input);
+
+      host.appendChild(row);
+
+      var val = head.querySelector('.arm101-jval span');
+      val.textContent = HOME_POSE[j.key];
+      S.refs.inputs[j.key] = input;
+      S.refs.vals[j.key] = val;
+
+      input.addEventListener('input', function () {
+        if (!S.linked || S.estop) return;
+        stopDemo(true);
+        S.goal[j.key] = +input.value;
+        val.textContent = +input.value;
+      });
+
+      input.addEventListener('change', function () {
+        if (!S.linked || S.estop) return;
+        sendJoint(j, +input.value);
+      });
+    });
+  }
+
+  function setPose(pose, send) {
+    JOINTS.forEach(function (j) {
+      S.goal[j.key] = pose[j.key];
+      if (S.refs.inputs[j.key]) {
+        S.refs.inputs[j.key].value = pose[j.key];
+        S.refs.vals[j.key].textContent = pose[j.key];
+      }
+    });
+    if (send) sendAll();
+  }
+
+  function sendJoint(j, value) {
+    if (!S.linked || S.estop) return;
+    var ticks = ticksFor(j, value);
+    S.packets += 1;
+    updatePackets();
+    log('tx', 'ID ' + pad2(j.id) + ' ← ' + pad4(ticks) + ' · ' + value + j.unit + '   ' + frameWrite(j.id, ticks));
+    var lat = 3.1 + Math.random() * 2.9;
+    setTimeout(function () {
+      if (S.linked && !S.estop) log('rx', 'ID ' + pad2(j.id) + ' ACK · ' + lat.toFixed(1) + ' ms');
+    }, 70 + Math.random() * 70);
+  }
+
+  function sendAll() {
+    if (!S.linked || S.estop) return;
+    var list = syncList();
+    S.packets += list.length;
+    updatePackets();
+    var lat = 3.4 + Math.random() * 2.6;
+    log('tx', 'SYNC_WRITE 6 servos · ' + list.length * 3 + ' B   ' + frameSync(list));
+    setTimeout(function () {
+      if (S.linked && !S.estop) log('rx', 'SYNC ACK 6/6 · ' + lat.toFixed(1) + ' ms');
+    }, 90 + Math.random() * 60);
+  }
+
+  function updatePackets() {
+    if (S.refs.pkts) S.refs.pkts.textContent = S.packets;
+  }
+
+  /* ---------- 演示序列 ---------- */
+  function toggleDemo() {
+    if (S.demo) {
+      stopDemo(true);
+      return;
+    }
+    if (!S.linked || S.estop) return;
+    resetPiece();
+    S.demo = true;
+    S.demoStep = 0;
+    S.refs.demoBtn.textContent = '停止演示';
+    log('sys', '演示序列开始 · ' + DEMO.length + ' 步');
+    runDemo();
+  }
+
+  function demoDelay() {
+    return 1250 + (10 - S.speed) * 90;
+  }
+
+  function runDemo() {
+    if (!S.demo) return;
+    if (S.demoStep >= DEMO.length) {
+      S.demoTimer = setTimeout(function () {
+        stopDemo(true);
+        log('sys', '序列完成 · 六轴保持末位姿');
+      }, 1400);
+      return;
+    }
+    var step = DEMO[S.demoStep];
+    setPose(step.pose);
+    log('sys', 'DEMO ' + pad2(S.demoStep + 1) + '/' + pad2(DEMO.length) + ' · ' + step.label);
+    sendAll();
+    S.demoStep += 1;
+    S.demoTimer = setTimeout(runDemo, demoDelay());
+  }
+
+  function stopDemo(logIt) {
+    if (!S.demo) return;
+    S.demo = false;
+    clearTimeout(S.demoTimer);
+    if (S.refs.demoBtn) S.refs.demoBtn.textContent = '演示序列';
+    if (logIt) log('sys', '演示已停止 · 保持当前位姿');
+  }
+
+  /* ---------- 电源 / 急停 ---------- */
+  function setLinked(on) {
+    S.linked = on;
+    if (!on) {
+      stopDemo(false);
+      S.estop = false;
+      log('sys', 'SERIAL CLOSED · 舵机失能');
+    } else {
+      log('sys', 'SERIAL OPEN · /dev/ttyACM0 @ 1000000 8N1');
+      log('sys', '舵机 6/6 应答 · 力矩 ON · 已载入中位 2048');
+    }
+    syncUI();
+  }
+
+  function toggleEstop() {
+    if (!S.linked) return;
+    S.estop = !S.estop;
+    if (S.estop) {
+      stopDemo(false);
+      log('err', 'EMERGENCY STOP · 力矩 OFF · 目标位置冻结');
+    } else {
+      log('sys', 'TORQUE ON · 驱动器就绪 · 继续跟踪目标');
+    }
+    syncUI();
+  }
+
+  function syncUI() {
+    var root = S.refs.root;
+    root.dataset.link = S.linked ? 'on' : 'off';
+    root.dataset.estop = S.estop ? '1' : '0';
+
+    S.refs.conn.innerHTML = '<i></i><b>' + (S.linked ? '串口已连接 · 1 Mbps' : '串口未连接') + '</b>';
+    S.refs.linkBtn.textContent = S.linked ? '断开串口' : '连接串口';
+    S.refs.estopBtn.textContent = S.estop ? '解除急停' : '急停';
+    S.refs.estopBanner.hidden = !S.estop;
+    S.refs.demoBtn.textContent = S.demo ? '停止演示' : '演示序列';
+
+    var lock = !S.linked || S.estop;
+    JOINTS.forEach(function (j) {
+      if (S.refs.inputs[j.key]) S.refs.inputs[j.key].disabled = lock;
+    });
+    S.refs.sendBtn.disabled = lock;
+    S.refs.homeBtn.disabled = lock;
+    S.refs.demoBtn.disabled = lock;
+    S.refs.estopBtn.disabled = !S.linked;
+
+    if (S.rig && S.rig.led) {
+      var c = S.estop ? 0xff3b30 : S.linked ? 0x36e07f : 0xffa41f;
+      S.rig.led.color.setHex(c);
+      S.rig.led.emissive.setHex(c);
+    }
+  }
+
+  function resetView() {
+    if (!S.controls || !S.view0) return;
+    S.camera.position.copy(S.view0.pos);
+    S.controls.target.copy(S.view0.target);
+    S.controls.update();
+  }
+
+  /* ---------- 挂载 ---------- */
+  function mount(body, win) {
+    S.body = body;
+    S.win = win;
+
+    if (body.dataset.ready === '1') {
+      syncUI();
+      return;
+    }
+
+    S.refs.root = body.querySelector('.arm101-root');
+    S.refs.stage = body.querySelector('[data-stage]');
+    S.refs.canvas = body.querySelector('[data-canvas]');
+    S.refs.conn = body.querySelector('[data-conn]');
+    S.refs.joints = body.querySelector('[data-joints]');
+    S.refs.log = body.querySelector('[data-log]');
+    S.refs.fallback = body.querySelector('[data-fallback]');
+    S.refs.tipX = body.querySelector('[data-tip-x]');
+    S.refs.tipY = body.querySelector('[data-tip-y]');
+    S.refs.tipZ = body.querySelector('[data-tip-z]');
+    S.refs.pkts = body.querySelector('[data-pkts]');
+    S.refs.linkBtn = body.querySelector('[data-act="link"]');
+    S.refs.sendBtn = body.querySelector('[data-act="send"]');
+    S.refs.homeBtn = body.querySelector('[data-act="home"]');
+    S.refs.demoBtn = body.querySelector('[data-act="demo"]');
+    S.refs.estopBtn = body.querySelector('[data-act="estop"]');
+    S.refs.estopBanner = body.querySelector('[data-estop]');
+    S.refs.speed = body.querySelector('[data-speed]');
+    S.refs.speedV = body.querySelector('[data-speed-v]');
+    S.stage = S.refs.stage;
+    S.canvas = S.refs.canvas;
+
+    S.cur = {}; S.goal = {};
+    JOINTS.forEach(function (j) {
+      S.cur[j.key] = HOME_POSE[j.key];
+      S.goal[j.key] = HOME_POSE[j.key];
+    });
+
+    buildJointRows();
+    initScene();
+
+    S.refs.linkBtn.addEventListener('click', function () { setLinked(!S.linked); });
+    S.refs.estopBtn.addEventListener('click', toggleEstop);
+    S.refs.sendBtn.addEventListener('click', sendAll);
+    S.refs.demoBtn.addEventListener('click', toggleDemo);
+    S.refs.homeBtn.addEventListener('click', function () {
+      stopDemo(false);
+      resetPiece();
+      setPose(HOME_POSE);
+      log('sys', 'HOME 位姿');
+      sendAll();
+    });
+    S.refs.speed.addEventListener('input', function () {
+      S.speed = +S.refs.speed.value;
+      S.refs.speedV.textContent = S.speed;
+    });
+    body.querySelector('[data-act="view"]').addEventListener('click', resetView);
+
+    body.dataset.ready = '1';
+    syncUI();
+
+    log('sys', 'SERIAL OPEN · /dev/ttyACM0 @ 1000000 8N1');
+    log('sys', '舵机 6/6 应答 · 力矩 ON · 已载入中位 2048');
+    log('sys', '数字孪生就绪 · 拖拽滑杆下发位置指令');
+
+    if (!S.started) {
+      S.started = true;
+      S.raf = requestAnimationFrame(frame);
+    }
+  }
+
+  registerApp({
+    id: 'arm101',
+    name: '101机械臂',
+    title: '101 机械臂 · 控制台',
+    sub: '六轴桌面臂 · 3D 孪生 · 总线信号仿真',
+    order: 18,
+    css: ['apps/arm101/app.css'],
+    body: window.ARM101_BODY,
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M4.5 20.5h7"/><path d="M8 20.5v-2.6"/>' +
+      '<circle cx="8.2" cy="16.2" r="1.7"/>' +
+      '<path d="m9.6 15.1 3.9-4.6"/><circle cx="14.8" cy="9" r="1.7"/>' +
+      '<path d="m16.1 7.9 2.4-1.9"/><path d="m18.1 6.4 2.2 2.1"/>' +
+      '<path d="m18.7 6.6-1.2 2.8"/></svg>',
+    mount: mount
   });
 })();
 
@@ -5247,20 +6643,31 @@ window.L2D_BODY = `
           <div class="l2d-field">
             <span class="l2d-lab">朗读声音</span>
             <div class="l2d-tts" id="l2dTts">
-              <div class="l2d-tts-top">
-                <select id="l2dVoiceSel" class="l2d-select" aria-label="音色"></select>
-                <button type="button" class="l2d-btn l2d-btn-ico" id="l2dVoiceRefresh" title="重新检测系统语音与本地模型">检测</button>
-              </div>
-              <div class="l2d-tts-state">
+              <div class="l2d-tts-head">
                 <span class="l2d-tag" id="l2dVoiceEngine">系统语音</span>
-                <span class="l2d-tts-status" id="l2dVoiceStatus">检测中…</span>
+                <div class="l2d-tts-tools">
+                  <button type="button" class="l2d-mini" id="l2dVoiceRefresh" title="重新检测系统语音与本地模型">检测</button>
+                  <button type="button" class="l2d-mini" id="l2dVoiceOpen" title="打开系统语音合成设置">设置</button>
+                </div>
               </div>
-              <label class="l2d-range" id="l2dRateRow"><span>语速</span><input type="range" id="l2dRate" min="0.7" max="1.4" step="0.02" value="1.04"><em id="l2dRateVal">1.04</em></label>
-              <label class="l2d-range" id="l2dPitchRow"><span>音调</span><input type="range" id="l2dPitch" min="0.7" max="1.5" step="0.02" value="1.12"><em id="l2dPitchVal">1.12</em></label>
-              <div class="l2d-tts-acts">
-                <button type="button" class="l2d-btn" id="l2dVoiceTest">试听一句</button>
-                <button type="button" class="l2d-btn" id="l2dVoiceOpen">语音设置</button>
+              <label class="l2d-tts-row">
+                <span class="l2d-tts-key">音色</span>
+                <select id="l2dVoiceSel" class="l2d-select" aria-label="音色"></select>
+              </label>
+              <!-- 选中支持韵律的本地音色时出现：决定朗读是交给 AI 控节奏，还是原样整句读 -->
+              <div class="l2d-tts-row l2d-ai hidden" id="l2dAiCtrl">
+                <span class="l2d-tts-key">方式</span>
+                <div class="l2d-ai-modes" role="radiogroup" aria-label="AI 语音控制方式">
+                  <button type="button" class="l2d-ai-btn on" data-l2d-ai="ai" role="radio" aria-checked="true">AI 控制</button>
+                  <button type="button" class="l2d-ai-btn" data-l2d-ai="direct" role="radio" aria-checked="false">直接朗读</button>
+                </div>
               </div>
+              <div class="l2d-stats" id="l2dVoiceStatus">检测中…</div>
+              <div class="l2d-tts-params">
+                <label class="l2d-range" id="l2dRateRow"><span>语速</span><input type="range" id="l2dRate" min="0.7" max="1.4" step="0.02" value="1.04"><em id="l2dRateVal">1.04</em></label>
+                <label class="l2d-range" id="l2dPitchRow"><span>音调</span><input type="range" id="l2dPitch" min="0.7" max="1.5" step="0.02" value="1.12"><em id="l2dPitchVal">1.12</em></label>
+              </div>
+              <button type="button" class="l2d-btn l2d-tts-test" id="l2dVoiceTest">试听一句</button>
               <p class="l2d-tts-hint" id="l2dVoiceHint"></p>
             </div>
           </div>
@@ -5483,19 +6890,31 @@ window.L2D_BODY = `
     try { localStorage.setItem(STORE_KEY, JSON.stringify(payload)); } catch (e) { /* 配额满就只留在内存里 */ }
   }
 
-  /* 读衣柜存下的当前搭配；没配过衣柜就返回 null */
+  /* 读衣柜存下的当前搭配；没配过衣柜就返回 null。
+     v2 多了 params（作者预留的换装参数），v1 只有 hidden，都兼容。 */
   function readWardrobeWear() {
     var raw = null;
     try { raw = localStorage.getItem(WARDROBE_KEY); } catch (e) { return null; }
     if (!raw) return null;
     var d = null;
     try { d = JSON.parse(raw); } catch (e) { return null; }
-    if (!d || d.v !== 1 || !d.draft || typeof d.draft !== 'object') return null;
+    if (!d || (d.v !== 1 && d.v !== 2) || !d.draft || typeof d.draft !== 'object') return null;
+    var params = {};
+    if (d.draft.params && typeof d.draft.params === 'object') {
+      Object.keys(d.draft.params).forEach(function (k) {
+        var v = Number(d.draft.params[k]);
+        if (k && isFinite(v)) params[k] = v;
+      });
+    }
     return {
       modelId: typeof d.draft.modelId === 'string' ? d.draft.modelId : '',
       hidden: Array.isArray(d.draft.hidden) ? d.draft.hidden.filter(function (x) {
         return typeof x === 'string' && x;
-      }).slice(0, 300) : []
+      }).slice(0, 300) : [],
+      shown: Array.isArray(d.draft.shown) ? d.draft.shown.filter(function (x) {
+        return typeof x === 'string' && x;
+      }).slice(0, 300) : [],
+      params: params
     };
   }
 
@@ -5522,6 +6941,10 @@ window.L2D_BODY = `
       modelId: loaded.modelId,
       /* 衣柜当前搭配里隐藏的部件（Cubism 部件 id）；换装时按它压透明度 */
       hiddenParts: [],
+      /* 衣柜要求整组显示的部件（Haru 另一套服装默认 opacity 为 0） */
+      shownParts: [],
+      /* 衣柜写下的换装参数（作者预留的开关），每帧写回 */
+      outfitParams: {},
       emo: 'neutral',
       busy: false,
       abort: null,
@@ -5558,6 +6981,8 @@ window.L2D_BODY = `
     if (wear) {
       if (wear.modelId) S.modelId = wear.modelId;
       S.hiddenParts = wear.hidden;
+      S.shownParts = wear.shown || [];
+      S.outfitParams = wear.params || {};
     }
 
     applyPersonaUI();
@@ -5611,6 +7036,7 @@ window.L2D_BODY = `
       creditAuthor: b.querySelector('#l2dCreditAuthor'),
       creditLicense: b.querySelector('#l2dCreditLicense'),
       voiceSel: b.querySelector('#l2dVoiceSel'),
+      aiCtrl: b.querySelector('#l2dAiCtrl'),
       voiceRefresh: b.querySelector('#l2dVoiceRefresh'),
       voiceEngine: b.querySelector('#l2dVoiceEngine'),
       voiceStatus: b.querySelector('#l2dVoiceStatus'),
@@ -5675,6 +7101,16 @@ window.L2D_BODY = `
       if (el) el.addEventListener('input', applyTtsForm);
     });
     if (r.voiceSel) r.voiceSel.addEventListener('change', applyTtsForm);
+    /* AI 语音控制 / 直接朗读：对所有支持韵律的本地音色生效 */
+    if (r.aiCtrl) {
+      r.aiCtrl.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-l2d-ai]');
+        if (!b) return;
+        setAiCtrlMode(b.getAttribute('data-l2d-ai'));
+        paintAiCtrlBtns();
+        paintVoiceHint();
+      });
+    }
     if (r.voiceTest) r.voiceTest.addEventListener('click', testSpeak);
     if (r.voiceRefresh) r.voiceRefresh.addEventListener('click', function () { refreshVoices(true); });
     if (r.voiceOpen) r.voiceOpen.addEventListener('click', openVoiceSettings);
@@ -5888,7 +7324,9 @@ window.L2D_BODY = `
         breath: s.breath || 0,
         eyeL: s.eyeL === undefined ? 1 : s.eyeL,
         browL: s.browL || 0,
-        hidden: (S.hiddenParts || []).slice()
+        hidden: (S.hiddenParts || []).slice(),
+        shown: (S.shownParts || []).slice(),
+        params: Object.assign({}, S.outfitParams || {})
       };
     };
 
@@ -5898,6 +7336,7 @@ window.L2D_BODY = `
       return {
         speaking: !!S.rig.speaking,
         tts: { voice: S.persona.tts.voice, rate: S.persona.tts.rate, pitch: S.persona.tts.pitch },
+        aiCtrl: { on: aiCtrlOn(), mode: aiCtrlMode(), prosody: prosodyEngine(localVoiceSpec()) },
         mem: { summary: S.mem.summary, at: S.mem.at, count: S.mem.count },
         aff: S.aff,
         msgs: S.msgs.length,
@@ -6110,6 +7549,36 @@ window.L2D_BODY = `
     return { text: s, emo: '' };
   }
 
+  /* 朗读标记只给 TTS 看：气泡、聊天记录、长期记忆里都不应该出现。
+   * 流式输出时标记可能只到一半，先藏到 [[ 之前，避免气泡里闪出「[[p=0」 */
+  function stripProsody(s, partial) {
+    var t = String(s || '').replace(/\[\[[^\]]*\]\]/g, '');
+    if (partial) {
+      var i = t.indexOf('[[');
+      if (i >= 0) t = t.slice(0, i);
+    }
+    return t.replace(/[ \t]{2,}/g, ' ').trim();
+  }
+
+  /* AI 语音控制：模型在回复里插 [[r=]] / [[p=]] / [[t=]]，桥接层逐段合成。
+   * 目前支持 Piper / Kokoro / MeloTTS / VITS / 参数合成；ZipVoice 与系统语音不走这条路。
+   * 状态键与设置页共用 hf_ttsAiMode。 */
+  function aiCtrlMode() {
+    try { return localStorage.getItem('hf_ttsAiMode') === 'direct' ? 'direct' : 'ai'; }
+    catch (e) { return 'ai'; }
+  }
+  function setAiCtrlMode(m) {
+    try { localStorage.setItem('hf_ttsAiMode', m === 'direct' ? 'direct' : 'ai'); } catch (e) { /* 隐私模式 */ }
+  }
+  function prosodyEngine(spec) {
+    /* param 是纯 JS 参数合成，[[f]]/[[e]] 也能直接用上，所以和神经引擎一起算支持韵律 */
+    return !!(spec && /^(piper|kokoro|melo|vits|param)$/.test(String(spec.engine || '')));
+  }
+  /* 只有「本地 + 支持韵律 + AI 控制」才让模型去写节奏标记；直接朗读时写标记只会被剥掉 */
+  function aiCtrlOn() {
+    return prosodyEngine(localVoiceSpec()) && aiCtrlMode() === 'ai';
+  }
+
   function detectEmo(text) {
     var t = String(text || '');
     if (/[【\[]\s*(开心|高兴|兴奋)/.test(t)) return 'happy';
@@ -6148,6 +7617,20 @@ window.L2D_BODY = `
       '3. 回复最开头用【情绪】标注一次，只能从：开心、害羞、难过、生气、惊讶、思考、平静 中选择。',
       '4. 不要重复用户的原话，不要自称 AI、语言模型或助手。'
     );
+    /* 只要是支持韵律的本地音色且开着 AI 控制，就让模型写节奏标记；
+     * 系统语音、ZipVoice 或直接朗读模式下不注入，避免标记被念出来。 */
+    if (aiCtrlOn()) {
+      /* 参数合成的音高 / 重音由运行时直接改波形，可以让模型一起控制；
+       * 神经引擎只支持分段语速与停顿，别给它压做不到的参数。 */
+      var aiSpec = localVoiceSpec();
+      var paramVoice = !!(aiSpec && aiSpec.engine === 'param');
+      lines.push(
+        '5. 想控制朗读节奏时可以插入标记（显示时会自动隐藏）：[[r=0.9]] 之后放慢（0.8~1.2），[[p=0.4]] 停 0.4 秒，' +
+          (paramVoice ? '[[f=1.1]] 之后提高音调（0.8~1.2），[[e=1.2]] 下一句加重（1~1.3），' : '') +
+          '[[t=0.3]] 句尾拖 0.3 秒。一条回复最多 2 个，不要连续堆叠。',
+        '6. 想表现思考时可以自然地说「嗯……」「那个……」，但不要每句都用。'
+      );
+    }
     return lines.join('\n');
   }
 
@@ -6183,7 +7666,7 @@ window.L2D_BODY = `
       acc = full;
       var sp = stripEmo(acc, false);
       setTyping(false);
-      setStreamText(sp.text);
+      setStreamText(stripProsody(sp.text, true));
       if (sp.emo) setEmotion(sp.emo);
       if (delta) speechFeed(delta);
     }, { app: 'live2d', signal: ctrl.signal }).then(function (finalText) {
@@ -6197,8 +7680,9 @@ window.L2D_BODY = `
         setTyping(false);
         removeStream();
         if (partial) {
-          pushMsg('a', partial, detectEmo(partial));
-          setEmotion(detectEmo(partial));
+          var shown = stripProsody(partial);
+          pushMsg('a', shown, detectEmo(shown));
+          setEmotion(detectEmo(shown));
           speakAloud(partial);
         } else {
           toast('已停止生成');
@@ -6217,15 +7701,17 @@ window.L2D_BODY = `
     removeStream();
 
     var sp = stripEmo(raw, true);
-    var text = sp.text.trim();
-    if (!text) text = '（她沉默了一下，好像在组织语言。）';
+    /* speechText 保留 [[...]] 交给本地 TTS；text 是给人看的纯文本 */
+    var speechText = sp.text.trim();
+    if (!speechText) speechText = '（她沉默了一下，好像在组织语言。）';
+    var text = stripProsody(speechText) || '（她沉默了一下，好像在组织语言。）';
     var emo = sp.emo || detectEmo(text);
     setEmotion(emo);
     addAff(1);
     pushMsg('a', text, emo);
     showSay(text);
     maybeRemember();
-    speakAloud(text);
+    speakAloud(speechText);
   }
 
   function failSend(msg) {
@@ -6314,12 +7800,15 @@ window.L2D_BODY = `
     var head = s.indexOf('piper:') === 0 ? 'piper'
       : (s.indexOf('kokoro:') === 0 ? 'kokoro'
         : (s.indexOf('melo:') === 0 ? 'melo'
-          : (s.indexOf('vits:') === 0 ? 'vits' : (s.indexOf('zipvoice:') === 0 ? 'zipvoice' : ''))));
+          : (s.indexOf('vits:') === 0 ? 'vits'
+            : (s.indexOf('zipvoice:') === 0 ? 'zipvoice'
+              : (s.indexOf('param:') === 0 ? 'param' : '')))));
     if (!head) return null;
     /* melo / vits / zipvoice 是单一份共享模型，启用值里没有可查的目录 id */
     if (head === 'melo') return { engine: 'melo', label: 'MeloTTS · 中英混读女声' };
     if (head === 'vits') return { engine: 'vits', label: 'VITS · 海星 · 俏皮甜美（近似）' };
     if (head === 'zipvoice') return { engine: 'zipvoice', label: 'ZipVoice · 我的克隆声音' };
+    if (head === 'param') return { engine: 'param', label: '参数合成 · 快问快答' };
     var item = (typeof catalogGet === 'function') ? catalogGet(s.slice(head.length + 1)) : null;
     if (!item) return null;
     if (item.engine === 'kokoro' && typeof item.sid === 'number') return { engine: 'kokoro', sid: item.sid, label: item.name };
@@ -6364,15 +7853,15 @@ window.L2D_BODY = `
     }
 
     if (local.length) {
-      var g2 = document.createElement('optgroup');
-      g2.label = '本地模型';
+      var g = document.createElement('optgroup');
+      g.label = '本地模型';
       local.forEach(function (v) {
         var o = document.createElement('option');
         o.value = v.value;
         o.textContent = v.name + (v.ready ? '' : (v.needRef ? '（缺参考录音）' : '（未就绪）'));
-        g2.appendChild(o);
+        g.appendChild(o);
       });
-      sel.appendChild(g2);
+      sel.appendChild(g);
     }
 
     /* 已存音色不在清单里（模型刚卸载 / 引擎还没探测到）也补一项，别让下拉悄悄退回系统默认 */
@@ -6391,21 +7880,38 @@ window.L2D_BODY = `
     paintVoiceMeta(snap);
   }
 
+  function paintAiCtrlBtns() {
+    var r = S && S.refs;
+    if (!r || !r.aiCtrl) return;
+    var mode = aiCtrlMode();
+    r.aiCtrl.querySelectorAll('[data-l2d-ai]').forEach(function (b) {
+      var on = b.getAttribute('data-l2d-ai') === mode;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+  }
+
   /* 引擎标签、音调可用性与状态行 */
   function paintVoiceMeta(snapshot) {
     var r = S && S.refs;
     if (!r) return;
     var api = ttsApi();
-    var isLocal = !!(api ? api.spec(effectiveVoice()) : localVoiceSpec());
+    var spec = api ? api.spec(effectiveVoice()) : localVoiceSpec();
+    var isLocal = !!spec;
     if (r.voiceEngine) {
       r.voiceEngine.textContent = isLocal ? '本地模型' : '系统语音';
       r.voiceEngine.classList.toggle('is-local', isLocal);
     }
-    if (r.pitch) r.pitch.disabled = isLocal;
+    /* AI 控制对所有支持韵律的本地音色都可用；系统语音与 ZipVoice 隐藏这一行 */
+    if (r.aiCtrl) r.aiCtrl.classList.toggle('hidden', !prosodyEngine(spec));
+    paintAiCtrlBtns();
+    /* 参数合成的音调由运行时改波形，和系统语音一样可调；神经音色仍由权重决定 */
+    var pitchOk = !isLocal || !!(spec && spec.engine === 'param');
+    if (r.pitch) r.pitch.disabled = !pitchOk;
     if (r.pitchRow) {
-      r.pitchRow.classList.toggle('is-off', isLocal);
+      r.pitchRow.classList.toggle('is-off', !pitchOk);
       var lab = r.pitchRow.querySelector('span');
-      if (lab) lab.textContent = isLocal ? '音调 · 仅系统语音' : '音调';
+      if (lab) lab.textContent = pitchOk ? '音调' : '音调 · 仅系统语音';
     }
     paintVoiceStatus(snapshot);
     paintVoiceHint(snapshot);
@@ -6418,17 +7924,34 @@ window.L2D_BODY = `
     var snap = snapshot || (api ? api.catalog() : null);
     var sys = snap ? (snap.system || []).length : voiceList().length;
     var st = snap ? snap.status : null;
-    var parts = ['系统语音 ' + sys + ' 个'];
+    var items = [{ label: '系统语音 ' + sys, on: sys > 0, title: '系统内置语音 ' + sys + ' 个' }];
     if (st) {
-      parts.push('Piper ' + (st.piper ? '就绪' : '未装'));
-      parts.push('Kokoro ' + (st.kokoro ? '就绪' : '未装'));
-      parts.push('MeloTTS ' + (st.melo ? '就绪' : '未装'));
-      parts.push('角色音色 ' + (st.vits ? '就绪' : '未装'));
-      parts.push('ZipVoice ' + (st.zipvoice ? (st.clone ? '就绪' : '缺参考录音') : '未装'));
+      items.push({ label: 'Piper', on: st.piper, title: st.piper ? 'Piper 就绪' : 'Piper 未安装' });
+      items.push({ label: 'Kokoro', on: st.kokoro, title: st.kokoro ? 'Kokoro 就绪' : 'Kokoro 未安装' });
+      items.push({ label: 'MeloTTS', on: st.melo, title: st.melo ? 'MeloTTS 就绪' : 'MeloTTS 未安装' });
+      items.push({ label: '角色音色', on: st.vits, title: st.vits ? 'VITS 角色音色就绪' : 'VITS 角色音色未安装' });
+      items.push({
+        label: 'ZipVoice',
+        on: !!(st.zipvoice && st.clone),
+        title: st.zipvoice ? (st.clone ? 'ZipVoice 克隆声音就绪' : 'ZipVoice 缺参考录音') : 'ZipVoice 未安装'
+      });
+      items.push({
+        label: '快速合成',
+        on: !!st.param,
+        title: st.param ? '参数音库已蒸馏，运行时不加载语音模型' : '参数音库未蒸馏：运行 node tools/distill-voice.js'
+      });
     } else {
-      parts.push('本地模型需桌面端');
+      items.push({ label: '本地模型需桌面端', on: false, title: '未连上桌面端，本地引擎状态未知' });
     }
-    el.textContent = parts.join(' · ');
+    el.innerHTML = '';
+    items.forEach(function (it) {
+      var chip = document.createElement('span');
+      chip.className = 'l2d-stat' + (it.on ? ' is-on' : ' is-off');
+      chip.title = it.title || '';
+      chip.appendChild(document.createElement('i'));
+      chip.appendChild(document.createTextNode(it.label));
+      el.appendChild(chip);
+    });
     el.classList.toggle('is-err', !!(st && !st.probed));
   }
 
@@ -6442,20 +7965,30 @@ window.L2D_BODY = `
     var snap = snapshot || (api ? api.catalog() : null);
     var st = snap ? snap.status : null;
     var text;
-    if (spec) {
+    if (prosodyEngine(spec)) {
+      var isParam = spec.engine === 'param';
+      var extra = isParam ? '参数合成不加载大语音模型，由 LLM 的语速 / 停顿 / 音调 / 重音参数直接驱动波形。' : '';
+      var ability = isParam ? '停顿、变速、音调与重音' : '停顿、变速与句尾拖音';
+      text = aiCtrlMode() === 'ai'
+        ? extra + 'AI 语音控制：模型按语义插入' + ability + '；标记只影响朗读，不会显示在气泡里。'
+        : extra + '直接朗读：整句原样读出，不解析任何节奏标记。';
+    } else if (spec) {
       if (spec.engine === 'zipvoice' && st && !st.clone) {
-        text = 'ZipVoice 还缺参考录音：到「语音设置 → 声音克隆」录一段 5-15 秒清晰人声，在此之前会退回系统语音；本地模型音调不生效。';
+        text = 'ZipVoice 还缺参考录音：到「语音设置 → 声音克隆」录一段 5-15 秒清晰人声，在此之前会退回系统语音；该音色暂不支持 AI 节奏控制。';
       } else if (st && !st.probed) {
-        text = '本地引擎状态未知：确认桌面端与运行时已启动，再点「检测」；本地模型音调不生效。';
+        text = '本地引擎状态未知：确认桌面端与运行时已启动，再点「检测」；该音色暂不支持 AI 节奏控制。';
+      } else if (spec.engine === 'zipvoice') {
+        text = '该音色暂不支持 AI 节奏控制；可在「语音设置」换成 Piper、Kokoro、MeloTTS 或角色音色。';
       } else {
         text = '本地模型按自身音色朗读，只有语速生效，音调已停用。';
       }
     } else if (!own && cur) {
-      text = '未单独选择，跟随默认音色：' + (api ? api.label(cur) : cur) + '。';
+      text = '未单独选择，跟随默认音色：' + (api ? api.label(cur) : cur) +
+        '。系统语音不支持 AI 节奏控制，换成 Piper / Kokoro / MeloTTS / 角色音色即可。';
     } else if (!snap || !(snap.system || []).length) {
       text = '没有检测到系统语音：可在「语音设置 / 模型商店」下载本地模型，或安装系统语音包。';
     } else {
-      text = '系统语音可调语速与音调；本地模型下载后会自动出现在这里。';
+      text = '系统语音可调语速与音调，但不支持 AI 节奏控制；下载本地音色后即可启用。';
     }
     el.textContent = text;
   }
@@ -6573,6 +8106,8 @@ window.L2D_BODY = `
     var payload = { text: clean, engine: spec.engine, rate: rate };
     if (spec.engine === 'kokoro') payload.sid = spec.sid;
     else if (spec.engine === 'piper') payload.voice = spec.voice;
+    else if (spec.engine === 'param') payload.pitch = clamp(Number(tts.pitch) || 1, 0.7, 1.5);
+
     S.rig.speaking = true;
     S.rig.ttsUntil = S.rig.t + Math.min(30, Math.max(1.4, clean.length / (5.4 * rate)));
     fetch(base + '/tts/speak', {
@@ -6600,20 +8135,27 @@ window.L2D_BODY = `
       if (p && p.catch) p.catch(function () { if (S) S.rig.speaking = false; });
     }).catch(function () {
       if (S) S.rig.speaking = false;
-      speakSystem(clean);
+      speakSystem(stripProsody(clean));
     });
     return true;
   }
 
   function speakAloud(text, force) {
     if (!S || (!S.voiceOn && !force) || !text) return;
-    var clean = String(text).replace(/[【】\[\]]/g, '').replace(/\s+/g, ' ').trim();
+    /* 保留 [[...]] 韵律标记给本地 TTS；只清掉旧的情绪标记与单层方括号 */
+    var clean = String(text)
+      .replace(/【[^】]*】/g, '')
+      .replace(/(?<!\[)\[(?!\[)[^\]]*\](?!\])/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    var spec = localVoiceSpec();
+    /* AI 控制关闭、系统语音或引擎不支持韵律时，先剥掉标记，免得被断句念出来 */
+    if (!aiCtrlOn()) clean = stripProsody(clean);
     if (!clean) return;
     try {
       stopSpeech();
-      var spec = localVoiceSpec();
       if (spec && speakLocal(clean, spec)) return;
-      speakSystem(clean);
+      speakSystem(stripProsody(clean));
     } catch (e) { S.rig.speaking = false; }
   }
 
@@ -6958,6 +8500,17 @@ window.L2D_BODY = `
               cm.setPartOpacityById(S.hiddenParts[hi], 0);
             }
           }
+          if (S.shownParts && S.shownParts.length) {
+            for (var si = 0; si < S.shownParts.length; si++) {
+              cm.setPartOpacityById(S.shownParts[si], 1);
+            }
+          }
+          /* 衣柜的换装参数：写绝对值，压住动作 / pose 的覆盖 */
+          if (S.outfitParams) {
+            Object.keys(S.outfitParams).forEach(function (pid) {
+              cm.setParameterValueById(pid, S.outfitParams[pid]);
+            });
+          }
           /* 说话时轻轻点头：叠加在模型自己算出的头部角度上 */
           if (Math.abs(st.nod) > 0.01) {
             var z = cm.getParameterValueById('ParamAngleZ') || 0;
@@ -7045,8 +8598,10 @@ window.L2D_BODY = `
     S.models.forEach(function (m) { if (m.id === id) hit = m; });
     if (!hit || !S.rig.ready) { syncModelUI(); return; }
     S.modelId = id;
-    /* 手动换皮套：上一条搭配的部件 id 不再适用 */
+    /* 手动换皮套：上一条搭配的部件 / 参数 id 不再适用 */
     S.hiddenParts = [];
+    S.shownParts = [];
+    S.outfitParams = {};
     saveState();
     syncModelUI();
     hideSay();
@@ -7055,12 +8610,23 @@ window.L2D_BODY = `
     toast('已换上皮套：' + (hit.name || hit.id));
   }
 
-  /* 衣柜点「穿上」时调用：换皮套 + 隐藏部件，数字人开着就即时生效 */
+  /* 衣柜点「穿上」时调用：换皮套 + 隐藏部件 + 换装参数，数字人开着就即时生效 */
   function applyOutfit(outfit) {
     if (!S || !outfit) return false;
     S.hiddenParts = Array.isArray(outfit.hidden) ? outfit.hidden.filter(function (x) {
       return typeof x === 'string' && x;
     }).slice(0, 300) : [];
+    S.shownParts = Array.isArray(outfit.shown) ? outfit.shown.filter(function (x) {
+      return typeof x === 'string' && x;
+    }).slice(0, 300) : [];
+    var params = {};
+    if (outfit.params && typeof outfit.params === 'object') {
+      Object.keys(outfit.params).forEach(function (k) {
+        var v = Number(outfit.params[k]);
+        if (k && isFinite(v)) params[k] = v;
+      });
+    }
+    S.outfitParams = params;
     var mid = typeof outfit.modelId === 'string' && outfit.modelId ? outfit.modelId : S.modelId;
     if (mid !== S.modelId) {
       S.modelId = mid;
@@ -7193,6 +8759,2589 @@ window.L2D_BODY = `
         return;
       }
       boot(body);
+    }
+  });
+})();
+
+/* ---- apps/maildesk/body.js ---- */
+/* 邮箱台的窗口骨架。
+ *
+ * 这里只有**静态 DOM**，所有数据由 app.js 渲染。放在 body.js 是因为三栏界面
+ * （信箱 / 收件箱 / 正文）的标签太多，塞进 app.js 会读不下去；
+ * app-scan 会自动把这份文件排在 app.js 之前内联，不需要改 index.html。
+ *
+ * ⚠ 不是 App：这里没有 registerApp，只有 window.MAILDESK_BODY 字符串。 */
+window.MAILDESK_BODY =
+  '<div class="md-root">' +
+    '<header class="md-head">' +
+      '<div class="md-brand">' +
+        '<span class="md-logo">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
+          'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<rect x="3" y="5.4" width="18" height="13.2" rx="2.4"/><path d="m3.8 7.2 8.2 5.8 8.2-5.8"/></svg>' +
+        '</span>' +
+        '<div class="md-brand-text">' +
+          '<div class="md-word">邮箱台<span class="md-tag">MAIL</span></div>' +
+          '<div class="md-sub">批量申请临时信箱 · 集中收验证码与链接</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="md-stats" aria-label="邮箱统计">' +
+        '<div class="md-stat"><b id="mdStatBoxes">0</b><span>信箱</span></div>' +
+        '<div class="md-stat is-accent"><b id="mdStatUnread">0</b><span>未读</span></div>' +
+        '<div class="md-stat" id="mdStatIssuesWrap"><b id="mdStatIssues">0</b><span>异常</span></div>' +
+      '</div>' +
+      '<div class="md-head-right">' +
+        '<div class="md-net" id="mdNet"><i></i><span>本地中转检测中</span></div>' +
+        '<button type="button" class="md-btn md-ai-btn" id="mdAiToggle" title="打开 AI 邮箱管理助手">AI 助手</button>' +
+      '</div>' +
+    '</header>' +
+
+    '<div class="md-bar">' +
+      '<div class="md-group">' +
+        '<label class="md-field">服务' +
+          '<select id="mdProvider" title="信箱服务商">' +
+            '<option value="mailtm">mail.tm</option>' +
+            '<option value="guerrilla">Guerrilla</option>' +
+            '<option value="mailgw">mail.gw</option>' +
+            '<option value="demo">演示（离线）</option>' +
+          '</select>' +
+        '</label>' +
+        '<label class="md-field">数量' +
+          '<input type="number" id="mdCount" min="1" max="20" step="1" value="3" title="一次申请几个（1–20）">' +
+        '</label>' +
+        '<label class="md-field">前缀' +
+          '<input type="text" id="mdPrefix" placeholder="留空随机，如 test" spellcheck="false" maxlength="12">' +
+        '</label>' +
+        '<button type="button" class="md-btn md-primary" id="mdCreate">批量申请</button>' +
+      '</div>' +
+      '<span class="md-div"></span>' +
+      '<div class="md-group">' +
+        '<label class="md-switch"><input type="checkbox" id="mdAuto"><span>自动收取</span></label>' +
+        '<select class="md-sec" id="mdAutoSec" title="自动收取间隔">' +
+          '<option value="15">15 秒</option>' +
+          '<option value="30">30 秒</option>' +
+          '<option value="60">60 秒</option>' +
+          '<option value="120">2 分钟</option>' +
+        '</select>' +
+        '<button type="button" class="md-btn" id="mdSyncAll">全部刷新</button>' +
+      '</div>' +
+      '<div class="md-group md-group-end">' +
+        '<button type="button" class="md-btn" id="mdImport" title="批量粘贴 地址----口令----client_id----refresh_token">导入</button>' +
+        '<button type="button" class="md-btn" id="mdExport" title="导出 地址----口令（不含令牌）">导出</button>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="md-main">' +
+      '<aside class="md-side">' +
+        '<div class="md-side-head">' +
+          '<span class="md-side-title">信箱 <b id="mdBoxCount">0</b></span>' +
+          '<span class="md-side-acts">' +
+            '<button type="button" class="md-mini" id="mdAdd" title="手动登记一个已有邮箱">添加</button>' +
+            '<button type="button" class="md-mini" id="mdCopyAll" title="把所有地址按行复制，方便逐个粘贴">复制地址</button>' +
+          '</span>' +
+        '</div>' +
+        '<div class="md-filters" id="mdFilters">' +
+          '<button type="button" data-filter="all" class="is-on">全部<b>0</b></button>' +
+          '<button type="button" data-filter="unread">未读<b>0</b></button>' +
+          '<button type="button" data-filter="pass">有口令<b>0</b></button>' +
+          '<button type="button" data-filter="error">异常<b>0</b></button>' +
+        '</div>' +
+        '<div class="md-search-wrap">' +
+          '<input type="search" id="mdSearch" placeholder="搜索地址" spellcheck="false">' +
+        '</div>' +
+        '<div class="md-add" id="mdAddPanel" hidden>' +
+          '<input type="text" id="mdAddAddr" placeholder="name@example.com" spellcheck="false" autocomplete="off">' +
+          '<input type="text" id="mdAddPass" placeholder="口令（用于 IMAP 收信）" spellcheck="false" autocomplete="off">' +
+          '<div class="md-add-acts">' +
+            '<button type="button" class="md-mini" id="mdAddCancel">取消</button>' +
+            '<button type="button" class="md-btn md-primary" id="mdAddSave">保存</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="md-batch" id="mdBatch">' +
+          '<label class="md-selall"><input type="checkbox" id="mdSelectAll"><span>全选</span></label>' +
+          '<span class="md-batch-count" id="mdSelCount">未选择</span>' +
+          '<span class="md-batch-acts">' +
+            '<button type="button" class="md-mini" id="mdBatchRefresh" disabled>刷新</button>' +
+            '<button type="button" class="md-mini" id="mdBatchCopy" disabled>复制</button>' +
+            '<button type="button" class="md-mini md-danger" id="mdBatchRemove" disabled>移除</button>' +
+          '</span>' +
+        '</div>' +
+        '<div class="md-boxes" id="mdBoxes"></div>' +
+      '</aside>' +
+
+      '<section class="md-inbox">' +
+        '<div class="md-inbox-head">' +
+          '<div class="md-inbox-id">' +
+            '<div class="md-inbox-top">' +
+              '<span class="md-inbox-addr" id="mdAddr" title="当前信箱">未选择信箱</span>' +
+              '<span class="md-prov" id="mdProv" hidden></span>' +
+            '</div>' +
+            '<div class="md-inbox-pass" id="mdPassRow" hidden>' +
+              '<span class="md-pass-k">凭证</span><b id="mdPass">—</b>' +
+            '</div>' +
+          '</div>' +
+          '<div class="md-inbox-acts">' +
+            '<button type="button" class="md-mini" id="mdCompose" disabled>写邮件</button>' +
+            '<button type="button" class="md-mini" id="mdCred" disabled>凭证</button>' +
+            '<button type="button" class="md-mini" id="mdCopyAddr" disabled>复制地址</button>' +
+            '<button type="button" class="md-mini" id="mdCopyPass" disabled>复制口令</button>' +
+            '<button type="button" class="md-mini" id="mdSyncOne" disabled>刷新</button>' +
+            '<button type="button" class="md-mini md-danger" id="mdRemove" disabled>移除</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="md-list-bar">' +
+          '<span class="md-list-count" id="mdMsgCount">0 封</span>' +
+          '<input type="search" id="mdMsgSearch" placeholder="搜索本信箱邮件" spellcheck="false" disabled>' +
+        '</div>' +
+        '<div class="md-msgs" id="mdMsgs"></div>' +
+      '</section>' +
+
+      '<article class="md-read" id="mdRead"></article>' +
+    '</div>' +
+
+    '<div class="md-ai" id="mdAi" hidden>' +
+      '<div class="md-ai-head">' +
+        '<span class="md-ai-title">AI 邮箱助手</span>' +
+        '<span class="md-ai-note" id="mdAiNote">可汇总未读、检查凭证、刷新收信、代写信件</span>' +
+        '<span class="md-ai-head-acts">' +
+          '<button type="button" class="md-mini" id="mdAiClear">清空</button>' +
+          '<button type="button" class="md-mini" id="mdAiClose">收起</button>' +
+        '</span>' +
+      '</div>' +
+      '<div class="md-ai-log" id="mdAiLog"></div>' +
+      '<div class="md-ai-quick">' +
+        '<button type="button" class="md-mini" data-ai-q="汇总每个信箱的未读来信和验证码">汇总未读</button>' +
+        '<button type="button" class="md-mini" data-ai-q="检查哪些信箱没有口令、没有 OAuth2 凭证或者收取失败">检查凭证</button>' +
+        '<button type="button" class="md-mini" data-ai-q="检查哪些信箱没有口令或者收取失败">检查异常</button>' +
+        '<button type="button" class="md-mini" data-ai-q="列出没有来信且没有口令的空信箱，准备清理">找出空信箱</button>' +
+        '<button type="button" class="md-mini" data-ai-q="按服务商统计一下现在的信箱数量和未读情况">服务商统计</button>' +
+      '</div>' +
+      '<div class="md-ai-input">' +
+        '<textarea id="mdAiText" rows="2" spellcheck="false" ' +
+          'placeholder="例：把没有口令的空信箱删掉；或者：我现在有哪些未读？"></textarea>' +
+        '<button type="button" class="md-btn md-primary" id="mdAiSend">发送</button>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="md-status">' +
+      '<span id="mdStatus">就绪</span>' +
+      '<span class="md-hint" id="mdHint">口令与 OAuth2 令牌只存本机，收发信经本地中转</span>' +
+    '</div>' +
+
+    '<div class="md-modal" id="mdImportModal" hidden>' +
+      '<div class="md-modal-card" role="dialog" aria-modal="true" aria-label="批量导入信箱">' +
+        '<div class="md-modal-head">' +
+          '<b>批量导入信箱</b>' +
+          '<span>每行一个：地址----口令----client_id----refresh_token</span>' +
+        '</div>' +
+        '<textarea id="mdImportText" spellcheck="false" ' +
+          'placeholder="name@outlook.com----password----client-id----refresh-token&#10;other@example.com----password"></textarea>' +
+        '<div class="md-modal-note">前两段是地址与口令，可选第三、四段为 OAuth2 的 client_id 与 refresh_token（Outlook 密码登录已关闭时必须用后者）；第 5 段起忽略。凭证只存本机，不随导出外泄。</div>' +
+        '<div class="md-modal-acts">' +
+          '<button type="button" class="md-mini" id="mdImportCancel">取消</button>' +
+          '<button type="button" class="md-btn md-primary" id="mdImportSave">导入</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="md-modal" id="mdComposeModal" hidden>' +
+      '<div class="md-modal-card" role="dialog" aria-modal="true" aria-label="写邮件">' +
+        '<div class="md-modal-head">' +
+          '<b>写邮件</b>' +
+          '<span id="mdComposeFrom">未选择发件信箱</span>' +
+        '</div>' +
+        '<div class="md-form">' +
+          '<input type="email" id="mdComposeTo" placeholder="收件人 name@example.com" spellcheck="false" autocomplete="off">' +
+          '<input type="text" id="mdComposeSubject" placeholder="主题" spellcheck="false" maxlength="200">' +
+          '<textarea id="mdComposeBody" spellcheck="false" placeholder="正文（纯文本，最多 20KB）"></textarea>' +
+        '</div>' +
+        '<div class="md-modal-note">有口令或 OAuth2 凭证的手动邮箱可发信；邮件只经本机中转发送，不保存副本。</div>' +
+        '<div class="md-modal-acts">' +
+          '<button type="button" class="md-mini" id="mdComposeCancel">取消</button>' +
+          '<button type="button" class="md-btn md-primary" id="mdComposeSend">发送</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="md-modal" id="mdCredModal" hidden>' +
+      '<div class="md-modal-card" role="dialog" aria-modal="true" aria-label="更新凭证">' +
+        '<div class="md-modal-head">' +
+          '<b>更新凭证</b>' +
+          '<span id="mdCredAddr">—</span>' +
+        '</div>' +
+        '<div class="md-form">' +
+          '<input type="text" id="mdCredPass" placeholder="新口令（留空不修改）" spellcheck="false" autocomplete="off">' +
+          '<input type="text" id="mdCredClient" placeholder="OAuth2 client_id（可选）" spellcheck="false" autocomplete="off">' +
+          '<input type="text" id="mdCredToken" placeholder="OAuth2 refresh_token（可选）" spellcheck="false" autocomplete="off">' +
+        '</div>' +
+        '<div class="md-modal-note">留空表示不修改；OAuth2 两项需要同时填写。旧值不会回显，保存后立即用于 IMAP / SMTP。</div>' +
+        '<div class="md-modal-acts">' +
+          '<button type="button" class="md-mini md-danger" id="mdCredClear">清除凭证</button>' +
+          '<span class="md-act-spacer"></span>' +
+          '<button type="button" class="md-mini" id="mdCredCancel">取消</button>' +
+          '<button type="button" class="md-btn md-primary" id="mdCredSave">保存</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+
+/* ---- apps/maildesk/app.js ---- */
+/* 邮箱台 —— 批量申请临时信箱，集中收取验证码与链接。
+ *
+ * 定位：注册、联调、演练时要「一次开好几个信箱，然后盯着它们收信」；
+ * 浏览器里一个个开网页、记地址、翻验证码太碎，这里把三件事收进一个窗口：
+ *   ① 批量申请（一次 1–20 个，服务商侧真实创建，不是本地占位）
+ *   ② 集中收取（单箱刷新 / 全部刷新 / 定时自动收）
+ *   ③ 读信（验证码与链接自动挑出来，点一下就复制）
+ *
+ * 服务商：mail.tm / mail.gw（同一套 REST 协议，互为备用）与「演示」（完全离线，
+ * 用来试流程和跑无头探针 —— 默认测试不许碰真实网络）。
+ *
+ * 网络：页面跑在 file:// / app:// 下，直连第三方接口一定是 CORS 拒（origin: null），
+ * 所以与 aisearch 一样借本地中转（relay）的 /proxy，用 X-Relay-Target 指定上游。
+ * 中转没起来时只报「请求失败」，不会让人以为信箱服务坏了。
+ *
+ * ⚠ 三条硬约束（和别的 App 一样，见 apps/README.md）：
+ *   ① 整个文件包在 IIFE 里；
+ *   ② mount() 幂等：画过一次只刷新数据，不重建 DOM（否则用户正在读的信会被冲掉）；
+ *   ③ 不碰 window.openagiDesktop，不读 llmKey。
+ */
+(function () {
+  'use strict';
+
+  const LS_KEY = 'hf_maildesk_v1';
+  const DOMAIN_KEY = 'hf_maildesk_domains';
+  const BODY = window.MAILDESK_BODY;
+  const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="2.8" y="5.4" width="18.4" height="13.2" rx="2.4"/>' +
+    '<path d="m3.6 7.2 8.4 6 8.4-6"/><path d="M6.6 15.6h4.2"/></svg>';
+
+  /* 演示服务不联网：信箱与来信都在本机生成，用来试流程与跑回归。 */
+  const PROVIDERS = {
+    mailtm: { label: 'mail.tm', base: 'https://api.mail.tm' },
+    guerrilla: { label: 'Guerrilla', base: 'https://api.guerrillamail.com/ajax.php' },
+    mailgw: { label: 'mail.gw', base: 'https://api.mail.gw' },
+    demo: { label: '演示', base: '' },
+    /* 手动登记：保存地址与口令，常见邮箱可通过本地中转走 IMAP 收信。 */
+    manual: { label: '手动', base: '' }
+  };
+
+  /* 手动登记的邮箱按域名推断 IMAP 主机：地址与口令都在本机，收信时才发给本地中转。
+   * 表里没有的域名只做地址/口令保管，不尝试收信。 */
+  const IMAP_PRESETS = [
+    { re: /@(outlook|hotmail|live|msn)\.com$/i, host: 'outlook.office365.com', port: 993 },
+    { re: /@foxmail\.com$/i, host: 'imap.qq.com', port: 993 },
+    { re: /@qq\.com$/i, host: 'imap.qq.com', port: 993 },
+    { re: /@gmail\.com$/i, host: 'imap.gmail.com', port: 993 },
+    { re: /@163\.com$/i, host: 'imap.163.com', port: 993 },
+    { re: /@126\.com$/i, host: 'imap.126.com', port: 993 },
+    { re: /@sina\.com$/i, host: 'imap.sina.com', port: 993 },
+    { re: /@yahoo\.com$/i, host: 'imap.mail.yahoo.com', port: 993 },
+    { re: /@(icloud|me)\.com$/i, host: 'imap.mail.me.com', port: 993 }
+  ];
+
+  function imapPreset(address) {
+    const a = String(address || '');
+    for (let i = 0; i < IMAP_PRESETS.length; i++) {
+      if (IMAP_PRESETS[i].re.test(a)) return IMAP_PRESETS[i];
+    }
+    return null;
+  }
+
+  /* OAuth2 凭证：卡密里的 client_id + refresh_token。
+   * 只存本机，不展示、不导出、不进模型上下文；刷新令牌由本地中转换取访问令牌。 */
+  function hasOauth(b) {
+    return !!(b && b.clientId && b.refreshToken);
+  }
+
+  /* 手动邮箱的 SMTP 发信主机：与 IMAP 表对应。
+   * secure=true 用 465 直连 TLS，false 用 587 + STARTTLS。 */
+  const SMTP_PRESETS = [
+    { re: /@(outlook|hotmail|live|msn)\.com$/i, host: 'smtp.office365.com', port: 587, secure: false },
+    { re: /@foxmail\.com$/i, host: 'smtp.qq.com', port: 465, secure: true },
+    { re: /@qq\.com$/i, host: 'smtp.qq.com', port: 465, secure: true },
+    { re: /@gmail\.com$/i, host: 'smtp.gmail.com', port: 465, secure: true },
+    { re: /@163\.com$/i, host: 'smtp.163.com', port: 465, secure: true },
+    { re: /@126\.com$/i, host: 'smtp.126.com', port: 465, secure: true },
+    { re: /@sina\.com$/i, host: 'smtp.sina.com', port: 465, secure: true },
+    { re: /@yahoo\.com$/i, host: 'smtp.mail.yahoo.com', port: 465, secure: true },
+    { re: /@(icloud|me)\.com$/i, host: 'smtp.mail.me.com', port: 587, secure: false }
+  ];
+
+  function smtpPreset(address) {
+    const a = String(address || '');
+    for (let i = 0; i < SMTP_PRESETS.length; i++) {
+      if (SMTP_PRESETS[i].re.test(a)) return SMTP_PRESETS[i];
+    }
+    return null;
+  }
+
+  function canSend(b) {
+    return !!b && b.provider === 'manual' && (!!b.password || hasOauth(b)) && !!smtpPreset(b.address);
+  }
+
+  function manualFetchable(b) {
+    return !!b && b.provider === 'manual' && (!!b.password || hasOauth(b)) && !!imapPreset(b.address);
+  }
+
+  /* 地址前缀词表：只求「读得出来、看得出是测试号」，不做花哨命名。 */
+  const WORDS = ['amber', 'brisk', 'coral', 'dusky', 'ember', 'frost', 'glide', 'hazel',
+    'ivory', 'jade', 'lumen', 'maple', 'nimbus', 'onyx', 'pearl', 'quartz', 'raven',
+    'sable', 'tide', 'umber', 'vivid', 'willow', 'xenon', 'yarrow', 'zephyr'];
+
+  const DOMAIN_CACHE = { mailtm: { at: 0, list: [] }, mailgw: { at: 0, list: [] } };
+
+  let S = loadState();
+  let els = null;
+  let busy = false;
+  let timer = null;
+  let saveTimer = null;
+  /* 筛选 / 选中 / 邮件搜索都只活在本次打开期间，不写进 localStorage：
+   * 这些是「看的时候的视角」，不是信箱数据。 */
+  let FILTER = 'all';
+  let MSGQ = '';
+  let batchConfirm = false;
+  let batchTimer = null;
+  const SEL = new Set();
+
+  /* ================= 基础工具 ================= */
+
+  function now() { return Date.now(); }
+  function uid() { return Math.random().toString(36).slice(2, 10); }
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function clamp(n, a, b) { return Math.min(b, Math.max(a, n)); }
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function msgOf(e) { return String((e && e.message) || e || '未知错误'); }
+
+  function clip(s, n) {
+    const t = String(s || '');
+    return t.length > n ? t.slice(0, n - 1) + '…' : t;
+  }
+
+  function fmtAgo(ts) {
+    if (!ts) return '从未';
+    const d = new Date(Number(ts));
+    if (isNaN(d.getTime())) return '';
+    const diff = now() - d.getTime();
+    if (diff < 60000) return '刚刚';
+    if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+    return (d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  function fmtFull(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+      ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  function providerLabel(p) { return (PROVIDERS[p] && PROVIDERS[p].label) || p; }
+  function baseOf(p) { return (PROVIDERS[p] && PROVIDERS[p].base) || ''; }
+
+  /* ================= 状态 ================= */
+
+  function blankState() {
+    return {
+      provider: 'mailtm', count: 3, prefix: '', auto: false, autoSec: 30,
+      boxes: [], activeId: '', lastAutoAt: 0
+    };
+  }
+
+  function normMessage(m) {
+    const from = m && m.from && typeof m.from === 'object'
+      ? { name: String(m.from.name || ''), address: String(m.from.address || '') }
+      : null;
+    return {
+      id: String((m && m.id) || ''),
+      subject: String((m && m.subject) || ''),
+      intro: String((m && m.intro) || ''),
+      from: from,
+      seen: !!(m && m.seen),
+      createdAt: String((m && m.createdAt) || ''),
+      text: String((m && m.text) || '').slice(0, 4000),
+      loaded: !!(m && m.loaded)
+    };
+  }
+
+  function normBox(b) {
+    return {
+      id: String((b && b.id) || uid()),
+      provider: PROVIDERS[b && b.provider] ? b.provider : 'mailtm',
+      address: String((b && b.address) || ''),
+      password: String((b && b.password) || ''),
+      clientId: String((b && b.clientId) || ''),
+      refreshToken: String((b && b.refreshToken) || ''),
+      token: String((b && b.token) || ''),
+      createdAt: Number(b && b.createdAt) || now(),
+      lastSync: Number(b && b.lastSync) || 0,
+      error: String((b && b.error) || ''),
+      activeMsgId: String((b && b.activeMsgId) || ''),
+      messages: Array.isArray(b && b.messages)
+        ? b.messages.filter(function (m) { return m && m.id; }).slice(0, 20).map(normMessage)
+        : []
+    };
+  }
+
+  function loadState() {
+    const st = blankState();
+    let raw = null;
+    try { raw = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { raw = null; }
+    if (!raw || typeof raw !== 'object') return st;
+    st.provider = PROVIDERS[raw.provider] ? raw.provider : 'mailtm';
+    st.count = clamp(parseInt(raw.count, 10) || 3, 1, 20);
+    st.prefix = String(raw.prefix || '').slice(0, 12);
+    st.auto = !!raw.auto;
+    st.autoSec = [15, 30, 60, 120].indexOf(Number(raw.autoSec)) >= 0 ? Number(raw.autoSec) : 30;
+    st.boxes = Array.isArray(raw.boxes) ? raw.boxes.filter(function (b) { return b && b.address; }).map(normBox) : [];
+    st.activeId = st.boxes.some(function (b) { return b.id === raw.activeId; }) ? raw.activeId : (st.boxes[0] ? st.boxes[0].id : '');
+    return st;
+  }
+
+  function save() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify({
+          provider: S.provider, count: S.count, prefix: S.prefix,
+          auto: S.auto, autoSec: S.autoSec, activeId: S.activeId,
+          boxes: S.boxes.map(normBox)
+        }));
+      } catch (e) { /* 配额满就只留在内存里，不阻断收信 */ }
+    }, 180);
+  }
+
+  function loadDomainCache() {
+    try {
+      const o = JSON.parse(localStorage.getItem(DOMAIN_KEY) || 'null');
+      if (!o) return;
+      Object.keys(DOMAIN_CACHE).forEach(function (k) {
+        if (o[k] && Array.isArray(o[k].list) && o[k].list.length) DOMAIN_CACHE[k] = { at: Number(o[k].at) || 0, list: o[k].list };
+      });
+    } catch (e) { /* 缓存坏了就当没有 */ }
+  }
+
+  function saveDomainCache() {
+    try { localStorage.setItem(DOMAIN_KEY, JSON.stringify(DOMAIN_CACHE)); } catch (e) { /* 忽略 */ }
+  }
+
+  /* ================= 网络 ================= */
+
+  function relayBaseSafe() {
+    try { if (typeof relayBase === 'function') return relayBase().replace(/\/+$/, ''); } catch (e) { /* 用默认 */ }
+    return 'http://127.0.0.1:8787';
+  }
+
+  function relayEndpoint() { return relayBaseSafe() + '/proxy'; }
+  function relayHealthUrl() { return relayBaseSafe() + '/health'; }
+  function needRelay() {
+    try { return /^(file|app|chrome-extension|moz-extension|edge):$/.test(location.protocol); }
+    catch (e) { return false; }
+  }
+
+  function friendlyHttp(status, msg) {
+    if (status === 429) return '服务限流，稍等 1 分钟再试';
+    if (status === 401) return '登录态失效';
+    if (status === 404) return '资源不存在（可能已被服务端清理）';
+    if (status >= 500) return '服务端异常（HTTP ' + status + '）';
+    return msg || ('HTTP ' + status);
+  }
+
+  function pickErr(data) {
+    if (!data || typeof data !== 'object') return '';
+    return String(data['hydra:description'] || data.detail || data.message || data.error || '');
+  }
+
+  /* 直连优先；file:// / app:// 下默认走本地中转。
+   * Guerrilla 的接口带 Access-Control-Allow-Origin: *，传 preferDirect=true 时先直连，
+   * 省掉对本地中转的依赖。真实 HTTP 错误（429/401/404）不再换通道重试。 */
+  async function httpJson(url, opts, ms, preferDirect) {
+    const init = Object.assign({ cache: 'no-store', redirect: 'follow' }, opts || {});
+    const headers = Object.assign({ Accept: 'application/json' }, init.headers || {});
+    const ctl = new AbortController();
+    const timerId = setTimeout(function () { ctl.abort(); }, ms || 20000);
+    const relay = relayEndpoint();
+    const targets = (needRelay() && !preferDirect) ? [relay] : [url, relay];
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const viaRelay = targets[i] === relay;
+        const h = viaRelay ? Object.assign({}, headers, { 'X-Relay-Target': url }) : headers;
+        let res;
+        try {
+          res = await fetch(targets[i], Object.assign({}, init, { headers: h, signal: ctl.signal }));
+        } catch (e) {
+          if (i + 1 < targets.length) continue;
+          if (e && e.name === 'AbortError') throw new Error('请求超时（' + Math.round((ms || 20000) / 1000) + ' 秒）');
+          throw new Error('请求失败：接口不可达或本地中转未启动');
+        }
+        const raw = await res.text().catch(function () { return ''; });
+        let data = null;
+        try { data = raw ? JSON.parse(raw) : null; } catch (e) { data = null; }
+        if (!res.ok) {
+          const err = new Error(friendlyHttp(res.status, pickErr(data)));
+          err.http = res.status;
+          throw err;
+        }
+        return data;
+      }
+      throw new Error('请求失败');
+    } finally {
+      clearTimeout(timerId);
+    }
+  }
+
+  function hydraList(d) {
+    if (!d) return [];
+    if (Array.isArray(d)) return d;
+    return d['hydra:member'] || d.member || d.items || [];
+  }
+
+  /* 手动邮箱收信：地址与口令（或 OAuth2 凭证）只发给本机中转的 /mail/imap，
+   * 由它代连 IMAP。中转必须在本机运行；这里不把凭证写进任何日志或提示。
+   * 超时给 70 秒：OAuth2 换令牌 + IMAP 收信各有一段独立预算。 */
+  async function relayMailFetch(payload, ms) {
+    const url = relayBaseSafe() + '/mail/imap';
+    const ctl = new AbortController();
+    const timerId = setTimeout(function () { ctl.abort(); }, ms || 70000);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload),
+        signal: ctl.signal
+      });
+      const raw = await res.text().catch(function () { return ''; });
+      let data = null;
+      try { data = raw ? JSON.parse(raw) : null; } catch (e) { data = null; }
+      if (!res.ok) {
+        throw new Error((data && (data.error || data.message)) || ('本地中转 HTTP ' + res.status));
+      }
+      if (!data || data.ok !== true) {
+        throw new Error((data && data.error) || '本地中转没有返回邮件');
+      }
+      return data;
+    } catch (e) {
+      if (e && e.name === 'AbortError') {
+        throw new Error('收信超时（' + Math.round((ms || 70000) / 1000) + ' 秒）');
+      }
+      if (e && e.name === 'TypeError') {
+        throw new Error('本地中转未启动或不可达：手动邮箱收信需要本地中转');
+      }
+      throw e;
+    } finally {
+      clearTimeout(timerId);
+    }
+  }
+
+  /* 发信：凭证与正文只发给本机中转的 /mail/smtp，由它代连 SMTP。 */
+  async function relayMailSend(payload, ms) {
+    const url = relayBaseSafe() + '/mail/smtp';
+    const ctl = new AbortController();
+    const timerId = setTimeout(function () { ctl.abort(); }, ms || 70000);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload),
+        signal: ctl.signal
+      });
+      const raw = await res.text().catch(function () { return ''; });
+      let data = null;
+      try { data = raw ? JSON.parse(raw) : null; } catch (e) { data = null; }
+      if (!res.ok || !data || data.ok !== true) {
+        throw new Error((data && (data.error || data.message)) || ('本地中转 HTTP ' + res.status));
+      }
+      return data;
+    } catch (e) {
+      if (e && e.name === 'AbortError') {
+        throw new Error('发信超时（' + Math.round((ms || 70000) / 1000) + ' 秒）');
+      }
+      if (e && e.name === 'TypeError') {
+        throw new Error('本地中转未启动或不可达：手动邮箱发信需要本地中转');
+      }
+      throw e;
+    } finally {
+      clearTimeout(timerId);
+    }
+  }
+
+  async function loadDomains(provider, force) {
+    const c = DOMAIN_CACHE[provider];
+    if (!force && c.list.length && now() - c.at < 10 * 60 * 1000) return c.list;
+    const d = await httpJson(baseOf(provider) + '/domains', {}, 15000);
+    const list = hydraList(d)
+      .filter(function (x) { return x && x.domain && x.isActive !== false; })
+      .map(function (x) { return x.domain; });
+    if (!list.length) throw new Error('服务端没有返回可用域名，稍后再试');
+    c.list = list;
+    c.at = now();
+    saveDomainCache();
+    return list;
+  }
+
+  async function mtLogin(provider, address, password) {
+    const tok = await httpJson(baseOf(provider) + '/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: address, password: password })
+    }, 20000);
+    if (!tok || !tok.token) throw new Error('登录令牌获取失败');
+    return tok.token;
+  }
+
+  async function mtCreateAccount(provider, address, password) {
+    await httpJson(baseOf(provider) + '/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: address, password: password })
+    }, 20000);
+    return mtLogin(provider, address, password);
+  }
+
+  /* 令牌过期（401）时用本地保存的口令重登一次；口令是申请时自己生成的，只存本机。 */
+  async function withRelogin(box, fn) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e.http !== 401 || !box.password) throw e;
+      box.token = await mtLogin(box.provider, box.address, box.password);
+      return fn();
+    }
+  }
+
+  function listMessages(box) {
+    return withRelogin(box, function () {
+      return httpJson(baseOf(box.provider) + '/messages?page=1', {
+        headers: { Authorization: 'Bearer ' + box.token }
+      }, 20000);
+    }).then(hydraList);
+  }
+
+  function readMessage(box, id) {
+    return withRelogin(box, function () {
+      return httpJson(baseOf(box.provider) + '/messages/' + encodeURIComponent(id), {
+        headers: { Authorization: 'Bearer ' + box.token }
+      }, 20000);
+    });
+  }
+
+  function markSeen(box, id) {
+    if (box.provider === 'demo' || box.provider === 'guerrilla') return;
+    httpJson(baseOf(box.provider) + '/messages/' + encodeURIComponent(id), {
+      method: 'PATCH',
+      headers: {
+        Authorization: 'Bearer ' + box.token,
+        'Content-Type': 'application/merge-patch+json'
+      },
+      body: JSON.stringify({ seen: true })
+    }, 12000).catch(function () { /* 标记已读失败不影响本地显示 */ });
+  }
+
+  /* ---- Guerrilla Mail ----
+   * 无需账号：一次 get_email_address 就是一个独立会话（sid_token 代替口令），
+   * set_email_user 可以把本地部分改成自己的前缀；读信用 fetch_email。
+   * 注意：每个新会话自带一封官方欢迎信，列表里过滤掉，不占用未读数。 */
+  function gUrl(qs) {
+    return baseOf('guerrilla') + '?' + qs + '&lang=en&site=guerrillamail.com&agent=maildesk';
+  }
+
+  async function guerrillaCreate(prefix) {
+    const a = await httpJson(gUrl('f=get_email_address'), {}, 20000, true);
+    if (!a || !a.email_addr || !a.sid_token) throw new Error('没能拿到临时地址（服务可能限流）');
+    const sid = String(a.sid_token);
+    let address = String(a.email_addr);
+    if (prefix) {
+      const local = prefix + String(Math.floor(1000 + Math.random() * 9000));
+      try {
+        const s = await httpJson(gUrl('f=set_email_user&email_user=' + encodeURIComponent(local) +
+          '&sid_token=' + encodeURIComponent(sid)), {}, 20000, true);
+        if (s && s.email_addr && !s.alias_error) address = String(s.email_addr);
+      } catch (e) { /* 前缀没改成就用随机地址，不影响收信 */ }
+    }
+    return { address: address, sid: sid };
+  }
+
+  async function guerrillaList(box) {
+    const d = await httpJson(gUrl('f=get_email_list&offset=0&sid_token=' + encodeURIComponent(box.token)), {}, 20000, true);
+    if (!d) return [];
+    if (Array.isArray(d.list)) return d.list;
+    if (d.error) throw new Error(String(d.error));
+    return [];
+  }
+
+  async function guerrillaRead(box, id) {
+    const d = await httpJson(gUrl('f=fetch_email&email_id=' + encodeURIComponent(id) +
+      '&sid_token=' + encodeURIComponent(box.token)), {}, 25000, true);
+    if (!d || d.mail_body == null) throw new Error('没取到正文（会话可能已过期）');
+    return {
+      subject: String(d.mail_subject || ''),
+      from: parseFrom(d.mail_from),
+      text: htmlToText(d.mail_body)
+    };
+  }
+
+  /* ================= 解析邮件内容 ================= */
+
+  function decodeEntities(s) {
+    return String(s || '')
+      .replace(/&#(\d+);/g, function (_, d) { try { return String.fromCharCode(Number(d)); } catch (e) { return ''; } })
+      .replace(/&#x([0-9a-f]+);/gi, function (_, h) { try { return String.fromCharCode(parseInt(h, 16)); } catch (e) { return ''; } })
+      .replace(/&nbsp;/gi, ' ').replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'")
+      .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&amp;/gi, '&');
+  }
+
+  function htmlToText(html) {
+    return decodeEntities(String(html || '')
+      .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
+      .replace(/<[^>]+>/g, ' '))
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function textOf(detail) {
+    if (detail && detail.text && String(detail.text).trim()) return String(detail.text);
+    const html = Array.isArray(detail && detail.html) ? detail.html.join('\n') : ((detail && detail.html) || '');
+    return htmlToText(html);
+  }
+
+  /* 验证码：先找「验证码 / code / OTP」附近的 4–8 位数字，再兜底裸 6 位数字。
+   * 只认数字 —— 带字母的码各站格式千奇百怪，硬猜会把订单号当验证码。 */
+  function extractCodes(raw) {
+    const s = String(raw || '');
+    const out = [];
+    const push = function (v) {
+      const c = String(v || '').trim();
+      if (c && out.indexOf(c) < 0) out.push(c);
+    };
+    const near = /(?:验证码|校验码|动态码|确认码|verification\s*code|verify\s*code|one[-\s]?time\s*code|\bcode\b|\bOTP\b|\bPIN\b)[^0-9]{0,20}([0-9]{4,8})/gi;
+    let m;
+    while ((m = near.exec(s)) && out.length < 4) push(m[1]);
+    const bare = /(^|[^0-9])([0-9]{6})(?![0-9])/g;
+    while ((m = bare.exec(s)) && out.length < 4) push(m[2]);
+    return out.slice(0, 4);
+  }
+
+  function extractLinks(raw) {
+    const out = [];
+    const re = /https?:\/\/[^\s<>"'）)，。、]+/g;
+    let m;
+    while ((m = re.exec(String(raw || ''))) && out.length < 6) {
+      const u = m[0].replace(/[.,;:!?\]}]+$/, '');
+      if (out.indexOf(u) < 0) out.push(u);
+    }
+    return out;
+  }
+
+  function fromText(from) {
+    if (!from) return '未知发件人';
+    if (from.name && from.address) return from.name + ' <' + from.address + '>';
+    return from.name || from.address || '未知发件人';
+  }
+
+  /* Guerrilla 的 mail_from 常是 "Name <addr>" 一整串，统一拆成结构。 */
+  function parseFrom(s) {
+    const str = String(s || '').trim();
+    const m = str.match(/^(.*?)<([^>]+)>$/);
+    if (m) return { name: m[1].trim().replace(/^"|"$/g, ''), address: m[2].trim() };
+    return { name: '', address: str };
+  }
+
+  function isGuerrillaWelcome(x) {
+    return /guerrillamail/i.test(String(x.mail_from || '')) &&
+      /^welcome to guerrilla mail/i.test(String(x.mail_subject || ''));
+  }
+
+  /* ================= 演示服务 ================= */
+
+  function randLocal() {
+    return WORDS[Math.floor(Math.random() * WORDS.length)] + String(Math.floor(1000 + Math.random() * 9000));
+  }
+
+  function randPassword() {
+    const chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let s = '';
+    for (let i = 0; i < 14; i++) s += chars[Math.floor(Math.random() * chars.length)];
+    return s;
+  }
+
+  function demoSeed(address) {
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    return [{
+      id: ('demo-' + uid()),
+      from: { name: '邮箱台演示', address: 'noreply@demo.maildesk' },
+      subject: '欢迎使用邮箱台 · 验证码 ' + code,
+      intro: '这是一封演示来信，用来验证收信列表、验证码识别与复制流程。',
+      seen: false,
+      createdAt: new Date().toISOString(),
+      text: '你好：\n\n这是演示信箱 ' + address + ' 收到的示例邮件，不会真的走网络。\n\n' +
+        '你的验证码是 ' + code + '，5 分钟内有效。\n\n' +
+        '如需走完整个流程，可以打开 https://example.com/verify?code=' + code + ' 查看效果。\n\n' +
+        '— 邮箱台演示服务',
+      loaded: true
+    }];
+  }
+
+  function addDemoBox() {
+    let address = '';
+    for (let i = 0; i < 5; i++) {
+      const a = randLocal() + '@demo.maildesk';
+      if (!S.boxes.some(function (b) { return b.address === a; })) { address = a; break; }
+    }
+    if (!address) address = 'demo' + uid() + '@demo.maildesk';
+    const box = {
+      id: uid(), provider: 'demo', address: address, password: '', token: '',
+      createdAt: now(), lastSync: now(), error: '', activeMsgId: '', messages: demoSeed(address)
+    };
+    box.activeMsgId = box.messages[0] ? box.messages[0].id : '';
+    S.boxes.unshift(box);
+    S.activeId = box.id;
+    return box;
+  }
+
+  /* ================= 业务：申请 / 收取 / 读信 ================= */
+
+  function activeBox() {
+    for (let i = 0; i < S.boxes.length; i++) if (S.boxes[i].id === S.activeId) return S.boxes[i];
+    return null;
+  }
+
+  function unreadOf(b) {
+    return b.messages.filter(function (m) { return !m.seen; }).length;
+  }
+
+  function selectedBoxes() {
+    return S.boxes.filter(function (b) { return SEL.has(b.id); });
+  }
+
+  function activeMsg() {
+    const b = activeBox();
+    if (!b || !b.activeMsgId) return null;
+    for (let i = 0; i < b.messages.length; i++) {
+      if (b.messages[i].id === b.activeMsgId) return b.messages[i];
+    }
+    return null;
+  }
+
+  /* 选中集合只保留仍存在的信箱，避免筛选 / 移除后留下幽灵 id。 */
+  function pruneSelection() {
+    const live = new Set(S.boxes.map(function (b) { return b.id; }));
+    Array.from(SEL).forEach(function (id) { if (!live.has(id)) SEL.delete(id); });
+  }
+
+  function toggleSel(id, on) {
+    if (on) SEL.add(id); else SEL.delete(id);
+    resetBatchConfirm();
+    renderBoxes();
+  }
+
+  function boxVisible(b) {
+    if (FILTER === 'unread' && !unreadOf(b)) return false;
+    if (FILTER === 'pass' && !b.password && !hasOauth(b)) return false;
+    if (FILTER === 'error' && !b.error) return false;
+    const q = String(els && els.search ? els.search.value : '').trim().toLowerCase();
+    return !q || b.address.toLowerCase().indexOf(q) >= 0;
+  }
+
+  function exportText(list) {
+    return list.map(function (b) {
+      return b.address + (b.password ? '----' + b.password : '');
+    }).join('\n');
+  }
+
+  /* 导入识别两种写法：
+   *   ① 卡密四段：address----password----client_id----refresh_token（第 5 段起忽略）
+   *   ② 老格式：地址 + 空格/制表符 + 口令
+   * 令牌类字段只存本机：不展示、不写日志、不进模型上下文，也不随导出外泄。 */
+  function clipLen(s, n) {
+    const t = String(s == null ? '' : s).trim();
+    return t.length > n ? t.slice(0, n) : t;
+  }
+
+  function parseImport(text) {
+    const out = [];
+    const bad = [];
+    const seen = {};
+    String(text == null ? '' : text).split(/\r?\n/).forEach(function (raw) {
+      const line = raw.trim();
+      if (!line || /^(#|\/\/)/.test(line)) return;
+      const m = line.match(/[a-z0-9._%+-]+@[a-z0-9]+(?:[.-][a-z0-9]+)+/i);
+      if (!m) { bad.push(line); return; }
+      const address = m[0].toLowerCase();
+      const rest = line.slice(line.indexOf(m[0]) + m[0].length).replace(/^[>\s]+/, '');
+      const segs = rest.split(/\s*(?:----|\t|,|;|\|)\s*/)
+        .map(function (s) { return s.trim(); })
+        .filter(function (s) { return s; });
+      if (seen[address]) return;
+      seen[address] = true;
+      out.push({
+        address: address,
+        password: clipLen(segs[0], 80),
+        clientId: clipLen(segs[1], 120),
+        refreshToken: clipLen(segs[2], 4096)
+      });
+    });
+    return { list: out, bad: bad };
+  }
+
+  function importBoxes(text) {
+    const r = parseImport(text);
+    let added = 0;
+    let updated = 0;
+    let dup = 0;
+    r.list.forEach(function (x) {
+      const exist = S.boxes.filter(function (b) {
+        return b.provider === 'manual' && b.address.toLowerCase() === x.address;
+      })[0];
+      if (exist) {
+        let changed = false;
+        if (x.password && x.password !== exist.password) { exist.password = x.password; changed = true; }
+        if (x.clientId && x.clientId !== exist.clientId) { exist.clientId = x.clientId; changed = true; }
+        if (x.refreshToken && x.refreshToken !== exist.refreshToken) { exist.refreshToken = x.refreshToken; changed = true; }
+        if (changed) {
+          exist.error = '';
+          save();
+          updated++;
+        } else {
+          dup++;
+        }
+        return;
+      }
+      const res = addManualBox(x.address, x.password, x.clientId, x.refreshToken);
+      if (res.error) dup++;
+      else added++;
+    });
+    return { added: added, updated: updated, dup: dup, bad: r.bad.length };
+  }
+
+  function downloadText(name, text) {
+    try {
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) { /* 忽略 */ } }, 1200);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function resetBatchConfirm() {
+    batchConfirm = false;
+    clearTimeout(batchTimer);
+    if (els && els.batchRemove) {
+      els.batchRemove.textContent = '移除';
+      els.batchRemove.classList.remove('is-confirm');
+    }
+  }
+
+  function mergeMessages(box, incoming) {
+    const old = {};
+    box.messages.forEach(function (m) { old[m.id] = m; });
+    const out = incoming.map(function (x) {
+      const prev = old[x.id] || {};
+      return normMessage({
+        id: x.id,
+        from: x.from || prev.from || null,
+        subject: x.subject || prev.subject || '',
+        intro: x.intro || prev.intro || '',
+        seen: prev.seen === true || x.seen === true,
+        createdAt: x.createdAt || prev.createdAt || '',
+        text: x.text || prev.text || '',
+        loaded: x.loaded === true || prev.loaded === true
+      });
+    });
+    out.sort(function (a, b) {
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+    box.messages = out.slice(0, 20);
+    if (box.activeMsgId && !box.messages.some(function (m) { return m.id === box.activeMsgId; })) {
+      box.activeMsgId = '';
+    }
+  }
+
+  /* mail.tm / mail.gw 的 hydra 摘要 → 统一消息结构 */
+  function mergeSummaries(box, list) {
+    mergeMessages(box, list.map(function (x) {
+      return {
+        id: x.id,
+        from: x.from,
+        subject: x.subject,
+        intro: x.intro,
+        seen: x.seen === true,
+        createdAt: x.createdAt
+      };
+    }));
+  }
+
+  /* Guerrilla 的邮件摘要 → 统一消息结构（mail_timestamp 是秒） */
+  function mergeGuerrilla(box, list) {
+    mergeMessages(box, list.filter(function (x) { return !isGuerrillaWelcome(x); }).map(function (x) {
+      return {
+        id: String(x.mail_id),
+        from: parseFrom(x.mail_from),
+        subject: String(x.mail_subject || ''),
+        intro: String(x.mail_excerpt || ''),
+        seen: Number(x.mail_read) === 1,
+        createdAt: x.mail_timestamp ? new Date(Number(x.mail_timestamp) * 1000).toISOString() : ''
+      };
+    }));
+  }
+
+  /* 手动邮箱走 IMAP：只读最近 8 封，不删除、不改服务端已读状态。
+   * 有 client_id + refresh_token 就走 OAuth2（XOAUTH2），否则用口令登录。 */
+  async function syncManual(box) {
+    const preset = imapPreset(box.address);
+    if (!preset) throw new Error('这个域名还没有内置 IMAP 收信配置');
+    const oauth = hasOauth(box);
+    if (!box.password && !oauth) throw new Error('没有口令或 OAuth2 令牌，无法登录收信');
+    setStatus('正在通过 IMAP' + (oauth ? '（OAuth2）' : '') + '收取 ' + box.address + '…');
+    const payload = {
+      address: box.address,
+      host: preset.host,
+      port: preset.port,
+      secure: true,
+      limit: 8
+    };
+    if (oauth) {
+      payload.clientId = box.clientId;
+      payload.refreshToken = box.refreshToken;
+    } else {
+      payload.password = box.password;
+    }
+    const data = await relayMailFetch(payload);
+    mergeMessages(box, Array.isArray(data.messages) ? data.messages : []);
+    box.lastSync = now();
+    box.error = '';
+    save();
+  }
+
+  /* 发信：凭证与正文只发给本机中转，不保存副本、不写已发送列表。 */
+  async function sendMail(box, to, subject, body) {
+    if (!canSend(box)) {
+      throw new Error('这个信箱没有可用的发信凭证（需要口令或 OAuth2 令牌，且域名在发信列表里）');
+    }
+    const preset = smtpPreset(box.address);
+    const target = String(to || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target)) throw new Error('收件人地址不正确');
+    const text = String(body || '');
+    if (!text.trim()) throw new Error('正文不能为空');
+    const payload = {
+      address: box.address,
+      to: target,
+      subject: String(subject || '').trim().slice(0, 200),
+      body: text.slice(0, 20 * 1024),
+      host: preset.host,
+      port: preset.port,
+      secure: preset.secure
+    };
+    const oauth = hasOauth(box);
+    if (oauth) {
+      payload.clientId = box.clientId;
+      payload.refreshToken = box.refreshToken;
+    } else {
+      payload.password = box.password;
+    }
+    setStatus('正在通过 SMTP' + (oauth ? '（OAuth2）' : '') + ' 发送到 ' + target + '…');
+    await relayMailSend(payload);
+    box.error = '';
+    save();
+  }
+
+  /* 凭证工具：按字段更新当前手动邮箱，留空表示保留旧值；旧值不回显。 */
+  function applyCredential(box, password, clientId, refreshToken) {
+    if (!box || box.provider !== 'manual') return { error: '只有手动邮箱可以更新凭证' };
+    const pass = clipLen(password, 80);
+    const cid = clipLen(clientId, 120);
+    const rt = clipLen(refreshToken, 4096);
+    if (!pass && !cid && !rt) return { error: '三项都为空，没有可保存的内容' };
+    if ((cid && !rt) || (!cid && rt)) return { error: 'OAuth2 需要同时填写 client_id 与 refresh_token' };
+    if (pass) box.password = pass;
+    if (cid && rt) {
+      box.clientId = cid;
+      box.refreshToken = rt;
+    }
+    box.error = '';
+    save();
+    return { ok: true };
+  }
+
+  function clearCredential(box) {
+    if (!box) return { error: '没有选中的信箱' };
+    box.password = '';
+    box.clientId = '';
+    box.refreshToken = '';
+    box.error = '';
+    save();
+    return { ok: true };
+  }
+
+  async function syncBox(box) {
+    if (box.provider === 'demo') {
+      box.lastSync = now();
+      box.error = '';
+      return;
+    }
+    if (box.provider === 'manual') {
+      await syncManual(box);
+      return;
+    }
+    if (box.provider === 'guerrilla') {
+      mergeGuerrilla(box, await guerrillaList(box));
+    } else {
+      mergeSummaries(box, await listMessages(box));
+    }
+    box.lastSync = now();
+    box.error = '';
+    save();
+  }
+
+  async function syncAll(silent) {
+    if (busy) return;
+    const list = S.boxes.filter(function (b) {
+      return b.provider === 'mailtm' || b.provider === 'mailgw' ||
+        b.provider === 'guerrilla' || manualFetchable(b);
+    });
+    if (!list.length) {
+      if (!silent) setStatus(S.boxes.length ? '当前没有可收信的信箱（手动邮箱需要口令或 OAuth2 令牌，且域名在收信列表里）' : '还没有信箱，先批量申请');
+      return;
+    }
+    busy = true;
+    setBusy(true);
+    let ok = 0;
+    let fail = 0;
+    let lastErr = '';
+    for (let i = 0; i < list.length; i++) {
+      setStatus('正在收取 ' + (i + 1) + ' / ' + list.length + '：' + list[i].address);
+      try {
+        await syncBox(list[i]);
+        ok++;
+      } catch (e) {
+        fail++;
+        lastErr = msgOf(e);
+        list[i].error = lastErr;
+      }
+      renderBoxes();
+      renderMsgs();
+    }
+    busy = false;
+    setBusy(false);
+    save();
+    setStatus('收取完成：' + ok + ' 个成功' + (fail ? '，' + fail + ' 个失败（' + lastErr + '）' : ''),
+      fail ? 'err' : 'ok');
+  }
+
+  async function createBatch() {
+    if (busy) return;
+    const provider = S.provider;
+    const n = clamp(parseInt(els.count.value, 10) || 1, 1, 20);
+    const prefix = String(els.prefix.value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
+    S.count = n;
+    S.prefix = prefix;
+    save();
+
+    busy = true;
+    setBusy(true);
+    try {
+      if (provider === 'demo') {
+        for (let i = 0; i < n; i++) addDemoBox();
+        renderAll();
+        save();
+        setStatus('已创建 ' + n + ' 个演示信箱（离线模拟，不会真的收信）', 'ok');
+        return;
+      }
+
+      /* Guerrilla 不需要账号体系：一个会话就是一份信箱，创建更轻。 */
+      if (provider === 'guerrilla') {
+        const madeG = [];
+        let failG = 0;
+        let lastErrG = '';
+        for (let i = 0; i < n; i++) {
+          setStatus('正在申请 ' + (i + 1) + ' / ' + n + ' 个 Guerrilla 信箱…');
+          try {
+            const r = await guerrillaCreate(prefix);
+            const box = {
+              id: uid(), provider: 'guerrilla', address: r.address, password: '', token: r.sid,
+              createdAt: now(), lastSync: 0, error: '', activeMsgId: '', messages: []
+            };
+            S.boxes.unshift(box);
+            S.activeId = box.id;
+            madeG.push(box);
+            save();
+            renderAll();
+          } catch (e) {
+            failG++;
+            lastErrG = msgOf(e);
+          }
+          if (i < n - 1) await sleep(900);
+        }
+        for (let i = 0; i < madeG.length; i++) {
+          try { await syncBox(madeG[i]); } catch (e) { madeG[i].error = msgOf(e); }
+        }
+        renderAll();
+        save();
+        setStatus('申请完成：' + madeG.length + ' 个成功' + (failG ? '，' + failG + ' 个失败（' + lastErrG + '）' : ''),
+          failG ? 'err' : 'ok');
+        return;
+      }
+
+      setStatus('正在获取可用域名…');
+      const domains = await loadDomains(provider);
+      const made = [];
+      let fail = 0;
+      let lastErr = '';
+
+      for (let i = 0; i < n; i++) {
+        setStatus('正在申请 ' + (i + 1) + ' / ' + n + ' 个信箱…');
+        const domain = domains[i % domains.length];
+        let address = '';
+        for (let t = 0; t < 4; t++) {
+          const local = prefix
+            ? prefix + String(Math.floor(100 + Math.random() * 900))
+            : randLocal();
+          const a = local + '@' + domain;
+          if (!S.boxes.some(function (b) { return b.address === a; })) { address = a; break; }
+        }
+        if (!address) { fail++; lastErr = '生成的地址重复'; continue; }
+
+        const password = randPassword();
+        try {
+          const token = await mtCreateAccount(provider, address, password);
+          const box = {
+            id: uid(), provider: provider, address: address, password: password, token: token,
+            createdAt: now(), lastSync: 0, error: '', activeMsgId: '', messages: []
+          };
+          S.boxes.unshift(box);
+          S.activeId = box.id;
+          made.push(box);
+          save();
+          renderAll();
+        } catch (e) {
+          fail++;
+          lastErr = msgOf(e);
+        }
+        if (i < n - 1) await sleep(1100);
+      }
+
+      /* 刚建好的信箱顺手收一次（多半为空，但能立刻验证口令有效）。 */
+      for (let i = 0; i < made.length; i++) {
+        setStatus('正在收取新信箱 ' + (i + 1) + ' / ' + made.length + '…');
+        try { await syncBox(made[i]); } catch (e) { made[i].error = msgOf(e); }
+      }
+      renderAll();
+      save();
+      setStatus('申请完成：' + made.length + ' 个成功' + (fail ? '，' + fail + ' 个失败（' + lastErr + '）' : ''),
+        fail ? 'err' : 'ok');
+    } catch (e) {
+      setStatus('申请失败：' + msgOf(e), 'err');
+    } finally {
+      busy = false;
+      setBusy(false);
+      renderAll();
+    }
+  }
+
+  /* 手动登记：保存地址、口令，以及可选的 OAuth2（client_id + refresh_token）。
+   * 常见邮箱可走 IMAP 收信；两项凭证都只存本机。 */
+  function addManualBox(address, password, clientId, refreshToken) {
+    const addr = String(address == null ? '' : address).trim().toLowerCase();
+    const pass = clipLen(password, 80);
+    const cid = clipLen(clientId, 120);
+    const rt = clipLen(refreshToken, 4096);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) {
+      return { error: '地址格式不对，例：name@example.com' };
+    }
+    if (S.boxes.some(function (b) { return b.address.toLowerCase() === addr; })) {
+      return { error: '这个地址已经在列表里：' + addr };
+    }
+    const box = {
+      id: uid(), provider: 'manual', address: addr, password: pass,
+      clientId: cid, refreshToken: rt, token: '',
+      createdAt: now(), lastSync: 0, error: '', activeMsgId: '', messages: []
+    };
+    S.boxes.unshift(box);
+    S.activeId = box.id;
+    save();
+    return { box: box };
+  }
+
+  function findBox(address) {
+    const addr = String(address == null ? '' : address).trim().toLowerCase();
+    if (!addr) return null;
+    for (let i = 0; i < S.boxes.length; i++) {
+      if (S.boxes[i].address.toLowerCase() === addr) return S.boxes[i];
+    }
+    return null;
+  }
+
+  function removeBox(b) {
+    if (!b) return;
+    S.boxes = S.boxes.filter(function (x) { return x.id !== b.id; });
+    S.activeId = S.boxes[0] ? S.boxes[0].id : '';
+    save();
+    renderAll();
+    setStatus('已从列表移除：' + b.address +
+      (b.provider === 'manual' ? '（本机记录已删除）' : '（服务端账号会自行过期）'));
+  }
+
+  function selectBox(id) {
+    S.activeId = id;
+    MSGQ = '';
+    if (els && els.msgSearch) els.msgSearch.value = '';
+    save();
+    renderBoxes();
+    renderMsgs();
+    renderRead();
+  }
+
+  function toggleSeen() {
+    const b = activeBox();
+    const m = activeMsg();
+    if (!b || !m) return;
+    m.seen = !m.seen;
+    if (m.seen) markSeen(b, m.id);
+    save();
+    renderMsgs();
+    renderRead();
+    renderStats();
+    renderFilters();
+    setStatus(m.seen ? '已标记为已读' : '已标记为未读', 'ok');
+  }
+
+  async function batchRefresh() {
+    if (busy) return;
+    const list = selectedBoxes().filter(function (b) {
+      return b.provider === 'mailtm' || b.provider === 'mailgw' ||
+        b.provider === 'guerrilla' || manualFetchable(b);
+    });
+    if (!list.length) {
+      setStatus('选中的信箱不支持收信（演示 / 未配置口令或 OAuth2 令牌的手动邮箱）', 'err');
+      return;
+    }
+    busy = true;
+    setBusy(true);
+    let ok = 0;
+    let fail = 0;
+    for (let i = 0; i < list.length; i++) {
+      setStatus('正在收取 ' + (i + 1) + ' / ' + list.length + '：' + list[i].address);
+      try {
+        await syncBox(list[i]);
+        ok++;
+      } catch (e) {
+        fail++;
+        list[i].error = msgOf(e);
+      }
+      renderBoxes();
+      renderMsgs();
+      renderRead();
+    }
+    busy = false;
+    setBusy(false);
+    save();
+    setStatus('批量收取完成：' + ok + ' 个成功' + (fail ? '，' + fail + ' 个失败' : ''), fail ? 'err' : 'ok');
+  }
+
+  function batchCopy() {
+    const list = selectedBoxes();
+    if (!list.length) return;
+    copyThenStatus(exportText(list), list.length + ' 个信箱（地址+口令）');
+  }
+
+  function batchRemove() {
+    if (busy) return;
+    const list = selectedBoxes();
+    if (!list.length) return;
+    if (!batchConfirm) {
+      batchConfirm = true;
+      els.batchRemove.textContent = '确认移除 ' + list.length + ' 个';
+      els.batchRemove.classList.add('is-confirm');
+      setStatus('再次点击「确认移除」才会删除这些本机记录');
+      clearTimeout(batchTimer);
+      batchTimer = setTimeout(resetBatchConfirm, 4000);
+      return;
+    }
+    resetBatchConfirm();
+    const ids = list.map(function (b) { return b.id; });
+    S.boxes = S.boxes.filter(function (b) { return ids.indexOf(b.id) < 0; });
+    ids.forEach(function (id) { SEL.delete(id); });
+    if (S.boxes.every(function (b) { return b.id !== S.activeId; })) {
+      S.activeId = S.boxes[0] ? S.boxes[0].id : '';
+    }
+    save();
+    renderAll();
+    setStatus('已移除 ' + ids.length + ' 个信箱（仅删本机记录）', 'ok');
+  }
+
+  function openImport() {
+    if (!els) return;
+    els.importModal.hidden = false;
+    els.importText.value = '';
+    setTimeout(function () { try { els.importText.focus(); } catch (e) { /* 忽略 */ } }, 40);
+  }
+
+  function closeImport() {
+    if (!els) return;
+    els.importModal.hidden = true;
+    els.importText.value = '';
+  }
+
+  function runImport() {
+    const r = importBoxes(els.importText.value);
+    if (!r.added && !r.updated && !r.dup && !r.bad) {
+      setStatus('没有可导入的内容：每行一个「地址----口令----client_id----refresh_token」', 'err');
+      return;
+    }
+    closeImport();
+    renderAll();
+    setStatus('导入完成：新增 ' + r.added + ' 个' +
+      (r.updated ? '，更新凭证 ' + r.updated + ' 个' : '') +
+      (r.dup ? '，跳过重复 ' + r.dup + ' 个' : '') +
+      (r.bad ? '，' + r.bad + ' 行无法识别' : ''), (r.added || r.updated) ? 'ok' : 'err');
+  }
+
+  /* ---- 写邮件 ---- */
+
+  function openCompose() {
+    if (!els) return;
+    const b = activeBox();
+    if (!b) { setStatus('先选一个手动邮箱', 'err'); return; }
+    if (!canSend(b)) {
+      setStatus('这个信箱不能发信：需要手动邮箱 + 口令或 OAuth2 凭证', 'err');
+      return;
+    }
+    els.composeFrom.textContent = b.address;
+    els.composeModal.hidden = false;
+    setTimeout(function () { try { els.composeTo.focus(); } catch (e) { /* 忽略 */ } }, 40);
+  }
+
+  function closeCompose() {
+    if (!els) return;
+    els.composeModal.hidden = true;
+    els.composeTo.value = '';
+    els.composeSubject.value = '';
+    els.composeBody.value = '';
+  }
+
+  async function runCompose() {
+    const b = activeBox();
+    if (!b) { setStatus('先选一个手动邮箱', 'err'); return; }
+    const to = String(els.composeTo.value || '').trim();
+    const subject = String(els.composeSubject.value || '').trim();
+    const body = String(els.composeBody.value || '');
+    if (!to) { setStatus('请填写收件人', 'err'); els.composeTo.focus(); return; }
+    if (!body.trim()) { setStatus('请填写正文', 'err'); els.composeBody.focus(); return; }
+    if (busy) return;
+    setBusy(true);
+    els.composeSend.disabled = true;
+    try {
+      await sendMail(b, to, subject, body);
+      closeCompose();
+      setStatus('已通过 SMTP 发送到 ' + to, 'ok');
+    } catch (e) {
+      setStatus('发信失败：' + msgOf(e), 'err');
+    } finally {
+      els.composeSend.disabled = false;
+      setBusy(false);
+    }
+  }
+
+  /* ---- 凭证工具 ---- */
+
+  function openCred() {
+    if (!els) return;
+    const b = activeBox();
+    if (!b || b.provider !== 'manual') {
+      setStatus('只有手动登记的邮箱可以管理凭证', 'err');
+      return;
+    }
+    els.credAddr.textContent = b.address;
+    els.credPass.value = '';
+    els.credClient.value = '';
+    els.credToken.value = '';
+    els.credModal.hidden = false;
+    setTimeout(function () { try { els.credPass.focus(); } catch (e) { /* 忽略 */ } }, 40);
+  }
+
+  function closeCred() {
+    if (!els) return;
+    els.credModal.hidden = true;
+    els.credPass.value = '';
+    els.credClient.value = '';
+    els.credToken.value = '';
+  }
+
+  function saveCred() {
+    const b = activeBox();
+    const r = applyCredential(b, els.credPass.value, els.credClient.value, els.credToken.value);
+    if (r.error) { setStatus(r.error, 'err'); return; }
+    closeCred();
+    renderAll();
+    setStatus('凭证已更新：' + b.address + (hasOauth(b) ? '（OAuth2）' : ''), 'ok');
+  }
+
+  function clearCred() {
+    const b = activeBox();
+    if (!b) return;
+    const ok = window.confirm
+      ? window.confirm('清除 ' + b.address + ' 的口令与 OAuth2 令牌？清除后无法收信 / 发信。')
+      : true;
+    if (!ok) return;
+    clearCredential(b);
+    closeCred();
+    renderAll();
+    setStatus('已清除凭证：' + b.address, 'ok');
+  }
+
+  function saveManualBox() {
+    const r = addManualBox(els.addAddr.value, els.addPass.value);
+    if (r.error) {
+      setStatus(r.error, 'err');
+      try { els.addAddr.focus(); } catch (e) { /* 忽略 */ }
+      return;
+    }
+    els.addPanel.hidden = true;
+    els.addAddr.value = '';
+    els.addPass.value = '';
+    renderAll();
+    setStatus('已添加手动邮箱：' + r.box.address, 'ok');
+  }
+
+  async function openMessage(box, m) {
+    box.activeMsgId = m.id;
+    if (!m.seen) {
+      m.seen = true;
+      markSeen(box, m.id);
+    }
+    renderMsgs();
+    renderRead();
+    renderStats();
+    renderFilters();
+    save();
+    if (m.loaded || box.provider === 'demo') return;
+
+    setStatus('正在读取正文…');
+    try {
+      const d = box.provider === 'guerrilla'
+        ? await guerrillaRead(box, m.id)
+        : await readMessage(box, m.id);
+      m.text = textOf(d).slice(0, 4000);
+      m.subject = String((d && d.subject) || m.subject || '');
+      m.from = (d && d.from) || m.from;
+      m.loaded = true;
+      renderRead();
+      save();
+      setStatus('已读取正文', 'ok');
+    } catch (e) {
+      setStatus('读取正文失败：' + msgOf(e), 'err');
+    }
+  }
+
+  /* ================= 渲染 ================= */
+
+  function monogram(s) {
+    const t = String(s == null ? '' : s).replace(/^[<"']+/, '').trim();
+    return esc(t ? t.charAt(0).toUpperCase() : '?');
+  }
+
+  function boxHtml(b) {
+    const unread = unreadOf(b);
+    const on = b.id === S.activeId;
+    const checked = SEL.has(b.id);
+    return '<div class="md-box p-' + esc(b.provider) + (on ? ' is-on' : '') +
+      (checked ? ' is-checked' : '') + '" role="button" tabindex="0" ' +
+      'data-box="' + esc(b.id) + '" title="' + esc(b.address) + '">' +
+      '<input type="checkbox" class="md-box-check" data-check="' + esc(b.id) + '"' +
+        (checked ? ' checked' : '') + ' aria-label="选择 ' + esc(b.address) + '">' +
+      '<span class="md-box-avatar">' + monogram(b.address) + '</span>' +
+      '<span class="md-box-main">' +
+        '<span class="md-box-addr">' + esc(b.address) + '</span>' +
+        '<span class="md-box-meta">' +
+          (b.provider === 'demo' || b.provider === 'manual'
+            ? ''
+            : '<span class="md-box-prov">' + esc(providerLabel(b.provider)) + '</span>') +
+          esc(b.provider === 'demo' ? '本地演示' : (b.provider === 'manual' ? '手动登记' : fmtAgo(b.lastSync || b.createdAt))) +
+          (b.error ? ' · <em class="md-err">收取失败</em>' : '') +
+        '</span>' +
+      '</span>' +
+      (unread ? '<span class="md-badge">' + unread + '</span>' : '') +
+      '</div>';
+  }
+
+  function renderStats() {
+    if (!els) return;
+    let unread = 0;
+    let issues = 0;
+    S.boxes.forEach(function (b) {
+      unread += unreadOf(b);
+      if (b.error) issues++;
+    });
+    els.statBoxes.textContent = String(S.boxes.length);
+    els.statUnread.textContent = String(unread);
+    els.statIssues.textContent = String(issues);
+    els.statIssuesWrap.classList.toggle('is-bad', issues > 0);
+  }
+
+  function renderFilters() {
+    if (!els) return;
+    let unread = 0;
+    let pass = 0;
+    let error = 0;
+    S.boxes.forEach(function (b) {
+      if (unreadOf(b)) unread++;
+      if (b.password || hasOauth(b)) pass++;
+      if (b.error) error++;
+    });
+    const counts = { all: S.boxes.length, unread: unread, pass: pass, error: error };
+    const btns = els.filters.querySelectorAll('[data-filter]');
+    for (let i = 0; i < btns.length; i++) {
+      const f = btns[i].getAttribute('data-filter');
+      btns[i].classList.toggle('is-on', f === FILTER);
+      const num = btns[i].querySelector('b');
+      if (num) num.textContent = String(counts[f] || 0);
+    }
+  }
+
+  function updateBatchBar(list) {
+    if (!els || !els.batch) return;
+    const n = SEL.size;
+    els.batch.classList.toggle('is-empty', !n);
+    els.batchCount.textContent = n ? ('已选 ' + n + ' 个') : '勾选后可批量操作';
+    els.batchRefresh.disabled = !n || busy;
+    els.batchCopy.disabled = !n;
+    els.batchRemove.disabled = !n || busy;
+    const visible = list || [];
+    const allChecked = visible.length > 0 && visible.every(function (b) { return SEL.has(b.id); });
+    els.selectAll.checked = allChecked;
+    els.selectAll.indeterminate = !allChecked && visible.some(function (b) { return SEL.has(b.id); });
+    if (!n) resetBatchConfirm();
+  }
+
+  function renderBoxes() {
+    if (!els) return;
+    pruneSelection();
+    const list = S.boxes.filter(boxVisible);
+    const top = els.boxes.scrollTop;
+    els.boxCount.textContent = String(S.boxes.length);
+    els.boxes.innerHTML = list.length
+      ? list.map(boxHtml).join('')
+      : '<div class="md-empty">' + (S.boxes.length
+        ? '当前筛选下没有信箱<span>换个筛选条件，或清空搜索</span>'
+        : '还没有信箱<span>选好服务与数量，点「批量申请」</span>') + '</div>';
+    els.boxes.scrollTop = top;
+    els.copyAll.disabled = !S.boxes.length || busy;
+    renderFilters();
+    renderStats();
+    updateBatchBar(list);
+  }
+
+  function senderName(m) {
+    return (m.from && (m.from.name || m.from.address)) || '未知发件人';
+  }
+
+  function msgRow(b, m) {
+    const raw = (m.subject || '') + '\n' + (m.intro || '') + '\n' + (m.text || '');
+    const hasCode = extractCodes(raw).length > 0;
+    return '<button type="button" class="md-msg' + (m.id === b.activeMsgId ? ' is-on' : '') +
+      (m.seen ? ' is-read' : '') + '" data-msg="' + esc(m.id) + '">' +
+      '<span class="md-msg-avatar" aria-hidden="true">' + monogram(senderName(m)) + '</span>' +
+      '<span class="md-msg-main">' +
+        '<span class="md-msg-top">' +
+          '<span class="md-msg-from">' + esc(senderName(m)) + '</span>' +
+          '<span class="md-msg-time">' + esc(fmtAgo(m.createdAt)) + '</span>' +
+        '</span>' +
+        '<span class="md-msg-subject">' + esc(m.subject || '(无主题)') + '</span>' +
+        (m.intro ? '<span class="md-msg-intro">' + esc(m.intro) + '</span>' : '') +
+        (hasCode ? '<span class="md-msg-tag">含验证码</span>' : '') +
+      '</span>' +
+      '</button>';
+  }
+
+  function msgMatches(m) {
+    if (!MSGQ) return true;
+    const from = m.from ? (String(m.from.name || '') + ' ' + String(m.from.address || '')) : '';
+    return (String(m.subject || '') + ' ' + from + ' ' + String(m.intro || ''))
+      .toLowerCase().indexOf(MSGQ) >= 0;
+  }
+
+  function renderMsgs() {
+    if (!els) return;
+    const b = activeBox();
+    els.addr.textContent = b ? b.address : '未选择信箱';
+    els.addr.title = b ? b.address : '';
+    els.prov.hidden = !b;
+    els.prov.textContent = b
+      ? (b.provider === 'manual' ? '手动登记' : (b.provider === 'demo' ? '本地演示' : providerLabel(b.provider)))
+      : '';
+    const pass = b ? String(b.password || '') : '';
+    const oauth = !!b && hasOauth(b);
+    els.passRow.hidden = !pass && !oauth;
+    els.pass.textContent = pass || (oauth ? 'OAuth2（令牌已保存）' : '—');
+    els.pass.title = pass ? '信箱口令：' + pass : (oauth ? 'OAuth2 刷新令牌已保存在本机，不在界面显示' : '');
+    els.copyAddr.disabled = !b || busy;
+    els.copyPass.disabled = !pass || busy;
+    const manual = !!b && b.provider === 'manual';
+    const preset = manual ? imapPreset(b.address) : null;
+    const canFetch = manual ? (!!preset && (!!b.password || oauth)) : true;
+    els.syncOne.disabled = !b || (manual && !canFetch) || busy;
+    els.syncOne.title = manual
+      ? (canFetch
+        ? '通过 IMAP' + (oauth ? '（OAuth2）' : '') + '收取：' + preset.host
+        : (!preset ? '这个域名还没有内置 IMAP 收信配置' : '没有口令或 OAuth2 令牌，无法收信'))
+      : '';
+    const smtp = manual ? smtpPreset(b.address) : null;
+    const canMail = manual ? (canSend(b)) : false;
+    els.compose.disabled = !canMail || busy;
+    els.compose.title = canMail
+      ? '用 ' + b.address + ' 发信：' + smtp.host
+      : '这个信箱没有可用的发信凭证';
+    els.cred.disabled = !manual || busy;
+    els.cred.title = manual ? '更新或清除这个邮箱的口令 / OAuth2 凭证' : '只有手动邮箱可以管理凭证';
+    els.remove.disabled = !b || busy;
+    if (!b) {
+      els.msgCount.textContent = '0 封';
+      els.msgSearch.disabled = true;
+      els.msgs.innerHTML = '<div class="md-empty">左侧选一个信箱<span>或先批量申请几个</span></div>';
+      return;
+    }
+    const unread = unreadOf(b);
+    els.msgCount.textContent = b.messages.length + ' 封' + (unread ? ' · 未读 ' + unread : '');
+    els.msgSearch.disabled = !b.messages.length;
+    const list = b.messages.filter(msgMatches);
+    const top = els.msgs.scrollTop;
+    els.msgs.innerHTML = list.length
+      ? list.map(function (m) { return msgRow(b, m); }).join('')
+      : '<div class="md-empty">' + (b.messages.length
+        ? '没有匹配的邮件<span>换个关键词试试</span>'
+        : (manual
+          ? (canFetch
+            ? '这个信箱还没有来信<span>点「刷新」通过 IMAP 收取</span>'
+            : '这个域名暂时不能收信<span>可复制地址与凭证，到目标站点使用</span>')
+          : '这个信箱还没有来信<span>把地址填到目标站点，再点「刷新」收取</span>')) + '</div>';
+    els.msgs.scrollTop = top;
+  }
+
+  function renderRead() {
+    if (!els) return;
+    const b = activeBox();
+    const m = activeMsg();
+    if (!b || !m) {
+      els.read.innerHTML = '<div class="md-empty">点开一封信<span>正文、验证码与链接会显示在这里</span></div>';
+      return;
+    }
+    const text = m.text || m.intro || '（这封信没有可读正文，点「刷新」后再试试）';
+    const codes = extractCodes((m.subject || '') + '\n' + text);
+    const links = extractLinks((m.subject || '') + '\n' + text);
+
+    els.read.innerHTML =
+      '<div class="md-read-bar">' +
+        '<span class="md-read-badge">' + esc(providerLabel(b.provider)) + '</span>' +
+        '<span class="md-read-acts">' +
+          '<button type="button" class="md-mini" data-read-act="copy-body">复制正文</button>' +
+          '<button type="button" class="md-mini" data-read-act="toggle-seen">' +
+            (m.seen ? '标为未读' : '标为已读') + '</button>' +
+        '</span>' +
+      '</div>' +
+      '<div class="md-read-head">' +
+        '<div class="md-read-subject">' + esc(m.subject || '(无主题)') + '</div>' +
+        '<div class="md-read-meta">' +
+          '<span class="md-read-from">' + esc(fromText(m.from)) + '</span>' +
+          '<span class="md-read-sep">·</span>' +
+          '<span>' + esc(fmtFull(m.createdAt)) + '</span>' +
+        '</div>' +
+      '</div>' +
+      (codes.length
+        ? '<div class="md-codes"><div class="md-codes-h">识别到的验证码 · 点击复制</div>' +
+          codes.map(function (c) {
+            return '<button type="button" class="md-code" data-copy="' + esc(c) + '" title="复制 ' + esc(c) + '">' + esc(c) + '</button>';
+          }).join('') + '</div>'
+        : '') +
+      (links.length
+        ? '<div class="md-links"><div class="md-links-h">邮件里的链接</div>' +
+          links.map(function (u) {
+            return '<div class="md-link-row">' +
+              '<span class="md-link" title="' + esc(u) + '">' + esc(clip(u, 72)) + '</span>' +
+              '<button type="button" class="md-mini" data-copy="' + esc(u) + '">复制</button>' +
+              '<button type="button" class="md-mini" data-open="' + esc(u) + '">打开</button>' +
+              '</div>';
+          }).join('') + '</div>'
+        : '') +
+      '<div class="md-read-body"><pre class="md-body">' + esc(text) + '</pre></div>';
+  }
+
+  function renderAll() {
+    if (!els) return;
+    renderBoxes();
+    renderMsgs();
+    renderRead();
+    updateHint();
+  }
+
+  function updateHint() {
+    if (!els) return;
+    els.hint.textContent = S.provider === 'demo'
+      ? '演示模式：信箱只在本机模拟'
+      : (S.provider === 'guerrilla'
+        ? 'Guerrilla 免账号，会话过期后需重新申请'
+        : '口令与 OAuth2 令牌只保存在本机，收发信经本地中转');
+  }
+
+  function setStatus(text, tone) {
+    if (!els) return;
+    els.status.textContent = text;
+    els.statusBar.classList.remove('is-ok', 'is-err');
+    if (tone === 'ok') els.statusBar.classList.add('is-ok');
+    if (tone === 'err') els.statusBar.classList.add('is-err');
+  }
+
+  function setBusy(on) {
+    busy = on;
+    if (!els) return;
+    els.root.classList.toggle('is-busy', on);
+    els.create.disabled = on;
+    els.syncAll.disabled = on;
+    renderBoxes();
+    renderMsgs();
+  }
+
+  function setNet(text, tone) {
+    if (!els || !els.netText) return;
+    els.netText.textContent = text;
+    els.net.className = 'md-net' + (tone ? ' is-' + tone : '');
+  }
+
+  async function checkNet() {
+    if (!els) return;
+    if (S.provider === 'demo') { setNet('离线演示', 'demo'); return; }
+    try {
+      const r = await fetch(relayHealthUrl(), { cache: 'no-store' });
+      setNet(r.ok ? '本地中转在线' : '本地中转异常', r.ok ? 'ok' : 'bad');
+    } catch (e) {
+      setNet('本地中转未启动', 'bad');
+    }
+  }
+
+  /* ================= 剪贴板 / 打开链接 ================= */
+
+  async function copyText(text) {
+    const s = String(text == null ? '' : text);
+    try {
+      await navigator.clipboard.writeText(s);
+      return true;
+    } catch (e) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = s;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        return ok;
+      } catch (e2) { return false; }
+    }
+  }
+
+  async function copyThenStatus(text, label) {
+    const ok = await copyText(text);
+    if (ok) setStatus('已复制' + (label ? '：' + clip(label, 60) : ''), 'ok');
+    else setStatus('复制失败：浏览器拒绝了剪贴板权限', 'err');
+  }
+
+  function openInBrowser(url) {
+    if (!/^https?:\/\//i.test(String(url || ''))) return;
+    if (typeof window.openDeskApp === 'function') {
+      window.__bwPendingUrl = url;
+      window.openDeskApp('browser');
+      setStatus('已转交内置浏览器打开', 'ok');
+    } else {
+      copyThenStatus(url, url);
+    }
+  }
+
+  /* ================= AI 邮箱助手 =================
+   * 把当前信箱清单（地址、未读、是否有口令、最近来信与识别到的验证码）交给模型，
+   * 模型只返回一份操作计划；删除等动作必须由用户点「执行」后才落到本机。
+   * 口令永远不进模型上下文。
+   */
+  const AI = { open: false, busy: false, log: [] };
+
+  const AI_SYS = [
+    '你是「邮箱台」里的邮箱管理助手，帮助用户查看、添加、选择、刷新、清理信箱，以及代写并发信。',
+    '只输出一个 JSON 对象，不要 Markdown，不要在 JSON 之外写任何文字。',
+    '格式：{"reply":"中文答复","actions":[...]}',
+    '可用动作：',
+    '{"type":"add","address":"name@example.com","password":"可选"}',
+    '{"type":"remove","address":"name@example.com"}',
+    '{"type":"select","address":"name@example.com"}',
+    '{"type":"refresh","address":"可选；为空表示全部"}',
+    '{"type":"send","address":"发件信箱，可选；为空用当前信箱","to":"收件人","subject":"主题","body":"纯文本正文"}',
+    '规则：只能引用状态清单里存在的地址；用户没有明确要求删除时不要生成 remove；',
+    '只有用户明确要求发信时才生成 send，正文要完整可发送，不要虚构凭证或验证码；',
+    '凭证明细不会出现在状态里，也不要向用户索要 refresh_token；',
+    '不要编造地址、口令或来信内容；不需要执行动作时 actions 用空数组；reply 控制在 80 字内。'
+  ].join('\n');
+
+  function llmConnSafe() {
+    try {
+      if (typeof llmConn === 'function') return llmConn();
+    } catch (e) { /* 未配置 */ }
+    return null;
+  }
+
+  function aiReady() {
+    const conn = llmConnSafe();
+    return !!(window.LLMRouter && typeof window.LLMRouter.complete === 'function'
+      && conn && conn.base && conn.key && conn.model);
+  }
+
+  function aiContext() {
+    const lines = ['时间：' + fmtFull(new Date().toISOString()) + '；信箱数：' + S.boxes.length];
+    S.boxes.slice(0, 40).forEach(function (b, i) {
+      const unread = b.messages.filter(function (m) { return !m.seen; }).length;
+      const recent = b.messages.slice(0, 3).map(function (m) {
+        const codes = extractCodes((m.subject || '') + '\n' + (m.text || m.intro || ''));
+        return '「' + clip(m.subject || '(无主题)', 40) + '」' +
+          (codes.length ? ' 码:' + codes.join('/') : '');
+      }).join('');
+      lines.push((i + 1) + '. ' + b.address + ' | ' + providerLabel(b.provider) +
+        ' | 未读 ' + unread + ' | ' + (b.password ? '有口令' : (hasOauth(b) ? 'OAuth2 已配置' : '无口令')) +
+        (b.provider === 'manual' ? (manualFetchable(b) ? ' | IMAP 可收信' : ' | 不可收信') : '') +
+        (b.provider === 'manual' && canSend(b) ? ' | SMTP 可发信' : '') +
+        (b.error ? ' | 收取失败' : '') + (recent ? ' | 来信 ' + recent : ''));
+    });
+    if (!S.boxes.length) lines.push('（列表为空）');
+    return lines.join('\n');
+  }
+
+  function parseAiPlan(raw) {
+    let t = String(raw == null ? '' : raw).trim();
+    t = t.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    const a = t.indexOf('{');
+    const b = t.lastIndexOf('}');
+    if (a < 0 || b <= a) return { reply: t || '（模型没有返回内容）', actions: [] };
+    let obj;
+    try { obj = JSON.parse(t.slice(a, b + 1)); } catch (e) { return { reply: t.slice(a, b + 1), actions: [] }; }
+    const allowed = { add: 1, remove: 1, select: 1, refresh: 1, send: 1 };
+    const actions = Array.isArray(obj.actions) ? obj.actions.filter(function (x) {
+      if (!x || !allowed[x.type]) return false;
+      if (x.type === 'refresh') return true;
+      if (x.type === 'send') return !!String(x.to || '').trim() && !!String(x.body || '').trim();
+      return !!String(x.address || '').trim();
+    }).slice(0, 12) : [];
+    return { reply: String(obj.reply || '').trim(), actions: actions };
+  }
+
+  function actionLabel(a) {
+    const addr = String(a.address || '');
+    if (a.type === 'add') return '添加手动邮箱 ' + addr + (a.password ? '（含口令）' : '（无口令）');
+    if (a.type === 'remove') return '移除 ' + addr;
+    if (a.type === 'select') return '选中 ' + addr;
+    if (a.type === 'refresh') return addr ? ('刷新 ' + addr) : '刷新全部可收信信箱';
+    if (a.type === 'send') {
+      return '用 ' + (addr || '当前信箱') + ' 发到 ' + String(a.to || '') +
+        (a.subject ? '：' + clip(a.subject, 30) : '');
+    }
+    return '未知动作';
+  }
+
+  function aiMsgHtml(item, i) {
+    if (item.role === 'user') return '<div class="md-ai-msg is-user">' + esc(item.text) + '</div>';
+    if (item.role === 'err') return '<div class="md-ai-msg is-err">' + esc(item.text) + '</div>';
+    let html = '<div class="md-ai-msg is-agent">' + esc(item.text);
+    if (item.actions && item.actions.length) {
+      html += '<div class="md-ai-plan">' + item.actions.map(function (a) {
+        return '<div class="md-ai-act">' + esc(actionLabel(a)) + '</div>';
+      }).join('');
+      if (!item.done) {
+        html += '<div class="md-ai-plan-acts">' +
+          '<button type="button" class="md-mini" data-ai-skip="' + i + '">忽略</button>' +
+          '<button type="button" class="md-btn md-primary" data-ai-run="' + i + '">执行</button>' +
+          '</div>';
+      } else if (item.results && item.results.length) {
+        html += '<div class="md-ai-results">' + item.results.map(function (r) {
+          return '<div>' + esc(r) + '</div>';
+        }).join('') + '</div>';
+      }
+      html += '</div>';
+    }
+    return html + '</div>';
+  }
+
+  function renderAi() {
+    if (!els || !els.ai) return;
+    els.ai.hidden = !AI.open;
+    els.aiToggle.classList.toggle('is-on', AI.open);
+    els.aiToggle.textContent = AI.open ? '收起助手' : 'AI 助手';
+    if (!AI.open) return;
+    els.aiNote.textContent = aiReady() ? '操作计划需确认后执行' : '未配置语言模型';
+    els.aiSend.disabled = AI.busy;
+    const nearBottom = els.aiLog.scrollHeight - els.aiLog.scrollTop - els.aiLog.clientHeight < 48;
+    els.aiLog.innerHTML = AI.log.length
+      ? AI.log.map(aiMsgHtml).join('')
+      : '<div class="md-ai-empty">问它「现在有哪些未读」，或让它帮你清理空信箱。</div>';
+    if (nearBottom || AI.log.length <= 1) els.aiLog.scrollTop = els.aiLog.scrollHeight;
+  }
+
+  function setAiOpen(on) {
+    AI.open = !!on;
+    if (AI.open && !AI.log.length) {
+      AI.log.push({
+        role: 'agent',
+        text: '我可以汇总未读、检查凭证与异常、刷新收信、添加或清理信箱，也能代写并发信。说出要求，我先给计划，你确认后再执行。',
+        actions: []
+      });
+    }
+    renderAi();
+    if (AI.open) setTimeout(function () { try { els.aiText.focus(); } catch (e) { /* 忽略 */ } }, 40);
+  }
+
+  function askAgent(text) {
+    const q = String(text == null ? '' : text).trim();
+    if (!q || AI.busy) return;
+    if (!aiReady()) {
+      AI.log.push({ role: 'err', text: '还没有可用的语言模型：请先在「设置 → 模型」里配置接口与 Key。' });
+      renderAi();
+      return;
+    }
+    const history = AI.log.filter(function (x) {
+      return x.role === 'user' || x.role === 'agent';
+    }).slice(-6).map(function (x) {
+      return { role: x.role === 'user' ? 'user' : 'assistant', content: x.text };
+    });
+    AI.log.push({ role: 'user', text: q });
+    AI.busy = true;
+    renderAi();
+    window.LLMRouter.complete({
+      app: 'maildesk',
+      sys: AI_SYS,
+      messages: history.concat([{
+        role: 'user',
+        content: '当前信箱状态：\n' + aiContext() + '\n\n用户指令：' + q
+      }]),
+      opts: { temperature: 0.2, timeoutMs: 60000 }
+    }).then(function (out) {
+      const plan = parseAiPlan(out);
+      AI.log.push({
+        role: 'agent', text: plan.reply || '（模型没有给出说明）',
+        actions: plan.actions, done: false, results: null
+      });
+    }).catch(function (e) {
+      AI.log.push({ role: 'err', text: '助手调用失败：' + msgOf(e) });
+    }).then(function () {
+      AI.busy = false;
+      renderAi();
+    });
+  }
+
+  async function aiRefresh(address) {
+    const box = address ? findBox(address) : null;
+    if (address && !box) return '没找到：' + address;
+    if (box && (box.provider === 'demo' || (box.provider === 'manual' && !manualFetchable(box)))) {
+      return box.address + ' 不支持收信';
+    }
+    if (!box) {
+      const any = S.boxes.some(function (b) {
+        return b.provider === 'mailtm' || b.provider === 'mailgw' ||
+          b.provider === 'guerrilla' || manualFetchable(b);
+      });
+      if (!any) return '没有可收信的信箱';
+      await syncAll(false);
+      return '已刷新全部可收信信箱';
+    }
+    if (busy) return '正在刷新，稍后再试';
+    busy = true;
+    setBusy(true);
+    try {
+      await syncBox(box);
+      renderMsgs();
+      renderRead();
+      save();
+      return '已刷新 ' + box.address;
+    } catch (e) {
+      box.error = msgOf(e);
+      return '刷新失败：' + box.error;
+    } finally {
+      busy = false;
+      setBusy(false);
+    }
+  }
+
+  async function runAiActions(i) {
+    const item = AI.log[i];
+    if (!item || item.done || !item.actions) return;
+    item.done = true;
+    item.results = [];
+    for (let k = 0; k < item.actions.length; k++) {
+      const a = item.actions[k];
+      try {
+        if (a.type === 'add') {
+          const r = addManualBox(a.address, a.password);
+          item.results.push(r.error || ('已添加 ' + r.box.address));
+        } else if (a.type === 'remove') {
+          const box = findBox(a.address);
+          if (!box) item.results.push('没找到：' + a.address);
+          else { const addr = box.address; removeBox(box); item.results.push('已移除 ' + addr); }
+        } else if (a.type === 'select') {
+          const box = findBox(a.address);
+          if (!box) item.results.push('没找到：' + a.address);
+          else { selectBox(box.id); item.results.push('已选中 ' + box.address); }
+        } else if (a.type === 'refresh') {
+          item.results.push(await aiRefresh(a.address));
+        } else if (a.type === 'send') {
+          const box = a.address ? findBox(a.address) : activeBox();
+          if (!box) item.results.push('没找到发件信箱：' + (a.address || '当前信箱'));
+          else if (!canSend(box)) item.results.push(box.address + ' 没有可用的发信凭证');
+          else {
+            try {
+              await sendMail(box, a.to, a.subject, a.body);
+              item.results.push('已用 ' + box.address + ' 发送到 ' + a.to);
+            } catch (e) {
+              item.results.push('发信失败：' + msgOf(e));
+            }
+          }
+        }
+      } catch (e) {
+        item.results.push('失败：' + msgOf(e));
+      }
+    }
+    renderAll();
+    renderAi();
+  }
+
+  function sendAiInput(text) {
+    const v = text == null ? els.aiText.value : text;
+    els.aiText.value = '';
+    askAgent(v);
+  }
+
+  /* ================= 自动收取 ================= */
+
+  function ensureTimer() {
+    if (timer) return;
+    timer = setInterval(function () {
+      if (!els || !S.auto || busy) return;
+      const win = document.getElementById('maildeskWin');
+      if (win && win.classList.contains('hidden')) return;
+      const gap = (Number(S.autoSec) || 30) * 1000;
+      if (now() - (S.lastAutoAt || 0) < gap) return;
+      S.lastAutoAt = now();
+      syncAll(true);
+    }, 5000);
+  }
+
+  /* ================= 事件 ================= */
+
+  function cacheEls(body) {
+    const q = function (s) { return body.querySelector(s); };
+    els = {
+      root: q('.md-root'),
+      net: q('#mdNet'),
+      netText: q('#mdNet span'),
+      statBoxes: q('#mdStatBoxes'),
+      statUnread: q('#mdStatUnread'),
+      statIssues: q('#mdStatIssues'),
+      statIssuesWrap: q('#mdStatIssuesWrap'),
+      provider: q('#mdProvider'),
+      count: q('#mdCount'),
+      prefix: q('#mdPrefix'),
+      create: q('#mdCreate'),
+      auto: q('#mdAuto'),
+      autoSec: q('#mdAutoSec'),
+      syncAll: q('#mdSyncAll'),
+      importBtn: q('#mdImport'),
+      exportBtn: q('#mdExport'),
+      boxCount: q('#mdBoxCount'),
+      filters: q('#mdFilters'),
+      addBtn: q('#mdAdd'),
+      addPanel: q('#mdAddPanel'),
+      addAddr: q('#mdAddAddr'),
+      addPass: q('#mdAddPass'),
+      addSave: q('#mdAddSave'),
+      addCancel: q('#mdAddCancel'),
+      copyAll: q('#mdCopyAll'),
+      search: q('#mdSearch'),
+      batch: q('#mdBatch'),
+      batchCount: q('#mdSelCount'),
+      selectAll: q('#mdSelectAll'),
+      batchRefresh: q('#mdBatchRefresh'),
+      batchCopy: q('#mdBatchCopy'),
+      batchRemove: q('#mdBatchRemove'),
+      boxes: q('#mdBoxes'),
+      addr: q('#mdAddr'),
+      prov: q('#mdProv'),
+      passRow: q('#mdPassRow'),
+      pass: q('#mdPass'),
+      copyAddr: q('#mdCopyAddr'),
+      copyPass: q('#mdCopyPass'),
+      compose: q('#mdCompose'),
+      cred: q('#mdCred'),
+      syncOne: q('#mdSyncOne'),
+      remove: q('#mdRemove'),
+      msgCount: q('#mdMsgCount'),
+      msgSearch: q('#mdMsgSearch'),
+      msgs: q('#mdMsgs'),
+      read: q('#mdRead'),
+      status: q('#mdStatus'),
+      statusBar: q('.md-status'),
+      hint: q('#mdHint'),
+      ai: q('#mdAi'),
+      aiToggle: q('#mdAiToggle'),
+      aiNote: q('#mdAiNote'),
+      aiLog: q('#mdAiLog'),
+      aiQuick: q('.md-ai-quick'),
+      aiText: q('#mdAiText'),
+      aiSend: q('#mdAiSend'),
+      aiClear: q('#mdAiClear'),
+      aiClose: q('#mdAiClose'),
+      importModal: q('#mdImportModal'),
+      importText: q('#mdImportText'),
+      importSave: q('#mdImportSave'),
+      importCancel: q('#mdImportCancel'),
+      composeModal: q('#mdComposeModal'),
+      composeFrom: q('#mdComposeFrom'),
+      composeTo: q('#mdComposeTo'),
+      composeSubject: q('#mdComposeSubject'),
+      composeBody: q('#mdComposeBody'),
+      composeSend: q('#mdComposeSend'),
+      composeCancel: q('#mdComposeCancel'),
+      credModal: q('#mdCredModal'),
+      credAddr: q('#mdCredAddr'),
+      credPass: q('#mdCredPass'),
+      credClient: q('#mdCredClient'),
+      credToken: q('#mdCredToken'),
+      credSave: q('#mdCredSave'),
+      credCancel: q('#mdCredCancel'),
+      credClear: q('#mdCredClear')
+    };
+  }
+
+  function syncForm() {
+    els.provider.value = S.provider;
+    els.count.value = String(S.count);
+    els.prefix.value = S.prefix;
+    els.auto.checked = !!S.auto;
+    els.autoSec.value = String(S.autoSec);
+  }
+
+  function wire() {
+    els.provider.addEventListener('change', function () {
+      S.provider = PROVIDERS[els.provider.value] ? els.provider.value : 'mailtm';
+      save();
+      updateHint();
+      checkNet();
+    });
+
+    function readCount() {
+      const n = clamp(parseInt(els.count.value, 10) || 1, 1, 20);
+      S.count = n;
+      els.count.value = String(n);
+      save();
+    }
+    els.count.addEventListener('change', readCount);
+    els.count.addEventListener('blur', readCount);
+
+    els.prefix.addEventListener('input', function () {
+      S.prefix = String(els.prefix.value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
+      save();
+    });
+
+    els.create.addEventListener('click', function () { createBatch(); });
+
+    els.syncAll.addEventListener('click', function () { syncAll(false); });
+
+    els.auto.addEventListener('change', function () {
+      S.auto = !!els.auto.checked;
+      S.lastAutoAt = 0;
+      save();
+      setStatus(S.auto ? '已开启自动收取（每 ' + S.autoSec + ' 秒）' : '已关闭自动收取');
+    });
+
+    els.autoSec.addEventListener('change', function () {
+      S.autoSec = Number(els.autoSec.value) || 30;
+      S.lastAutoAt = 0;
+      save();
+    });
+
+    els.search.addEventListener('input', function () { renderBoxes(); });
+
+    els.filters.addEventListener('click', function (e) {
+      const btn = e.target.closest('[data-filter]');
+      if (!btn) return;
+      FILTER = btn.getAttribute('data-filter') || 'all';
+      renderBoxes();
+    });
+
+    els.selectAll.addEventListener('change', function () {
+      const list = S.boxes.filter(boxVisible);
+      if (els.selectAll.checked) list.forEach(function (b) { SEL.add(b.id); });
+      else list.forEach(function (b) { SEL.delete(b.id); });
+      renderBoxes();
+    });
+
+    els.batchRefresh.addEventListener('click', function () { batchRefresh(); });
+    els.batchCopy.addEventListener('click', function () { batchCopy(); });
+    els.batchRemove.addEventListener('click', function () { batchRemove(); });
+
+    els.msgSearch.addEventListener('input', function () {
+      MSGQ = String(els.msgSearch.value || '').trim().toLowerCase();
+      renderMsgs();
+    });
+
+    els.importBtn.addEventListener('click', openImport);
+    els.importCancel.addEventListener('click', closeImport);
+    els.importSave.addEventListener('click', runImport);
+
+    els.importModal.addEventListener('click', function (e) {
+      if (e.target === els.importModal) closeImport();
+    });
+
+    els.compose.addEventListener('click', function () { openCompose(); });
+    els.composeCancel.addEventListener('click', closeCompose);
+    els.composeSend.addEventListener('click', runCompose);
+    els.composeModal.addEventListener('click', function (e) {
+      if (e.target === els.composeModal) closeCompose();
+    });
+
+    els.cred.addEventListener('click', function () { openCred(); });
+    els.credCancel.addEventListener('click', closeCred);
+    els.credSave.addEventListener('click', saveCred);
+    els.credClear.addEventListener('click', clearCred);
+    els.credModal.addEventListener('click', function (e) {
+      if (e.target === els.credModal) closeCred();
+    });
+    els.composeBody.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeCompose();
+    });
+    els.credToken.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeCred();
+    });
+
+    els.exportBtn.addEventListener('click', function () {
+      const list = SEL.size ? selectedBoxes() : S.boxes;
+      if (!list.length) { setStatus('还没有可导出的信箱', 'err'); return; }
+      const text = exportText(list);
+      if (downloadText('maildesk-' + Date.now() + '.txt', text)) {
+        setStatus('已导出 ' + list.length + ' 个信箱（地址+口令，不含令牌）', 'ok');
+      } else {
+        copyThenStatus(text, list.length + ' 个信箱（地址+口令）');
+      }
+    });
+
+    els.addBtn.addEventListener('click', function () {
+      els.addPanel.hidden = !els.addPanel.hidden;
+      if (!els.addPanel.hidden) {
+        els.addAddr.value = '';
+        els.addPass.value = '';
+        setTimeout(function () { try { els.addAddr.focus(); } catch (e) { /* 忽略 */ } }, 30);
+      }
+    });
+
+    els.addCancel.addEventListener('click', function () { els.addPanel.hidden = true; });
+
+    els.addSave.addEventListener('click', saveManualBox);
+
+    els.addPass.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') saveManualBox();
+    });
+
+    els.addAddr.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') els.addPass.focus();
+    });
+
+    els.aiToggle.addEventListener('click', function () { setAiOpen(!AI.open); });
+    els.aiClose.addEventListener('click', function () { setAiOpen(false); });
+
+    els.aiClear.addEventListener('click', function () {
+      AI.log = [];
+      setAiOpen(true);
+    });
+
+    els.aiSend.addEventListener('click', function () { sendAiInput(); });
+
+    els.aiText.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendAiInput();
+      }
+    });
+
+    els.aiQuick.addEventListener('click', function (e) {
+      const b = e.target.closest('[data-ai-q]');
+      if (b) sendAiInput(b.getAttribute('data-ai-q'));
+    });
+
+    els.aiLog.addEventListener('click', function (e) {
+      const run = e.target.closest('[data-ai-run]');
+      if (run) {
+        runAiActions(Number(run.getAttribute('data-ai-run')));
+        return;
+      }
+      const skip = e.target.closest('[data-ai-skip]');
+      if (skip) {
+        const item = AI.log[Number(skip.getAttribute('data-ai-skip'))];
+        if (item && !item.done) {
+          item.done = true;
+          item.results = ['已忽略本次计划'];
+          renderAi();
+        }
+      }
+    });
+
+    els.copyAll.addEventListener('click', function () {
+      if (!S.boxes.length) return;
+      copyThenStatus(S.boxes.map(function (b) { return b.address; }).join('\n'),
+        S.boxes.length + ' 个地址');
+    });
+
+    els.copyAddr.addEventListener('click', function () {
+      const b = activeBox();
+      if (b) copyThenStatus(b.address, b.address);
+    });
+
+    els.copyPass.addEventListener('click', function () {
+      const b = activeBox();
+      if (b && b.password) copyThenStatus(b.password, b.password);
+    });
+
+    els.syncOne.addEventListener('click', async function () {
+      const b = activeBox();
+      if (!b || busy) return;
+      if (b.provider === 'demo') { setStatus('演示信箱不需要刷新'); return; }
+      busy = true;
+      setBusy(true);
+      setStatus('正在收取：' + b.address);
+      try {
+        await syncBox(b);
+        renderMsgs();
+        renderRead();
+        setStatus('收取完成：' + b.messages.length + ' 封信', 'ok');
+      } catch (e) {
+        b.error = msgOf(e);
+        setStatus('收取失败：' + b.error, 'err');
+      } finally {
+        busy = false;
+        setBusy(false);
+        save();
+      }
+    });
+
+    els.remove.addEventListener('click', function () {
+      const b = activeBox();
+      if (!b) return;
+      removeBox(b);
+    });
+
+    els.boxes.addEventListener('click', function (e) {
+      const chk = e.target.closest('[data-check]');
+      if (chk) {
+        toggleSel(chk.getAttribute('data-check'), chk.checked);
+        return;
+      }
+      const el = e.target.closest('[data-box]');
+      if (!el) return;
+      selectBox(el.getAttribute('data-box'));
+    });
+
+    els.boxes.addEventListener('keydown', function (e) {
+      const el = e.target.closest('[data-box]');
+      if (!el || (e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+      selectBox(el.getAttribute('data-box'));
+    });
+
+    els.msgs.addEventListener('click', function (e) {
+      const el = e.target.closest('[data-msg]');
+      if (!el) return;
+      const b = activeBox();
+      if (!b) return;
+      const id = el.getAttribute('data-msg');
+      let m = null;
+      for (let i = 0; i < b.messages.length; i++) if (b.messages[i].id === id) m = b.messages[i];
+      if (m) openMessage(b, m);
+    });
+
+    els.root.addEventListener('click', function (e) {
+      const act = e.target.closest('[data-read-act]');
+      if (act) {
+        e.preventDefault();
+        const kind = act.getAttribute('data-read-act');
+        if (kind === 'toggle-seen') toggleSeen();
+        if (kind === 'copy-body') {
+          const m = activeMsg();
+          if (m) copyThenStatus(m.text || m.intro || '', '邮件正文');
+        }
+        return;
+      }
+      const c = e.target.closest('[data-copy]');
+      if (c) {
+        e.preventDefault();
+        copyThenStatus(c.getAttribute('data-copy'), c.getAttribute('data-copy'));
+        return;
+      }
+      const o = e.target.closest('[data-open]');
+      if (o) {
+        e.preventDefault();
+        openInBrowser(o.getAttribute('data-open'));
+      }
+    });
+  }
+
+  /* ================= 注册 ================= */
+
+  registerApp({
+    id: 'maildesk',
+    name: '邮箱台',
+    title: '邮箱台 · 批量信箱与收件',
+    sub: '批量申请临时信箱，集中收取验证码与链接',
+    icon: ICON,
+    order: 18,
+    cls: 'maildesk',
+    win: 'maildeskWin',
+    css: ['apps/maildesk/app.css'],
+
+    mount: function (body) {
+      /* 已经画过：只刷新数据，不重建 DOM —— 否则正在读的那封信、滚动位置、
+         输入框里的前缀都会被冲掉。 */
+      if (body.dataset.ready === '1' && els && els.root && body.contains(els.root)) {
+        renderAll();
+        renderAi();
+        checkNet();
+        ensureTimer();
+        return;
+      }
+
+      loadDomainCache();
+      body.innerHTML = BODY;
+      cacheEls(body);
+      wire();
+      syncForm();
+      body.dataset.ready = '1';
+
+      renderAll();
+      renderAi();
+      ensureTimer();
+      checkNet();
+      if (S.boxes.length) setStatus('已恢复 ' + S.boxes.length + ' 个信箱');
+      setTimeout(function () { try { els.count.focus(); } catch (e) { /* 忽略 */ } }, 80);
     }
   });
 })();
@@ -7923,6 +12072,12 @@ window.STUDIO_BODY = `
         <section class="st-panel hidden" data-panel="text">
           <div class="st-hint">点一个预设，文字会落在播放头位置。</div>
           <div class="st-presets" id="stTextPresets"></div>
+          <div class="st-hint">字幕：导入 SRT / VTT 自动落到字幕文字轨，导出按文字片段生成 SRT。</div>
+          <div class="st-srtrow">
+            <button type="button" class="st-ghost st-wide" id="stSrtImport">导入字幕（SRT / VTT）</button>
+            <button type="button" class="st-ghost st-wide" id="stSrtExport">导出字幕（SRT）</button>
+          </div>
+          <input type="file" id="stSrtFile" accept=".srt,.vtt,text/plain" aria-label="选择字幕文件" hidden>
         </section>
 
         <section class="st-panel hidden" data-panel="audio">
@@ -7992,6 +12147,7 @@ window.STUDIO_BODY = `
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3L11 6v12L7 14.5H4z"/><path class="st-ico-wave" d="M14.5 9.2a4 4 0 0 1 0 5.6M17.2 6.8a7.4 7.4 0 0 1 0 10.4"/><path class="st-ico-mute hidden" d="m15 10 4 4m0-4-4 4"/></svg>
           </button>
           <input type="range" class="st-vol" id="stVol" min="0" max="100" step="1" value="100" aria-label="预览音量">
+          <div class="st-level" id="stLevel" title="主输出电平（仅在播放时跳动）" aria-label="主输出电平"><i></i></div>
         </div>
       </div>
     </section>
@@ -8050,6 +12206,8 @@ window.STUDIO_BODY = `
           <div class="st-ruler" id="stRuler"></div>
           <div class="st-rows" id="stRows"></div>
           <div class="st-drop hidden" id="stDrop"></div>
+          <div class="st-range hidden" id="stRange" aria-hidden="true"><b class="st-range-in"></b><b class="st-range-out"></b></div>
+          <div class="st-marquee hidden" id="stMarquee" aria-hidden="true"></div>
           <div class="st-playhead" id="stPlayhead"><b></b></div>
         </div>
       </div>
@@ -8127,6 +12285,9 @@ window.STUDIO_BODY = `
             <option value="4">轻量 · 4 Mbps</option>
           </select>
         </label>
+        <label class="st-form-row"><span>导出范围</span>
+          <label class="st-check" for="stExRange"><input type="checkbox" id="stExRange"> 仅导出入出点区间</label>
+        </label>
         <div class="st-exnote">导出为 WebM（浏览器实时渲染并编码，时长越长等待越久；导出期间不要切走页面）。</div>
         <div class="st-progress hidden" id="stExProg">
           <div class="st-progress-bar"><i id="stExBar"></i></div>
@@ -8184,7 +12345,7 @@ window.STUDIO_BODY = `
   /* ---------------- 常量 ---------------- */
   const SAVE_KEY = 'hf_studio_project_v1';
   const SNAP_KEY = 'hf_studio_snaps_v1';
-  const SAVE_VER = 2;
+  const SAVE_VER = 3;
   const SNAP_MAX = 5;
   const SNAP_MS = 5 * 60 * 1000;
   const RULER_H = 26;
@@ -8231,6 +12392,7 @@ window.STUDIO_BODY = `
   const $ = (id) => document.getElementById(id);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const round2 = (v) => Math.round(v * 100) / 100;
+  const round3 = (v) => Math.round(v * 1000) / 1000;
   let seq = 0;
   const uid = (p) => p + Date.now().toString(36) + (seq++).toString(36);
   const svgWrap = (inner) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + inner + '</svg>';
@@ -8283,12 +12445,74 @@ window.STUDIO_BODY = `
     if (v >= 1024) return (v / 1024).toFixed(0) + ' KB';
     return v + ' B';
   }
-  function cssFilter(id) {
-    const f = FILTERS.find((x) => x.id === id);
-    return (f && f.css) || 'none';
+  /* 效果栈：可叠加 / 可排序 / 可逐项开关。
+     预览（DOM style.filter）与导出（ctx.filter）只允许通过 effectsCss 取串，
+     避免出现第二套效果拼装逻辑。 */
+  const EFFECT_MAX = 8;
+  const ADJUST_DEFS = [
+    { key: 'brightness', name: '亮度', min: 0.3, max: 2, step: 0.01 },
+    { key: 'contrast', name: '对比度', min: 0.3, max: 2, step: 0.01 },
+    { key: 'saturate', name: '饱和度', min: 0, max: 2.5, step: 0.01 }
+  ];
+  function presetOf(id) {
+    return FILTERS.find(function (x) { return x.id === id; }) || null;
+  }
+  function normalizeEffects(raw, legacy) {
+    const out = [];
+    (Array.isArray(raw) ? raw : []).forEach(function (e) {
+      if (!e || typeof e !== 'object' || out.length >= EFFECT_MAX) return;
+      if (e.type === 'preset') {
+        const f = presetOf(e.preset);
+        if (!f || f.id === 'none') return;
+        out.push({ id: String(e.id || uid('fx')), type: 'preset', preset: f.id, enabled: e.enabled !== false });
+      } else if (e.type === 'adjust') {
+        const src = e.params || {};
+        const params = {};
+        ADJUST_DEFS.forEach(function (d) {
+          const n = Number(src[d.key]);
+          params[d.key] = isFinite(n) ? clamp(n, d.min, d.max) : 1;
+        });
+        out.push({ id: String(e.id || uid('fx')), type: 'adjust', enabled: e.enabled !== false, params: params });
+      } else if (e.type === 'blur') {
+        const n = Number((e.params || {}).px);
+        out.push({ id: String(e.id || uid('fx')), type: 'blur', enabled: e.enabled !== false, params: { px: isFinite(n) ? clamp(n, 0, 40) : 4 } });
+      }
+    });
+    if (!out.length && legacy && legacy !== 'none') {
+      const f = presetOf(legacy);
+      if (f) out.push({ id: uid('fx'), type: 'preset', preset: f.id, enabled: true });
+    }
+    return out;
+  }
+  function effectName(e) {
+    if (!e) return '';
+    if (e.type === 'preset') { const f = presetOf(e.preset); return f ? f.name : '滤镜'; }
+    if (e.type === 'adjust') return '调色';
+    if (e.type === 'blur') return '模糊';
+    return '效果';
+  }
+  function effectsCss(c) {
+    const parts = [];
+    ((c && c.effects) || []).forEach(function (e) {
+      if (!e || e.enabled === false) return;
+      if (e.type === 'preset') {
+        const f = presetOf(e.preset);
+        if (f && f.css && f.css !== 'none') parts.push(f.css);
+      } else if (e.type === 'adjust') {
+        const p = e.params || {};
+        const b = Number(p.brightness), ct = Number(p.contrast), sa = Number(p.saturate);
+        if (isFinite(b) && Math.abs(b - 1) > 0.005) parts.push('brightness(' + round3(b) + ')');
+        if (isFinite(ct) && Math.abs(ct - 1) > 0.005) parts.push('contrast(' + round3(ct) + ')');
+        if (isFinite(sa) && Math.abs(sa - 1) > 0.005) parts.push('saturate(' + round3(sa) + ')');
+      } else if (e.type === 'blur') {
+        const px = Number((e.params || {}).px);
+        if (isFinite(px) && px > 0) parts.push('blur(' + round3(px) + 'px)');
+      }
+    });
+    return parts.length ? parts.join(' ') : 'none';
   }
 
-  /* ---------------- 项目模型（v2） ---------------- */
+  /* ---------------- 项目模型（v3） ---------------- */
   function defaultTracks() {
     return DEFAULT_TRACKS.map(function (t) {
       return {
@@ -8380,22 +12604,34 @@ window.STUDIO_BODY = `
     }).sort(function (a, b) { return a.t - b.t; });
   }
 
-  /* v1 → v2：补齐轨道、标记、关键帧容器。对 v2 是恒等操作，可重复调用。 */
+  /* v1 → v2：补齐轨道、标记、关键帧容器。
+     v2 → v3：把单值 filter 迁进 effects 栈，删除旧字段。
+     分版本增量迁移，对当前版本是恒等操作，可重复调用。 */
   function migrateProject(raw) {
     if (!raw || typeof raw !== 'object') return null;
     const ver = Number(raw.v) || 1;
     if (ver >= SAVE_VER) return raw;
     const out = JSON.parse(JSON.stringify(raw));
+    if (ver < 2) {
+      out.sampleRate = 48000;
+      out.tracks = defaultTracks();
+      out.markers = [];
+      out.meta = { createdAt: 0, updatedAt: 0, app: 'studio' };
+      out.clips = (Array.isArray(out.clips) ? out.clips : []).map(function (c) {
+        if (!c || typeof c !== 'object') return c;
+        if (!c.kf) c.kf = {};
+        return c;
+      });
+    }
+    if (ver < 3) {
+      out.clips = (Array.isArray(out.clips) ? out.clips : []).map(function (c) {
+        if (!c || typeof c !== 'object') return c;
+        c.effects = normalizeEffects(c.effects, c.filter);
+        delete c.filter;
+        return c;
+      });
+    }
     out.v = SAVE_VER;
-    out.sampleRate = 48000;
-    out.tracks = defaultTracks();
-    out.markers = [];
-    out.meta = { createdAt: 0, updatedAt: 0, app: 'studio' };
-    out.clips = (Array.isArray(out.clips) ? out.clips : []).map(function (c) {
-      if (!c || typeof c !== 'object') return c;
-      if (!c.kf) c.kf = {};
-      return c;
-    });
     return out;
   }
 
@@ -8420,7 +12656,7 @@ window.STUDIO_BODY = `
       muted: !!c.muted,
       fadeIn: c.fadeIn == null ? 0 : Number(c.fadeIn),
       fadeOut: c.fadeOut == null ? 0 : Number(c.fadeOut),
-      filter: c.filter || 'none',
+      effects: normalizeEffects(c.effects, c.filter),
       kf: normalizeKf(c.kf),
       text: {
         content: (c.text && c.text.content) || '标题文字',
@@ -8567,7 +12803,20 @@ window.STUDIO_BODY = `
     snapshots: [],
     lastSnapAt: 0,
     snapStep: 0,
-    trackSig: ''
+    trackSig: '',
+    /* 序列入出点（null = 未设置） */
+    rngIn: null,
+    rngOut: null,
+    /* 播放速率与方向：J 倒放时 dir = -1，L 连按提速到 4× */
+    rate: 1,
+    dir: 1,
+    /* 片段剪贴板：{ base, items } */
+    clipboard: null,
+    /* 音频峰值缓存与并发解码任务 */
+    peaks: new Map(),
+    peakJobs: new Map(),
+    marquee: null,
+    lastReverseSeek: 0
   };
 
   function tracks() { return S.project.tracks; }
@@ -8766,10 +13015,10 @@ window.STUDIO_BODY = `
     S.saveTimer = setTimeout(saveNow, 650);
   }
 
-  /* ---------------- 历史 ---------------- */
+  /* ---------------- 历史（语义化：每条带动作名） ---------------- */
   function snap() { return JSON.stringify(S.project); }
-  function pushHistory() {
-    S.hist.push(snap());
+  function pushHistory(label) {
+    S.hist.push({ label: String(label || '编辑'), snap: snap() });
     if (S.hist.length > MAX_HIST) S.hist.shift();
     S.future.length = 0;
     S.steps += 1;
@@ -8781,15 +13030,26 @@ window.STUDIO_BODY = `
   }
   function undo() {
     if (!S.hist.length) return false;
-    S.future.push(snap());
-    S.project = normalizeProject(JSON.parse(S.hist.pop()));
+    const item = S.hist.pop();
+    S.future.push({ label: item.label, snap: snap() });
+    S.project = normalizeProject(JSON.parse(item.snap));
     afterRestore();
     return true;
   }
   function redo() {
     if (!S.future.length) return false;
-    S.hist.push(snap());
-    S.project = normalizeProject(JSON.parse(S.future.pop()));
+    const item = S.future.pop();
+    S.hist.push({ label: item.label, snap: snap() });
+    S.project = normalizeProject(JSON.parse(item.snap));
+    afterRestore();
+    return true;
+  }
+  /* 历史面板跳转：回到第 i 条历史之前的状态（i = 0 表示最初） */
+  function goHistory(i) {
+    if (i < 0 || i >= S.hist.length) return false;
+    S.future.push({ label: '回到：' + S.hist[i].label, snap: snap() });
+    S.project = normalizeProject(JSON.parse(S.hist[i].snap));
+    S.hist = S.hist.slice(0, i);
     afterRestore();
     return true;
   }
@@ -8799,7 +13059,11 @@ window.STUDIO_BODY = `
     Array.from(S.multi).forEach(function (id) {
       if (!alive.has(id)) S.multi.delete(id);
     });
-    S.time = clamp(S.time, 0, Math.max(0, projectDuration(S.project)));
+    const dur = Math.max(0, projectDuration(S.project));
+    S.time = clamp(S.time, 0, dur);
+    if (S.rngIn != null) S.rngIn = clamp(S.rngIn, 0, dur);
+    if (S.rngOut != null) S.rngOut = clamp(S.rngOut, 0, dur);
+    if (S.rngIn != null && S.rngOut != null && S.rngOut <= S.rngIn) S.rngOut = null;
     renderAll();
     applyTime();
     scheduleSave();
@@ -8810,6 +13074,14 @@ window.STUDIO_BODY = `
     const r = $('stRedo');
     if (u) u.disabled = !S.hist.length;
     if (r) r.disabled = !S.future.length;
+    const box = $('stHistList');
+    if (!box) return;
+    const rows = S.hist.slice(-8).map(function (h, k) {
+      const idx = S.hist.length - Math.min(8, S.hist.length) + k;
+      return '<button class="st-histrow" data-hist="' + idx + '" title="回到这一步之前">' +
+        '<span>' + escHtml(h.label) + '</span><em>#' + (idx + 1) + '</em></button>';
+    }).reverse().join('');
+    box.innerHTML = rows || '<div class="st-hint">还没有可撤销的动作</div>';
   }
 
   /* ---------------- 提示 ---------------- */
@@ -9012,6 +13284,7 @@ window.STUDIO_BODY = `
       AUD.master = master;
       AUD.monitor = monitor;
       AUD.recDest = dest;
+      hookAnalyser();
     } catch (e) { return null; }
     return AUD.ctx;
   }
@@ -9034,6 +13307,125 @@ window.STUDIO_BODY = `
   function applyMonitorGain() {
     if (!AUD.monitor) return;
     AUD.monitor.gain.value = (S.muted || S.exportSession) ? 0 : 1;
+  }
+  /* 主输出电平表：master 旁挂一个 AnalyserNode，只观察不参与链路。 */
+  function hookAnalyser() {
+    if (AUD.analyser || !AUD.ctx || !AUD.master) return;
+    try {
+      const an = AUD.ctx.createAnalyser();
+      an.fftSize = 512;
+      an.smoothingTimeConstant = 0.45;
+      AUD.master.connect(an);
+      AUD.analyser = an;
+      AUD.levelBuf = new Uint8Array(an.fftSize);
+    } catch (e) { AUD.analyser = null; }
+  }
+  function paintLevel() {
+    const box = $('stLevel');
+    if (!box) return;
+    const bar = box.querySelector('i');
+    let peak = 0;
+    if (AUD.analyser && S.playing && S.dir > 0) {
+      try {
+        AUD.analyser.getByteTimeDomainData(AUD.levelBuf);
+        for (let i = 0; i < AUD.levelBuf.length; i++) {
+          const d = Math.abs(AUD.levelBuf[i] - 128) / 128;
+          if (d > peak) peak = d;
+        }
+      } catch (e) { peak = 0; }
+    }
+    const pct = Math.round(clamp(peak * 130, 0, 100));
+    if (bar) bar.style.height = pct + '%';
+    box.classList.toggle('hot', pct > 88);
+  }
+
+  /* ---------------- 音频波形 ----------------
+   * 只保留每秒 100 点的峰值，解码缓冲用完即丢；解码失败静默降级为空波形。 */
+  const PEAK_RATE = 100;
+  function peaksOf(mediaId) {
+    const p = S.peaks.get(mediaId);
+    return p && p.data ? p : null;
+  }
+  function ensureVisiblePeaks() {
+    if (!S.inited) return;
+    const ids = new Set();
+    S.project.clips.forEach(function (c) {
+      if (c.kind === 'audio' && c.mediaId) ids.add(c.mediaId);
+    });
+    ids.forEach(function (id) { loadPeaks(id); });
+  }
+  function loadPeaks(mediaId) {
+    if (S.peaks.has(mediaId)) {
+      const p = peaksOf(mediaId);
+      return Promise.resolve(p ? p.data.length : 0);
+    }
+    /* 同一素材并发请求复用同一个任务，避免重复解码。 */
+    if (S.peakJobs.has(mediaId)) return S.peakJobs.get(mediaId);
+    const m = mediaOf(mediaId);
+    if (!m || !m.url || m.kind === 'image') return Promise.resolve(0);
+    const ctx = ensureAudio();
+    if (!ctx || !window.fetch) { S.peaks.set(mediaId, { data: null }); return Promise.resolve(0); }
+    const job = fetch(m.url)
+      .then(function (r) { return r.ok ? r.arrayBuffer() : null; })
+      .then(function (buf) {
+        if (!buf) throw new Error('fetch failed');
+        return new Promise(function (res, rej) {
+          const p = ctx.decodeAudioData(buf.slice(0), res, rej);
+          if (p && p.catch) p.catch(rej);
+        });
+      })
+      .then(function (audio) {
+        const n = Math.max(1, Math.ceil(audio.duration * PEAK_RATE));
+        const data = new Float32Array(n);
+        const ch = audio.getChannelData(0);
+        const step = Math.max(1, Math.floor(ch.length / n));
+        for (let i = 0; i < n; i++) {
+          let peak = 0;
+          const s = i * step;
+          const e = Math.min(ch.length, s + step);
+          for (let j = s; j < e; j++) {
+            const a = Math.abs(ch[j]);
+            if (a > peak) peak = a;
+          }
+          data[i] = peak;
+        }
+        S.peaks.set(mediaId, { data: data, dur: audio.duration });
+        paintWaves();
+        return n;
+      })
+      .catch(function () { S.peaks.set(mediaId, { data: null }); return 0; });
+    S.peakJobs.set(mediaId, job);
+    job.then(function () { S.peakJobs.delete(mediaId); });
+    return job;
+  }
+  function paintWaves() {
+    const nodes = document.querySelectorAll('#stRows .st-clip[data-kind="audio"]');
+    nodes.forEach(function (node) {
+      const c = clipOf(node.dataset.id);
+      const cv = node.querySelector('canvas.st-wave');
+      if (!c || !cv) return;
+      const fullW = Math.max(1, Math.round(c.dur * S.pps));
+      /* Canvas 单边有上限：超长片段按比例降采样，避免 width 赋值失败后画不出来。 */
+      const w = Math.min(4096, fullW);
+      const scale = w / fullW;
+      const h = Math.max(10, node.clientHeight);
+      if (cv.width !== w) cv.width = w;
+      if (cv.height !== h) cv.height = h;
+      const g = cv.getContext('2d');
+      if (!g) return;
+      g.clearRect(0, 0, w, h);
+      const pk = peaksOf(c.mediaId);
+      if (!pk) return;
+      g.fillStyle = 'rgba(224,255,244,.6)';
+      for (let x = 0; x < w; x++) {
+        const clipPx = x / scale;
+        const srcT = c.in + (clipPx / Math.max(1, S.pps)) * c.speed;
+        const idx = Math.floor(srcT * PEAK_RATE);
+        if (idx < 0 || idx >= pk.data.length) continue;
+        const bh = Math.max(1, Math.min(1, pk.data[idx] * 1.6) * (h - 6));
+        g.fillRect(x, (h - bh) / 2, 1, bh);
+      }
+    });
   }
 
   /* ---------------- 预览同步 ---------------- */
@@ -9073,7 +13465,7 @@ window.STUDIO_BODY = `
     el.style.transform = 'translate(' + dx.toFixed(1) + 'px,' + dy.toFixed(1) + 'px) scale(' +
       v.scale.toFixed(3) + ') rotate(' + v.rot + 'deg)';
     el.style.opacity = String(clamp(v.opacity * fadeFactor(c, t), 0, 1));
-    el.style.filter = cssFilter(c.filter);
+    el.style.filter = effectsCss(c);
   }
 
   function hideVisual(pool) {
@@ -9125,7 +13517,7 @@ window.STUDIO_BODY = `
       if (mediaDur) srcT = clamp(srcT, 0, Math.max(0, mediaDur - 0.03));
       else srcT = Math.max(0, srcT);
       const vol = propAt(c, 'volume', t);
-      v.playbackRate = clamp(c.speed, 0.25, 4);
+      v.playbackRate = clamp(c.speed * (S.dir > 0 ? S.rate : 1), 0.25, 4);
       v.volume = clamp(vol * S.vol * fade, 0, 1);
       v.muted = !!c.muted || !!tk.muted || vol <= 0;
       if (playing) {
@@ -9174,7 +13566,7 @@ window.STUDIO_BODY = `
     const mediaDur = isFinite(a.duration) && a.duration > 0 ? a.duration : 0;
     let srcT = (t - c.start) * c.speed + c.in;
     if (mediaDur) srcT = clamp(srcT, 0, Math.max(0, mediaDur - 0.03));
-    a.playbackRate = clamp(c.speed, 0.25, 4);
+    a.playbackRate = clamp(c.speed * (S.dir > 0 ? S.rate : 1), 0.25, 4);
     a.volume = clamp(vol * S.vol * fade, 0, 1);
     a.muted = !!c.muted || !!tk.muted || vol <= 0;
     if (playing) {
@@ -9299,8 +13691,8 @@ window.STUDIO_BODY = `
 
   function applyTime() {
     tracks().forEach(function (t) {
-      if (t.kind === 'video') syncVisual(t.id, S.time, S.playing);
-      else if (t.kind === 'audio') syncAudio(t.id, S.time, S.playing);
+      if (t.kind === 'video') syncVisual(t.id, S.time, S.playing && S.dir > 0);
+      else if (t.kind === 'audio') syncAudio(t.id, S.time, S.playing && S.dir > 0);
     });
     paintTexts(false);
     paintPlayhead();
@@ -9316,13 +13708,61 @@ window.STUDIO_BODY = `
 
   function seekBy(d) { seek(S.time + d); }
 
+  /* 入出点：null 表示未设置。区间优先级高于整片。 */
+  function playStart() {
+    const d = projectDuration(S.project);
+    return S.rngIn == null ? 0 : clamp(S.rngIn, 0, d);
+  }
+  function playEnd() {
+    const d = projectDuration(S.project);
+    return S.rngOut == null ? d : clamp(S.rngOut, 0, d);
+  }
+  function setRangeEdge(edge, t) {
+    const d = projectDuration(S.project);
+    const v = clamp(Number(t), 0, d);
+    if (edge === 'in') {
+      S.rngIn = round2(v);
+      if (S.rngOut != null && S.rngOut <= S.rngIn) S.rngOut = null;
+    } else {
+      S.rngOut = round2(v);
+      if (S.rngIn != null && S.rngIn >= S.rngOut) S.rngIn = null;
+    }
+    paintRange();
+    paintStatus();
+    return edge === 'in' ? S.rngIn : S.rngOut;
+  }
+  function clearInOut() {
+    S.rngIn = null;
+    S.rngOut = null;
+    paintRange();
+    paintStatus();
+  }
+  function paintRange() {
+    const el = $('stRange');
+    if (!el) return;
+    const has = S.rngIn != null || S.rngOut != null;
+    el.classList.toggle('hidden', !has);
+    if (!has) return;
+    const a = S.rngIn == null ? 0 : clamp(S.rngIn, 0, projectDuration(S.project));
+    const b = S.rngOut == null ? projectDuration(S.project) : clamp(S.rngOut, 0, projectDuration(S.project));
+    el.style.left = (a * S.pps) + 'px';
+    el.style.width = Math.max(2, (b - a) * S.pps) + 'px';
+    const i = el.querySelector('.st-range-in');
+    const o = el.querySelector('.st-range-out');
+    if (i) i.classList.toggle('hidden', S.rngIn == null);
+    if (o) o.classList.toggle('hidden', S.rngOut == null);
+  }
+
   function play() {
     const dur = projectDuration(S.project);
     if (dur <= 0.05) { toast('时间线还是空的，先把素材拖进轨道'); return; }
-    if (S.time >= dur - 0.02) S.time = 0;
     ensureAudio();
     resumeAudio();
     applyMonitorGain();
+    S.dir = 1;
+    const end = playEnd();
+    if (S.time >= end - 0.02) S.time = playStart();
+    else if (S.rngIn != null && S.time < S.rngIn) S.time = playStart();
     S.playing = true;
     S.last = 0;
     paintPlayIcon();
@@ -9331,8 +13771,38 @@ window.STUDIO_BODY = `
     applyTime();
   }
 
+  /* JKL：L 播放并逐次提速，K 停止复位，J 倒放（逐帧回退）。 */
+  function shuttle(dir) {
+    if (dir < 0) {
+      const dur = projectDuration(S.project);
+      if (dur <= 0.05) { toast('时间线还是空的，先把素材拖进轨道'); return; }
+      if (S.time <= (S.rngIn == null ? 0 : S.rngIn) + 0.02 && S.rngOut == null) { toast('已经在开头'); return; }
+      ensureAudio();
+      applyMonitorGain();
+      S.dir = -1;
+      S.rate = 1;
+      S.playing = true;
+      S.last = 0;
+      paintPlayIcon();
+      cancelAnimationFrame(S.raf);
+      S.raf = requestAnimationFrame(tick);
+      applyTime();
+      return;
+    }
+    if (!S.playing || S.dir < 0) {
+      S.rate = 1;
+      play();
+      return;
+    }
+    S.rate = S.rate >= 4 ? 1 : S.rate * 2;
+    applyTime();
+    paintStatus();
+  }
+
   function pause() {
     S.playing = false;
+    S.dir = 1;
+    S.rate = 1;
     if (S.raf) cancelAnimationFrame(S.raf);
     S.raf = 0;
     S.last = 0;
@@ -9343,6 +13813,7 @@ window.STUDIO_BODY = `
       if (p && p.audio) { try { p.audio.pause(); } catch (e) {} }
     });
     applyTime();
+    paintLevel();
   }
 
   function togglePlay() { if (S.playing) pause(); else play(); }
@@ -9353,17 +13824,31 @@ window.STUDIO_BODY = `
     let dt = (now - S.last) / 1000;
     S.last = now;
     if (dt > 0.3) dt = 0.3;
-    const dur = projectDuration(S.project);
-    S.time += dt;
-    if (S.time >= dur) {
+    /* 倒放不做解码播放，逐帧回退；限制 seek 频率，避免高码率素材拖死主线程。 */
+    if (S.dir < 0 && now - S.lastReverseSeek < 30) {
+      S.raf = requestAnimationFrame(tick);
+      return;
+    }
+    if (S.dir < 0) S.lastReverseSeek = now;
+    const start = S.exportSession ? S.exportSession.a : playStart();
+    const end = S.exportSession ? S.exportSession.b : playEnd();
+    const speed = S.dir < 0 ? 1 : Math.max(0.25, S.rate || 1);
+    S.time += dt * speed * S.dir;
+    if (S.dir < 0 && S.time <= start) {
+      S.time = start;
+      applyTime();
+      pause();
+      return;
+    }
+    if (S.time >= end) {
       if (S.loop && !S.exportSession) {
-        S.time = 0;
+        S.time = start;
         S.last = 0;
         applyTime();
         S.raf = requestAnimationFrame(tick);
         return;
       }
-      S.time = dur;
+      S.time = end;
       applyTime();
       if (S.exportSession) { finishExportTick(); return; }
       pause();
@@ -9371,6 +13856,7 @@ window.STUDIO_BODY = `
       return;
     }
     applyTime();
+    paintLevel();
     if (S.exportSession) {
       drawExportFrame();
       paintExportProgress();
@@ -9445,12 +13931,15 @@ window.STUDIO_BODY = `
     const width = Math.max(14, c.dur * S.pps);
     const showMeta = width > 78;
     const kfCount = Object.keys(c.kf || {}).length;
+    const fxCount = (c.effects || []).length;
     const meta = showMeta ? '<span class="st-clip-meta">' + fmtDur(c.dur) +
       (c.speed !== 1 ? ' · ' + c.speed.toFixed(2) + 'x' : '') +
+      (fxCount ? ' · fx' + fxCount : '') +
       (kfCount ? ' · ◆' + kfCount : '') + '</span>' : '';
     return '<div class="st-clip' + (isSelClip(c) ? ' sel' : '') + '" data-id="' + c.id +
       '" data-kind="' + c.kind + '" style="left:' + left.toFixed(1) + 'px;width:' + width.toFixed(1) + 'px" title="' +
       escHtml(c.name) + '">' +
+      (c.kind === 'audio' ? '<canvas class="st-wave"></canvas>' : '') +
       '<b class="st-clip-pattern"></b>' +
       '<span class="st-clip-name">' + escHtml(c.name) + '</span>' + meta +
       '<b class="st-trim" data-edge="l"></b><b class="st-trim" data-edge="r"></b></div>';
@@ -9471,6 +13960,8 @@ window.STUDIO_BODY = `
         .forEach(function (c) { row.insertAdjacentHTML('beforeend', clipEl(c)); });
     });
     updateCounts();
+    ensureVisiblePeaks();
+    paintWaves();
   }
 
   function updateCounts() {
@@ -9484,6 +13975,7 @@ window.STUDIO_BODY = `
   function renderTimeline() {
     renderRuler();
     renderRows();
+    paintRange();
   }
 
   function liveClipEl(c) {
@@ -9608,7 +14100,7 @@ window.STUDIO_BODY = `
       toast('这里已经有标记');
       return null;
     }
-    pushHistory();
+    pushHistory('添加标记');
     const m = { t: round2(t), name: '标记 ' + (S.project.markers.length + 1), color: '#f0b429' };
     S.project.markers.push(m);
     S.project.markers.sort(function (a, b) { return a.t - b.t; });
@@ -9622,7 +14114,7 @@ window.STUDIO_BODY = `
   function removeMarker(t) {
     const hit = S.project.markers.some(function (m) { return Math.abs(m.t - Number(t)) < 0.02; });
     if (!hit) return false;
-    pushHistory();
+    pushHistory('删除标记');
     S.project.markers = S.project.markers.filter(function (m) {
       return Math.abs(m.t - Number(t)) >= 0.02;
     });
@@ -9678,7 +14170,7 @@ window.STUDIO_BODY = `
   }
 
   function addTrack(kind) {
-    pushHistory();
+    pushHistory('新建轨道');
     const t = insertTrack(kind);
     rebuildTracks();
     toast('已新增轨道：' + t.name);
@@ -9692,7 +14184,7 @@ window.STUDIO_BODY = `
     if (S.project.clips.some(function (c) { return c.track === id; })) {
       toast('轨道上还有片段，先删掉片段'); return false;
     }
-    pushHistory();
+    pushHistory('删除轨道');
     S.project.tracks = S.project.tracks.filter(function (x) { return x.id !== id; });
     if (S.sel && !clipOf(S.sel)) S.sel = '';
     rebuildTracks();
@@ -9703,7 +14195,7 @@ window.STUDIO_BODY = `
   function setTrackFlag(id, key) {
     const t = trackOf(id);
     if (!t || ['locked', 'muted', 'solo', 'hidden'].indexOf(key) < 0) return;
-    pushHistory();
+    pushHistory('切换轨道开关');
     t[key] = !t[key];
     buildTrackHeads();
     applyTime();
@@ -9733,7 +14225,7 @@ window.STUDIO_BODY = `
     }
     const needTrack = !tr;
     const dur = m.kind === 'image' ? 5 : Math.max(MIN_CLIP, m.dur || 5);
-    pushHistory();
+    pushHistory('添加片段');
     if (needTrack) tr = insertTrack(wantKind).id;
     const at = start == null ? trackEnd(tr) : Math.max(0, start);
     const c = makeClip({
@@ -9759,7 +14251,7 @@ window.STUDIO_BODY = `
     const st = p.style;
     const at = opts && opts.start != null ? opts.start : S.time;
     const needTrack = !tracksOfKind('text').length;
-    pushHistory();
+    pushHistory('添加文字');
     const trackId = needTrack ? insertTrack('text').id : tracksOfKind('text')[0].id;
     if (trackLocked(trackId)) { dropHistory(); toast('文字轨道已锁定'); return null; }
     const c = makeClip({
@@ -9805,32 +14297,62 @@ window.STUDIO_BODY = `
     return splitClip(target, t);
   }
 
+  /* 关键帧按局部时间段切片：from/to 都是相对片段起点的时间。 */
+  function kfSlice(kf, from, to) {
+    const out = {};
+    Object.keys(kf || {}).forEach(function (prop) {
+      const arr = kf[prop] || [];
+      const pts = arr.map(function (k) {
+        return { t: round2(k.t - from), v: k.v, ease: k.ease };
+      }).filter(function (k) { return k.t >= -0.001 && k.t <= (to - from) + 0.001; });
+      if (pts.length) out[prop] = pts;
+    });
+    return out;
+  }
+
+  /* 纯数据切割：不改历史、不重绘，供分割 / 覆盖 / 粘贴共用。 */
+  function cutClip(target, t) {
+    if (!target) return null;
+    const leftDur = t - target.start;
+    const right = JSON.parse(JSON.stringify(target));
+    right.id = uid('c');
+    right.start = round2(t);
+    right.dur = round2(target.dur - leftDur);
+    right.in = round2(target.in + leftDur * target.speed);
+    right.kf = kfSlice(target.kf, leftDur, target.dur);
+    target.kf = kfSlice(target.kf, 0, leftDur);
+    target.dur = round2(leftDur);
+    S.project.clips.push(right);
+    return right;
+  }
+
+  /* 在播放头一次切开所有未锁定轨道；一次历史、一次重绘。 */
+  function splitAllAt(t) {
+    const at = t == null ? S.time : Number(t);
+    const targets = S.project.clips.filter(function (c) {
+      return !trackLocked(c.track) && at > c.start + 0.04 && at < c.start + c.dur - 0.04;
+    });
+    if (!targets.length) { toast('播放头没有可切割的片段'); return 0; }
+    pushHistory('在播放头切开所有轨道');
+    const made = targets.map(function (c) { return cutClip(c, at); }).filter(Boolean);
+    S.multi = new Set(made.map(function (c) { return c.id; }));
+    if (S.multi.size < 2) S.multi.clear();
+    S.sel = made.length ? made[made.length - 1].id : '';
+    renderTimeline();
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    toast('已切开 ' + made.length + ' 个片段');
+    return made.length;
+  }
+
   /* 把指定片段在时间 t 处切成两段（播放头分割与剃刀工具共用）。 */
   function splitClip(target, t) {
     if (!target) return null;
     if (t <= target.start + 0.04 || t >= target.start + target.dur - 0.04) return null;
     if (trackLocked(target.track)) { toast('轨道已锁定，先解锁'); return null; }
-    pushHistory();
-    const leftDur = t - target.start;
-    const right = JSON.parse(JSON.stringify(target));
-    right.id = uid('c');
-    right.start = t;
-    right.dur = target.dur - leftDur;
-    right.in = round2(target.in + leftDur * target.speed);
-    /* 关键帧按分割点切成两段，右段的时间轴归零 */
-    right.kf = {};
-    Object.keys(target.kf || {}).forEach(function (prop) {
-      const arr = target.kf[prop];
-      const left = arr.filter(function (k) { return k.t <= leftDur + 0.001; });
-      const rightPts = arr.map(function (k) {
-        return { t: round2(k.t - leftDur), v: k.v, ease: k.ease };
-      }).filter(function (k) { return k.t >= -0.001; });
-      if (left.length) target.kf[prop] = left;
-      else delete target.kf[prop];
-      if (rightPts.length) right.kf[prop] = rightPts;
-    });
-    target.dur = round2(leftDur);
-    S.project.clips.push(right);
+    pushHistory('分割片段');
+    const right = cutClip(target, t);
     S.sel = right.id;
     S.multi.clear();
     renderTimeline();
@@ -9845,7 +14367,7 @@ window.STUDIO_BODY = `
     const ids = selectedIds();
     const group = ids.map(clipOf).filter(Boolean);
     if (!group.length) { toast('先选中片段'); return null; }
-    pushHistory();
+    pushHistory('复制片段');
     const end = Math.max.apply(null, group.map(function (c) { return c.start + c.dur; }));
     const minStart = Math.min.apply(null, group.map(function (c) { return c.start; }));
     const made = [];
@@ -9884,7 +14406,7 @@ window.STUDIO_BODY = `
       toast('选中片段所在轨道已锁定');
       return false;
     }
-    pushHistory();
+    pushHistory(ripple ? '波纹删除片段' : '删除片段');
     const removedByTrack = {};
     group.forEach(function (c) {
       (removedByTrack[c.track] = removedByTrack[c.track] || []).push(c);
@@ -9907,6 +14429,127 @@ window.STUDIO_BODY = `
     scheduleSave();
     toast(ripple ? '已波纹删除 ' + group.length + ' 个片段' : '已删除 ' + group.length + ' 个片段');
     return true;
+  }
+
+  /* ---------------- 覆盖 / 插入 / 剪贴板 ---------------- */
+  /* 清空某轨在 [a,b) 内的内容：完全覆盖的删除，部分覆盖的裁切，跨中间的切开。 */
+  function clearRange(trackId, a, b) {
+    if (!(b > a)) return 0;
+    let touched = 0;
+    S.project.clips.slice().forEach(function (c) {
+      if (c.track !== trackId) return;
+      const s = c.start;
+      const e = c.start + c.dur;
+      if (e <= a + 1e-4 || s >= b - 1e-4) return;
+      touched += 1;
+      if (s >= a - 1e-4 && e <= b + 1e-4) {
+        S.project.clips = S.project.clips.filter(function (x) { return x.id !== c.id; });
+        return;
+      }
+      if (s < a - 1e-4 && e > b + 1e-4) cutClip(c, b);
+      if (s < a - 1e-4) {
+        c.kf = kfSlice(c.kf, 0, a - s);
+        c.dur = round2(a - s);
+      } else {
+        const shift = b - s;
+        c.kf = kfSlice(c.kf, shift, c.dur);
+        c.start = round2(b);
+        c.in = round2(c.in + shift * c.speed);
+        c.dur = round2(e - b);
+      }
+    });
+    return touched;
+  }
+
+  /* 插入编辑：先切开跨越插入点的片段，再把插入点之后的片段整体后移（同步锁语义）。 */
+  function shiftAllTracksAfter(at, dur) {
+    if (!dur) return;
+    S.project.clips.slice().forEach(function (c) {
+      if (trackLocked(c.track)) return;
+      if (c.start < at - 1e-4 && c.start + c.dur > at + 1e-4) cutClip(c, at);
+    });
+    S.project.clips.forEach(function (c) {
+      if (trackLocked(c.track)) return;
+      if (c.start >= at - 1e-4) c.start = round2(c.start + dur);
+    });
+  }
+
+  /* 素材落点：insert = 撑开空隙，overwrite = 清空目标区间。 */
+  function placeMedia(mediaId, mode) {
+    const m = mediaOf(mediaId);
+    if (!m) return null;
+    const want = m.kind === 'text' ? 'text' : m.kind === 'audio' ? 'audio' : 'video';
+    const tr0 = preferredTrack(want);
+    if (tr0 && trackLocked(tr0)) { toast('目标轨道已锁定，先解锁'); return null; }
+    const dur = round2(m.kind === 'image' ? 5 : Math.max(MIN_CLIP, m.dur || 5));
+    const at = round2(S.time);
+    pushHistory(mode === 'insert' ? '插入素材' : '覆盖素材');
+    const tr = tr0 || insertTrack(want).id;
+    if (mode === 'insert') shiftAllTracksAfter(at, dur);
+    else clearRange(tr, at, at + dur);
+    const c = makeClip({
+      track: tr,
+      kind: m.kind,
+      mediaId: m.id,
+      name: m.name,
+      start: at,
+      dur: Math.min(dur, maxDurFor({ kind: m.kind, mediaId: m.id, speed: 1 }, 0)),
+      volume: m.kind === 'audio' ? 0.9 : 1
+    });
+    S.project.clips.push(c);
+    S.sel = c.id;
+    S.multi.clear();
+    renderTimeline();
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    toast((mode === 'insert' ? '已插入：' : '已覆盖：') + m.name);
+    return c;
+  }
+
+  function copySelected() {
+    const group = selectedIds().map(clipOf).filter(Boolean);
+    if (!group.length) { toast('先选中片段'); return 0; }
+    const base = Math.min.apply(null, group.map(function (c) { return c.start; }));
+    S.clipboard = { base: round2(base), items: JSON.parse(JSON.stringify(group)) };
+    toast('已复制 ' + group.length + ' 个片段，Ctrl+V 粘贴到播放头');
+    return group.length;
+  }
+
+  function pasteAt(t) {
+    if (!S.clipboard || !S.clipboard.items.length) { toast('剪贴板是空的'); return 0; }
+    const cb = S.clipboard;
+    const anchor = Math.max(0, t == null ? S.time : Number(t));
+    const offset = Math.max(anchor - cb.base, -cb.base);
+    const made = [];
+    let skipped = 0;
+    pushHistory('粘贴片段');
+    cb.items.forEach(function (src) {
+      const c = JSON.parse(JSON.stringify(src));
+      const want = c.kind === 'text' ? 'text' : c.kind === 'audio' ? 'audio' : 'video';
+      const tr = trackOf(c.track) ? c.track : preferredTrack(want);
+      if (!tr || trackLocked(tr)) { skipped += 1; return; }
+      c.id = uid('c');
+      c.track = tr;
+      c.start = round2(Math.max(0, src.start + offset));
+      clearRange(tr, c.start, c.start + c.dur);
+      S.project.clips.push(c);
+      made.push(c);
+    });
+    if (!made.length) {
+      dropHistory();
+      toast('没有可粘贴的轨道');
+      return 0;
+    }
+    S.multi = new Set(made.map(function (c) { return c.id; }));
+    if (S.multi.size < 2) S.multi.clear();
+    S.sel = made[made.length - 1].id;
+    renderTimeline();
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    toast('已粘贴 ' + made.length + ' 个片段' + (skipped ? '，跳过 ' + skipped + ' 个锁定轨道' : ''));
+    return made.length;
   }
 
   /* ---------------- 右键菜单 / 分离音频 ---------------- */
@@ -9932,7 +14575,7 @@ window.STUDIO_BODY = `
     let tr = preferredTrack('audio');
     if (tr && trackLocked(tr)) { toast('音频轨道已锁定，先解锁'); return null; }
     const needTrack = !tr;
-    pushHistory();
+    pushHistory('分离音频');
     if (needTrack) tr = insertTrack('audio').id;
     const a = makeClip({
       track: tr,
@@ -9981,7 +14624,7 @@ window.STUDIO_BODY = `
     }
     if (!r || !r.url) { toast('配音失败：没有返回音频'); return null; }
     const dur = Math.max(MIN_CLIP, (await probeDuration(r.url, 'audio')) || 5);
-    pushHistory();
+    pushHistory('生成配音');
     const media = {
       id: 'tts:' + uid('m'),
       name: '配音 · ' + (c.name || '文字'),
@@ -10073,6 +14716,30 @@ window.STUDIO_BODY = `
     });
   }
 
+  function openMediaMenu(m, x, y) {
+    closeClipMenu();
+    if (!m) return;
+    const menu = document.createElement('div');
+    menu.className = 'st-ctx';
+    menu.id = 'stCtx';
+    menu.setAttribute('role', 'menu');
+    menu.innerHTML =
+      '<button type="button" role="menuitem" data-mi="append">追加到时间线</button>' +
+      '<button type="button" role="menuitem" data-mi="insert">插入到播放头（波纹）</button>' +
+      '<button type="button" role="menuitem" data-mi="overwrite">覆盖到播放头</button>';
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = Math.max(6, Math.min(x, window.innerWidth - rect.width - 8)) + 'px';
+    menu.style.top = Math.max(6, Math.min(y, window.innerHeight - rect.height - 8)) + 'px';
+    menu.addEventListener('click', function (e) {
+      const b = e.target.closest('[data-mi]');
+      if (!b) return;
+      closeClipMenu();
+      if (b.dataset.mi === 'append') addMediaClip(m.id, null, null);
+      else placeMedia(m.id, b.dataset.mi);
+    });
+  }
+
   function setClipProps(id, patch) {
     const c = clipOf(id);
     if (!c) return null;
@@ -10102,7 +14769,7 @@ window.STUDIO_BODY = `
     if (trackLocked(c.track)) { toast('轨道已锁定，先解锁'); return null; }
     const local = clamp((atT == null ? S.time : atT) - c.start, 0, c.dur);
     const v = propAt(c, prop, c.start + local);
-    pushHistory();
+    pushHistory('添加关键帧');
     c.kf = c.kf || {};
     const arr = (c.kf[prop] || []).filter(function (k) { return Math.abs(k.t - local) > 0.02; });
     arr.push({ t: round2(local), v: Math.round(v * 1000) / 1000, ease: 'linear' });
@@ -10119,7 +14786,7 @@ window.STUDIO_BODY = `
   function clearKeyframes(id, prop) {
     const c = clipOf(id);
     if (!c) return false;
-    pushHistory();
+    pushHistory('清除关键帧');
     if (prop) delete c.kf[prop];
     else c.kf = {};
     renderRows();
@@ -10227,6 +14894,61 @@ window.STUDIO_BODY = `
   }
 
   /* ---------------- 时间线拖拽 ---------------- */
+  function paintMarquee() {
+    const el = $('stMarquee');
+    const m = S.marquee;
+    if (!el) return;
+    if (!m) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.style.left = Math.min(m.x0, m.x1) + 'px';
+    el.style.top = Math.min(m.y0, m.y1) + 'px';
+    el.style.width = Math.abs(m.x1 - m.x0) + 'px';
+    el.style.height = Math.abs(m.y1 - m.y0) + 'px';
+  }
+  /* 框选命中：时间区间相交 + 轨道行区间相交。 */
+  function marqueeHits(m) {
+    const a = Math.min(m.x0, m.x1) / S.pps;
+    const b = Math.max(m.x0, m.x1) / S.pps;
+    const y0 = Math.min(m.y0, m.y1) - RULER_H;
+    const y1 = Math.max(m.y0, m.y1) - RULER_H;
+    const hits = [];
+    let top = 0;
+    tracks().forEach(function (t) {
+      const bottom = top + t.height;
+      if (Math.min(y1, bottom) > Math.max(y0, top)) {
+        S.project.clips.forEach(function (c) {
+          if (c.track !== t.id) return;
+          if (c.start + c.dur < a || c.start > b) return;
+          hits.push(c);
+        });
+      }
+      top = bottom;
+    });
+    return hits;
+  }
+  function paintMarqueeSel() {
+    const m = S.marquee;
+    if (!m) return;
+    const hit = marqueeHits(m);
+    const base = S.drag && S.drag.baseSel ? S.drag.baseSel : [];
+    S.multi = new Set(base);
+    hit.forEach(function (c) { S.multi.add(c.id); });
+    if (S.multi.size < 2) S.multi.clear();
+    S.sel = hit.length ? hit[0].id : (S.multi.size ? Array.from(S.multi).pop() : '');
+    paintSel();
+  }
+  /* 拖到时间线边缘时自动滚动：跟随指针移动事件，不做后台动画。 */
+  function autoScroll(cx, cy) {
+    const sc = $('stScroll');
+    if (!sc) return;
+    const r = sc.getBoundingClientRect();
+    const zone = 44;
+    if (cx < r.left + zone) sc.scrollLeft = Math.max(0, sc.scrollLeft - Math.ceil((r.left + zone - cx) / 3));
+    else if (cx > r.right - zone) sc.scrollLeft += Math.ceil((cx - (r.right - zone)) / 3);
+    if (cy < r.top + zone) sc.scrollTop = Math.max(0, sc.scrollTop - Math.ceil((r.top + zone - cy) / 3));
+    else if (cy > r.bottom - zone) sc.scrollTop += Math.ceil((cy - (r.bottom - zone)) / 3);
+  }
+
   function onTimelineDown(e) {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     const trim = e.target.closest('.st-trim');
@@ -10234,8 +14956,21 @@ window.STUDIO_BODY = `
     const row = e.target.closest('.st-row');
     if (!clipNode) {
       if (!row) return;
-      selectClip('');
-      S.drag = { mode: 'scrub', pointerId: e.pointerId };
+      const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+      if (!additive) selectClip('');
+      const inner = $('stInner');
+      const ir = inner ? inner.getBoundingClientRect() : { left: 0, top: 0 };
+      S.drag = {
+        mode: 'scrub',
+        pointerId: e.pointerId,
+        x0: e.clientX,
+        y0: e.clientY,
+        ix0: e.clientX - ir.left,
+        iy0: e.clientY - ir.top,
+        baseSel: Array.from(S.multi),
+        moved: false
+      };
+      try { $('stRows').setPointerCapture(e.pointerId); } catch (err) {}
       seek(timeAtX(e.clientX));
       e.preventDefault();
       return;
@@ -10269,7 +15004,12 @@ window.STUDIO_BODY = `
     else if ((e.ctrlKey || e.metaKey) && !additive) mode = 'slide';
 
     const group = selectedIds().map(clipOf).filter(Boolean);
-    pushHistory();
+    pushHistory(mode === 'blade' ? '切分片段'
+      : mode === 'trim' ? '修剪片段'
+      : mode === 'roll' ? '滚动剪辑'
+      : mode === 'slip' ? '滑移片段'
+      : mode === 'slide' ? '滑动片段'
+      : '移动片段');
     S.drag = {
       mode: mode,
       id: c.id,
@@ -10291,12 +15031,28 @@ window.STUDIO_BODY = `
   function onPointerMove(e) {
     const d = S.drag;
     if (!d) return;
-    if (d.mode === 'scrub') { seek(timeAtX(e.clientX)); return; }
+    if (d.mode === 'scrub') {
+      const dist = Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0);
+      if (!d.moved && dist < 6) return;
+      const inner = $('stInner');
+      const ir = inner ? inner.getBoundingClientRect() : { left: 0, top: 0 };
+      if (!d.moved) {
+        d.moved = true;
+        S.marquee = { x0: d.ix0, y0: d.iy0, x1: d.ix0, y1: d.iy0 };
+      }
+      S.marquee.x1 = e.clientX - ir.left;
+      S.marquee.y1 = e.clientY - ir.top;
+      paintMarquee();
+      paintMarqueeSel();
+      autoScroll(e.clientX, e.clientY);
+      return;
+    }
     if (d.mode === 'height') {
       setTrackHeight(d.id, d.h0 + (e.clientY - d.y0));
       d.changed = true;
       return;
     }
+    autoScroll(e.clientX, e.clientY);
     const c = clipOf(d.id);
     if (!c) { S.drag = null; return; }
     const dx = (e.clientX - d.x0) / S.pps;
@@ -10344,7 +15100,17 @@ window.STUDIO_BODY = `
     const d = S.drag;
     if (!d) return;
     S.drag = null;
-    if (d.mode === 'scrub') return;
+    if (d.mode === 'scrub') {
+      if (d.moved) {
+        S.marquee = null;
+        paintMarquee();
+        renderInspector();
+        paintFxSel();
+        const n = S.multi.size || (S.sel ? 1 : 0);
+        if (n > 1) toast('已框选 ' + n + ' 个片段');
+      }
+      return;
+    }
     if (!d.changed) { dropHistory(); return; }
     renderRows();
     renderInspector();
@@ -10486,7 +15252,7 @@ window.STUDIO_BODY = `
       .filter(function (x) { return !!x.kind; });
     if (!usable.length) { toast('没有可用的视频 / 音频 / 图片文件'); return []; }
     toast('正在导入 ' + usable.length + ' 个素材…');
-    pushHistory();
+    pushHistory('导入素材');
     const out = [];
     for (const item of usable) {
       const url = URL.createObjectURL(item.f);
@@ -10507,6 +15273,102 @@ window.STUDIO_BODY = `
     scheduleSave();
     toast('已导入 ' + out.length + ' 个素材，双击可加入时间线（文件素材不会写进项目存档）');
     return out;
+  }
+
+  /* ---------------- 字幕：SRT / VTT ----------------
+   * 解析与生成是纯函数，导入/导出只负责落到文字轨与下载。 */
+  function parseSubs(text) {
+    if (!text) return [];
+    let src = String(text).replace(/\r\n?/g, '\n').replace(/^\uFEFF/, '');
+    src = src.replace(/^WEBVTT[^\n]*\n/i, '').replace(/^NOTE\b[\s\S]*?\n\n/gm, '');
+    const out = [];
+    const re = /(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})[^\n]*\n?([\s\S]*?)(?=\n\s*\n|$)/g;
+    let m;
+    while ((m = re.exec(src))) {
+      const a = (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) + Number('0.' + m[4]);
+      const b = (+m[5]) * 3600 + (+m[6]) * 60 + (+m[7]) + Number('0.' + m[8]);
+      const body = m[9]
+        .split('\n')
+        .filter(function (ln) { return !/^\s*$/.test(ln); })
+        .join('\n')
+        .replace(/<[^>]+>/g, '')
+        .trim();
+      if (!body || !(b > a)) continue;
+      out.push({ start: round2(a), end: round2(b), text: body });
+    }
+    return out;
+  }
+  function srtTime(sec) {
+    const ms = Math.max(0, Math.round(Number(sec) * 1000));
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    const r = ms % 1000;
+    const two = function (n) { return String(n).padStart(2, '0'); };
+    return two(h) + ':' + two(m) + ':' + two(s) + ',' + String(r).padStart(3, '0');
+  }
+  function buildSrt(clips) {
+    const list = (clips || []).filter(function (c) {
+      return c && c.kind === 'text' && String((c.text && c.text.content) || '').trim();
+    }).slice().sort(function (a, b) { return a.start - b.start; });
+    return list.map(function (c, i) {
+      return (i + 1) + '\n' + srtTime(c.start) + ' --> ' + srtTime(c.start + c.dur) + '\n' +
+        String(c.text.content).trim() + '\n';
+    }).join('\n');
+  }
+  function importSubs(text) {
+    const cues = parseSubs(text);
+    if (!cues.length) { toast('没有解析到字幕条目'); return 0; }
+    pushHistory('导入字幕');
+    let tr = tracksOfKind('text')[0];
+    if (tr && trackLocked(tr.id)) { dropHistory(); toast('字幕轨道已锁定，先解锁'); return 0; }
+    if (!tr) tr = insertTrack('text');
+    const made = [];
+    cues.forEach(function (q, i) {
+      const c = makeClip({
+        track: tr.id,
+        kind: 'text',
+        name: '字幕 ' + (i + 1),
+        start: q.start,
+        dur: Math.max(0.3, round2(q.end - q.start)),
+        y: 32,
+        text: {
+          content: q.text,
+          size: 54,
+          color: '#ffffff',
+          bg: 'rgba(0,0,0,0.35)',
+          bold: true,
+          align: 'center'
+        }
+      });
+      S.project.clips.push(c);
+      made.push(c);
+    });
+    S.sel = made[0].id;
+    S.multi.clear();
+    renderAll();
+    applyTime();
+    scheduleSave();
+    toast('已导入 ' + made.length + ' 条字幕');
+    return made.length;
+  }
+  function subsText() {
+    return buildSrt(S.project.clips.filter(function (c) { return c.kind === 'text'; }));
+  }
+  function exportSubs() {
+    const txt = subsText();
+    if (!txt) { toast('时间线上没有文字片段'); return ''; }
+    const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = String(S.project.name || '字幕').replace(/[\\/:*?"<>|]+/g, '_') + '.srt';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) {} }, 4000);
+    toast('已导出 SRT 字幕');
+    return txt;
   }
 
   /* ---------------- 素材弹层：视频库 / 图库 ---------------- */
@@ -10790,15 +15652,21 @@ window.STUDIO_BODY = `
       '<label class="st-field wide"><span>帧率</span><select data-proj="fps">' + fps + '</select></label>' +
       '<div class="st-insp-empty">素材 ' + S.project.media.length + ' 个 · 片段 ' + S.project.clips.length +
       ' 条 · 标记 ' + S.project.markers.length + ' 个</div></div>' +
-      trackPanel() + snapshotPanel() +
+      trackPanel() + snapshotPanel() + histPanel() +
       '<div class="st-insp-sec"><h4>操作提示</h4><div class="st-insp-empty"><ul>' +
-      '<li>拖素材到轨道，或双击素材自动追加</li>' +
+      '<li>拖素材到轨道，或双击素材自动追加；右键素材可插入 / 覆盖到播放头</li>' +
       '<li>Alt+拖边缘＝波纹裁剪，Ctrl+拖边缘＝滚动剪辑</li>' +
       '<li>Alt+拖片段＝滑移，Ctrl+拖片段＝滑动</li>' +
-      '<li>Shift/Ctrl+点选多选，拖任意一个整体移动</li>' +
-      '<li>空格播放，S 分割，M 打标记，Delete 删除</li>' +
-      '<li>Shift+Delete 波纹删除，Ctrl+Z / Ctrl+Shift+Z 撤销重做</li>' +
+      '<li>空白处拖拽＝框选，Shift/Ctrl+点选多选</li>' +
+      '<li>J/K/L 倒放 / 停 / 播放加速，I / O 设入出点，X 清除区间</li>' +
+      '<li>空格播放，S 分割，Ctrl+K 切开全部轨道，M 打标记</li>' +
+      '<li>Ctrl+C / Ctrl+V 以播放头粘贴，Shift+Delete 波纹删除</li>' +
       '</ul></div></div>';
+  }
+
+  function histPanel() {
+    return '<div class="st-insp-sec"><h4>历史<em>点条目回退</em></h4>' +
+      '<div class="st-histlist" id="stHistList"></div></div>';
   }
 
   function kfPanel(c) {
@@ -10820,7 +15688,7 @@ window.STUDIO_BODY = `
     const box = $('stInspector');
     if (!box) return;
     const c = selected();
-    if (!c) { box.innerHTML = projectPanel(); paintStatus(); return; }
+    if (!c) { box.innerHTML = projectPanel(); paintStatus(); paintUndo(); return; }
     const isText = c.kind === 'text';
     const isVisual = c.kind === 'video' || c.kind === 'image';
     const m = c.mediaId ? mediaOf(c.mediaId) : null;
@@ -10870,10 +15738,7 @@ window.STUDIO_BODY = `
         rng('旋转', 'rot', Math.round(c.rot), -180, 180, 1, Math.round(c.rot) + '°') +
         rng('透明', 'opacityPct', Math.round(c.opacity * 100), 0, 100, 1, Math.round(c.opacity * 100) + '%');
       if (isVisual) {
-        html += '<label class="st-field wide"><span>滤镜</span><select data-prop="filter">' +
-          FILTERS.map(function (f) {
-            return '<option value="' + f.id + '"' + (f.id === c.filter ? ' selected' : '') + '>' + f.name + '</option>';
-          }).join('') + '</select></label>';
+        html += fxStackPanel(c);
       }
       html += '</div>';
     }
@@ -10901,10 +15766,121 @@ window.STUDIO_BODY = `
     paintStatus();
   }
 
+  /* 效果栈面板：顺序即渲染顺序，开关只影响该条。 */
+  function fxStackPanel(c) {
+    const list = c.effects || [];
+    const rows = list.map(function (e) {
+      let params = '';
+      if (e.type === 'adjust') {
+        params = ADJUST_DEFS.map(function (d) {
+          const v = Number(e.params[d.key]);
+          return '<label class="st-field"><span>' + d.name + '</span>' +
+            '<input type="range" data-fxparam="' + e.id + ':' + d.key + '" min="' + d.min + '" max="' + d.max +
+            '" step="' + d.step + '" value="' + v + '"><i class="st-fval">' + v.toFixed(2) + '</i></label>';
+        }).join('');
+      } else if (e.type === 'blur') {
+        params = '<label class="st-field"><span>半径</span>' +
+          '<input type="range" data-fxparam="' + e.id + ':px" min="0" max="40" step="1" value="' + e.params.px +
+          '"><i class="st-fval">' + e.params.px + 'px</i></label>';
+      }
+      return '<div class="st-fxrow' + (e.enabled === false ? ' off' : '') + '" data-fxrow="' + e.id + '">' +
+        '<label class="st-fxtoggle"><input type="checkbox" data-fxtoggle="' + e.id + '"' +
+        (e.enabled !== false ? ' checked' : '') + '></label>' +
+        '<b>' + escHtml(effectName(e)) + '</b>' +
+        '<span class="st-fxrow-act">' +
+        '<button type="button" data-fxmove="-1" data-fxid="' + e.id + '" title="上移">↑</button>' +
+        '<button type="button" data-fxmove="1" data-fxid="' + e.id + '" title="下移">↓</button>' +
+        '<button type="button" data-fxdel="' + e.id + '" title="移除">×</button></span>' +
+        (params ? '<div class="st-fxparams">' + params + '</div>' : '') + '</div>';
+    }).join('');
+    return '<div class="st-insp-sec" data-g="visual"><h4>效果栈<em>' + list.length + ' / ' + EFFECT_MAX + '</em></h4>' +
+      (rows || '<div class="st-hint">还没有效果。可在「滤镜」面板添加，或点下面按钮。</div>') +
+      '<div class="st-fxadd"><button type="button" class="st-ghost" data-fxadd="adjust">+ 调色</button>' +
+      '<button type="button" class="st-ghost" data-fxadd="blur">+ 模糊</button></div></div>';
+  }
+
+  function addEffect(id, type) {
+    const c = clipOf(id);
+    if (!c) return null;
+    if (trackLocked(c.track)) { toast('轨道已锁定，先解锁'); return null; }
+    if ((c.effects || []).length >= EFFECT_MAX) { toast('效果最多 ' + EFFECT_MAX + ' 个'); return null; }
+    pushHistory(type === 'blur' ? '添加模糊' : '添加调色');
+    const e = type === 'blur'
+      ? { id: uid('fx'), type: 'blur', enabled: true, params: { px: 4 } }
+      : { id: uid('fx'), type: 'adjust', enabled: true, params: { brightness: 1, contrast: 1, saturate: 1 } };
+    c.effects = (c.effects || []).concat([e]);
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    return e;
+  }
+  function setEffectEnabled(id, fxId, on) {
+    const c = clipOf(id);
+    if (!c || trackLocked(c.track)) return false;
+    const e = (c.effects || []).filter(function (x) { return x.id === fxId; })[0];
+    if (!e) return false;
+    e.enabled = !!on;
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    return true;
+  }
+  function moveEffect(id, fxId, dir) {
+    const c = clipOf(id);
+    if (!c || trackLocked(c.track)) return false;
+    const list = c.effects || [];
+    const i = list.findIndex(function (x) { return x.id === fxId; });
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return false;
+    const tmp = list[i];
+    list[i] = list[j];
+    list[j] = tmp;
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    return true;
+  }
+  function removeEffect(id, fxId) {
+    const c = clipOf(id);
+    if (!c || trackLocked(c.track)) return false;
+    const before = (c.effects || []).length;
+    c.effects = (c.effects || []).filter(function (x) { return x.id !== fxId; });
+    if (c.effects.length === before) return false;
+    renderInspector();
+    applyTime();
+    scheduleSave();
+    return true;
+  }
+  function setFxParam(pair, value) {
+    const parts = String(pair || '').split(':');
+    const c = selected();
+    if (!c || !parts[0]) return false;
+    const e = (c.effects || []).filter(function (x) { return x.id === parts[0]; })[0];
+    if (!e || !e.params) return false;
+    if (e.type === 'adjust') {
+      const d = ADJUST_DEFS.filter(function (x) { return x.key === parts[1]; })[0];
+      if (!d) return false;
+      e.params[d.key] = clamp(Number(value) || 0, d.min, d.max);
+    } else if (e.type === 'blur') {
+      e.params.px = clamp(Number(value) || 0, 0, 40);
+    }
+    const out = document.querySelector('[data-fxparam="' + pair + '"]');
+    if (out && out.parentNode) {
+      const fv = out.parentNode.querySelector('.st-fval');
+      if (fv) fv.textContent = e.type === 'blur' ? e.params.px + 'px' : Number(e.params[parts[1]]).toFixed(2);
+    }
+    applyTime();
+    scheduleSave();
+    return true;
+  }
+
   function paintFxSel() {
     const c = selected();
+    const used = c ? (c.effects || []).filter(function (e) {
+      return e.type === 'preset' && e.enabled !== false;
+    }).map(function (e) { return e.preset; }) : [];
     document.querySelectorAll('#stFxGrid .st-fxcard').forEach(function (n) {
-      n.classList.toggle('on', !!c && c.filter === n.dataset.fx);
+      n.classList.toggle('on', used.indexOf(n.dataset.fx) >= 0);
     });
   }
 
@@ -10927,6 +15903,7 @@ window.STUDIO_BODY = `
     const target = e.target;
     if (!target || !target.dataset) return;
     if (target.dataset.proj) { onProjectInput(target); return; }
+    if (target.dataset.fxparam) { setFxParam(target.dataset.fxparam, target.value); return; }
     const prop = target.dataset.prop;
     if (!prop) return;
     const c = selected();
@@ -10947,7 +15924,6 @@ window.STUDIO_BODY = `
       case 'speed': c.speed = clamp(Number(v) || 1, 0.25, 4); break;
       case 'fadeIn': c.fadeIn = clamp(Number(v) || 0, 0, 5); break;
       case 'fadeOut': c.fadeOut = clamp(Number(v) || 0, 0, 5); break;
-      case 'filter': c.filter = String(v); break;
       case 'textContent': c.text.content = String(v); break;
       case 'textSize': c.text.size = clamp(Number(v) || 64, 10, 220); break;
       case 'textColor': c.text.color = String(v); break;
@@ -10967,8 +15943,12 @@ window.STUDIO_BODY = `
   function onInspectorChange(e) {
     const target = e.target;
     if (!target || !target.dataset) return;
+    if (target.dataset.fxtoggle) {
+      setEffectEnabled(S.sel, target.dataset.fxtoggle, target.checked);
+      return;
+    }
     if (S.inspSnap && snap() !== S.inspSnap) {
-      S.hist.push(S.inspSnap);
+      S.hist.push({ label: '调整参数', snap: S.inspSnap });
       if (S.hist.length > MAX_HIST) S.hist.shift();
       S.future.length = 0;
       paintUndo();
@@ -11163,6 +16143,12 @@ window.STUDIO_BODY = `
       if (!m) return;
       addMediaClip(m.id, null, null);
     });
+    grid.addEventListener('contextmenu', function (e) {
+      const card = e.target.closest('.st-mcard');
+      if (!card) return;
+      e.preventDefault();
+      openMediaMenu(mediaOf(card.dataset.id), e.clientX, e.clientY);
+    });
     grid.addEventListener('dragstart', function (e) {
       const card = e.target.closest('.st-mcard');
       if (!card) return;
@@ -11191,9 +16177,28 @@ window.STUDIO_BODY = `
     if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redo(); return; }
     if (mod && (e.key === 'd' || e.key === 'D')) { e.preventDefault(); duplicateSelected(); return; }
     if (mod && (e.key === 'a' || e.key === 'A')) { e.preventDefault(); selectAllClips(); return; }
+    if (mod && (e.key === 'c' || e.key === 'C')) { e.preventDefault(); copySelected(); return; }
+    if (mod && (e.key === 'v' || e.key === 'V')) { e.preventDefault(); pasteAt(S.time); return; }
+    if (mod && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); splitAllAt(S.time); return; }
     if (mod && (e.key === 's' || e.key === 'S')) { e.preventDefault(); saveNow(); toast('项目已保存到本机'); return; }
     if (mod) return;
     if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
+    if (e.key === 'j' || e.key === 'J') { e.preventDefault(); shuttle(-1); return; }
+    if (e.key === 'k' || e.key === 'K') { e.preventDefault(); pause(); return; }
+    if (e.key === 'l' || e.key === 'L') { e.preventDefault(); shuttle(1); return; }
+    if (e.key === 'i' || e.key === 'I') {
+      e.preventDefault();
+      if (e.altKey) { S.rngIn = null; paintRange(); paintStatus(); }
+      else setRangeEdge('in', S.time);
+      return;
+    }
+    if (e.key === 'o' || e.key === 'O') {
+      e.preventDefault();
+      if (e.altKey) { S.rngOut = null; paintRange(); paintStatus(); }
+      else setRangeEdge('out', S.time);
+      return;
+    }
+    if (e.key === 'x' || e.key === 'X') { e.preventDefault(); clearInOut(); return; }
     if (e.key === 'v' || e.key === 'V') { e.preventDefault(); setTool('select'); return; }
     if (e.key === 'b' || e.key === 'B') { e.preventDefault(); setTool('blade'); return; }
     if (e.key === 'f' || e.key === 'F') { e.preventDefault(); fitTimeline(); return; }
@@ -11227,11 +16232,14 @@ window.STUDIO_BODY = `
 
   /* ---------------- 菜单栏 / 快捷键面板 ---------------- */
   const SHORTCUTS = [
-    ['空格', '播放 / 暂停'],
+    ['空格 / K', '播放 / 停止'],
+    ['J / L', '倒放 / 播放（连按 L 加速 2×、4×）'],
     ['V / B', '选择工具 / 剃刀工具'],
-    ['S', '在播放头处分割'],
+    ['S / Ctrl+K', '分割选中片段 / 切开所有轨道'],
+    ['I / O / X', '设入点 / 设出点 / 清除区间'],
     ['Ctrl+Z / Ctrl+Shift+Z', '撤销 / 重做'],
-    ['Ctrl+D', '复制片段'],
+    ['Ctrl+C / Ctrl+V', '复制片段 / 粘贴到播放头'],
+    ['Ctrl+D', '复制片段（紧随其后）'],
     ['Delete / Shift+Delete', '删除 / 波纹删除'],
     ['Ctrl+A', '全选片段'],
     ['M', '在播放头打标记'],
@@ -11244,6 +16252,7 @@ window.STUDIO_BODY = `
     ['Alt+边缘 / Ctrl+边缘', '波纹裁剪 / 滚动剪辑'],
     ['Alt+片段 / Ctrl+片段', '滑移 / 滑动'],
     ['Shift+点击 / Ctrl+点击', '多选片段'],
+    ['空白处拖拽', '框选片段'],
     ['Esc', '关闭菜单 / 取消选中']
   ];
 
@@ -11263,14 +16272,18 @@ window.STUDIO_BODY = `
         { label: '导出项目', run: function () { $('stProjExport').click(); } },
         { sep: true },
         { label: '导入素材…', run: function () { $('stImport').click(); } },
-        { label: '导出视频…', run: function () { $('stExport').click(); } }
+        { label: '导出视频…', run: function () { $('stExport').click(); } },
+        { label: '导出当前帧（PNG）', run: exportStill }
       ] },
       { id: 'edit', items: [
         { label: '撤销', hint: 'Ctrl+Z', disabled: !S.hist.length, run: undo },
         { label: '重做', hint: 'Ctrl+Shift+Z', disabled: !S.future.length, run: redo },
         { sep: true },
         { label: '在播放头处分割', hint: 'S', run: function () { splitAt(); } },
+        { label: '切开所有轨道', hint: 'Ctrl+K', run: function () { splitAllAt(S.time); } },
         { label: '复制片段', hint: 'Ctrl+D', run: duplicateSelected },
+        { label: '复制到剪贴板', hint: 'Ctrl+C', run: copySelected },
+        { label: '粘贴到播放头', hint: 'Ctrl+V', run: function () { pasteAt(S.time); } },
         { label: '删除', hint: 'Del', run: function () { deleteSelected(false); } },
         { label: '波纹删除', hint: 'Shift+Del', run: function () { deleteSelected(true); } },
         { sep: true },
@@ -11282,7 +16295,13 @@ window.STUDIO_BODY = `
         { label: '缩小时间线', hint: '−', run: function () { setZoom(S.pps / 1.25); } },
         { sep: true },
         { label: '磁吸对齐', hint: '开 / 关', checked: S.snap, run: function () { $('stSnap').click(); } },
-        { label: '循环播放', checked: S.loop, run: function () { setLoop(!S.loop); } }
+        { label: '循环播放', checked: S.loop, run: function () { setLoop(!S.loop); } },
+        { sep: true },
+        { label: '设入点', hint: 'I', checked: S.rngIn != null, run: function () { setRangeEdge('in', S.time); } },
+        { label: '设出点', hint: 'O', checked: S.rngOut != null, run: function () { setRangeEdge('out', S.time); } },
+        { label: '清除入出点', hint: 'X', run: clearInOut },
+        { label: '循环播放选区', hint: '开 / 关', checked: S.loop && S.rngIn != null && S.rngOut != null,
+          run: function () { if (S.rngIn == null || S.rngOut == null) { toast('先按 I / O 设入出点'); return; } setLoop(true); seek(S.rngIn); } }
       ] },
       { id: 'help', items: [
         { label: '快捷键一览', run: openHelp },
@@ -11404,7 +16423,7 @@ window.STUDIO_BODY = `
       if (!grip) return;
       const t = trackOf(grip.dataset.grip);
       if (!t) return;
-      pushHistory();
+      pushHistory('调整轨道高度');
       S.drag = { mode: 'height', id: t.id, y0: e.clientY, h0: t.height, changed: false, pointerId: e.pointerId };
       try { grip.setPointerCapture(e.pointerId); } catch (err) {}
       e.preventDefault();
@@ -11471,6 +16490,18 @@ window.STUDIO_BODY = `
     bindMediaGrid($('stMediaGrid'));
     bindMediaGrid($('stAudioGrid'));
 
+    $('stSrtImport').addEventListener('click', function () { $('stSrtFile').click(); });
+    $('stSrtExport').addEventListener('click', exportSubs);
+    $('stSrtFile').addEventListener('change', function (e) {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = function () { importSubs(String(reader.result || '')); };
+      reader.onerror = function () { toast('字幕文件读取失败'); };
+      reader.readAsText(f, 'utf-8');
+    });
+
     $('stTextPresets').addEventListener('click', function (e) {
       const b = e.target.closest('[data-preset]');
       if (b) addTextClip(b.dataset.preset);
@@ -11479,13 +16510,27 @@ window.STUDIO_BODY = `
     $('stFxGrid').addEventListener('click', function (e) {
       const card = e.target.closest('.st-fxcard');
       if (!card) return;
+      const fxId = card.dataset.fx;
       const c = selected();
       if (!c || (c.kind !== 'video' && c.kind !== 'image')) {
         toast('先选中一个视频 / 图片片段');
         return;
       }
-      pushHistory();
-      c.filter = card.dataset.fx;
+      if (trackLocked(c.track)) { toast('轨道已锁定，先解锁'); return; }
+      if (fxId === 'none') {
+        pushHistory('清除滤镜');
+        c.effects = [];
+      } else {
+        const has = (c.effects || []).some(function (e) { return e.type === 'preset' && e.preset === fxId; });
+        if (has) {
+          pushHistory('移除滤镜');
+          c.effects = (c.effects || []).filter(function (e) { return !(e.type === 'preset' && e.preset === fxId); });
+        } else {
+          if ((c.effects || []).length >= EFFECT_MAX) { toast('效果最多 ' + EFFECT_MAX + ' 个'); return; }
+          pushHistory('添加滤镜');
+          c.effects = normalizeEffects((c.effects || []).concat([{ type: 'preset', preset: fxId, enabled: true }]));
+        }
+      }
       renderInspector();
       applyTime();
       scheduleSave();
@@ -11590,6 +16635,14 @@ window.STUDIO_BODY = `
       if (tkf) { setTrackFlag(tkf.dataset.tk, tkf.dataset.tkf); return; }
       const tkdel = e.target.closest('[data-tkdel]');
       if (tkdel) { removeTrack(tkdel.dataset.tkdel); return; }
+      const fxAdd = e.target.closest('[data-fxadd]');
+      if (fxAdd) { if (S.sel) addEffect(S.sel, fxAdd.dataset.fxadd); return; }
+      const fxDel = e.target.closest('[data-fxdel]');
+      if (fxDel) { if (S.sel) removeEffect(S.sel, fxDel.dataset.fxdel); return; }
+      const fxMove = e.target.closest('[data-fxmove]');
+      if (fxMove) { if (S.sel) moveEffect(S.sel, fxMove.dataset.fxid, Number(fxMove.dataset.fxmove)); return; }
+      const histBtn = e.target.closest('[data-hist]');
+      if (histBtn) { goHistory(Number(histBtn.dataset.hist)); return; }
       const b = e.target.closest('[data-act]');
       if (!b) return;
       if (b.dataset.act === 'dup') duplicateSelected();
@@ -11781,6 +16834,13 @@ window.STUDIO_BODY = `
       return;
     }
     const opts = readExportOpts();
+    /* 入出点是会话级状态，可能残留在已缩短的时间线上：先夹到当前时长再判断。 */
+    const rIn = S.rngIn == null ? null : clamp(S.rngIn, 0, dur);
+    const rOut = S.rngOut == null ? null : clamp(S.rngOut, 0, dur);
+    const wantRange = rIn != null && rOut != null && rOut - rIn > 0.05 &&
+      !!($('stExRange') && $('stExRange').checked);
+    const a = wantRange ? rIn : 0;
+    const b = wantRange ? rOut : dur;
     const canvas = document.createElement('canvas');
     canvas.width = opts.w;
     canvas.height = opts.h;
@@ -11792,7 +16852,9 @@ window.STUDIO_BODY = `
     S.playing = false;
     if (S.raf) cancelAnimationFrame(S.raf);
     S.raf = 0;
-    S.time = 0;
+    S.dir = 1;
+    S.rate = 1;
+    S.time = a;
     S.last = 0;
     applyTime();
     $('stExProg').classList.remove('hidden');
@@ -11823,7 +16885,9 @@ window.STUDIO_BODY = `
       opts: opts,
       ctx: ctx,
       canvas: canvas,
-      dur: dur,
+      a: a,
+      b: b,
+      dur: Math.max(0.05, b - a),
       chunks: [],
       rec: rec,
       stream: stream,
@@ -11839,7 +16903,7 @@ window.STUDIO_BODY = `
     try { rec.start(200); } catch (e) { toast('录制启动失败：' + (e.message || e)); S.exportSession = null; resetExportUI(); return; }
 
     applyMonitorGain();
-    S.time = 0;
+    S.time = a;
     applyTime();
     S.playing = true;
     S.last = 0;
@@ -11856,7 +16920,7 @@ window.STUDIO_BODY = `
     if (cancel) cancel.textContent = '取消';
   }
 
-  function drawEl(ctx, el, c, W, H, kind) {
+  function drawEl(ctx, el, c, W, H, kind, t) {
     if (!el) return;
     if (kind === 'image') {
       if (!el.complete || !el.naturalWidth) return;
@@ -11867,12 +16931,12 @@ window.STUDIO_BODY = `
     const mh = kind === 'image' ? el.naturalHeight : el.videoHeight;
     if (!mw || !mh) return;
     const fit = Math.min(W / mw, H / mh);
-    const view = visualOf(c, S.time);
+    const view = visualOf(c, t);
     const dw = mw * fit * view.scale;
     const dh = mh * fit * view.scale;
     ctx.save();
-    ctx.globalAlpha = clamp(view.opacity * fadeFactor(c, S.time), 0, 1);
-    const f = cssFilter(c.filter);
+    ctx.globalAlpha = clamp(view.opacity * fadeFactor(c, t), 0, 1);
+    const f = effectsCss(c);
     if (f && f !== 'none') ctx.filter = f;
     ctx.translate(W / 2 + (view.x / 100) * W, H / 2 + (view.y / 100) * H);
     ctx.rotate((view.rot * Math.PI) / 180);
@@ -11906,8 +16970,7 @@ window.STUDIO_BODY = `
     return out;
   }
 
-  function drawExportTexts(ctx, W, H) {
-    const t = S.time;
+  function drawTexts(ctx, W, H, t) {
     activeTextsAt(t).forEach(function (c) {
       const view = visualOf(c, t);
       const fs = c.text.size * (W / S.project.w) * view.scale;
@@ -11945,29 +17008,56 @@ window.STUDIO_BODY = `
     });
   }
 
-  function drawExportFrame() {
-    const v = S.exportSession;
-    if (!v) return;
-    const W = v.opts.w;
-    const H = v.opts.h;
-    const ctx = v.ctx;
+  /* 唯一合成入口：预览抓帧、导出、当前帧 PNG 都走这里。
+     参数只依赖 (W,H,t)，不读全局时间，保证任意帧可重放。 */
+  function renderFrame(ctx, W, H, t) {
     ctx.save();
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
     /* 轨道数组自上而下是「上层 → 下层」，绘制时反过来：下层先画、上层后盖 */
-    const visualTracks = tracksOfKind('video').slice().reverse();
-    visualTracks.forEach(function (tk) {
+    tracksOfKind('video').slice().reverse().forEach(function (tk) {
       if (!trackActive(tk)) return;
-      const c = activeClipOn(tk.id, S.time);
+      const c = activeClipOn(tk.id, t);
       if (!c) return;
       const m = mediaOf(c.mediaId);
       const pool = S.pool[tk.id];
       if (!m || !pool) return;
       const el = m.kind === 'image' ? pool.img : pool.video;
-      drawEl(ctx, el, c, W, H, m.kind);
+      drawEl(ctx, el, c, W, H, m.kind, t);
     });
-    drawExportTexts(ctx, W, H);
+    drawTexts(ctx, W, H, t);
     ctx.restore();
+  }
+
+  function grabFrame(t) {
+    const W = S.project.w || 1280;
+    const H = S.project.h || 720;
+    const cv = document.createElement('canvas');
+    cv.width = W;
+    cv.height = H;
+    const g = cv.getContext('2d');
+    if (!g) return '';
+    renderFrame(g, W, H, t == null ? S.time : t);
+    try { return cv.toDataURL('image/png'); } catch (e) { return ''; }
+  }
+
+  function exportStill() {
+    const url = grabFrame(S.time);
+    if (!url) { toast('当前帧抓取失败'); return ''; }
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '剪辑台-帧-' + String(round2(S.time)).replace('.', '_') + '.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('已导出当前帧');
+    return url;
+  }
+
+  function drawExportFrame() {
+    const v = S.exportSession;
+    if (!v) return;
+    renderFrame(v.ctx, v.opts.w, v.opts.h, S.time);
   }
 
   function paintExportProgress() {
@@ -11976,12 +17066,12 @@ window.STUDIO_BODY = `
     const now = performance.now();
     if (now - v.lastPaint < 120) return;
     v.lastPaint = now;
-    const pct = clamp((S.time / v.dur) * 100, 0, 100);
+    const pct = clamp(((S.time - v.a) / v.dur) * 100, 0, 100);
     const bar = $('stExBar');
     if (bar) bar.style.width = pct.toFixed(1) + '%';
     const txt = $('stExTxt');
     if (txt) {
-      txt.textContent = '正在渲染 ' + fmtMmss(S.time) + ' / ' + fmtMmss(v.dur) + ' · ' + pct.toFixed(0) + '%';
+      txt.textContent = '正在渲染 ' + fmtMmss(S.time - v.a) + ' / ' + fmtMmss(v.dur) + ' · ' + pct.toFixed(0) + '%';
     }
   }
 
@@ -12110,7 +17200,12 @@ window.STUDIO_BODY = `
           future: S.future.length,
           exporting: !!S.exportSession,
           frameW: S.frameW,
-          frameH: S.frameH
+          frameH: S.frameH,
+          rngIn: S.rngIn,
+          rngOut: S.rngOut,
+          rate: S.rate,
+          dir: S.dir,
+          clipboard: S.clipboard ? S.clipboard.items.length : 0
         };
       },
       project: function () { return JSON.parse(JSON.stringify(S.project)); },
@@ -12126,7 +17221,7 @@ window.STUDIO_BODY = `
           source: 'file',
           libId: ''
         };
-        pushHistory();
+        pushHistory('加入素材');
         S.project.media.push(item);
         renderAll();
         scheduleSave();
@@ -12221,6 +17316,80 @@ window.STUDIO_BODY = `
       selectAll: selectAllClips,
       fit: fitTimeline,
       bladeAt: function (id, t) { return splitClip(clipOf(id), Number(t)); },
+      splitAll: function (t) { return splitAllAt(t == null ? S.time : t); },
+      effects: function (id) {
+        const c = clipOf(id);
+        return c ? JSON.parse(JSON.stringify(c.effects || [])) : null;
+      },
+      effectsCss: function (id) {
+        const c = clipOf(id);
+        return c ? effectsCss(c) : '';
+      },
+      setEffects: function (id, list) {
+        const c = clipOf(id);
+        if (!c) return null;
+        c.effects = normalizeEffects(list, '');
+        renderInspector();
+        applyTime();
+        scheduleSave();
+        return JSON.parse(JSON.stringify(c.effects));
+      },
+      addEffect: function (id, type) {
+        const e = addEffect(id, type);
+        return e ? JSON.parse(JSON.stringify(e)) : null;
+      },
+      toggleEffect: function (id, fxId, on) { return setEffectEnabled(id, fxId, on); },
+      fxParam: function (id, fxId, key, v) {
+        const c = clipOf(id);
+        if (!c) return null;
+        const e = (c.effects || []).filter(function (x) { return x.id === fxId; })[0];
+        if (!e || !e.params) return null;
+        e.params[key] = Number(v);
+        applyTime();
+        scheduleSave();
+        return JSON.parse(JSON.stringify(e.params));
+      },
+      moveEffect: function (id, fxId, dir) { return moveEffect(id, fxId, dir); },
+      grabFrame: function (t) { return grabFrame(t); },
+      exportStill: exportStill,
+      setRange: function (edge, t) { return setRangeEdge(edge, t); },
+      range: function () { return { in: S.rngIn, out: S.rngOut }; },
+      clearRange: function () { clearInOut(); return true; },
+      trimRange: function (trackId, a, b) {
+        const n = clearRange(trackId, a, b);
+        renderAll();
+        applyTime();
+        scheduleSave();
+        return n;
+      },
+      copy: function () { return copySelected(); },
+      paste: function (t) { return pasteAt(t); },
+      place: function (mediaId, mode) {
+        const c = placeMedia(mediaId, mode);
+        return c ? c.id : null;
+      },
+      parseSubs: parseSubs,
+      buildSrt: function () { return subsText(); },
+      importSubs: function (text) { return importSubs(text); },
+      history: function () { return S.hist.map(function (h) { return h.label; }); },
+      goHistory: function (i) { return goHistory(i); },
+      peaks: function (mediaId) {
+        const p = peaksOf(mediaId);
+        if (!p) return null;
+        let max = 0;
+        for (let i = 0; i < p.data.length; i++) if (p.data[i] > max) max = p.data[i];
+        return { n: p.data.length, max: max };
+      },
+      loadPeaks: function (mediaId) { return loadPeaks(mediaId); },
+      level: function () {
+        const el = $('stLevel');
+        const bar = el && el.querySelector('i');
+        return bar ? bar.style.height || '0%' : '';
+      },
+      shuttle: function (dir) { shuttle(dir); return { rate: S.rate, dir: S.dir, playing: S.playing }; },
+      pause: pause,
+      playEnd: playEnd,
+      playStart: playStart,
       openMenu: function (name) {
         const b = document.querySelector('#stMenuBar [data-menu="' + name + '"]');
         if (!b) return false;
@@ -12295,6 +17464,399 @@ window.STUDIO_BODY = `
       }
     }
   };
+})();
+
+/* ---- apps/tunnel/app.js ---- */
+/* 分享与反馈 —— 一键把本机变成「可上传、可反馈」的公网入口。
+ *
+ * 服务本身在 plugins/tunnel/tunnel.js（主进程按 plugins/manifest.json 拉起），
+ * 这里只是控制面板：启动 / 停止隧道、看公网地址、管口令与上限、看收到的文件和反馈。
+ *
+ * 端口来源：桌面壳通过 ?tunnel=http://127.0.0.1:<port> 注入（被占用时端口会顺延）。
+ * 用 file:// 直接打开时没有这个参数，退回默认 8796。
+ */
+(function () {
+  'use strict';
+
+  const BASE = (function () {
+    try {
+      const v = new URLSearchParams(location.search).get('tunnel');
+      return v ? decodeURIComponent(v).replace(/\/+$/, '') : 'http://127.0.0.1:8796';
+    } catch (e) { return 'http://127.0.0.1:8796'; }
+  })();
+
+  const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 16V4"/><path d="m7.5 8.5 4.5-4.5 4.5 4.5"/><path d="M4.5 15v3.5a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>';
+
+  const BODY =
+    '<div class="tn-wrap">' +
+      '<div class="tn-head">' +
+        '<div class="tn-title">' +
+          '<div class="tn-h">分享与反馈</div>' +
+          '<div class="tn-sub">启动后，任何拿到链接的人都能上传资源、提交意见，文件直接落在你这台机器上。</div>' +
+        '</div>' +
+        '<div class="tn-badge" id="tnBadge"><i></i><span>服务未连接</span></div>' +
+      '</div>' +
+
+      '<section class="tn-hero">' +
+        '<div class="tn-url-line">' +
+          '<div class="tn-url" id="tnUrl">尚未生成公网地址</div>' +
+          '<button type="button" class="tn-btn" id="tnCopy" disabled>复制</button>' +
+          '<button type="button" class="tn-btn" id="tnOpen" disabled>打开</button>' +
+        '</div>' +
+        '<div class="tn-actions">' +
+          '<button type="button" class="tn-btn tn-primary" id="tnToggle">启动分享</button>' +
+          '<span class="tn-state" id="tnState">未启动</span>' +
+        '</div>' +
+        '<div class="tn-meta" id="tnMeta"></div>' +
+        '<div class="tn-warn">公网地址每次启动都会变；链接相当于门钥匙，请只发给信任的人。</div>' +
+      '</section>' +
+
+      '<div class="tn-grid">' +
+        '<section class="tn-card">' +
+          '<div class="tn-card-h">访问口令</div>' +
+          '<label class="tn-switch"><input type="checkbox" id="tnKeyOn"><span>启用口令保护</span></label>' +
+          '<div class="tn-key-row">' +
+            '<input type="text" id="tnKey" readonly spellcheck="false">' +
+            '<button type="button" class="tn-btn tn-mini" id="tnRegen">换一个</button>' +
+          '</div>' +
+          '<div class="tn-tip">分享链接会自动带上口令。关掉口令后，任何人只要有链接就能上传。</div>' +
+        '</section>' +
+
+        '<section class="tn-card">' +
+          '<div class="tn-card-h">接收设置</div>' +
+          '<label class="tn-field"><span>单文件上限</span>' +
+            '<input type="number" id="tnMax" min="1" max="2048" step="10"> <em>MB</em></label>' +
+          '<label class="tn-switch"><input type="checkbox" id="tnFbOn"><span>开放意见反馈</span></label>' +
+          '<label class="tn-field tn-field-col"><span>页面说明</span>' +
+            '<input type="text" id="tnNote" maxlength="300" placeholder="写给访问者的一句话"></label>' +
+          '<div class="tn-save-row"><button type="button" class="tn-btn tn-primary tn-mini" id="tnSave">保存设置</button>' +
+          '<button type="button" class="tn-btn tn-mini" id="tnReveal">打开上传目录</button></div>' +
+        '</section>' +
+      '</div>' +
+
+      '<div class="tn-tabs">' +
+        '<button type="button" class="tn-tab on" data-tab="up">收到的文件 <b id="tnUpCount">0</b></button>' +
+        '<button type="button" class="tn-tab" data-tab="fb">意见反馈 <b id="tnFbCount">0</b></button>' +
+      '</div>' +
+      '<div class="tn-panel" id="tnPanel"><div class="tn-empty">还没有内容。</div></div>' +
+
+      '<details class="tn-log">' +
+        '<summary>运行日志</summary>' +
+        '<pre id="tnLogs">—</pre>' +
+      '</details>' +
+    '</div>';
+
+  let timer = null;
+  let busy = false;
+  let tab = 'up';
+  let lastList = { up: '', fb: '' };
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function fmtSize(n) {
+    const v = Number(n || 0);
+    if (v < 1024) return v + ' B';
+    if (v < 1048576) return (v / 1024).toFixed(1) + ' KB';
+    if (v < 1073741824) return (v / 1048576).toFixed(1) + ' MB';
+    return (v / 1073741824).toFixed(2) + ' GB';
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const p = n => String(n).padStart(2, '0');
+    return (d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  async function api(path, opts) {
+    const r = await fetch(BASE + path, Object.assign({ cache: 'no-store' }, opts || {}));
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+    return data;
+  }
+
+  function shareUrl(st) {
+    if (!st || !st.tunnel || !st.tunnel.url) return '';
+    const k = st.config && st.config.keyOn && st.config.key ? ('?k=' + encodeURIComponent(st.config.key)) : '';
+    return st.tunnel.url + '/' + k;
+  }
+
+  function copyText(text) {
+    if (!text) return Promise.resolve(false);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(() => true).catch(() => fallbackCopy(text));
+    }
+    return Promise.resolve(fallbackCopy(text));
+  }
+
+  function fallbackCopy(text) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) { return false; }
+  }
+
+  function setState(body, st) {
+    body._st = st;
+    const url = shareUrl(st);
+    const urlEl = body.querySelector('#tnUrl');
+    const copyBtn = body.querySelector('#tnCopy');
+    const openBtn = body.querySelector('#tnOpen');
+    const badge = body.querySelector('#tnBadge');
+    const stateEl = body.querySelector('#tnState');
+    const metaEl = body.querySelector('#tnMeta');
+    const toggle = body.querySelector('#tnToggle');
+
+    urlEl.textContent = url || '尚未生成公网地址';
+    urlEl.classList.toggle('on', !!url);
+    copyBtn.disabled = !url;
+    openBtn.disabled = !url;
+
+    const t = st.tunnel || {};
+    const running = t.status === 'running';
+    const starting = t.status === 'starting';
+    badge.className = 'tn-badge' + (running ? ' ok' : starting ? ' wait' : t.status === 'error' ? ' err' : '');
+    badge.querySelector('span').textContent = running ? '公网可访问' : starting ? '正在启动' : t.status === 'error' ? '启动失败' : '未启动';
+
+    toggle.textContent = running || starting ? '停止分享' : '启动分享';
+    toggle.classList.toggle('tn-stop', running || starting);
+
+    if (st.download && st.download.running) {
+      stateEl.textContent = '正在下载 cloudflared ' + (st.download.pct || 0) + '%' +
+        (st.download.bytesPerSec ? ' · ' + Math.max(1, Math.round(st.download.bytesPerSec / 1024)) + ' KB/s' : '') +
+        (st.download.source ? ' · ' + st.download.source : '');
+    } else if (starting) {
+      stateEl.textContent = '正在协商公网地址…';
+    } else if (running) {
+      stateEl.textContent = '已连接 Cloudflare';
+    } else if (t.status === 'error') {
+      stateEl.textContent = t.error || '启动失败';
+    } else {
+      stateEl.textContent = '未启动';
+    }
+    stateEl.classList.toggle('bad', t.status === 'error');
+
+    const c = st.config || {};
+    metaEl.textContent = '本地服务 ' + (st.local || '') + ' · 上传文件 ' +
+      ((st.counts && st.counts.uploads) || 0) + ' 份 · 反馈 ' + ((st.counts && st.counts.feedback) || 0) + ' 条';
+
+    const keyOn = body.querySelector('#tnKeyOn');
+    if (document.activeElement !== keyOn) keyOn.checked = c.keyOn !== false;
+    const keyEl = body.querySelector('#tnKey');
+    if (document.activeElement !== keyEl) keyEl.value = c.key || '';
+    const maxEl = body.querySelector('#tnMax');
+    if (document.activeElement !== maxEl) maxEl.value = c.maxMB || 200;
+    const fbEl = body.querySelector('#tnFbOn');
+    if (document.activeElement !== fbEl) fbEl.checked = c.feedbackOn !== false;
+    const noteEl = body.querySelector('#tnNote');
+    if (document.activeElement !== noteEl) noteEl.value = c.note || '';
+
+    body.querySelector('#tnUpCount').textContent = String((st.counts && st.counts.uploads) || 0);
+    body.querySelector('#tnFbCount').textContent = String((st.counts && st.counts.feedback) || 0);
+
+    const logEl = body.querySelector('#tnLogs');
+    const logs = (st.logs || []).map(x => fmtTime(x.at) + '  ' + x.text).join('\n');
+    if (logEl.textContent !== logs) logEl.textContent = logs || '—';
+  }
+
+  function offline(body, err) {
+    body._st = null;
+    const badge = body.querySelector('#tnBadge');
+    badge.className = 'tn-badge err';
+    badge.querySelector('span').textContent = '服务未连接';
+    body.querySelector('#tnState').textContent = '无法连接本地服务（' + BASE + '）';
+    body.querySelector('#tnState').classList.add('bad');
+    body.querySelector('#tnMeta').textContent = '桌面端启动时会自动拉起该服务；浏览器直开 index.html 时没有它。';
+    body.querySelector('#tnUrl').textContent = '尚未生成公网地址';
+    body.querySelector('#tnCopy').disabled = true;
+    body.querySelector('#tnOpen').disabled = true;
+    body.querySelector('#tnToggle').textContent = '启动分享';
+    body.querySelector('#tnLogs').textContent = err ? String(err.message || err) : '—';
+  }
+
+  function renderList(body, st, up, fb) {
+    const panel = body.querySelector('#tnPanel');
+    if (tab === 'up') {
+      const items = (up && up.items) || [];
+      const key = 'u' + items.length + '|' + items.map(x => x.name + x.size + x.at).join(',');
+      if (lastList.up === key) return;
+      lastList.up = key;
+      if (!items.length) {
+        panel.innerHTML = '<div class="tn-empty">还没有收到文件。把链接发给朋友后，这里会出现他们的上传。</div>';
+        return;
+      }
+      panel.innerHTML = items.map(x =>
+        '<div class="tn-item">' +
+          '<div class="tn-item-main">' +
+            '<div class="tn-item-name" title="' + esc(x.name) + '">' + esc(x.name) + '</div>' +
+            '<div class="tn-item-sub">' + fmtSize(x.size) + ' · ' + fmtTime(x.at) +
+              (x.note ? ' · ' + esc(x.note) : '') + '</div>' +
+          '</div>' +
+        '</div>'
+      ).join('');
+    } else {
+      const items = (fb && fb.items) || [];
+      const key = 'f' + items.length + '|' + items.map(x => x.at + x.text.length).join(',');
+      if (lastList.fb === key) return;
+      lastList.fb = key;
+      if (!items.length) {
+        panel.innerHTML = '<div class="tn-empty">还没有收到反馈。</div>';
+        return;
+      }
+      panel.innerHTML = items.map(x =>
+        '<div class="tn-item">' +
+          '<div class="tn-item-main">' +
+            '<div class="tn-item-sub">' + esc(x.name || '匿名') +
+              (x.contact ? ' · ' + esc(x.contact) : '') + ' · ' + fmtTime(x.at) + '</div>' +
+            '<div class="tn-item-text">' + esc(x.text) + '</div>' +
+          '</div>' +
+        '</div>'
+      ).join('');
+    }
+  }
+
+  async function refresh(body, opts) {
+    try {
+      const st = await api('/api/status');
+      setState(body, st);
+      if (opts && opts.list) {
+        const [up, fb] = await Promise.all([
+          api('/api/uploads').catch(() => ({ items: [] })),
+          api('/api/feedback').catch(() => ({ items: [] }))
+        ]);
+        renderList(body, st, up, fb);
+      } else if (st.counts) {
+        // 计数变化时才拉列表，避免每 3 秒重建 DOM
+        const changed = Number(body.dataset.upN || 0) !== Number(st.counts.uploads || 0) ||
+          Number(body.dataset.fbN || 0) !== Number(st.counts.feedback || 0);
+        if (changed) {
+          body.dataset.upN = String(st.counts.uploads || 0);
+          body.dataset.fbN = String(st.counts.feedback || 0);
+          const [up, fb] = await Promise.all([
+            api('/api/uploads').catch(() => ({ items: [] })),
+            api('/api/feedback').catch(() => ({ items: [] }))
+          ]);
+          renderList(body, st, up, fb);
+        }
+      }
+    } catch (e) {
+      offline(body, e);
+    }
+  }
+
+  async function withBusy(body, fn) {
+    if (busy) return;
+    busy = true;
+    try { await fn(); } catch (e) {
+      body.querySelector('#tnState').textContent = e.message || String(e);
+      body.querySelector('#tnState').classList.add('bad');
+    }
+    busy = false;
+  }
+
+  function bind(body) {
+    body.querySelector('#tnToggle').addEventListener('click', () => withBusy(body, async () => {
+      const st = body._st;
+      const on = st && st.tunnel && (st.tunnel.status === 'running' || st.tunnel.status === 'starting');
+      await api(on ? '/api/tunnel/stop' : '/api/tunnel/start', { method: 'POST' });
+      await new Promise(r => setTimeout(r, 400));
+      await refresh(body, { list: true });
+    }));
+
+    body.querySelector('#tnCopy').addEventListener('click', async () => {
+      const st = body._st;
+      const url = shareUrl(st);
+      if (!url) return;
+      const ok = await copyText(url);
+      const el = body.querySelector('#tnState');
+      el.textContent = ok ? '链接已复制' : '复制失败，请手动选中地址';
+      el.classList.toggle('bad', !ok);
+      setTimeout(() => refresh(body), 1600);
+    });
+
+    body.querySelector('#tnOpen').addEventListener('click', () => {
+      const url = shareUrl(body._st);
+      if (url) window.open(url, '_blank');
+    });
+
+    body.querySelector('#tnRegen').addEventListener('click', () => withBusy(body, async () => {
+      await api('/api/key/regen', { method: 'POST' });
+      await refresh(body);
+    }));
+
+    body.querySelector('#tnSave').addEventListener('click', () => withBusy(body, async () => {
+      await api('/api/config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          keyOn: body.querySelector('#tnKeyOn').checked,
+          feedbackOn: body.querySelector('#tnFbOn').checked,
+          maxMB: Number(body.querySelector('#tnMax').value) || 200,
+          note: body.querySelector('#tnNote').value
+        })
+      });
+      const el = body.querySelector('#tnState');
+      el.textContent = '设置已保存';
+      el.classList.remove('bad');
+      setTimeout(() => refresh(body), 1400);
+    }));
+
+    body.querySelector('#tnReveal').addEventListener('click', () => {
+      api('/api/reveal', { method: 'POST' }).catch(() => {});
+    });
+
+    body.querySelectorAll('.tn-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        tab = btn.dataset.tab;
+        body.querySelectorAll('.tn-tab').forEach(b => b.classList.toggle('on', b === btn));
+        lastList.up = '';
+        lastList.fb = '';
+        refresh(body, { list: true });
+      });
+    });
+  }
+
+  registerApp({
+    id: 'tunnel',
+    name: '分享与反馈',
+    title: '分享与反馈',
+    barTitle: '分享与反馈 · 免费内网穿透',
+    sub: '把本机变成上传与反馈入口',
+    icon: ICON,
+    order: 62,
+    css: ['apps/tunnel/app.css'],
+
+    mount: function (body) {
+      if (body.dataset.ready === '1') {
+        refresh(body, { list: true });
+        return;
+      }
+      body.innerHTML = BODY;
+      bind(body);
+      body.dataset.ready = '1';
+      refresh(body, { list: true });
+      if (!timer) {
+        timer = setInterval(() => {
+          if (document.visibilityState === 'hidden') return;
+          if (body.isConnected) refresh(body);
+        }, 3000);
+      }
+    }
+  });
 })();
 
 /* ---- apps/visionlab/body.js ---- */
@@ -16335,9 +21897,9 @@ window.VL_BODY = '' +
 /* ---- apps/wardrobe/body.js ---- */
 /* 衣柜 App 的窗口 DOM（app-scan 会把它排在 app.js 之前内联）。
  *
- * 三栏：左边套装、中间皮套预览、右边部件清单。
+ * 三栏：左边套装、中间皮套预览、右边「衣橱」槽位（高级里可逐部件微调）。
  * 皮套来自 apps/live2d/model/，由 tools/pack-live2d.js 预打包；
- * 预览运行时在同目录 rig.js 里（window.WD_RIG）。
+ * 预览运行时在同目录 rig.js 里（window.WD_RIG），槽位定义在 presets.js。
  */
 window.WD_BODY = `
 <div class="wd-app" id="wdApp">
@@ -16351,7 +21913,7 @@ window.WD_BODY = `
       </span>
       <div class="wd-brand-txt">
         <b>衣柜</b>
-        <span>给数字人换皮套、挑部件、存套装</span>
+        <span>作者预留的配饰 / 道具 / 配色开关</span>
       </div>
     </div>
     <div class="wd-tools">
@@ -16370,11 +21932,11 @@ window.WD_BODY = `
         <span class="wd-pane-num" id="wdOutfitCount">0</span>
       </div>
       <div class="wd-new">
-        <input type="text" id="wdOutfitName" maxlength="12" placeholder="套装名，如 校服" spellcheck="false">
+        <input type="text" id="wdOutfitName" maxlength="12" placeholder="套装名，如 眼镜马尾" spellcheck="false">
         <button type="button" class="wd-btn" id="wdSaveOutfit">保存当前</button>
       </div>
       <div class="wd-outfits" id="wdOutfits"></div>
-      <p class="wd-hint">套装 = 皮套 + 隐藏的部件。点卡片试穿，点「穿上」同步给数字人。</p>
+      <p class="wd-hint">套装 = 皮套 + 衣橱选择 + 部件微调。点卡片试穿，点「穿上」同步给数字人。</p>
     </aside>
 
     <section class="wd-stage" id="wdStage">
@@ -16393,7 +21955,7 @@ window.WD_BODY = `
       <div class="wd-hud">
         <span class="wd-chip" id="wdChip">等待皮套…</span>
         <span class="wd-hud-gap"></span>
-        <button type="button" class="wd-mini" id="wdShowAll">全部显示</button>
+        <button type="button" class="wd-mini" id="wdResetLook">恢复默认搭配</button>
         <span class="wd-part-total" id="wdPartCount"></span>
       </div>
 
@@ -16402,38 +21964,53 @@ window.WD_BODY = `
 
     <aside class="wd-right">
       <div class="wd-pane-head">
-        <h3>部件</h3>
-        <span class="wd-pane-num" id="wdHiddenCount">隐藏 0</span>
+        <h3>衣橱</h3>
+        <span class="wd-pane-num" id="wdSlotCount"></span>
       </div>
-      <div class="wd-search">
-        <input type="text" id="wdSearch" placeholder="搜索部件名 / ID" spellcheck="false">
-        <button type="button" class="wd-btn" id="wdReset" title="取消所有隐藏">重置</button>
-      </div>
-      <div class="wd-parts" id="wdParts"></div>
+      <p class="wd-note" id="wdNote"></p>
+      <div class="wd-slots" id="wdSlots"></div>
+
+      <details class="wd-adv" id="wdAdv">
+        <summary>
+          <span>高级：部件微调</span>
+          <i id="wdHiddenCount">隐藏 0</i>
+        </summary>
+        <div class="wd-search">
+          <input type="text" id="wdSearch" placeholder="搜索部件名 / ID" spellcheck="false">
+          <button type="button" class="wd-btn" id="wdReset" title="清空所有微调">重置</button>
+        </div>
+        <div class="wd-parts" id="wdParts"></div>
+      </details>
     </aside>
   </div>
 </div>
 `;
 
 /* ---- apps/wardrobe/app.js ---- */
-/* 衣柜 —— 数字人皮套的换装台。
+/* 衣柜 —— 数字人皮套的真实换装台。
  *
- * 左边套装、中间预览、右边部件。皮套清单与数据包都复用数字人 App 的
+ * 左边套装、中间预览、右边衣橱。皮套清单与数据包都复用数字人 App 的
  * apps/live2d/model/（由 tools/pack-live2d.js 生成），预览运行时是 rig.js 的
- * window.WD_RIG —— 这个文件只管界面与状态，不直接碰 Cubism。
+ * window.WD_RIG，槽位定义在 presets.js 的 window.WD_PRESETS —— 这个文件只管界面与状态，
+ * 不直接碰 Cubism，也不猜参数：槽位里只出现模型作者实际预留的开关。
  *
- * 数据只存本机：
+ * 数据只存本机（v2；读到 v1 会自动迁移）：
  *   hf_wardrobe_state = {
- *     v: 1,
+ *     v: 2,
  *     modelId,                    // 上次预览的皮套
  *     activeId,                   // 最近穿上的套装（仅用于高亮）
- *     outfits: [{ id, name, modelId, hidden: [partId], ts }],
- *     draft: { modelId, hidden }  // 当前搭配：数字人启动时按它穿
+ *     outfits: [{ id, name, modelId, look, extra, showManual, hidden, shown, params, ts }],
+ *     draft: { modelId, look, extra, showManual, hidden, shown, params }
  *   }
+ * look  = { slotId: itemId }，衣橱槽位的选择；
+ * extra = 手动隐藏的部件，showManual = 手动强制显示的部件，两者是槽位之外的微调；
+ * shown = 展开后的最终显示列表（槽位要求整组显示时用；当前鲸鱼娘没有这种槽位）。
+ *
+ * 皮套下拉只列出 presets.js 里真的有槽位的模型：没有作者预留开关的皮套
+ * （例如官方 Haru）不放进衣柜，避免「点进去什么都没有」。
  *
  * 「应用到数字人」写 draft 并调 window.__l2dApplyOutfit（数字人开着就即时生效，
- * 没开就等它下次启动读 draft）。部件隐藏靠 Cubism 的部件透明度实现。
- * 扩展点：PART_CATS 里加一条正则就有新分组；新的换装维度在 rig.js 上开方法。
+ * 没开就等它下次启动读 draft）。
  */
 (function () {
   'use strict';
@@ -16447,18 +22024,17 @@ window.WD_BODY = `
     '<path d="M12 7.4 3.6 13.1a1.5 1.5 0 0 0 .8 2.8h15.2a1.5 1.5 0 0 0 .8-2.8L12 7.4Z"/></svg>';
 
   var STORE_KEY = 'hf_wardrobe_state';
-  var STORE_VER = 1;
+  var STORE_VER = 2;
   var L2D_KEY = 'hf_live2d_state';
 
-  /* 部件分组：按 cdi3 的中文名归类；匹配不到落到「其他」。
-     想加一类（比如「尾巴」「翅膀」）在这里插一条正则即可。 */
+  /* 高级部件分组：按 cdi3 的中文名归类；匹配不到落到「其他」 */
   var PART_CATS = [
     { key: 'hair', label: '头发 / 头饰', re: /发|角|耳|帽|头饰|蝴蝶结|呆毛|兽耳/ },
     { key: 'face', label: '面部 / 表情', re: /脸|眉|眼|嘴|口|腮|舌|泪|痣|表情/ },
     { key: 'hand', label: '手 / 手臂', re: /手|爪|臂|指|腕/ },
-    { key: 'cloth', label: '服装', re: /衣|裙|裤|袜|鞋|领|袖|披风|围巾|制服|泳装/ },
-    { key: 'prop', label: '道具 / 场景', re: /饭|板|手机|包|桌|杯|盘|笔|书|伞|道具|麦克风|椅|床/ },
-    { key: 'fx', label: '特效 / 贴图', re: /特效|贴图|光|晕|符号|背景|阴影/ },
+    { key: 'cloth', label: '服装', re: /衣|裙|裤|袜|鞋|领|袖|披风|围巾|制服|泳装|腕|body|arm/i },
+    { key: 'prop', label: '道具 / 场景', re: /饭|板|手机|包|桌|杯|盘|笔|书|伞|道具|麦克风|椅|床|背景|下绘|rough/i },
+    { key: 'fx', label: '特效 / 贴图', re: /特效|贴图|光|晕|符号|阴影/ },
     { key: 'other', label: '其他', re: /[\s\S]*/ }
   ];
 
@@ -16483,11 +22059,34 @@ window.WD_BODY = `
     }).slice(0, 300);
   }
 
+  function cleanLook(obj) {
+    var out = {};
+    if (!obj || typeof obj !== 'object') return out;
+    Object.keys(obj).forEach(function (k) {
+      if (typeof obj[k] === 'string' && obj[k]) out[k] = obj[k];
+    });
+    return out;
+  }
+
+  function cleanParams(obj) {
+    var out = {};
+    if (!obj || typeof obj !== 'object') return out;
+    Object.keys(obj).forEach(function (k) {
+      var v = Number(obj[k]);
+      if (k && isFinite(v)) out[k] = v;
+    });
+    return out;
+  }
+
   /* ---------- 存档 ---------- */
+  function emptyDraft() {
+    return { modelId: '', look: {}, extra: [], showManual: [], hidden: [], shown: [], params: {} };
+  }
+
   function loadState() {
-    var out = { modelId: '', activeId: '', outfits: [], draft: null };
+    var out = { modelId: '', activeId: '', outfits: [], draft: emptyDraft() };
     var d = readJson(STORE_KEY);
-    if (!d || d.v !== STORE_VER) {
+    if (!d || (d.v !== 1 && d.v !== STORE_VER)) {
       /* 第一次用衣柜：沿用数字人当前的皮套，不硬切回第一套 */
       var l2 = readJson(L2D_KEY);
       if (l2 && typeof l2.modelId === 'string') out.modelId = l2.modelId;
@@ -16495,29 +22094,53 @@ window.WD_BODY = `
     }
     if (typeof d.modelId === 'string') out.modelId = d.modelId;
     if (typeof d.activeId === 'string') out.activeId = d.activeId;
-    if (d.draft && typeof d.draft === 'object') {
-      out.draft = {
-        modelId: typeof d.draft.modelId === 'string' ? d.draft.modelId : '',
-        hidden: cleanIds(d.draft.hidden)
+
+    function fix(o, v1) {
+      var hidden = cleanIds(o.hidden);
+      var manual = cleanIds(o.manualShow);
+      /* 早期 v2 把「手动显示」放在 shown 里，这里兼容读一次 */
+      if (!manual.length && Array.isArray(o.shown)) manual = cleanIds(o.shown);
+      return {
+        modelId: typeof o.modelId === 'string' ? o.modelId : '',
+        look: v1 ? {} : cleanLook(o.look),
+        extra: v1 ? hidden : cleanIds(o.extra),
+        showManual: v1 ? [] : manual,
+        hidden: hidden,
+        shown: cleanIds(o.shown),
+        params: v1 ? {} : cleanParams(o.params)
       };
     }
+
+    if (d.draft && typeof d.draft === 'object') out.draft = fix(d.draft, d.v === 1);
     if (Array.isArray(d.outfits)) {
+      var presets = window.WD_PRESETS || {};
       out.outfits = d.outfits.filter(function (o) {
-        return o && typeof o.id === 'string' && o.id;
+        /* 旧版本可能存过没有真实槽位的皮套（例如 Haru 的假「制服」），读档时丢掉 */
+        return o && typeof o.id === 'string' && o.id && presets[o.modelId];
       }).map(function (o) {
-        return {
-          id: o.id,
-          name: String(o.name || '未命名').slice(0, 16),
-          modelId: typeof o.modelId === 'string' ? o.modelId : '',
-          hidden: cleanIds(o.hidden),
-          ts: Number(o.ts) || 0
-        };
+        var f = fix(o, d.v === 1);
+        f.id = o.id;
+        f.name = String(o.name || '未命名').slice(0, 16);
+        f.ts = Number(o.ts) || 0;
+        return f;
       }).slice(0, 60);
     }
     if (out.activeId && !out.outfits.some(function (o) { return o.id === out.activeId; })) {
       out.activeId = '';
     }
     return out;
+  }
+
+  function draftOf() {
+    return {
+      modelId: S.modelId || '',
+      look: Object.assign({}, S.look),
+      extra: S.extra.slice(),
+      shown: S.showParts.slice(),
+      manualShow: S.showManual.slice(),
+      hidden: S.hidden.slice(),
+      params: Object.assign({}, S.params)
+    };
   }
 
   function saveState() {
@@ -16527,11 +22150,17 @@ window.WD_BODY = `
       modelId: S.modelId || '',
       activeId: S.activeId || '',
       outfits: S.outfits.map(function (o) {
-        return { id: o.id, name: o.name, modelId: o.modelId, hidden: o.hidden.slice(), ts: o.ts };
+        return {
+          id: o.id, name: o.name, modelId: o.modelId,
+          look: Object.assign({}, o.look), extra: o.extra.slice(), shown: o.shown.slice(),
+          manualShow: o.showManual.slice(), hidden: o.hidden.slice(),
+          params: Object.assign({}, o.params), ts: o.ts
+        };
       }),
-      draft: { modelId: S.modelId || '', hidden: S.hidden.slice() }
+      draft: draftOf()
     };
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(payload)); } catch (e) { /* 配额满就只留在内存里 */ }
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(payload)); }
+    catch (e) { /* 配额满就只留在内存里 */ }
   }
 
   /* ---------- 启动 ---------- */
@@ -16543,7 +22172,12 @@ window.WD_BODY = `
       win: body.closest ? body.closest('.os-win') : null,
       models: [],
       modelId: loaded.modelId || '',
-      hidden: loaded.draft ? loaded.draft.hidden.slice() : [],
+      look: loaded.draft.look,
+      extra: loaded.draft.extra,
+      showManual: loaded.draft.showManual,
+      showParts: [],
+      hidden: loaded.draft.hidden,
+      params: loaded.draft.params,
       outfits: loaded.outfits,
       activeId: loaded.activeId,
       rig: null,
@@ -16557,6 +22191,8 @@ window.WD_BODY = `
 
     cacheRefs();
     bindEvents();
+    compose();
+    renderSlots();
     renderOutfits();
     syncHiddenUI();
     body.dataset.ready = '1';
@@ -16572,11 +22208,14 @@ window.WD_BODY = `
     installProbe();
 
     window.WD_RIG.runtime().then(function (models) {
-      S.models = (models || []).filter(function (m) { return m && m.id && m.pack; });
+      var presets = window.WD_PRESETS || {};
+      S.models = (models || []).filter(function (m) {
+        return m && m.id && m.pack && presets[m.id];
+      });
       renderModels();
       if (!S.models.length) {
         S.loading = false;
-        S.error = '没有可用的皮套：把模型放进 apps/live2d/model/<id>/ 后跑 node tools/pack-live2d.js';
+        S.error = '没有可换装的皮套：先在 apps/wardrobe/presets.js 里为模型补槽位';
         setStageState();
         return;
       }
@@ -16586,12 +22225,18 @@ window.WD_BODY = `
       if (!def) {
         def = S.models[0];
         S.modelId = def.id;
-        /* 皮套变了，旧部件的隐藏状态没有意义 */
-        S.hidden = [];
+        /* 皮套变了，旧槽位 / 微调都没有意义 */
+        S.look = {};
+        S.extra = [];
+        S.showManual = [];
         S.activeId = '';
+        compose();
+        renderSlots();
       }
       if (S.refs.modelSel) S.refs.modelSel.value = S.modelId;
+      S.rig.setParams(S.params);
       S.rig.setHidden(S.hidden);
+      S.rig.setShown(S.showParts);
       loadModel(S.modelId);
     }).catch(function (err) {
       S.loading = false;
@@ -16614,9 +22259,13 @@ window.WD_BODY = `
       loading: b.querySelector('#wdLoading'),
       err: b.querySelector('#wdErr'),
       chip: b.querySelector('#wdChip'),
-      showAll: b.querySelector('#wdShowAll'),
+      resetLook: b.querySelector('#wdResetLook'),
       partCount: b.querySelector('#wdPartCount'),
       toast: b.querySelector('#wdToast'),
+      slotCount: b.querySelector('#wdSlotCount'),
+      note: b.querySelector('#wdNote'),
+      slots: b.querySelector('#wdSlots'),
+      adv: b.querySelector('#wdAdv'),
       hiddenCount: b.querySelector('#wdHiddenCount'),
       search: b.querySelector('#wdSearch'),
       reset: b.querySelector('#wdReset'),
@@ -16654,13 +22303,18 @@ window.WD_BODY = `
       wearOutfit(id, false);
     });
 
-    r.showAll.addEventListener('click', function () {
-      clearHidden();
+    r.slots.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('.wd-opt') : null;
+      if (!btn) return;
+      choose(btn.getAttribute('data-slot'), btn.getAttribute('data-item'));
+    });
+
+    r.resetLook.addEventListener('click', function () {
+      resetLook();
     });
     r.reset.addEventListener('click', function () {
       r.search.value = '';
-      clearHidden();
-      renderParts();
+      resetLook(true);
     });
 
     var searchTimer = 0;
@@ -16721,7 +22375,9 @@ window.WD_BODY = `
     S.ready = false;
     S.error = '';
     setStageState();
+    S.rig.setParams(S.params);
     S.rig.setHidden(S.hidden);
+    S.rig.setShown(S.showParts);
 
     S.rig.load(id).then(function (info) {
       if (seq !== S.loadSeq) return;
@@ -16730,7 +22386,11 @@ window.WD_BODY = `
       S.error = (info && info.error) || '';
       if (info && info.modelId) S.modelId = info.modelId;
       if (S.refs.modelSel) S.refs.modelSel.value = S.modelId;
-      if (S.ready) S.rig.setHidden(S.hidden);
+      if (S.ready) {
+        S.rig.setHidden(S.hidden);
+        S.rig.setShown(S.showParts);
+        S.rig.setParams(S.params);
+      }
       saveState();
       renderParts();
       syncHiddenUI();
@@ -16742,9 +22402,12 @@ window.WD_BODY = `
   function changeModel(id) {
     if (!id || id === S.modelId) return;
     S.modelId = id;
-    S.hidden = [];
+    S.look = {};
+    S.extra = [];
+    S.showManual = [];
     S.activeId = '';
-    if (S.rig) S.rig.setHidden([]);
+    compose();
+    renderSlots();
     saveState();
     renderOutfits();
     loadModel(id, function () {
@@ -16784,7 +22447,134 @@ window.WD_BODY = `
     }, 2000);
   }
 
-  /* ---------- 部件 ---------- */
+  /* ---------- 衣橱槽位 ---------- */
+  function preset() {
+    var all = window.WD_PRESETS || {};
+    return all[S.modelId] || null;
+  }
+
+  function slotDef(p, slotId) {
+    var hit = null;
+    ((p && p.slots) || []).forEach(function (s) { if (s.id === slotId) hit = s; });
+    return hit;
+  }
+
+  function itemOf(slot, itemId) {
+    var hit = null;
+    (slot.items || []).forEach(function (it) { if (it.id === itemId) hit = it; });
+    return hit || (slot.items || [])[0] || null;
+  }
+
+  /* 把 look 展开成最终的 hidden / shown / params；look 里没有的槽位用默认项 */
+  function compose() {
+    var p = preset();
+    var hidden = p && p.defaultHidden ? p.defaultHidden.slice() : [];
+    var show = [];
+    var params = {};
+    ((p && p.slots) || []).forEach(function (slot) {
+      var it = itemOf(slot, S.look[slot.id]);
+      if (!it) return;
+      if (it.hide) hidden = hidden.concat(it.hide);
+      if (it.show) show = show.concat(it.show);
+      if (it.params) Object.keys(it.params).forEach(function (k) { params[k] = it.params[k]; });
+    });
+    hidden = hidden.concat(S.extra);
+    show = show.concat(S.showManual);
+    var showSet = {};
+    var showList = [];
+    show.forEach(function (id) {
+      if (!id || showSet[id]) return;
+      showSet[id] = 1;
+      showList.push(id);
+    });
+    var seen = {};
+    S.hidden = hidden.filter(function (id) {
+      if (!id || seen[id] || showSet[id]) return false;
+      seen[id] = 1;
+      return true;
+    });
+    S.showParts = showList;
+    S.params = params;
+  }
+
+  function applyLook() {
+    compose();
+    if (S.rig) {
+      S.rig.setHidden(S.hidden);
+      S.rig.setShown(S.showParts);
+      S.rig.setParams(S.params);
+    }
+    saveState();
+    syncHiddenUI();
+  }
+
+  function choose(slotId, itemId) {
+    var slot = slotDef(preset(), slotId);
+    if (!slot) return;
+    var it = itemOf(slot, itemId);
+    if (!it) return;
+    S.look[slotId] = it.id;
+    S.activeId = '';
+    /* 换了槽位就清掉这一槽位相关的手动微调，避免旧部件残留 */
+    var rel = {};
+    (slot.items || []).forEach(function (x) {
+      (x.hide || []).forEach(function (id) { rel[id] = 1; });
+      (x.show || []).forEach(function (id) { rel[id] = 1; });
+    });
+    if (Object.keys(rel).length) {
+      S.extra = S.extra.filter(function (id) { return !rel[id]; });
+      S.showManual = S.showManual.filter(function (id) { return !rel[id]; });
+    }
+    applyLook();
+    renderSlots();
+    renderOutfits();
+    toast(slot.label + '：' + it.name);
+  }
+
+  function resetLook(silent) {
+    S.look = {};
+    S.extra = [];
+    S.showManual = [];
+    S.activeId = '';
+    applyLook();
+    renderSlots();
+    renderOutfits();
+    renderParts();
+    if (!silent) toast('已恢复默认搭配');
+  }
+
+  function renderSlots() {
+    var box = S.refs.slots;
+    if (!box) return;
+    var p = preset();
+    if (!p) {
+      box.innerHTML = '<p class="wd-empty">这个皮套没有作者预留的换装槽位。</p>';
+      if (S.refs.note) S.refs.note.textContent = '';
+      if (S.refs.slotCount) S.refs.slotCount.textContent = '';
+      return;
+    }
+    if (S.refs.note) S.refs.note.textContent = p.note || '';
+    if (S.refs.slotCount) S.refs.slotCount.textContent = p.slots.length + ' 组';
+
+    var html = '';
+    p.slots.forEach(function (slot) {
+      var cur = itemOf(slot, S.look[slot.id]);
+      var curId = cur ? cur.id : '';
+      html += '<section class="wd-slot" data-slot="' + esc(slot.id) + '">' +
+        '<div class="wd-slot-h"><b>' + esc(slot.label) + '</b><span>' +
+          esc(cur ? cur.name : '—') + '</span></div>' +
+        '<div class="wd-opts">';
+      (slot.items || []).forEach(function (it) {
+        html += '<button type="button" class="wd-opt' + (it.id === curId ? ' is-on' : '') +
+          '" data-slot="' + esc(slot.id) + '" data-item="' + esc(it.id) + '">' +
+          esc(it.name) + '</button>';
+      });
+      html += '</div></section>';
+    });
+    box.innerHTML = html;
+  }
+
+  /* ---------- 高级：部件微调 ---------- */
   function hiddenMap() {
     var m = {};
     (S ? S.hidden : []).forEach(function (id) { m[id] = 1; });
@@ -16798,7 +22588,7 @@ window.WD_BODY = `
     all.forEach(function (p) { if (hidden[p.id]) n++; });
 
     if (S.refs.hiddenCount) {
-      S.refs.hiddenCount.textContent = n ? ('隐藏 ' + n) : '全部显示';
+      S.refs.hiddenCount.textContent = n ? ('隐藏 ' + n) : '隐藏 0';
     }
     if (S.refs.partCount) {
       S.refs.partCount.textContent = '部件 ' + all.length + (n ? ' · 隐藏 ' + n : '');
@@ -16814,14 +22604,16 @@ window.WD_BODY = `
       var row = inputs[i].closest ? inputs[i].closest('.wd-part') : null;
       if (row) row.classList.toggle('is-off', !on);
     }
-    renderOutfits();
   }
 
   function groupParts(list) {
     var buckets = PART_CATS.map(function (c) { return { cat: c, items: [] }; });
     list.forEach(function (p) {
       for (var i = 0; i < buckets.length; i++) {
-        if (buckets[i].cat.re.test(p.name)) { buckets[i].items.push(p); return; }
+        if (buckets[i].cat.re.test(p.name) || buckets[i].cat.re.test(p.id)) {
+          buckets[i].items.push(p);
+          return;
+        }
       }
     });
     return buckets.filter(function (b) { return b.items.length; });
@@ -16870,41 +22662,32 @@ window.WD_BODY = `
     box.innerHTML = html;
   }
 
-  /* 手改过部件就不再属于某个套装，清掉高亮 */
-  function markDirty() {
-    S.activeId = '';
-  }
-
-  function applyHidden() {
-    if (S.rig) S.rig.setHidden(S.hidden);
-    saveState();
-    syncHiddenUI();
-  }
-
   function togglePart(id, show) {
-    var set = {};
-    S.hidden.forEach(function (x) { set[x] = 1; });
-    if (show) delete set[id]; else set[id] = 1;
-    S.hidden = Object.keys(set);
-    markDirty();
-    applyHidden();
-  }
-
-  function clearHidden() {
-    if (!S.hidden.length) { renderParts(); return; }
-    S.hidden = [];
-    markDirty();
-    applyHidden();
-    renderParts();
-    toast('已显示全部部件');
+    if (!id) return;
+    if (show) {
+      S.extra = S.extra.filter(function (x) { return x !== id; });
+      S.showManual = S.showManual.filter(function (x) { return x !== id; });
+      /* 槽位本身会隐藏它：记一条「强制显示」 */
+      if (S.hidden.indexOf(id) >= 0) S.showManual.push(id);
+    } else {
+      S.showManual = S.showManual.filter(function (x) { return x !== id; });
+      if (S.extra.indexOf(id) < 0) S.extra.push(id);
+    }
+    S.activeId = '';
+    applyLook();
   }
 
   function isolatePart(id) {
     if (!id) return;
     var all = S.rig ? S.rig.parts() : [];
-    S.hidden = all.filter(function (p) { return p.id !== id; }).map(function (p) { return p.id; });
-    markDirty();
-    applyHidden();
+    var base = S.hidden.filter(function (x) { return x !== id; });
+    var baseSet = {};
+    base.forEach(function (x) { baseSet[x] = 1; });
+    S.extra = all.filter(function (p) { return p.id !== id && !baseSet[p.id]; })
+      .map(function (p) { return p.id; });
+    S.showManual = [id];
+    S.activeId = '';
+    applyLook();
     renderParts();
     var name = id;
     all.forEach(function (p) { if (p.id === id) name = p.name; });
@@ -16918,6 +22701,22 @@ window.WD_BODY = `
     return hit;
   }
 
+  function outfitSummary(o) {
+    var p = (window.WD_PRESETS || {})[o.modelId] || null;
+    if (!p) return '';
+    var names = [];
+    p.slots.forEach(function (slot) {
+      var it = itemOf(slot, (o.look || {})[slot.id]);
+      if (!it) return;
+      var first = (slot.items || [])[0];
+      if (first && it.id === first.id) return;
+      names.push(it.name);
+    });
+    var n = (o.extra || []).length;
+    if (n) names.push('微调 ' + n);
+    return names.join(' · ');
+  }
+
   function saveOutfit(name) {
     var nm = String(name || '').trim();
     if (!nm) nm = '套装 ' + (S.outfits.length + 1);
@@ -16925,7 +22724,12 @@ window.WD_BODY = `
       id: 'o' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
       name: nm.slice(0, 16),
       modelId: S.modelId,
+      look: Object.assign({}, S.look),
+      extra: S.extra.slice(),
+      shown: S.showParts.slice(),
+      showManual: S.showManual.slice(),
       hidden: S.hidden.slice(),
+      params: Object.assign({}, S.params),
       ts: Date.now()
     };
     S.outfits.unshift(o);
@@ -16947,7 +22751,6 @@ window.WD_BODY = `
     if (S.activeId === id) S.activeId = '';
     saveState();
     renderOutfits();
-    if (S.refs.outfitCount) S.refs.outfitCount.textContent = String(S.outfits.length);
     toast('已删除套装：' + gone.name);
   }
 
@@ -16957,31 +22760,34 @@ window.WD_BODY = `
     if (!o) return;
 
     S.activeId = o.id;
-    S.hidden = o.hidden.slice();
-    if (S.rig) S.rig.setHidden(S.hidden);
-    saveState();
-    renderOutfits();
-    syncHiddenUI();
+    S.look = Object.assign({}, o.look);
+    S.extra = o.extra.slice();
+    S.showManual = (o.showManual || []).slice();
+    compose();
+    renderSlots();
+
+    function after() {
+      if (S.rig) {
+        S.rig.setHidden(S.hidden);
+        S.rig.setShown(S.showParts);
+        S.rig.setParams(S.params);
+      }
+      saveState();
+      renderParts();
+      syncHiddenUI();
+      if (toHuman) pushToHuman(o.name);
+      else toast('试穿：' + o.name);
+    }
 
     if (o.modelId && o.modelId !== S.modelId) {
       S.modelId = o.modelId;
       if (S.refs.modelSel) S.refs.modelSel.value = o.modelId;
-      loadModel(o.modelId, function () {
-        if (S.rig) S.rig.setHidden(S.hidden);
-        saveState();
-        syncHiddenUI();
-        renderParts();
-        if (toHuman) pushToHuman(o.name);
-        else toast('试穿：' + o.name);
-      });
+      loadModel(o.modelId, after);
       return;
     }
 
-    if (S.rig) S.rig.setHidden(S.hidden);
-    renderParts();
-    syncHiddenUI();
-    if (toHuman) pushToHuman(o.name);
-    else toast('试穿：' + o.name);
+    renderOutfits();
+    after();
   }
 
   function renderOutfits() {
@@ -16989,18 +22795,18 @@ window.WD_BODY = `
     if (!box) return;
     if (S.refs.outfitCount) S.refs.outfitCount.textContent = String(S.outfits.length);
     if (!S.outfits.length) {
-      box.innerHTML = '<p class="wd-empty">还没有套装。调好部件后点「保存当前」。</p>';
+      box.innerHTML = '<p class="wd-empty">还没有套装。在右边衣橱里挑好，点「保存当前」。</p>';
       return;
     }
     var html = '';
     S.outfits.forEach(function (o) {
-      var n = o.hidden.length;
+      var sum = outfitSummary(o);
       html += '<article class="wd-outfit' + (o.id === S.activeId ? ' is-on' : '') + '" data-oid="' + esc(o.id) + '">' +
         '<div class="wd-outfit-top">' +
           '<b>' + esc(o.name) + '</b>' +
-          '<span>' + (n ? ('隐藏 ' + n) : '全套') + '</span>' +
+          '<span>' + esc(modelName(o.modelId) || '未记录皮套') + '</span>' +
         '</div>' +
-        '<div class="wd-outfit-meta">' + esc(modelName(o.modelId) || '未记录皮套') + '</div>' +
+        '<div class="wd-outfit-meta">' + esc(sum || '默认搭配') + '</div>' +
         '<div class="wd-outfit-acts">' +
           '<button type="button" class="wd-mini" data-human="' + esc(o.id) + '">穿上</button>' +
           '<button type="button" class="wd-mini ghost" data-del="' + esc(o.id) + '" title="删除套装">删除</button>' +
@@ -17015,7 +22821,9 @@ window.WD_BODY = `
     var payload = {
       name: name || '当前搭配',
       modelId: S.modelId,
-      hidden: S.hidden.slice()
+      hidden: S.hidden.slice(),
+      shown: S.showParts.slice(),
+      params: Object.assign({}, S.params)
     };
     saveState();
     var fn = window.__l2dApplyOutfit;
@@ -17027,7 +22835,7 @@ window.WD_BODY = `
     }
   }
 
-  /* 探针只读钩子：无头测试读部件、隐藏状态与存档用 */
+  /* 探针只读钩子：无头测试读槽位、参数、隐藏状态与存档用 */
   function installProbe() {
     if (!window.__wdRig) {
       window.__wdRig = function () {
@@ -17040,11 +22848,17 @@ window.WD_BODY = `
           modelId: S.modelId,
           parts: (info.parts || []).map(function (p) { return { id: p.id, name: p.name }; }),
           partCount: (info.parts || []).length,
+          look: Object.assign({}, S.look),
           hidden: S.hidden.slice(),
+          shown: S.showParts.slice(),
           applied: (info.hidden || []).slice(),
+          params: Object.assign({}, S.params),
           activeId: S.activeId,
           outfits: S.outfits.map(function (o) {
-            return { id: o.id, name: o.name, modelId: o.modelId, hidden: o.hidden.slice() };
+            return {
+              id: o.id, name: o.name, modelId: o.modelId,
+              look: Object.assign({}, o.look), hidden: o.hidden.slice(), params: Object.assign({}, o.params)
+            };
           })
         };
       };
@@ -17054,8 +22868,16 @@ window.WD_BODY = `
         return S && S.rig ? S.rig.partOpacity(id) : null;
       };
     }
+    if (!window.__wdParam) {
+      window.__wdParam = function (id) {
+        return S && S.rig ? S.rig.paramValue(id) : null;
+      };
+    }
     if (!window.__wdState) {
       window.__wdState = function () { return readJson(STORE_KEY); };
+    }
+    if (!window.__wdModel) {
+      window.__wdModel = function () { return S && S.rig ? S.rig.model() : null; };
     }
   }
 
@@ -17063,14 +22885,14 @@ window.WD_BODY = `
   registerApp({
     id: 'wardrobe',
     name: '衣柜',
-    title: '衣柜 · 数字人皮套',
-    sub: '换皮套、挑部件、存套装',
+    title: '衣柜 · 真实换装',
+    sub: '作者预留的配饰 / 道具 / 配色开关，存套装',
     icon: ICON,
     order: 17,
     cls: 'wardrobe',
     win: 'wardrobeWin',
     css: ['apps/wardrobe/app.css'],
-    scripts: ['apps/wardrobe/rig.js'],
+    scripts: ['apps/wardrobe/presets.js', 'apps/wardrobe/rig.js'],
     body: BODY_HTML,
     mount: function (body) {
       if (body.dataset.ready === '1' && S && S.body === body) {

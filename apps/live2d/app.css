@@ -750,9 +750,9 @@
 .l2d-tts-key { flex: 0 0 28px; font-size: 11px; color: #8993a3; }
 .l2d-tts-row .l2d-select { flex: 1 1 auto; min-width: 0; height: 32px; }
 
-/* 机械音的朗读方式：只有选中机械音时才显示 */
-.l2d-mecha-modes { display: flex; flex: 1 1 auto; gap: 5px; }
-.l2d-mecha-btn {
+/* AI 语音控制方式：选中支持韵律的本地音色时才显示 */
+.l2d-ai-modes { display: flex; flex: 1 1 auto; gap: 5px; }
+.l2d-ai-btn {
   flex: 1 1 0;
   height: 27px;
   padding: 0 8px;
@@ -764,8 +764,8 @@
   cursor: pointer;
   transition: background .15s, border-color .15s, color .15s;
 }
-.l2d-mecha-btn:hover { border-color: #c4d7f2; color: var(--l2d-accent-deep); }
-.l2d-mecha-btn.on { background: #eef4ff; border-color: #cfe0f8; color: var(--l2d-accent-deep); }
+.l2d-ai-btn:hover { border-color: #c4d7f2; color: var(--l2d-accent-deep); }
+.l2d-ai-btn.on { background: #eef4ff; border-color: #cfe0f8; color: var(--l2d-accent-deep); }
 
 .l2d-stats { display: flex; flex-wrap: wrap; gap: 5px; }
 .l2d-stat {

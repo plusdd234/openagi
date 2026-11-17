@@ -339,6 +339,7 @@ const PSFilters = (function () {
       if (opts.onProgress) opts.onProgress(i + 1, tiles.length, spec.name);
       if ((i + 1) % 6 === 0) await PS.frame();
     }
+    if (PS.alphaLocked(layer)) PS.restoreTileAlpha(tx);
     PS.touch(layer);
     PS.endTx(tx);
     doc.version++;

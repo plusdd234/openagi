@@ -1,12 +1,14 @@
-/* 探针：衣柜 App（apps/wardrobe）
+/* 探针：衣柜 App（apps/wardrobe）——真实换装
  *
  * 覆盖的关键点：
  *   ① 桌面图标 → 窗口能打开，皮套在 canvas 上渲染出来；
- *   ② 部件清单来自皮套 cdi3，勾掉后部件透明度压到 0，并落进 hf_wardrobe_state；
- *   ③ 套装：保存 → 卡片出现 → 改乱部件后试穿能恢复；
- *   ④ 与数字人联动：数字人启动读到衣柜搭配；衣柜「应用到数字人」即时改隐藏部件；
- *   ⑤ 窄窗口改成上下排布且无横向溢出；
- *   ⑥ 全程无 pageerror / console error。
+ *   ② 鲸鱼娘：点衣橱槽位 → 参数真写进 Cubism（眼镜 / 发饰），不是只改界面；
+ *   ③ 套装：保存 → 恢复默认 → 试穿后参数与部件一起回来；
+ *   ④ 手动隐藏部件 → 模型透明度真的归零，取消后恢复；
+ *   ⑤ 与数字人联动：数字人启动读到衣柜的 params，并穿到模型上；
+ *   ⑥ 没有真实槽位的皮套（Haru）不进口袋衣柜，避免假换装；
+ *   ⑦ 存档是 v2，look / params 都落盘；窄窗无横向溢出；
+ *   ⑧ 全程无 pageerror / console error。
  *
  * 用法：node tools/probe-wardrobe.js [--shots]
  */
@@ -34,6 +36,10 @@ const visible = (page, sel) => page.evaluate((s) => {
 }, sel);
 
 const wd = (page) => page.evaluate(() => (window.__wdRig ? window.__wdRig() : null));
+
+function slot(page, slotId, itemId) {
+  return page.click('#wardrobeWin #wdSlots .wd-opt[data-slot="' + slotId + '"][data-item="' + itemId + '"]');
+}
 
 (async () => {
   const browser = await chromium.launch({ channel: 'msedge' });
@@ -90,52 +96,59 @@ const wd = (page) => page.evaluate(() => (window.__wdRig ? window.__wdRig() : nu
   check(!!cv && !cv.loading, '加载态已收起');
   check(await page.evaluate(() => document.getElementById('wdErr').hidden), '没有落进错误态');
 
-  /* 找一件带「发」的部件，没有就退到第一件 */
-  const target = await page.evaluate(() => {
-    const list = window.__wdRig().parts;
-    return list.filter((p) => /发/.test(p.name))[0] || list[0];
-  });
-  check(!!target && !!target.id, '找到可换部件', target ? target.name + ' · ' + target.id : '无');
+  const slotCount = await page.evaluate(() => document.querySelectorAll('#wdSlots .wd-slot').length);
+  check(slotCount >= 8, '衣橱槽位已渲染', slotCount + ' 组（鲸鱼娘）');
 
-  await page.click('#wardrobeWin #wdParts input[data-pid="' + target.id + '"]');
-  await page.waitForTimeout(360);
-  const afterHide = await page.evaluate((id) => ({
-    wd: window.__wdRig(),
-    op: window.__wdPartOpacity(id),
-    st: window.__wdState()
-  }), target.id);
-  check(afterHide.wd.hidden.indexOf(target.id) >= 0, '勾掉后进入隐藏列表', target.id);
-  check(afterHide.op !== null && afterHide.op < 0.02, '部件透明度被压到 0',
-    'opacity=' + afterHide.op);
-  check(!!(afterHide.st && afterHide.st.draft &&
-    afterHide.st.draft.hidden.indexOf(target.id) >= 0), '隐藏状态落进 hf_wardrobe_state');
-  check(await page.evaluate(() => {
-    const el = document.getElementById('wdHiddenCount');
-    return !!el && /隐藏\s*1/.test(el.textContent);
-  }), '右栏隐藏计数同步');
+  /* ② 点槽位 → 参数真写进模型 */
+  await slot(page, 'glasses', 'square');
+  await page.waitForTimeout(260);
+  let s = await wd(page);
+  const opSquare = await page.evaluate(() => window.__wdParam('ParamCheek72'));
+  check(!!s && s.params.ParamCheek72 === 1, '选「方眼镜」写进 params', JSON.stringify(s && s.params));
+  check(opSquare !== null && Math.abs(opSquare - 1) < 0.02, '模型参数 ParamCheek72 实际为 1',
+    'value=' + opSquare);
 
-  /* ③ 套装：保存 → 卡片出现 → 改乱部件 → 试穿恢复 */
+  await slot(page, 'hair', 'tail');
+  await page.waitForTimeout(260);
+  s = await wd(page);
+  const opTail = await page.evaluate(() => window.__wdParam('fx1'));
+  check(!!s && s.params.fx1 === 1, '选「单边马尾」写进 params', JSON.stringify(s && s.params));
+  check(opTail !== null && Math.abs(opTail - 1) < 0.02, '模型参数 fx1 实际为 1', 'value=' + opTail);
+
+  const st1 = await page.evaluate(() => window.__wdState());
+  check(!!st1 && st1.v === 2 && st1.draft && st1.draft.params && st1.draft.params.fx1 === 1,
+    '存档升级为 v2，params 已落盘', st1 ? 'v' + st1.v : '无存档');
+
+  /* ③ 套装：保存 → 恢复默认 → 试穿恢复 */
   await page.fill('#wardrobeWin #wdOutfitName', '测试套装');
   await page.click('#wardrobeWin #wdSaveOutfit');
   await page.waitForTimeout(320);
   const saved = await wd(page);
   check(!!saved && saved.outfits.length === 1 && saved.activeId === saved.outfits[0].id,
     '套装已保存并高亮', saved ? saved.outfits.map((o) => o.name).join(' , ') : '无');
+  check(!!saved && saved.outfits[0].params.fx1 === 1 &&
+    saved.outfits[0].look.glasses === 'square', '套装里带着 look 与 params');
   check(await page.evaluate(() => document.querySelectorAll('#wdOutfits .wd-outfit').length === 1),
     '套装卡片出现在左栏');
 
-  await page.click('#wardrobeWin #wdShowAll');
-  await page.waitForTimeout(260);
-  const shown = await wd(page);
-  check(!!shown && shown.hidden.length === 0, '「全部显示」清空隐藏');
+  await page.click('#wardrobeWin #wdResetLook');
+  await page.waitForTimeout(320);
+  const reset = await wd(page);
+  const opAfterReset = await page.evaluate(() => window.__wdParam('fx1'));
+  check(!!reset && Object.keys(reset.params).length === 0, '「恢复默认搭配」清空 params');
+  check(opAfterReset !== null && Math.abs(opAfterReset) < 0.02, '模型参数也被写回 0',
+    'fx1=' + opAfterReset);
 
   await page.click('#wardrobeWin .wd-outfit[data-oid="' + saved.activeId + '"] .wd-outfit-top b');
   await page.waitForTimeout(420);
   const wore = await wd(page);
-  check(!!wore && wore.hidden.indexOf(target.id) >= 0 && wore.activeId === saved.outfits[0].id,
-    '试穿套装恢复隐藏部件');
+  check(!!wore && wore.params.fx1 === 1 && wore.params.ParamCheek72 === 1,
+    '试穿套装恢复 look 与 params', JSON.stringify(wore && wore.params));
 
-  /* ④ 打开数字人：启动时应当读到衣柜的当前搭配 */
+  /* ④ 应用给数字人（先落 draft，再开数字人，验证启动即穿） */
+  await page.evaluate(() => document.getElementById('wdApplyHuman').click());
+  await page.waitForTimeout(240);
+
   await page.evaluate(() => window.openDeskApp('live2d'));
   const l2ready = await page.waitForFunction(
     () => window.__l2dRig && window.__l2dRig() !== null,
@@ -143,26 +156,38 @@ const wd = (page) => page.evaluate(() => (window.__wdRig ? window.__wdRig() : nu
   ).then(() => true).catch(() => false);
   check(l2ready, '数字人皮套加载成功');
   const l2 = await page.evaluate(() => window.__l2dRig());
-  check(!!l2 && l2.hidden.indexOf(target.id) >= 0, '数字人启动时穿上了衣柜搭配',
-    l2 ? 'hidden ' + l2.hidden.length : '参数不可读');
+  check(!!l2 && l2.params && l2.params.fx1 === 1 && l2.params.ParamCheek72 === 1,
+    '数字人启动时穿上了衣柜的换装参数', l2 ? JSON.stringify(l2.params) : '读不到参数');
 
-  /* 衣柜里改成「全部显示」再应用到数字人：隐藏部件应当即时清空 */
-  /* 数字人窗口在前台时衣柜是隐藏的，这里直接派发 DOM click，不依赖可见性 */
-  await page.evaluate(() => document.getElementById('wdShowAll').click());
-  await page.waitForTimeout(220);
-  await page.evaluate(() => document.getElementById('wdApplyHuman').click());
-  await page.waitForTimeout(420);
-  const l2after = await page.evaluate(() => window.__l2dRig());
-  check(!!l2after && l2after.hidden.length === 0, '「应用到数字人」即时清空隐藏部件',
-    l2after ? 'hidden ' + l2after.hidden.length : '参数不可读');
-  const stAfter = await page.evaluate(() => window.__wdState());
-  check(!!stAfter && stAfter.draft && stAfter.draft.hidden.length === 0,
-    '当前搭配（draft）已落盘');
-
-  /* ⑤ 窄窗：容器查询把三栏改成上下排布 */
-  /* 把衣柜切回前台再量尺寸 */
+  /* ⑤ 皮套下拉只列出有槽位的皮套：官方 Haru 的 runtime 没有第二套服装部件，
+     不做「点了变光头」的假换装，因此整个 Haru 不进口袋衣柜 */
   await page.evaluate(() => window.openDeskApp('wardrobe'));
-  await page.waitForTimeout(450);
+  await page.waitForTimeout(400);
+  const sel = await page.evaluate(() => ({
+    opts: Array.from(document.querySelectorAll('#wdModelSel option')).map((o) => o.value),
+    hasHaruPreset: !!(window.WD_PRESETS && window.WD_PRESETS.haru)
+  }));
+  check(sel.opts.length === 1 && sel.opts[0] === 'c_0120' && !sel.hasHaruPreset,
+    '衣柜只列出有真实槽位的皮套（Haru 无槽位不展示）', JSON.stringify(sel.opts));
+
+  /* ⑥ 高级部件：隐藏 / 恢复一件真实存在的部件，透明度真的写进 Cubism */
+  await page.evaluate(() => { document.getElementById('wdAdv').open = true; });
+  await page.waitForTimeout(160);
+  const partId = 'Part29';
+  const partBefore = await page.evaluate((id) => window.__wdPartOpacity(id), partId);
+  await page.click('#wdParts input[data-pid="' + partId + '"]');
+  await page.waitForTimeout(300);
+  const partOff = await page.evaluate((id) => window.__wdPartOpacity(id), partId);
+  check(partBefore !== null && partBefore > 0.9 && partOff !== null && partOff < 0.02,
+    '手动隐藏部件真的落到模型透明度', partId + ' ' + partBefore + '→' + partOff);
+  await page.click('#wdParts input[data-pid="' + partId + '"]');
+  await page.waitForTimeout(300);
+  const partBack = await page.evaluate((id) => window.__wdPartOpacity(id), partId);
+  check(partBack !== null && partBack > 0.9, '取消隐藏后部件透明度恢复', partId + '=' + partBack);
+
+  /* ⑦ 窄窗：容器查询把三栏改成上下排布 */
+  await page.evaluate(() => { document.getElementById('wdAdv').open = false; });
+  await page.waitForTimeout(160);
   const narrow = await page.evaluate(() => {
     const win = document.getElementById('wardrobeWin');
     const old = win.getAttribute('style');
@@ -170,12 +195,12 @@ const wd = (page) => page.evaluate(() => (window.__wdRig ? window.__wdRig() : nu
     win.style.height = '760px';
     const app = document.querySelector('#wardrobeWin .wd-app');
     const main = document.querySelector('#wardrobeWin .wd-main');
-    const parts = document.getElementById('wdParts');
+    const slots = document.getElementById('wdSlots');
     const out = {
       dir: getComputedStyle(main).flexDirection,
       appOverflow: app.scrollWidth - app.clientWidth,
       stageH: Math.round(document.getElementById('wdStage').getBoundingClientRect().height),
-      partsH: Math.round(parts.getBoundingClientRect().height)
+      slotsH: Math.round(slots.getBoundingClientRect().height)
     };
     if (old === null) win.removeAttribute('style');
     else win.setAttribute('style', old);
@@ -184,10 +209,13 @@ const wd = (page) => page.evaluate(() => (window.__wdRig ? window.__wdRig() : nu
   await page.waitForTimeout(260);
   check(narrow.dir === 'column' && narrow.appOverflow <= 1, '窄窗口改成上下排布且无横向溢出',
     'dir ' + narrow.dir + ' / 溢出 +' + narrow.appOverflow);
-  check(narrow.stageH > 180 && narrow.partsH > 60, '窄窗口下舞台与部件栏仍可用',
-    '舞台 ' + narrow.stageH + 'px / 部件 ' + narrow.partsH + 'px');
+  check(narrow.stageH > 180 && narrow.slotsH > 80, '窄窗口下舞台与衣橱仍可用',
+    '舞台 ' + narrow.stageH + 'px / 衣橱 ' + narrow.slotsH + 'px');
 
-  /* 窄窗截图另存一份，方便回看排布（默认 PROBE_SHOTS=0 时不产生文件） */
+  /* 截图：整窗与窄窗各留一张，方便回看三栏与上下排布 */
+  const wideEl = await page.$('#wardrobeWin');
+  if (wideEl) await run.shot(wideEl, 'wardrobe-window.png');
+
   await page.evaluate(() => {
     const win = document.getElementById('wardrobeWin');
     window.__wdWinStyle = win.getAttribute('style');
@@ -204,9 +232,6 @@ const wd = (page) => page.evaluate(() => (window.__wdRig ? window.__wdRig() : nu
     delete window.__wdWinStyle;
   });
   await page.waitForTimeout(260);
-
-  const wideEl = await page.$('#wardrobeWin');
-  if (wideEl) await run.shot(wideEl, 'wardrobe-window.png');
 
   await browser.close();
   check(errors.length === 0, '全程无 pageerror / console error', errors.join(' | '));

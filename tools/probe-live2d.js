@@ -203,34 +203,69 @@ const rig = (page) => page.evaluate(() => (window.__l2dRig ? window.__l2dRig() :
   check(localPitch.disabled && localPitch.off && localPitch.engine === '本地模型',
     '本地音色时音调禁用并切换引擎标签',
     localPitch.engine + ' / disabled ' + localPitch.disabled);
-  check(/音调/.test(localPitch.hint), '本地音色提示音调不生效', localPitch.hint.slice(0, 32));
+  check(/AI 语音控制/.test(localPitch.hint), '本地音色提示 AI 语音控制', localPitch.hint.slice(0, 32));
 
-  /* 机械音：选中后才出现「AI 控制 / 直接朗读」，且两者互斥 */
-  const mechaRow = await page.evaluate(() => {
+  /* 快速合成：选中后出现「AI 控制 / 直接朗读」，且两者互斥；音调也可调 */
+  const fastRow = await page.evaluate(() => {
     const sel = document.getElementById('l2dVoiceSel');
     const o = document.createElement('option');
-    o.value = 'vits:mecha';
-    o.textContent = '深海机娘 · probe';
+    o.value = 'param:fast';
+    o.textContent = '快速合成 · probe';
     sel.appendChild(o);
-    sel.value = 'vits:mecha';
+    sel.value = 'param:fast';
     sel.dispatchEvent(new Event('change', { bubbles: true }));
-    const row = document.getElementById('l2dMecha');
-    const ai = row && row.querySelector('[data-l2d-mecha="ai"]');
-    const direct = row && row.querySelector('[data-l2d-mecha="direct"]');
+    const row = document.getElementById('l2dAiCtrl');
+    const ai = row && row.querySelector('[data-l2d-ai="ai"]');
+    const direct = row && row.querySelector('[data-l2d-ai="direct"]');
     if (direct) direct.click();
+    const pitch = document.getElementById('l2dPitch');
     const out = {
       shown: !!row && !row.classList.contains('hidden'),
       directOn: !!(direct && direct.classList.contains('on')),
       checked: direct ? direct.getAttribute('aria-checked') : '',
-      aiOnAfter: !!(ai && ai.classList.contains('on'))
+      aiOnAfter: !!(ai && ai.classList.contains('on')),
+      pitchOn: !!(pitch && !pitch.disabled)
     };
     /* 复位成 AI 控制，别把测试偏好留给后续步骤 */
     if (ai) ai.click();
     return out;
   });
-  check(mechaRow.shown, '选机械音后出现朗读方式切换');
-  check(mechaRow.directOn && mechaRow.checked === 'true' && !mechaRow.aiOnAfter,
-    '机械音可切到「直接朗读」', JSON.stringify(mechaRow));
+  check(fastRow.shown, '选快速合成后出现朗读方式切换');
+  check(fastRow.directOn && fastRow.checked === 'true' && !fastRow.aiOnAfter,
+    '快速合成可切到「直接朗读」', JSON.stringify(fastRow));
+  check(fastRow.pitchOn, '快速合成的音调可调', JSON.stringify(fastRow));
+
+  /* 角色音色也应拿到同一套 AI 语音控制，不再只限快速合成 */
+  const humanAi = await page.evaluate(() => {
+    const sel = document.getElementById('l2dVoiceSel');
+    let o = [...sel.options].find(x => x.value === 'vits:theresa');
+    if (!o) {
+      o = document.createElement('option');
+      o.value = 'vits:theresa';
+      o.textContent = 'VITS · probe';
+      sel.appendChild(o);
+    }
+    sel.value = 'vits:theresa';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    const row = document.getElementById('l2dAiCtrl');
+    const on = window.__l2dDiag ? window.__l2dDiag().aiCtrl : null;
+    const direct = row && row.querySelector('[data-l2d-ai="direct"]');
+    const ai = row && row.querySelector('[data-l2d-ai="ai"]');
+    if (direct) direct.click();
+    const off = window.__l2dDiag ? window.__l2dDiag().aiCtrl : null;
+    if (ai) ai.click();
+    return {
+      shown: !!row && !row.classList.contains('hidden'),
+      on: on,
+      off: off,
+      hint: document.getElementById('l2dVoiceHint').textContent.trim()
+    };
+  });
+  check(humanAi.shown && humanAi.on && humanAi.on.prosody && humanAi.on.on,
+    '角色音色也显示 AI 语音控制并默认开启', JSON.stringify(humanAi.on));
+  check(!!humanAi.off && !humanAi.off.on && humanAi.off.mode === 'direct',
+    '角色音色可切到直接朗读', JSON.stringify(humanAi.off));
+  check(/AI 语音控制/.test(humanAi.hint), '角色音色提示 AI 语音控制', humanAi.hint.slice(0, 32));
 
   /* 切回系统语音：后面的试听要走 SpeechSynthesisUtterance 那条链路 */
   await page.evaluate(() => {
@@ -364,6 +399,21 @@ const rig = (page) => page.evaluate(() => (window.__l2dRig ? window.__l2dRig() :
     };
   });
 
+  /* 角色音色 + AI 控制：系统提示词里必须真的出现节奏标记说明 */
+  await page.evaluate(() => {
+    const sel = document.getElementById('l2dVoiceSel');
+    let o = [...sel.options].find(x => x.value === 'vits:theresa');
+    if (!o) {
+      o = document.createElement('option');
+      o.value = 'vits:theresa';
+      o.textContent = 'VITS · probe';
+      sel.appendChild(o);
+    }
+    sel.value = 'vits:theresa';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(80);
+
   await page.fill('#live2dWin #l2dInput', '今天有点累');
   await page.press('#live2dWin #l2dInput', 'Enter');
 
@@ -379,6 +429,8 @@ const rig = (page) => page.evaluate(() => (window.__l2dRig ? window.__l2dRig() :
   check(!!req && req.app === 'live2d', '对话走统一 llmStreamRequest 且带 app 标记');
   check(!!req && req.sys.indexOf(stageName) >= 0 && /情绪/.test(req.sys),
     '系统提示词带人设与情绪标注规则');
+  check(!!req && /\[\[p=0\.4\]\]/.test(req.sys),
+    '角色音色下系统提示词注入 AI 节奏标记规则');
   check(!!req && req.msgs.length >= 1 && req.msgs[req.msgs.length - 1].content === '今天有点累',
     '用户消息进入上下文');
 
