@@ -23,6 +23,13 @@ const BANK_JSON = 'bank.json';
 const BANK_PCM = 'units.bin';
 const MAX_SECONDS = 45;
 const MAX_CACHE = 64;
+/* 单元是老师「孤立读一个字」录的，自带句末拉长：音库实测中位 0.365s，
+ * 而自然语流里普通音节约 0.2s。不压缩就会一字一顿，所以默认收 25%。
+ * 这是时长补偿，不是语速：用户/LLM 的 [[r=]] 仍在此之上缩放。 */
+const UNIT_TIME = 0.75;
+/* 自然语句的音高会从开头到结尾缓慢下倾；单元直接拼接没有这条曲线，
+ * 整句听起来像逐条列读。全程最多降 6%，正好落在自然下倾的量级。 */
+const DECLINATION = 0.06;
 
 /* 标点自带的基础停顿（秒）；LLM 的 [[p=]] 是在此之上额外追加。 */
 const PUNCT_PAUSE = {
@@ -196,7 +203,7 @@ function psola(src, sr, f0, durFactor, pitchFactor) {
 }
 
 function fadeEdges(buf, sr) {
-  const n = Math.min(Math.round(sr * 0.004), buf.length >> 1);
+  const n = Math.min(Math.round(sr * 0.003), buf.length >> 1);
   if (n < 2) return buf;
   for (let i = 0; i < n; i++) {
     const g = i / n;
@@ -206,15 +213,40 @@ function fadeEdges(buf, sr) {
   return buf;
 }
 
+/* 蒸馏时每个单元首尾各留了 25ms 静音余量；逐字拼接后这些余量会变成
+ * 字与字之间 50ms 的空白，听感就是「断断续续」。播之前先按能量把静音剪掉，
+ * 只留 6ms 保护音头，之后靠交叉淡化接缝。 */
+function trimSilence(src, sr) {
+  const frame = Math.max(1, Math.round(sr * 0.008));
+  const thr = 0.012;
+  let first = -1;
+  let last = -1;
+  for (let i = 0; i + frame <= src.length; i += frame) {
+    let peak = 0;
+    for (let j = 0; j < frame; j++) {
+      const v = Math.abs(src[i + j]);
+      if (v > peak) peak = v;
+    }
+    if (peak > thr) {
+      if (first < 0) first = i;
+      last = i + frame;
+    }
+  }
+  if (first < 0) return src;
+  const margin = Math.round(sr * 0.006);
+  const start = Math.max(0, first - margin);
+  const end = Math.min(src.length, last + margin);
+  if (start === 0 && end === src.length) return src;
+  return src.subarray(start, end);
+}
+
 function renderUnit(unit, sr, rate, pitch, gain) {
-  const src = unit.samples;
-  const durFactor = 1 / Math.max(0.5, Math.min(2, rate));
+  const src = trimSilence(unit.samples, sr);
+  const durFactor = UNIT_TIME / Math.max(0.5, Math.min(2, rate));
   const p = Math.max(0.7, Math.min(1.5, pitch));
-  let out;
-  if (Math.abs(durFactor - 1) < 0.01 && Math.abs(p - 1) < 0.01) out = src.slice();
-  else if (unit.f0 >= 50) out = psola(src, sr, unit.f0, durFactor, p);
-  else out = resample(resample(src, p), durFactor / p);
-  return fadeEdges(out, sr);
+  if (Math.abs(durFactor - 1) < 0.01 && Math.abs(p - 1) < 0.01) return src.slice();
+  if (unit.f0 >= 50) return psola(src, sr, unit.f0, durFactor, p);
+  return resample(resample(src, p), durFactor / p);
 }
 
 function silence(seconds, sr) {
@@ -245,47 +277,92 @@ function synth(text, opt) {
   const plan = parseProsody(src, baseRate);
   const sr = bank.rate;
   const chunks = [];
+  const limit = Math.round(MAX_SECONDS * sr);
   let total = 0;
-  const push = (arr, gap) => {
-    if (!arr || !arr.length) return;
-    if (total >= MAX_SECONDS * sr) return;
-    const room = Math.max(0, Math.round(MAX_SECONDS * sr) - total);
-    const take = Math.min(arr.length, room);
-    chunks.push(take === arr.length ? arr : arr.subarray(0, take));
-    total += take;
-    if (gap) {
-      const s = silence(gap, sr);
-      const g = Math.min(s.length, Math.max(0, Math.round(MAX_SECONDS * sr) - total));
-      if (g > 0) { chunks.push(s.subarray(0, g)); total += g; }
-    }
-  };
+  let lastVoiced = -1;       // chunks 里最后一个「有声」块的下标，用于接缝
 
-  push(silence(plan.lead, sr), 0);
+  function pushSilence(seconds) {
+    if (total >= limit) return;
+    const s = silence(seconds, sr);
+    const take = Math.min(s.length, limit - total);
+    if (take <= 0) return;
+    chunks.push(take === s.length ? s : s.subarray(0, take));
+    total += take;
+  }
+
+  /* 字与字之间不再插静音：拼接合成（concatenative TTS）的标准做法是把
+   * 相邻浊音段做 10–30ms 等功率交叉淡化，靠重叠消掉接缝处的爆音与断口。
+   * 只在标点、空格和 [[p=]] 处才真正插入静音。 */
+  function pushVoiced(arr) {
+    if (!arr || !arr.length || total >= limit) return;
+    let buf = arr;
+    if (buf.length > limit - total) buf = buf.subarray(0, Math.max(0, limit - total));
+    if (!buf.length) return;
+    const prev = lastVoiced >= 0 && lastVoiced === chunks.length - 1 ? chunks[lastVoiced] : null;
+    const xf = prev ? Math.min(Math.round(sr * 0.012), prev.length, buf.length) : 0;
+    if (!prev || xf < 8) {
+      chunks.push(buf);
+      total += buf.length;
+      lastVoiced = chunks.length - 1;
+      return;
+    }
+    const merged = new Float32Array(prev.length + buf.length - xf);
+    merged.set(prev, 0);
+    for (let i = 0; i < xf; i++) {
+      const t = (i + 0.5) / xf;
+      const a = Math.cos(t * Math.PI / 2);
+      const b = Math.sin(t * Math.PI / 2);
+      merged[prev.length - xf + i] = prev[prev.length - xf + i] * a + buf[i] * b;
+    }
+    merged.set(buf.subarray(xf), prev.length);
+    chunks[lastVoiced] = merged;
+    total += buf.length - xf;
+  }
+
+  pushSilence(plan.lead);
+  /* 先数一遍整句有多少个能发音的音节，用来把下倾均匀摊到每个字上。 */
+  let voicedTotal = 0;
+  for (let si = 0; si < plan.segments.length; si++) {
+    const chars = Array.from(plan.segments[si].text);
+    for (let ci = 0; ci < chars.length; ci++) {
+      const ch = chars[ci];
+      if (/\s/.test(ch) || PUNCT_PAUSE[ch] != null) continue;
+      if (unitKeyFor(bank, ch)) voicedTotal++;
+    }
+  }
+  let voicedIndex = 0;
   for (let si = 0; si < plan.segments.length; si++) {
     const seg = plan.segments[si];
     const rate = clamp(seg.rate || baseRate, 0.6, 1.6);
-    const pitch = clamp((seg.pitch || 1) * basePitch, 0.7, 1.5);
     const gain = clamp((seg.gain || 1) * baseGain, 0.5, 1.8);
-    const gap = 0.035 / clamp(rate, 0.7, 1.4);
     const chars = Array.from(seg.text);
     for (let ci = 0; ci < chars.length; ci++) {
       const ch = chars[ci];
-      if (/\s/.test(ch)) { push(silence(0.04, sr), 0); continue; }
+      if (/\s/.test(ch)) { pushSilence(0.04); continue; }
       const pause = PUNCT_PAUSE[ch];
       if (pause != null) {
         /* 标点停顿跟着语速轻微缩放，但不受 LLM 的 [[p=]] 影响（p 之后会额外加） */
-        push(silence(pause / clamp(rate, 0.8, 1.2), sr), 0);
+        pushSilence(pause / clamp(rate, 0.8, 1.2));
         continue;
       }
       const key2 = unitKeyFor(bank, ch);
       if (!key2) continue;
       const unit = readUnit(bank, key2);
       if (!unit) continue;
+      const decl = voicedTotal > 1 ? 1 - DECLINATION * (voicedIndex / (voicedTotal - 1)) : 1;
+      voicedIndex++;
+      const pitch = clamp((seg.pitch || 1) * basePitch * decl, 0.7, 1.5);
       const buf = renderUnit(unit, sr, rate, pitch, gain);
       for (let i = 0; i < buf.length; i++) buf[i] *= gain;
-      push(buf, gap);
+      pushVoiced(buf);
     }
-    push(silence(seg.after, sr), 0);
+    pushSilence(seg.after);
+  }
+
+  /* 整段只做 3ms 首尾淡入淡出，防止播放器起停爆音；字间接缝交给交叉淡化。 */
+  if (chunks.length) {
+    fadeEdges(chunks[0], sr);
+    fadeEdges(chunks[chunks.length - 1], sr);
   }
 
   let sampleCount = 0;

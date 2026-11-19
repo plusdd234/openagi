@@ -139,6 +139,15 @@ const LONG = 'DeepSeek 官方文档说明：模型支持 128K 上下文窗口，
     };
     window.deskSearch = {
       run: function (q) {
+        /* AI 辅助脚本的补充检索式：单独给一条命中，验证脚本真的补回了新结果。 */
+        if (/辅助脚本补充检索/.test(String(q || ''))) {
+          return Promise.resolve({
+            ok: true, provider: 'stub', ms: 5,
+            results: [
+              { title: '辅助脚本补充命中', url: 'https://assist.example.org/hit', snippet: '补充检索命中的相关资料' }
+            ]
+          });
+        }
         if (/在线观看/.test(String(q || ''))) {
           return Promise.resolve({
             ok: true, provider: 'stub', ms: 8,
@@ -184,6 +193,15 @@ const LONG = 'DeepSeek 官方文档说明：模型支持 128K 上下文窗口，
     window.LLMRouter = window.LLMRouter || {};
     window.LLMRouter.complete = function (o) {
       window.__llmLast = { sys: String(o.sys || ''), user: String((o.messages && o.messages[0] && o.messages[0].content) || '') };
+      /* 辅助脚本场景：只在显式打开 __assistStub 后返回脚本，避免影响前面的既有断言。
+         模型给的是可执行代码（在 sandbox iframe 里跑），不是声明式规则。 */
+      if (window.__assistStub && /检索辅助脚本生成器/.test(window.__llmLast.sys)) {
+        return Promise.resolve(JSON.stringify({
+          name: '补脚本资料',
+          code: "var m={};data.results.forEach(function(r){if(/news\\.example\\.com\\/p\\/2/.test(r.url))m[r.url]=3});"
+            + "return {queries:['辅助脚本补充检索'],drop:['https://news.example.com/p/1'],score:m};"
+        }));
+      }
       const media = /影视来源助手/.test(window.__llmLast.sys);
       const parts = media ? [
         '**结论**：《流浪地球 2》在腾讯视频可以免费观看（含广告）[1]，爱奇艺需要会员[2]。',
@@ -491,6 +509,41 @@ const LONG = 'DeepSeek 官方文档说明：模型支持 128K 上下文窗口，
     '影视模式使用了专用提示词与平台标注');
   check(/不推荐任何非官方站点/.test(media.llm.sys || '') && /不提供下载、磁力、网盘链接/.test(media.llm.sys || ''),
     '影视提示词明确禁止非官方站点与下载链接');
+
+  /* ---- 9. AI 辅助脚本：模型写脚本 → 补检索式 + 过滤 + 加权 ---- */
+  await page.evaluate(() => document.querySelector('#aisearchWin .ais-brand').click());
+  await page.waitForTimeout(200);
+  await page.click('#aisearchWin .ais-mode[data-mode="web"]');
+  await page.waitForTimeout(200);
+  const assistInit = await page.evaluate(() => {
+    const b = document.querySelector('#aisearchWin [data-act="assist"]');
+    return { on: !!b && b.classList.contains('is-on'), pressed: b && b.getAttribute('aria-pressed') };
+  });
+  check(assistInit.on && assistInit.pressed === 'true', '辅助脚本开关默认开启');
+
+  await page.evaluate(() => { window.__assistStub = true; });
+  await page.fill('#aisearchWin .ais-hero-input', '辅助脚本测试');
+  await page.press('#aisearchWin .ais-hero-input', 'Enter');
+  await page.waitForFunction(() => {
+    const s = document.querySelector('#aisearchWin .ais-status');
+    return s && /完成|未找到|失败/.test(s.textContent || '');
+  }, null, { timeout: 15000 });
+  const assist = await page.evaluate(() => ({
+    trace: [...document.querySelectorAll('#aisearchWin .ais-trace-item')].map((el) => el.textContent),
+    hits: [...document.querySelectorAll('#aisearchWin .ais-hit')]
+      .map((el) => el.querySelector('.ais-hit-url').textContent)
+  }));
+  check(assist.trace.some((t) => /脚本/.test(t) && /补脚本资料/.test(t)),
+    '链路里记录了 AI 辅助脚本');
+  check(assist.hits.some((h) => /assist\.example\.org/.test(h)),
+    '辅助脚本补充的检索式带回了新结果');
+
+  const assistOff = await page.evaluate(() => {
+    const b = document.querySelector('#aisearchWin [data-act="assist"]');
+    b.click();
+    return { on: b.classList.contains('is-on'), pressed: b.getAttribute('aria-pressed') };
+  });
+  check(!assistOff.on && assistOff.pressed === 'false', '点击可以关闭辅助脚本');
 
   check(errors.length === 0, '全程无 pageerror', errors.join(' | ').slice(0, 200));
 

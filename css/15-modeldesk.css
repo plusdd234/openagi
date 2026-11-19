@@ -343,6 +343,15 @@
   cursor: pointer;
 }
 .md-vpsel:focus { outline: 1px solid var(--md-on-line); outline-offset: -1px; }
+/* 视口标题行的「线框」勾选：独立于着色下拉，勾上 = 在当前着色之上叠拓扑边线 */
+.md-vpck {
+  display: inline-flex; align-items: center; gap: 3px;
+  flex: 0 0 auto; margin: 0 4px 0 0; padding: 0 2px;
+  font-size: 9.5px; line-height: 16px; color: #3b4147;
+  white-space: nowrap; cursor: pointer;
+}
+.md-vpck input { width: 11px; height: 11px; margin: 0; padding: 0; accent-color: #4a7fb5; }
+.md-vpck input:checked + span { color: #1f2328; font-weight: 600; }
 .md-vpi {
   width: 20px; height: 20px; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
@@ -1342,9 +1351,8 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 }
 .md-uvk-help:hover { background: #fbfbfc; }
 
-/* 右侧工具箱的两个页签（建模 / 绘画） */
-.md-tbkinds { display: flex; align-items: center; gap: 2px; }
-.md-tbkinds .md-otab { height: 18px; line-height: 17px; }
+/* 右侧栏的「属性」开关：模式切换只在左上角一个入口，这里只切工具箱 / 属性 */
+.md-propstog { height: 18px; line-height: 17px; }
 .md-tb.is-paint .md-tb-tabs,
 .md-tb.is-paint .md-modebar,
 .md-tb.is-paint .md-mode-hint,
@@ -1498,6 +1506,14 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-mix-mini.is-del { color: #c9342a; }
 .md-mix-mini.is-del:hover { background: #c9342a; border-color: #c9342a; }
 .md-mix-mini.is-on { border-color: #7db3e6; color: #2b7cd3; background: #2b7cd3; }
+/* 图层显隐眼睛：和图像工坊一样放在最左侧，关闭态行整体变淡（缩略图仍可见） */
+.md-mix-mini.md-mix-eye {
+  flex: 0 0 20px; min-width: 20px; width: 20px; padding: 0;
+  font-size: 11px; line-height: 20px; color: #4c545e;
+}
+.md-mix-row.is-off .md-mix-thumb,
+.md-mix-row.is-off .md-mix-name { opacity: .42; }
+.md-mix-row.is-off .md-mix-mini.md-mix-eye { color: #9aa2ac; }
 .md-mix-blend { flex: 0 0 92px; width: 92px; }
 .md-mix-line b {
   flex: 0 0 32px; text-align: right; font-weight: 400; font-size: 10px; color: #2b7cd3;
@@ -2327,10 +2343,14 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
 
 /* ---------- 15.9 右侧面板 ---------- */
 .md-app .md-right { background: var(--md-panel); }
-/* 页签条：三个大页签在本行最左，右边的"对象"是当前模式的回显 */
+/* 页签条：左边是当前栏目标题，右边是「对象」回显与属性开关 */
 .md-app .md-right-h { padding: 0 6px; gap: 8px; }
-.md-app .md-tbkinds { gap: 3px; }
-.md-app .md-tbkinds .md-otab { height: 19px; line-height: 18px; padding: 0 9px; }
+.md-app .md-right-h .md-right-t { font-size: 11px; font-weight: 600; color: var(--md-txt); }
+.md-app .md-right-h em:empty { display: none; }
+.md-app .md-propstog { margin-left: 2px; height: 19px; line-height: 18px; padding: 0 9px; }
+.md-app .md-propstog.on { background: var(--md-on); border-color: var(--md-on-line); color: #fff; }
+/* 属性编辑器是建模上下文的页签：绘制模式不显示入口，右栏只留绘画工具箱 */
+.md-app[data-md-editor="paint"] .md-propstog { display: none; }
 /* 模式条：五个模式图标是这一栏最重要的东西，给它一条自己的底 */
 .md-app .md-modebar {
   gap: 6px; padding: 7px 7px 6px;
@@ -3164,6 +3184,8 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
 .md-app .md-vpsel:focus,
 .md-app .md-numb:hover,
 .md-app .md-vpstyle:hover { border-color: #8a95a5; }
+.md-app .md-vpck { color: #5a6068; }
+.md-app .md-vpck input:checked + span { color: #2a2f36; }
 .md-app .md-stage { background: linear-gradient(180deg, #f7f9fb 0%, #e9edf2 100%); }
 
 /* 视图立方体 / 四视图标签 / HUD：从「深底浅字」改为「毛玻璃白卡」 */
@@ -3847,27 +3869,25 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
 .md-app .md-edbtn svg { width: 12px; height: 12px; display: block; }
 .md-app .md-edbtn:hover { color: var(--md-txt); background: var(--md-raise-hi); }
 .md-app .md-edbtn.on {
-  background: var(--md-raise); color: var(--md-txt);
-  box-shadow: 0 1px 2px rgba(28, 38, 60, .12), inset 0 0 0 1px var(--md-line);
+  background: var(--md-on); color: #fff;
+  box-shadow: 0 1px 3px rgba(28, 60, 100, .18);
 }
-.md-app .md-edbtn.on[data-md-editor-btn="paint"] {
-  background: var(--md-on); color: #fff; box-shadow: none;
-}
-.md-app .md-edbtn.on[data-md-editor-btn="paint"]:hover { background: var(--md-on-hi); color: #fff; }
+.md-app .md-edbtn.on:hover { background: var(--md-on-hi); color: #fff; }
 
 /* 22.2 绘制模式专用工具条（只在绘制模式出现） */
 .md-app .md-paintbar {
   flex: 0 0 34px; height: 34px;
   display: flex; align-items: center; gap: 7px;
   padding: 0 9px;
-  background: linear-gradient(180deg, #f5f9fe 0%, #edf3fa 100%);
+  background: #f6f7f9;
   border-bottom: 1px solid var(--md-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
   overflow: hidden;
 }
 .md-app .md-paintbar[hidden] { display: none; }
 .md-app .md-pb-title {
   flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px;
-  font-size: 11px; font-weight: 700; color: var(--md-on-line); letter-spacing: .02em;
+  font-size: 11px; font-weight: 700; color: var(--md-txt); letter-spacing: .02em;
 }
 .md-app .md-pb-title svg { width: 13px; height: 13px; display: block; color: var(--md-on); }
 .md-app .md-pb-sep {
@@ -3910,17 +3930,14 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
 }
 .md-app .md-pb-right { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 
-/* 22.3 右侧标题：建模模式显示三个页签，绘制模式只显示标题 */
-.md-app .md-right-paint-t { display: none; font-size: 11px; font-weight: 600; color: var(--md-txt); }
-.md-app[data-md-editor="paint"] .md-right-paint-t { display: inline-flex; }
+/* 22.3 右侧标题：标题跟随模式，属性开关是次要页签 */
 
 /* 22.4 绘制模式的显隐：建模专用区域整块收起（DOM 保留，状态不动） */
 .md-app[data-md-editor="paint"] .md-shelf,
 .md-app[data-md-editor="paint"] .md-strip,
 .md-app[data-md-editor="paint"] .md-outline,
 .md-app[data-md-editor="paint"] .md-dock,
-.md-app[data-md-editor="paint"] .md-tb-left,
-.md-app[data-md-editor="paint"] .md-tbkinds { display: none; }
+.md-app[data-md-editor="paint"] .md-tb-left { display: none; }
 
 /* 22.5 绘制模式左侧工具条：图标 + 名称 + 快捷键竖向排列，选中态用主色实心块，
  * 与右侧参数面板形成「左边选工具、右边调参数」的图像编辑器习惯。
@@ -3969,5 +3986,71 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
 
 /* 绘制模式：顶栏只留文档动作（新建 / 打开 / 保存 / 撤销 / 重做） */
 .md-app[data-md-editor="paint"] .md-toolbar { background: #fbfbfc; }
+
+/* ---------- 24. 建模左侧工具条：与绘画工具条同一套外观 ----------
+ * 图标 + 名称 + 快捷键竖向排列，宽度与 .md-paintrail 对齐，
+ * 两种模式切换时左侧栏不跳宽、选中态同为实心主色块。 */
+.md-app .md-strip {
+  flex: 0 0 56px;
+  gap: 3px;
+  padding: 6px 0 8px;
+  overflow-y: auto; overflow-x: hidden; scrollbar-width: none;
+}
+.md-app .md-strip::-webkit-scrollbar { width: 0; height: 0; }
+.md-app .md-tool {
+  width: 48px; height: 40px; flex: 0 0 auto; padding: 0;
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  border: 1px solid transparent; border-radius: 5px;
+  background: transparent; color: #3b4147; cursor: pointer;
+}
+.md-app .md-tool svg { width: 16px; height: 16px; }
+.md-app .md-toolname {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 9.5px; line-height: 1; font-weight: 600; letter-spacing: .02em;
+  white-space: nowrap;
+}
+.md-app .md-toolname kbd {
+  font: inherit; font-size: 8.5px; font-weight: 700; letter-spacing: 0;
+  min-width: 9px; text-align: center; padding: 1px 2px;
+  border-radius: 2px; background: rgba(28, 60, 100, .10); color: #4a5763;
+}
+.md-app .md-tool:hover { background: var(--md-raise-hi); border-color: var(--md-line); color: var(--md-txt); }
+.md-app .md-tool:hover .md-toolname kbd { background: rgba(28, 60, 100, .16); }
+.md-app .md-tool.on {
+  background: var(--md-on); border-color: var(--md-on-line); color: #fff;
+  box-shadow: 0 1px 3px rgba(28, 60, 100, .22);
+}
+.md-app .md-tool.on .md-toolname kbd { background: rgba(255, 255, 255, .24); color: #fff; }
+.md-app .md-tool-sep { flex: 0 0 1px; width: 28px; height: 1px; margin: 3px 0; background: var(--md-line); }
+
+/* ---------- 25. 绘画工具箱 / 图层 页签（借鉴图像工坊） ----------
+ * 页签条固定在上沿不滚动，笔刷参数与图层列表各自成为一个滚动区。
+ * 两个 pane 始终在 DOM 里，切页签只换 hidden —— 不重建控件、不丢笔刷状态。 */
+.md-app #mdPaintBox { padding: 0; gap: 0; overflow: hidden; }
+.md-app .md-paint-tabs {
+  flex: 0 0 auto; display: flex; align-items: stretch; gap: 2px;
+  height: 31px; padding: 0 8px;
+  background: #f5f6f8; border-bottom: 1px solid #e3e6ea;
+}
+.md-app .md-paint-tab {
+  position: relative; padding: 0 12px;
+  border: 0; border-bottom: 2px solid transparent; background: transparent;
+  color: #6a7488; font: inherit; font-size: 11px; line-height: 31px;
+  white-space: nowrap; cursor: pointer;
+}
+.md-app .md-paint-tab:hover { color: #2a2f36; }
+.md-app .md-paint-tab.on {
+  color: #1f2328; font-weight: 600;
+  border-bottom-color: var(--md-accent);
+}
+.md-app .md-paint > .md-paint-pane {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 9px;
+  padding: 10px 10px 14px;
+}
+.md-app .md-paint > .md-paint-pane[hidden] { display: none; }
+.md-app .md-paint-pane::-webkit-scrollbar { width: 8px; }
+/* 图层页签里整个面板就是卡片，分区不再重复描边 */
+.md-app .md-paint-pane .md-paint-mix { margin-top: 0; padding-top: 0; border-top: 0; }
 
 

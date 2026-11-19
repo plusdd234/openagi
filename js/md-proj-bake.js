@@ -2074,9 +2074,6 @@
 
       if (!TStack) {
         /* 层栈没加载：退回老路（直接写 slotMaps），否则这次投射等于白做 */
-        var mats0 = st.doc.materials || (st.doc.materials = {});
-        var arr0 = mats0.slotMaps || (mats0.slotMaps = []);
-        while (arr0.length <= S.slot) arr0.push('');
         var base0 = slotBaseImage();
         var c2b = cv.getContext('2d');
         c2b.globalCompositeOperation = 'destination-over';
@@ -2084,7 +2081,7 @@
         else { c2b.fillStyle = slotColorOf(S.slot); c2b.fillRect(0, 0, W, H); }
         c2b.globalCompositeOperation = 'source-over';
         var after0 = cv.toDataURL('image/png');
-        arr0[S.slot] = after0;
+        ctx.setSlotMap(S.slot, after0);
         SeedModel.Scene.revision(st.doc, 'current');
         var tex0 = new THREE.CanvasTexture(cv);
         if ('encoding' in tex0 && THREE.sRGBEncoding != null) tex0.encoding = THREE.sRGBEncoding;
@@ -2174,17 +2171,14 @@
         base: got.img, slotColor: slotColorOf(S.slot), cap: BAKE_CAP
       });
       if (!cv) { toast('固化失败：取不到底座尺寸', true); return false; }
-      var mats = st.doc.materials || (st.doc.materials = {});
-      var arr = mats.slotMaps || (mats.slotMaps = []);
-      while (arr.length <= S.slot) arr.push('');
-      var beforeMap = arr[S.slot] || '';
+      var beforeMap = ctx.slotMap(S.slot);
       var beforeOps = TStack.ops(st.doc, S.slot).slice();
       var afterMap = '';
       try { afterMap = cv.toDataURL('image/png'); } catch (e) {
         toast('固化失败：画布无法编码（可能是跨域图）', true);
         return false;
       }
-      arr[S.slot] = afterMap;
+      ctx.setSlotMap(S.slot, afterMap);
       TStack.clear(st.doc, S.slot);
       SeedModel.Scene.revision(st.doc, 'current');
       pushHist({
@@ -2327,13 +2321,10 @@
       var got = slotBaseImage();
       if (got.url || !got.img) return false;
       if (ctx.mixComposed && ctx.mixComposed(S.slot) === got.img) return false;
-      var mats = st.doc.materials || (st.doc.materials = {});
-      var arr = mats.slotMaps || (mats.slotMaps = []);
-      while (arr.length <= S.slot) arr.push('');
       var url = '';
       try { url = imgToURL(got.img); } catch (e) { return false; }
       if (!url) return false;
-      arr[S.slot] = url;
+      ctx.setSlotMap(S.slot, url);
       SeedModel.Scene.revision(st.doc, 'current');
       return true;
     }

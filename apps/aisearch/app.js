@@ -16,6 +16,7 @@
 
   var APP = 'aisearch';
   var LS_HIST = 'hf_aisearch_hist';
+  var LS_ASSIST = 'hf_aisearch_assist';
   var MAX_SOURCES = 6;          // 最多精读几篇（并发 3，超出的留摘要）
   var SCAN_MAX = 120;           // 一轮最多筛读多少条候选（含边扫边扩出来的外链）
   var SCAN_BATCH = 10;          // 每 10 条压成一组交给模型判断
@@ -681,6 +682,8 @@
     pageCache: Object.create(null),
     emails: [],
     intentKind: '',
+    assistOn: true,
+    assistScript: null,
     autoTried: false,
     answer: '',
     error: '',
@@ -1640,6 +1643,8 @@
       if (isCommunity(u)) score += 1;
       /* 筛读阶段被 AI 判为「值得读」的，优先进入结果与精读名单。 */
       if (r.pick) score += 6;
+      /* AI 辅助脚本给出的加权：只影响排序，不改变结果是否保留。 */
+      if (r.assistScore) score += r.assistScore;
       /* 找人 / 邮箱：频道页、榜单页、含联系方式的页面优先，否则会被泛新闻挤出精读名额。 */
       if (contact) {
         if (CONTACT_HINT.test(text)) score += 7;
@@ -2111,6 +2116,236 @@
     return out;
   }
 
+  /* ---------------- AI 辅助脚本 ----------------
+   * 让语言模型在检索阶段写一段临时 JavaScript（补充检索式 / 淘汰页面 / 打分）。
+   * 代码不在本页执行：App 与桌面桥同渲染进程，eval 或 new Function 能直接读
+   * localStorage 与 window.openagiDesktop。这里把代码丢进 sandbox iframe：
+   *   · 没有 allow-same-origin → 独立的不透明源，摸不到父页存储；
+   *   · 内嵌 CSP default-src 'none' → 没有网络、没有外部资源；
+   *   · 只喂候选页的纯数据，2 秒超时，超时或异常都退回原结果。
+   * 模型返回值仍要过一遍结构校验：检索式长度、URL 必须真实存在于候选池。 */
+  var ASSIST_MAX_QUERIES = 3;
+  var ASSIST_SCORE_MIN = -5;
+  var ASSIST_SCORE_MAX = 5;
+  var ASSIST_TIMEOUT = 2000;
+
+  /* 沙箱载荷：只放纯数据，不放 DOM、不放连接、不放全局对象引用。 */
+  function assistCandidates(results) {
+    return (results || []).slice(0, 24).map(function (r, i) {
+      return {
+        i: i,
+        title: clip(r.title || r.url || '', 120),
+        url: String(r.url || ''),
+        site: hostOf(r.url),
+        snippet: clip(r.snippet || '', 160)
+      };
+    });
+  }
+
+  function assistScriptPrompt(q, results) {
+    var lines = assistCandidates(results).map(function (c) {
+      return c.i + '. ' + c.title + ' | ' + c.site + ' | ' + (c.snippet || '暂无摘要');
+    }).join('\n');
+    return {
+      sys: '你是智搜的检索辅助脚本生成器。你输出一段 JavaScript 函数体，系统会在隔离沙箱里用候选数据调用它。\n'
+        + '只输出 JSON：{"name":"不超过16字","code":"JavaScript 函数体"}\n'
+        + '沙箱里没有网络、没有存储、没有 DOM，只有参数 data，必须同步 return 一个对象。\n'
+        + 'data = {"question":原问题,"primary":主检索式,"results":[{"i","title","url","site","snippet"}]}\n'
+        + '返回结构：{"queries":[补充检索式],"drop":[要淘汰的 url],"score":{"url":分值}}\n'
+        + '规则：\n'
+        + '1. queries 最多 3 条，要提出比原问题更具体的新方向（版本号、专有名词、对比、官方文档等），不能复述原句；\n'
+        + '2. drop 只能写 data.results 里真实存在的 url，只淘汰明显无关的页（排行榜、下载站、其他主题）；\n'
+        + '3. score 只给 data.results 里真实存在的 url，分值 -5 到 5，直接决定最终排序；\n'
+        + '4. code 里不要用反引号，不要输出解释文字；没有把握就返回空数组 / 空对象；\n'
+        + '5. 你必须先读标题与摘要再判断，不要凭空编造页面。\n'
+        + '示例：{"name":"补官方文档","code":"var out=[];data.results.forEach(function(r){if(/官方|文档/.test(r.title))out.push(r.url)});return {queries:[\'React 19 useActionState 官方文档\'],drop:[],score:out.reduce(function(m,u){m[u]=3;return m},{})}"}',
+      user: '用户问题：' + q + '\n\n候选页（编号 | 标题 | 站点 | 摘要）：\n' + (lines || '（无）')
+        + '\n\n只输出 JSON。'
+    };
+  }
+
+  /* 模型输出可能夹带解释文字：取第一个大括号块，只接受 {name, code}。 */
+  function parseAssistScript(raw) {
+    var m = String(raw || '').match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    var o;
+    try { o = JSON.parse(m[0]); } catch (e) { return null; }
+    if (!o || typeof o !== 'object') return null;
+    var code = String(o.code || '').trim();
+    if (!code || code.length > 4000) return null;
+    /* 死循环会把沙箱所在线程占满，超时定时器也跟着停摆；显式拦掉最常见的两种写法。 */
+    if (/while\s*\(\s*(true|1)\s*\)/i.test(code) || /for\s*\(\s*;\s*;\s*\)/i.test(code)) return null;
+    return { name: clip(o.name || '检索辅助', 24), code: code };
+  }
+
+  /* 沙箱执行：srcdoc 里注册一次性的 message 监听，用 new Function 跑模型代码。
+     父页只等一条带 token 的回包，超时直接拆掉 iframe。 */
+  function runAssistSandbox(code, payload, timeoutMs) {
+    return new Promise(function (resolve) {
+      var token = 'as_' + Math.random().toString(36).slice(2);
+      var done = false;
+      function finish(out) {
+        if (done) return;
+        done = true;
+        window.removeEventListener('message', onMsg);
+        try { if (frame.parentNode) frame.parentNode.removeChild(frame); } catch (e) { /* 忽略 */ }
+        resolve(out);
+      }
+      function onMsg(e) {
+        if (!e.data || e.data.__assist !== token) return;
+        finish(e.data.ok ? { ok: true, out: e.data.out } : { ok: false, err: e.data.err });
+      }
+      var html = '<!doctype html><meta charset="utf-8">'
+        + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\' \'unsafe-eval\'">'
+        + '<script>'
+        + 'window.addEventListener("message",function(ev){'
+        + 'var d=ev.data||{};if(!d.__run)return;'
+        + 'function back(ok,v){parent.postMessage({__assist:d.token,ok:ok,out:ok?v:undefined,err:ok?undefined:v},"*");}'
+        + 'function run(code){var f=new Function("data",code);return f(d.payload);}'
+        + 'function deliver(r){if(r&&typeof r.then==="function"){r.then(function(v){back(true,v)},function(e){back(false,String(e&&e.message||e))});}else back(true,r);}'
+        + 'try{deliver(run(d.code));}catch(err){'
+        /* 模型偶尔多写一个收尾大括号；只在首次语法失败后去掉末尾一个 } 重试。 */
+        + 'try{deliver(run(String(d.code).replace(/\}\\s*$/,"")));}catch(e2){back(false,String(err&&err.message||err));}'
+        + '}});'
+        + '<\/script>';
+      var frame = document.createElement('iframe');
+      frame.setAttribute('sandbox', 'allow-scripts');
+      frame.setAttribute('aria-hidden', 'true');
+      frame.style.cssText = 'position:absolute;left:-9999px;top:0;width:1px;height:1px;border:0';
+      frame.srcdoc = html;
+      /* srcdoc 的内联脚本在解析期就注册好监听，load 之后再投递不会丢。 */
+      frame.onload = function () {
+        try {
+          frame.contentWindow.postMessage({ __run: 1, token: token, code: code, payload: payload }, '*');
+        } catch (e) { finish({ ok: false, err: 'postMessage failed' }); }
+      };
+      window.addEventListener('message', onMsg);
+      document.body.appendChild(frame);
+      setTimeout(function () { finish({ ok: false, err: 'timeout' }); }, timeoutMs || ASSIST_TIMEOUT);
+    });
+  }
+
+  /* 结构校验：只接受候选池里真实存在的 URL；检索式不许复述原句；分值夹在 -5~5。 */
+  function acceptAssistResult(out, results, q) {
+    if (!out || typeof out !== 'object') return null;
+    var urls = Object.create(null);
+    (results || []).forEach(function (r) { urls[r.url] = 1; });
+
+    var queries = [];
+    (Array.isArray(out.queries) ? out.queries : []).forEach(function (x) {
+      var s = String(x == null ? '' : x).replace(/\s+/g, ' ').trim();
+      if (s.length < 2 || s.length > 60) return;
+      var low = s.toLowerCase();
+      if (low === String(q || '').toLowerCase()) return;
+      if (queries.some(function (y) { return y.toLowerCase() === low; })) return;
+      if (queries.length < ASSIST_MAX_QUERIES) queries.push(s);
+    });
+
+    var drop = [];
+    (Array.isArray(out.drop) ? out.drop : []).forEach(function (u) {
+      var s = String(u || '').trim();
+      if (!urls[s] || drop.indexOf(s) >= 0) return;
+      drop.push(s);
+    });
+
+    var score = Object.create(null);
+    var scored = 0;
+    if (out.score && typeof out.score === 'object') {
+      Object.keys(out.score).forEach(function (u) {
+        if (!urls[u]) return;
+        var n = Number(out.score[u]);
+        if (!isFinite(n)) return;
+        n = Math.max(ASSIST_SCORE_MIN, Math.min(ASSIST_SCORE_MAX, n));
+        if (!n) return;
+        score[u] = n;
+        scored++;
+      });
+    }
+
+    if (!queries.length && !drop.length && !scored) return null;
+    return { queries: queries, drop: drop, score: score };
+  }
+
+  /* 应用脚本结果：drop 不能把候选清空（真删光就整批保留）；打分累加进 rankPool。 */
+  function applyAssistResult(act, results) {
+    var dropSet = Object.create(null);
+    act.drop.forEach(function (u) { dropSet[u] = 1; });
+    var keepAll = !(results || []).some(function (r) { return !dropSet[r.url]; });
+
+    var dropped = 0;
+    var boosted = 0;
+    var kept = [];
+    (results || []).forEach(function (r) {
+      if (!keepAll && dropSet[r.url]) { dropped++; return; }
+      var add = act.score[r.url] || 0;
+      if (add) { r.assistScore = (r.assistScore || 0) + add; boosted++; }
+      kept.push(r);
+    });
+    return { list: kept, drop: dropped, boost: boosted };
+  }
+
+  /* 只在检索阶段接一次：模型不可用、脚本非法、超时或用户关掉开关时，
+     原样返回主流程的结果，不产生额外请求也不改变排序。 */
+  function aiAssistScript(q, results, askFn, signal) {
+    if (!S.assistOn || S.mode !== 'web' || signal.aborted) return Promise.resolve(results);
+    var conn = llmConnSafe();
+    if (!window.LLMRouter || typeof window.LLMRouter.complete !== 'function'
+      || !conn || !conn.base || !conn.key || !conn.model) return Promise.resolve(results);
+
+    var p = assistScriptPrompt(q, results);
+    var local = isLocalBase(conn.base);
+    return window.LLMRouter.complete({
+      app: APP,
+      sys: p.sys,
+      messages: [{ role: 'user', content: p.user }],
+      opts: { signal: signal, temperature: 0, timeoutMs: local ? 120000 : 30000 }
+    }).then(function (out) {
+      if (signal.aborted) return results;
+      var script = parseAssistScript(out);
+      if (!script) return results;
+      return runAssistSandbox(script.code, {
+        question: q,
+        primary: primaryQuery(q),
+        results: assistCandidates(results)
+      }, ASSIST_TIMEOUT).then(function (res) {
+        if (signal.aborted || !res.ok) return results;
+        var act = acceptAssistResult(res.out, results, q);
+        if (!act) return results;
+        S.assistScript = { name: script.name, queries: act.queries, drop: act.drop, score: act.score };
+
+        /* 补充检索式整轮最多 2 条：模型可以给 3 条，但多发一轮就多一次抓取与等待。 */
+        var extraQueries = act.queries.filter(function (qq) {
+          var key = String(qq).toLowerCase();
+          if (S.trailTried[key]) return false;
+          S.trailTried[key] = 1;
+          return true;
+        }).slice(0, 2);
+
+        var seq = Promise.resolve([]);
+        extraQueries.forEach(function (qq) {
+          seq = seq.then(function (acc) {
+            if (signal.aborted) return acc;
+            return askFn(qq, '脚本').catch(function () { return []; }).then(function (list) {
+              return acc.concat(list || []);
+            });
+          });
+        });
+        return seq.then(function (extra) {
+          if (signal.aborted) return results;
+          var applied = applyAssistResult(act, results.concat(extra));
+          trace({
+            kind: '脚本',
+            text: 'AI 辅助脚本「' + script.name + '」'
+              + (extraQueries.length ? '：' + extraQueries.join(' / ') : ''),
+            res: '新增 ' + extra.length + ' 条 · 加权 ' + applied.boost + ' · 过滤 ' + applied.drop,
+            ok: extra.length > 0 || applied.boost > 0 || applied.drop > 0
+          });
+          return applied.list;
+        });
+      });
+    }).catch(function () { return results; });
+  }
+
   /* ---------------- 主流程 ---------------- */
   function runSearch(raw) {
     var q = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
@@ -2137,6 +2372,7 @@
     S.pageCache = Object.create(null);
     S.emails = [];
     S.intentKind = '';
+    S.assistScript = null;
     S.answer = '';
     S.error = '';
     S.note = '';
@@ -2403,7 +2639,11 @@
         if (!repos.length && !seeds.length && !judge(web, q).ok) {
           trace({ kind: '判断', text: '没有真正相关的资料', res: '继续读页面找出站链接', ok: false });
         }
-        return { results: all };
+        /* 检索告一段落：让模型写一份临时辅助脚本，补检索式 / 加权 / 过滤候选页。
+           这一步只加强候选池，不改写正文与答案；失败时原样返回。 */
+        return aiAssistScript(q, all, ask, ctrl.signal).then(function (finalList) {
+          return { results: finalList };
+        });
       });
     }
 
@@ -3022,6 +3262,17 @@
   function focusInput() {
     var el = $('.ais-hero').classList.contains('hidden') ? $('.ais-input') : $('.ais-hero-input');
     if (el) { try { el.focus(); } catch (e) { /* 忽略 */ } }
+  }
+
+  /* 辅助脚本开关：只影响下一轮检索，不改已有结果。 */
+  function applyAssistUI() {
+    var b = $('[data-act="assist"]');
+    if (!b) return;
+    b.classList.toggle('is-on', !!S.assistOn);
+    b.setAttribute('aria-pressed', S.assistOn ? 'true' : 'false');
+    b.title = S.assistOn
+      ? 'AI 辅助脚本：开启（点击关闭）'
+      : 'AI 辅助脚本：关闭（点击开启）';
   }
 
   /* 模式切换只改「找什么」，不改视觉体系。影视模式换掉的只有文案、示例与结果区。 */
@@ -3701,6 +3952,10 @@
         S.hist = [];
         saveHist();
         renderHist();
+      } else if (act === 'assist') {
+        S.assistOn = !S.assistOn;
+        try { localStorage.setItem(LS_ASSIST, S.assistOn ? '1' : '0'); } catch (e) { /* 忽略 */ }
+        applyAssistUI();
       } else if (act === 'net') {
         checkEnv();
       }
@@ -3754,9 +4009,12 @@
       S.body = body;
       try { S.mode = localStorage.getItem('hf_aisearch_mode') === 'media' ? 'media' : 'web'; }
       catch (e) { S.mode = 'web'; }
+      try { S.assistOn = localStorage.getItem(LS_ASSIST) !== '0'; }
+      catch (e) { S.assistOn = true; }
       loadHist();
       bind(body);
       applyModeUI();
+      applyAssistUI();
       renderHist();
       body.dataset.ready = '1';
       checkEnv();

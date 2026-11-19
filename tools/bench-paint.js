@@ -104,7 +104,7 @@ async function setupScene(page, scene) {
 async function measure(page, rounds, moves) {
   return page.evaluate(async ({ rounds, moves }) => {
     const API = window.modelDesk, d = API.__debug(), T = window.THREE;
-    const tb = document.querySelector('[data-md-tbk="paint"]');
+    const tb = document.querySelector('[data-md-editor-btn="paint"]');
     if (tb) tb.click();
     const set = (id, v, ev) => {
       const el = document.getElementById(id);

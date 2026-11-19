@@ -59,6 +59,7 @@
     var o = {
       id: String(r.id || ''), name: String(r.name || ''),
       flipY: r.flipY !== false,
+      visible: r.visible !== false,
       opacity: TB.clampNum(r.opacity != null ? r.opacity : 1, 0, 1),
       blend: r.blend || 'normal'
     };
@@ -81,6 +82,7 @@
     if (persist && !l.id) return null;
     var o = {
       id: String(l.id || ''), name: String(l.name || ''), flipY: l.flipY !== false,
+      visible: l.visible !== false,
       opacity: TB.clampNum(l.opacity, 0, 1), blend: l.blend || 'normal'
     };
     if (!persist && l.src) o.src = String(l.src);
@@ -461,6 +463,7 @@
         }
         return {
           id: l.id, name: l.name, flipY: l.flipY !== false,
+          visible: l.visible !== false,
           opacity: TB.clampNum(l.opacity, 0, 1), blend: l.blend || 'normal',
           img: img, mask: mask,
           kind: l.kind || '', islands: l.islands || []
@@ -541,11 +544,20 @@
     }
 
     /* ---------------- 合成 ---------------- */
+    /* 绘画工作副本的底座是不是「底座 + 图层」的合成图。
+     * 是的话工作副本里已经含图层像素：隐藏 / 删除图层后不能再把它当最终像素，
+     * 否则颜色退不掉（真实症状：关掉头发那一层，视口里头发仍有颜色）。
+     * 命中时一律回退到「底座 + 已提交笔迹」重新合成。 */
+    function paintSeedComposed(slot) {
+      return !!(ctx.paintSeedComposed && ctx.paintSeedComposed(slot));
+    }
+
     function effectiveLayers(rec) {
       var out = [];
       var ls = rec.layers || [];
       for (var i = 0; i < ls.length; i++) {
-        if (ls[i] && ls[i].img && TB.clampNum(ls[i].opacity, 0, 1) > 0) out.push(ls[i]);
+        if (ls[i] && ls[i].img && ls[i].visible !== false &&
+            TB.clampNum(ls[i].opacity, 0, 1) > 0) out.push(ls[i]);
       }
       return out;
     }
@@ -586,16 +598,24 @@
      * 否则用 doc 里原来的共享贴图（没有就 null = 只吃槽色）。 */
     function applyBase(slot) {
       var rec = recOf(docOf(), slot);
+      /* 上一张是不是本模块挂的合成图：是的话「回到基础贴图」必须把它换掉，
+       * 不能因为材质上还有图就保留 —— 那会把刚隐藏 / 删掉的图层留在视口里。 */
+      var owned = !!rec.tex;
       dropTex(rec);
+      /* 回到基础贴图：合成缓存作废。留着上一张合成图的话，
+       * 保存时「自动烘焙」会把已经删掉的图层又烘回 GLB。 */
+      rec.canvas = null;
+      rec.composeState = null;
       var pt = paintTexFor ? paintTexFor(slot) : null;
-      if (pt) { applySlotTexture(slot, pt); return; }
+      /* 工作副本若拿合成图当过底座，里面含图层像素：图层都删光后也不能回挂它 */
+      if (pt && !paintSeedComposed(slot)) { applySlotTexture(slot, pt); return; }
       var doc = docOf();
       var url = ((doc && doc.materials && doc.materials.slotMaps) || [])[slot] || '';
       if (url) { applySlotTexture(slot, sharedTexture(url)); return; }
       /* slotMaps 里没有 URL 时**不能**把材质清成 null：材质上那张可能就是唯一的图
        * （只在 map 上的老资产 / 合成图）。清掉就是「撤销一下贴图全没了」。
        * 只有材质上本来也没图，才真的清空。 */
-      if (liveSlotImage && liveSlotImage(slot)) return;
+      if (!owned && liveSlotImage && liveSlotImage(slot)) return;
       applySlotTexture(slot, null);
     }
 
@@ -671,6 +691,7 @@
     /* 整图重算次数：性能基准用它判断「拖动时是否还在整张合成」。
      * 增量合成不计入 —— 它的成本是笔刷包围盒，与整图不是一个量级。 */
     var composeN = 0;
+    var bakeN = 0;      /* 保存时自动烘焙的次数（探针 / 基准用） */
     function composeOnto(doc, slot, rec, baseImg, eff, ink) {
       var sz = TB.mixSize({ baseImg: baseImg, layers: eff || [] }, MAX_SIDE);
       /* 只有笔迹、没有底座/混合层时，尺寸要跟笔迹画布一致（工作副本 2048），
@@ -845,13 +866,14 @@
        * （2048² 拷贝 + 新纹理上传）会把拖动手感拖垮。抬笔后 ink 归 null，
        * 再走下面的正常合成。模糊笔也一样：工作副本里已经做了局部模糊。 */
       var ptex = paintTexFor ? paintTexFor(slot) : null;
-      if (!eff.length && ptex && ink) { applySlotTexture(slot, ptex); return; }
+      var seedComposed = paintSeedComposed(slot);
+      if (!eff.length && ptex && ink && !seedComposed) { applySlotTexture(slot, ptex); return; }
       /* 没有混合层时，绘画工作副本就是最终像素（底座 ⊕ 已提交层 ⊕ 这一笔）。
        * 抬笔后 ink 归 null，这里把它当成成品直接采纳 —— 回放层栈会把同一批笔迹
        * 再叠一遍（橡皮还会多擦一次），所以走 adoptPaintCanvas 而不是 composeOnto。
        * 模糊例外：blur 层要作用在「底座 + 混合层」的结果上，工作副本里没有
        * 混合层，不能拿它当底座，否则糊出来的是底座颜色。 */
-      if (!eff.length && pc && !blur) { adoptPaintCanvas(doc, slot, rec, pc, !!ink); return; }
+      if (!eff.length && pc && !blur && !seedComposed) { adoptPaintCanvas(doc, slot, rec, pc, !!ink); return; }
       var baked = (rec.baked && rec.baked.img) || null;
       if (!eff.length && !baked && !hasOps && !ink) { applyBase(slot); return; }
       /* 底座只取「投射」层：笔迹由 composeOnto 叠在混合层之上 */
@@ -944,7 +966,7 @@
         if (uiReady) renderUi();
         return 1;
       }).catch(function (e) {
-        setStatus('纹理混合：' + ((e && e.message) || e), true);
+        setStatus('材质图层：' + ((e && e.message) || e), true);
         return 0;
       });
     }
@@ -1085,17 +1107,17 @@
       var doc = docOf();
       if (!doc) return;
       var cfg = readCfg(doc, slot);
-      if (cfg.layers.length >= LIMIT) { setStatus('纹理混合：一个材质槽最多 ' + LIMIT + ' 层', true); return; }
+      if (cfg.layers.length >= LIMIT) { setStatus('材质图层：一个材质槽最多 ' + LIMIT + ' 层', true); return; }
       var before = snapCfg(slot);
       return putImageAsset(dataURL, name).then(function (id) {
         cfg.layers.push({
-          id: id, name: name || '贴图', flipY: true, opacity: 1, blend: 'normal',
+          id: id, name: name || '贴图', flipY: true, visible: true, opacity: 1, blend: 'normal',
           src: id ? '' : dataURL
         });
         writeCfg(doc, slot, cfg);
         rebuildSlot(slot, before, '添加混合层');
         if (uiReady) renderUi();
-        setStatus('纹理混合：已叠加「' + (name || '贴图') + '」' +
+        setStatus('材质图层：已叠加「' + (name || '贴图') + '」' +
           (id ? '' : '（网页版：本次会话内有效）'));
       });
     }
@@ -1115,7 +1137,7 @@
         writeCfg(doc, slot, cfg);
         rebuildSlot(slot, before, '设置遮罩');
         if (uiReady) renderUi();
-        setStatus('纹理混合：遮罩已设置（白色显示、黑色隐藏）');
+        setStatus('材质图层：遮罩已设置（白色显示、黑色隐藏）');
       });
     }
 
@@ -1150,7 +1172,7 @@
           });
           return chain;
         }).catch(function (e) {
-          setStatus('纹理混合：' + ((e && e.message) || e), true);
+          setStatus('材质图层：' + ((e && e.message) || e), true);
         });
         fileInput.value = '';
       };
@@ -1171,15 +1193,15 @@
       var doc = docOf();
       if (!doc || !a || !a.id) return;
       var cfg = readCfg(doc, slot);
-      if (cfg.layers.length >= LIMIT) { setStatus('纹理混合：一个材质槽最多 ' + LIMIT + ' 层', true); return; }
+      if (cfg.layers.length >= LIMIT) { setStatus('材质图层：一个材质槽最多 ' + LIMIT + ' 层', true); return; }
       var before = snapCfg(slot);
       cfg.layers.push({
-        id: String(a.id), name: a.name || '贴图', flipY: true, opacity: 1, blend: 'normal'
+        id: String(a.id), name: a.name || '贴图', flipY: true, visible: true, opacity: 1, blend: 'normal'
       });
       writeCfg(doc, slot, cfg);
       rebuildSlot(slot, before, '添加混合层');
       if (uiReady) renderUi();
-      setStatus('纹理混合：已叠加「' + (a.name || '贴图') + '」');
+      setStatus('材质图层：已叠加「' + (a.name || '贴图') + '」');
     }
 
     function setMaskFromAsset(slot, idx, a) {
@@ -1193,7 +1215,7 @@
       writeCfg(doc, slot, cfg);
       rebuildSlot(slot, before, '设置遮罩');
       if (uiReady) renderUi();
-      setStatus('纹理混合：遮罩已设置（白色显示、黑色隐藏）');
+      setStatus('材质图层：遮罩已设置（白色显示、黑色隐藏）');
     }
 
     var gallery = null;
@@ -1298,7 +1320,7 @@
       var rec = recOf(doc, slot);
       var cfg = readCfg(doc, slot);
       if (!cfg.layers.length) {
-        setStatus('纹理混合：没有可烘焙的图层（底层贴图本身不用烘焙）', true);
+        setStatus('材质图层：没有可烘焙的图层（底层贴图本身不用烘焙）', true);
         return;
       }
       var pc = paintCanvasFor ? paintCanvasFor(slot) : null;
@@ -1314,7 +1336,7 @@
       var url = cv.toDataURL('image/png');
       var name = (slotKeyOf(doc, slot) || '槽') + ' 烘焙';
       var before = snapCfg(slot);
-      setStatus('纹理混合：正在烘焙 ' + sz.w + '×' + sz.h + '…');
+      setStatus('材质图层：正在烘焙 ' + sz.w + '×' + sz.h + '…');
       return putImageAsset(url, name).then(function (id) {
         var cfg2 = readCfg(doc, slot);
         cfg2.baked = { id: id, name: name, flipY: true, src: id ? '' : url };
@@ -1322,10 +1344,10 @@
         writeCfg(doc, slot, cfg2);
         rebuildSlot(slot, before, '烘焙纹理');
         if (uiReady) renderUi();
-        setStatus('纹理混合：已烘焙为「' + name + '」' +
+        setStatus('材质图层：已烘焙为「' + name + '」' +
           (id ? '（已存入资产库）' : '（本次会话内有效）'));
       }).catch(function (e) {
-        setStatus('纹理混合：烘焙失败 · ' + ((e && e.message) || e), true);
+        setStatus('材质图层：烘焙失败 · ' + ((e && e.message) || e), true);
       });
     }
 
@@ -1345,7 +1367,7 @@
       var rec = recOf(doc, slot);
       var rl = (rec.layers && rec.layers[idx]) || null;
       var srcImg = rl && rl.img;
-      if (!srcImg) { setStatus('纹理混合：贴图还没解码完，稍后再画遮罩', true); return; }
+      if (!srcImg) { setStatus('材质图层：贴图还没解码完，稍后再画遮罩', true); return; }
       closeMaskDlg();
 
       var W = Math.min(1024, srcImg.width || 512);
@@ -1508,12 +1530,12 @@
         writeCfg(doc, mp.slot, cfg);
         schedule(mp.slot);
         if (uiReady) renderUi();
-        setStatus('纹理混合：已取消，遮罩回到绘制前');
+        setStatus('材质图层：已取消，遮罩回到绘制前');
         return;
       }
       var name = (mp.layerName || '图层') + ' 手绘遮罩';
       var url = mp.cv.toDataURL('image/png');
-      setStatus('纹理混合：遮罩绘制完成，正在保存…');
+      setStatus('材质图层：遮罩绘制完成，正在保存…');
       putImageAsset(url, name).then(function (id) {
         var doc2 = docOf();
         if (!doc2) return;
@@ -1529,9 +1551,9 @@
         writeCfg(doc2, mp.slot, cfg2);
         rebuildSlot(mp.slot, mp.before, '手绘遮罩');
         if (uiReady) renderUi();
-        setStatus('纹理混合：手绘遮罩已保存' + (id ? '（已存入资产库）' : '（本次会话内有效）'));
+        setStatus('材质图层：手绘遮罩已保存' + (id ? '（已存入资产库）' : '（本次会话内有效）'));
       }).catch(function (e) {
-        setStatus('纹理混合：遮罩保存失败 · ' + ((e && e.message) || e), true);
+        setStatus('材质图层：遮罩保存失败 · ' + ((e && e.message) || e), true);
       });
     }
 
@@ -1539,13 +1561,13 @@
       if (maskPaint) stopMaskPaint(true);
       var doc = docOf();
       if (!doc) return;
-      if (!ctx.paintRayHit) { setStatus('纹理混合：视口还没准备好', true); return; }
+      if (!ctx.paintRayHit) { setStatus('材质图层：视口还没准备好', true); return; }
       var cfg = readCfg(doc, slot);
       var l = cfg.layers[idx];
       if (!l) return;
       var rec = recOf(doc, slot);
       var rl = (rec.layers && rec.layers[idx]) || null;
-      if (!rl || !rl.img) { setStatus('纹理混合：贴图还在解码，稍后再画', true); return; }
+      if (!rl || !rl.img) { setStatus('材质图层：贴图还在解码，稍后再画', true); return; }
       closeGallery();
       closeMaskDlg();
 
@@ -1620,7 +1642,7 @@
         mp.lastOk = false;
         try { st.canvas.setPointerCapture(e.pointerId); } catch (err) {}
         var px = hitPx(e);
-        if (!px) { setStatus('纹理混合：要点在模型表面才能画', true); return; }
+        if (!px) { setStatus('材质图层：要点在模型表面才能画', true); return; }
         dab(px);
         mp.lastX = px.x; mp.lastY = px.y; mp.lastOk = true;
         schedule(slot);
@@ -1677,14 +1699,14 @@
         c2.clearRect(0, 0, W, H);
         delete live.__mc;
         schedule(slot);
-        setStatus('纹理混合：遮罩已清空（整层显示）');
+        setStatus('材质图层：遮罩已清空（整层显示）');
       }));
       bar.appendChild(mkBtn('取消', '放弃这次绘制', function () { stopMaskPaint(false); }));
       bar.appendChild(mkBtn('完成', '保存并写回这一层', function () { stopMaskPaint(true); }, 'md-mix-add'));
       document.body.appendChild(bar);
       maskBar = bar;
       schedule(slot);
-      setStatus('纹理混合：在模型表面涂遮罩，白色显示、擦掉隐藏');
+      setStatus('材质图层：在模型表面涂遮罩，白色显示、擦掉隐藏');
     }
 
 
@@ -1693,7 +1715,7 @@
       var l = cfg.layers[idx];
       var rl = (rec.layers && rec.layers[idx]) || null;
       var row = document.createElement('div');
-      row.className = 'md-mix-row';
+      row.className = 'md-mix-row' + (l.visible === false ? ' is-off' : '');
 
       var line1 = document.createElement('div');
       line1.className = 'md-mix-line';
@@ -1714,6 +1736,12 @@
       grip.textContent = '⠿';
       grip.title = '拖动排序';
       line1.appendChild(grip);
+      /* 眼睛 = 整层显隐（和图像工坊的图层行同一套语义）：
+       * 不改不透明度，关掉就是「暂时不参与合成」，随时可以再打开。 */
+      var eye = mkBtn(l.visible === false ? '○' : '◉',
+        l.visible === false ? '显示这一层' : '隐藏这一层',
+        function () { toggleLayerVisible(slot, idx); }, 'md-mix-eye');
+      line1.appendChild(eye);
       var thBox = document.createElement('div');
       thBox.className = 'md-mix-thumb';
       var th = thumbOfLayer(rl || l, 34);
@@ -1723,7 +1751,8 @@
       var nm = document.createElement('div');
       nm.className = 'md-mix-name';
       nm.textContent = l.name || ('图层 ' + (idx + 1));
-      nm.title = nm.textContent;
+      nm.title = nm.textContent + '（双击改名）';
+      nm.ondblclick = function () { renameLayer(slot, idx); };
       line1.appendChild(nm);
 
       /* 列表倒序显示：视觉上「上移」= 数组往后挪一位 */
@@ -1733,6 +1762,7 @@
       if (idx > 0) {
         line1.appendChild(mkBtn('↓', '下移一层', function () { moveLayer(slot, idx, idx - 1); }));
       }
+      line1.appendChild(mkBtn('⧉', '复制这一层', function () { duplicateLayer(slot, idx); }));
       line1.appendChild(mkBtn('×', '删除这一层', function () { removeLayer(slot, idx, l.name); }, 'is-del'));
       row.appendChild(line1);
       row.ondragover = function (e) {
@@ -1855,6 +1885,61 @@
       return row;
     }
 
+    /* 图层显隐：和图像工坊一样只切一个字段，不碰不透明度 ——
+     * 用户关掉再打开时参数原样还在。 */
+    function toggleLayerVisible(slot, idx) {
+      var doc = docOf();
+      if (!doc) return;
+      var cfg = readCfg(doc, slot);
+      var l = cfg.layers[idx];
+      if (!l) return;
+      var rec = recOf(doc, slot);
+      var before = snapCfg(slot);
+      l.visible = l.visible === false;
+      if (rec.layers && rec.layers[idx]) rec.layers[idx].visible = l.visible;
+      writeCfg(doc, slot, cfg);
+      rebuildSlot(slot, before, l.visible ? '显示图层' : '隐藏图层');
+      if (uiReady) renderUi();
+      setStatus('材质图层：已' + (l.visible ? '显示' : '隐藏') + '「' + (l.name || ('图层 ' + (idx + 1))) + '」');
+    }
+
+    function renameLayer(slot, idx) {
+      var doc = docOf();
+      if (!doc) return;
+      var cfg = readCfg(doc, slot);
+      var l = cfg.layers[idx];
+      if (!l) return;
+      var name = global.prompt ? global.prompt('图层名称', l.name || ('图层 ' + (idx + 1))) : '';
+      name = String(name == null ? '' : name).trim();
+      if (!name || name === l.name) return;
+      var before = snapCfg(slot);
+      l.name = name.slice(0, 60);
+      var rec = recOf(doc, slot);
+      if (rec.layers && rec.layers[idx]) rec.layers[idx].name = l.name;
+      writeCfg(doc, slot, cfg);
+      pushMixHistory(slot, before, snapCfg(slot), '重命名图层');
+      if (uiReady) renderUi();
+      setStatus('材质图层：图层已改名为「' + l.name + '」');
+    }
+
+    function duplicateLayer(slot, idx) {
+      var doc = docOf();
+      if (!doc) return;
+      var cfg = readCfg(doc, slot);
+      var l = cfg.layers[idx];
+      if (!l) return;
+      if (cfg.layers.length >= LIMIT) { setStatus('材质图层：一个材质槽最多 ' + LIMIT + ' 层', true); return; }
+      var before = snapCfg(slot);
+      var copy = JSON.parse(JSON.stringify(l));
+      copy.name = (l.name || ('图层 ' + (idx + 1))) + ' 副本';
+      if (copy.mask) delete copy.__mc;
+      cfg.layers.splice(idx + 1, 0, copy);
+      writeCfg(doc, slot, cfg);
+      rebuildSlot(slot, before, '复制图层');
+      if (uiReady) renderUi();
+      setStatus('材质图层：已复制「' + (l.name || '图层') + '」');
+    }
+
     /* 图层在数组里「后者在上」：from → to 直接搬运，不交换。
      * 上移/下移是相邻移动，拖拽排序可能跨多格，所以按 splice 实现。 */
     function moveLayer(slot, from, to) {
@@ -1888,7 +1973,7 @@
       schedule(slot);
       pushMixHistory(slot, before, snapCfg(slot), '删除混合层');
       if (uiReady) renderUi();
-      setStatus('纹理混合：已删除「' + (name || '图层') + '」');
+      setStatus('材质图层：已删除「' + (name || '图层') + '」');
     }
 
     function shortName(s, n) {
@@ -1905,7 +1990,7 @@
       var accent = document.createElement('i');
       head.appendChild(accent);
       var t = document.createElement('span');
-      t.textContent = '纹理混合';
+      t.textContent = '材质图层';
       head.appendChild(t);
 
       if (!doc) {
@@ -1960,8 +2045,8 @@
       if (!cfg.layers.length) {
         var zero = document.createElement('div');
         zero.className = 'md-mix-empty';
-        zero.innerHTML = '<b>＋</b><span>还没有混合层</span>' +
-          '<em>点下方「＋ 贴图」叠加一张；第二张起就能用「比例 + 遮罩」做过渡、脏迹、旧化。</em>';
+        zero.innerHTML = '<b>＋</b><span>这个材质槽还没有图层</span>' +
+          '<em>点下方「＋ 图层」叠加贴图；每层可调显隐、顺序、混合模式、不透明度与遮罩。保存时自动烘焙成该槽贴图。</em>';
         listEl.appendChild(zero);
       }
       for (var li = cfg.layers.length - 1; li >= 0; li--) {
@@ -1982,7 +2067,7 @@
 
       var acts = document.createElement('div');
       acts.className = 'md-mix-acts';
-      var addBtn = mkBtn('＋ 贴图', '叠加一张贴图（图片会存入资产库）', function () {
+      var addBtn = mkBtn('＋ 图层', '叠加一张贴图作为新图层（图片会存入资产库）', function () {
         pickFiles(true, function (url, name) { return addLayerAsset(slot, url, name); });
       });
       addBtn.classList.add('md-mix-add');
@@ -2000,13 +2085,13 @@
         writeCfg(doc, slot, cfg2);
         rebuildSlot(slot, before, '清空纹理混合');
         if (uiReady) renderUi();
-        setStatus('纹理混合：已清空，回到基础贴图');
+        setStatus('材质图层：已清空，回到基础贴图');
       }));
       wrap.appendChild(acts);
 
       var hint = document.createElement('div');
       hint.className = 'md-mix-hint';
-      hint.textContent = '拖动图层标题行可排序；遮罩白色显示、黑色隐藏；合成图直接作为该槽贴图，笔刷仍写在基础贴图上。';
+      hint.textContent = '眼睛切显隐，双击图层名改名，拖动标题行排序；保存时自动把「底座 + 图层 + 笔迹」烘焙成该槽贴图。';
       wrap.appendChild(hint);
 
       if (doc.materials.textureConfigMissing) {
@@ -2054,6 +2139,47 @@
       });
     }
 
+    /* ---------------- 保存时自动烘焙 ----------------
+     * GLB 只带一张 baseColorTexture，带不了图层结构。保存 / 导出前把每个
+     * 「有图层（含隐藏层）或笔迹」的槽重新合成一遍，prepareExportMaps 直接取
+     * 这张 canvas 当贴图 —— 这样存进 GLB 的就是图层叠加后的最终视觉，
+     * 不需要用户再手动点「烘焙」。
+     *
+     * 不做破坏性固化：层栈与配置原样留在文档 / localStorage，
+     * 重开时仍按「底座 + 图层」重新合成；extras 里的 slotMaps 仍是底座，
+     * 不会出现「合成图再叠一遍」的双份。 */
+    async function bakeForSave() {
+      var doc = docOf();
+      if (!doc) return 0;
+      var n = slotCount(doc), done = 0;
+      for (var i = 0; i < n; i++) {
+        var cfg = readCfg(doc, i);
+        var has = cfg.layers.length || cfg.baked ||
+          (global.TexStack && global.TexStack.has(doc, i));
+        if (!has) continue;
+        try {
+          await ensureSlot(i, false);
+          composeAndApply(i);
+          done++;
+        } catch (e) { /* 单槽失败不阻断整次保存 */ }
+      }
+      if (done) bakeN++;
+      return done;
+    }
+
+    /* 导出用：这一槽「底座 + 图层 + 笔迹」的最终画布。
+     * 没有图层 / 笔迹 / 烘焙图时返回 null，让调用方回落到材质上的基础贴图。 */
+    function composedCanvas(slot) {
+      var doc = docOf();
+      if (!doc) return null;
+      var cfg = readCfg(doc, slot);
+      var has = cfg.layers.length || cfg.baked ||
+        (global.TexStack && global.TexStack.has(doc, slot));
+      if (!has) return null;
+      var rec = recOf(doc, slot);
+      return (rec.canvas && rec.canvas.width) ? rec.canvas : null;
+    }
+
     return {
       init: init, refresh: refresh, renderUi: renderUi, schedule: schedule,
       /* 同步重合成：撤销「投射层 / 固化」之后要立刻看到结果，不能等异步解码。
@@ -2066,10 +2192,18 @@
       /* 导出时判断「这一槽的底座还有没有别的来源」：有混合层就不能把 slotMaps 清成空，
        * 否则重开时 GLB 里的合成图会被当成底座、混合层再叠一遍。 */
       hasLayers: function (slot) { return readCfg(docOf(), slot).layers.length > 0; },
+      /* 这一槽是否有「图层 / 烘焙图」需要保存时自动合成。
+       * 导出前 glbTexSwap 会跳过这些槽：底座保持原样，避免笔迹被叠两次。 */
+      needsBake: function (slot) {
+        var c = readCfg(docOf(), slot);
+        return !!(c.layers.length || c.baked);
+      },
       rekey: rekey, selectSlot: selectSlot, adoptSlot: adoptSlot, listSlots: listSlots,
       migrateLegacy: migrateLegacy,
+      /* 保存 / 导出：先把所有槽合成到最新，再让导出贴图直接取这张 canvas */
+      bakeForSave: bakeForSave, composedCanvas: composedCanvas,
       /* 性能基准：整图重算次数（增量合成不计） */
-      stats: function () { return { compose: composeN }; }
+      stats: function () { return { compose: composeN, bake: bakeN }; }
     };
   }
 

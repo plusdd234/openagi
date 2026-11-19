@@ -1081,7 +1081,329 @@ const check = (ok, name, extra) => {
   check(modeKeys === 'raster' && modeF3 === 'vector' && modeF2 === 'raster',
     'F2 / F3 切换位图与矢量编辑器', [modeKeys, modeF3, modeF2].join(' → '));
 
-  /* 9. 关闭按钮 */
+  /* 9. 3D 绘制工作区：UV 岛识别 + 遮挡动态遮罩 */
+  const threeDemo = await page.evaluate(() => {
+    const ok = window.psLab.__test.threeDemo();
+    return { ok, mode: window.psLab.__test.mode(), state: window.psLab.__test.three() };
+  });
+  check(threeDemo.ok && threeDemo.mode === '3d' && !!threeDemo.state && threeDemo.state.ready &&
+        threeDemo.state.islands >= 4,
+    '3D 工作区载入示例模型并识别 UV 岛',
+    JSON.stringify(threeDemo.state));
+
+  const threeChrome = await page.evaluate(() => {
+    const appEl = document.querySelector('.ps-app');
+    const host = document.getElementById('ps3dHost');
+    const q = s => appEl && appEl.querySelector(s);
+    const vis = el => !!el && getComputedStyle(el).display !== 'none' && el.offsetHeight > 0;
+    const view = host && host.querySelector('.ps3d-view');
+    return {
+      is3d: !!(appEl && appEl.classList.contains('is-3d')),
+      hostVisible: !!host && !host.classList.contains('hidden') && host.offsetHeight > 40,
+      toolbar: vis(q('.ps-toolbar')),
+      options: vis(q('.ps-options')),
+      side: vis(q('.ps-side')),
+      doctabs: vis(q('.ps-doctabs')),
+      viewW: view ? view.clientWidth : 0,
+      viewH: view ? view.clientHeight : 0
+    };
+  });
+  check(threeChrome.is3d && threeChrome.hostVisible && threeChrome.toolbar &&
+        threeChrome.options && threeChrome.side && threeChrome.doctabs &&
+        threeChrome.viewW > 240 && threeChrome.viewH > 240,
+    '3D 模式保留 PS 界面（工具箱 / 选项栏 / 图层面板 / 文档标签可见，画布区换成 3D 视口）',
+    JSON.stringify(threeChrome));
+
+  const covOn = await page.evaluate(() => {
+    const t = window.psLab.__test;
+    t.threeSelectAll(true);
+    t.threeOcclude(true);
+    return t.threeRebuild();
+  });
+  const covOff = await page.evaluate(() => {
+    const t = window.psLab.__test;
+    t.threeOcclude(false);
+    return t.threeRebuild();
+  });
+  await page.evaluate(() => window.psLab.__test.threeOcclude(true));
+  check(covOn > 0.001 && covOff > covOn,
+    '遮挡剔除按可见面缩小遮罩',
+    '带遮挡 ' + (covOn * 100).toFixed(2) + '% / 不剔除 ' + (covOff * 100).toFixed(2) + '%');
+
+  const layersBefore3D = await page.evaluate(() => window.psLab.__debug().doc.layers);
+  const committed = await page.evaluate(() => {
+    window.psLab.__test.threeSetKind('layer');
+    return window.psLab.__test.threeCommit();
+  });
+  await page.waitForTimeout(200);
+  const after3D = await page.evaluate(() => ({
+    layers: window.psLab.__debug().doc.layers,
+    active: window.psLab.__test.activeLayer()
+  }));
+  check(committed && after3D.layers === layersBefore3D + 1 && /3D/.test(after3D.active.name),
+    '生成遮罩图层并写入 2D 文档',
+    JSON.stringify({ before: layersBefore3D, after: after3D.layers, name: after3D.active.name }));
+
+  const layerRow = await page.evaluate(() => {
+    const el = document.getElementById('psLayerList');
+    return !!el && /3D 遮罩/.test(el.textContent || '');
+  });
+  check(layerRow, '生成的遮罩图层出现在右侧图层面板', '');
+
+  const maskApplied = await page.evaluate(() => {
+    window.psLab.__test.threeSetKind('mask');
+    const ok = window.psLab.__test.threeCommit();
+    return { ok, active: window.psLab.__test.activeLayer(), target: window.psLab.__test.three().target };
+  });
+  check(maskApplied.ok && !!maskApplied.active && !!maskApplied.active.mask &&
+        maskApplied.active.mask.tiles > 0,
+    '3D 遮罩可套用为图层蒙版',
+    JSON.stringify(maskApplied.active && maskApplied.active.mask));
+
+  const groupAdded = await page.evaluate(() => {
+    const t = window.psLab.__test;
+    const before = t.doc().layers.length;
+    const ok = t.threeAddMaskGroup();
+    const layers = t.doc().layers.slice();
+    const groups = layers.filter(l => l.type === 'group');
+    const kids = layers.filter(l => l.group);
+    const active = layers.find(l => l.id === t.doc().activeId);
+    const list = document.getElementById('psLayerList');
+    return {
+      ok,
+      before,
+      err: t.three() && t.three().groupError,
+      total: layers.length,
+      groups: groups.length,
+      kids: kids.length,
+      kidsWithMask: kids.filter(l => l.mask && l.mask.tiles && l.mask.tiles.size > 0).length,
+      activeIsChild: !!(active && active.group),
+      activeMasked: !!(active && active.mask && active.mask.tiles && active.mask.tiles.size > 0),
+      groupRows: !!list && /组 ·/.test(list.textContent || '')
+    };
+  });
+  check(groupAdded.ok && groupAdded.total > groupAdded.before && groupAdded.groups === 1 &&
+        groupAdded.kids >= 2 && groupAdded.kidsWithMask === groupAdded.kids &&
+        groupAdded.activeIsChild && groupAdded.activeMasked && groupAdded.groupRows,
+    '添加遮罩：按当前视角正交投影，每个可见 UV 岛一个带蒙版的图层（组）',
+    JSON.stringify(groupAdded));
+
+  const islandMask = await page.evaluate(() => {
+    const t = window.psLab.__test;
+    const kid = t.doc().layers.find(l => l.group);
+    const tile = kid && kid.mask && kid.mask.tiles.values().next().value;
+    if (!tile) return { ok: false };
+    const ctx = tile.ctx || tile.canvas.getContext('2d');
+    const d = ctx.getImageData(0, 0, tile.w, tile.h).data;
+    let hidden = 0, shown = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] > 240) hidden++;
+      else if (d[i + 3] < 8) shown++;
+    }
+    return { ok: true, hidden, shown, w: tile.w, h: tile.h };
+  });
+  check(islandMask.ok && islandMask.hidden > 0 && islandMask.shown > 0,
+    '岛图层蒙版：岛外隐藏、岛内可绘制', JSON.stringify(islandMask));
+
+  await page.evaluate(() => window.psLab.__test.setMode('raster'));
+
+  /* 9.5 图像处理助手（色板右侧）：面板就绪、工具生成 SVG、可置入画布 */
+  const asstTab = await page.evaluate(() => {
+    const card = document.getElementById('psHistCard');
+    const col = document.querySelector('[data-col="hist"]');
+    if (card.classList.contains('is-collapsed') && col) col.click();
+    const tabs = Array.from(document.querySelectorAll('#psHistTabs [data-htab]')).map(b => b.textContent.trim());
+    const b = document.querySelector('#psHistTabs [data-htab="assistant"]');
+    if (b) b.click();
+    return { tabs: tabs, active: !!(b && b.classList.contains('is-on')) };
+  });
+  await page.waitForTimeout(140);
+  const asstUi = await page.evaluate(() => {
+    const p = document.getElementById('psAssistant');
+    return {
+      visible: !!p && getComputedStyle(p).display !== 'none',
+      input: !!document.getElementById('psAsstInput'),
+      send: !!document.getElementById('psAsstSend'),
+      greeting: (document.getElementById('psAsstLog') || {}).textContent || ''
+    };
+  });
+  check(asstTab.tabs.join(',') === '历史记录,色板,助手' && asstTab.active,
+    '色板右侧新增「助手」标签', asstTab.tabs.join(' | '));
+  check(asstUi.visible && asstUi.input && asstUi.send && asstUi.greeting.indexOf('图像处理助手') >= 0,
+    '助手面板：消息区 / 输入框 / 发送按钮就绪', asstUi.greeting.slice(0, 24));
+
+  const asstRan = await page.evaluate(async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><rect width="120" height="120" fill="#0af"/><circle cx="60" cy="60" r="34" fill="#fff"/></svg>';
+    const out = await window.psLab.assistant.ask('画一只企鹅', { svg: svg, say: '我来画。' });
+    const st = window.psLab.assistant.state();
+    const preview = document.getElementById('psAsstImg');
+    return {
+      w: out && out.w, h: out && out.h, hasSvg: st.hasSvg,
+      src: !!(preview && /^data:image\/svg\+xml/.test(preview.src)),
+      saveOn: !document.querySelector('[data-asst="save"]').disabled,
+      paintOn: !document.querySelector('[data-asst="paint"]').disabled,
+      log: (document.getElementById('psAsstLog') || {}).textContent || ''
+    };
+  });
+  check(asstRan.hasSvg && asstRan.w === 120 && asstRan.h === 120 && asstRan.src && asstRan.saveOn && asstRan.paintOn,
+    '助手通过 draw_svg 工具生成 SVG 并显示预览', asstRan.w + '×' + asstRan.h);
+  check(/draw_svg/.test(asstRan.log), '助手消息区记录工具调用轨迹', '');
+
+  /* 模型不可用时的本地模板兜底：不同主体产出不同 SVG，且不再连环报网络错误 */
+  const localDraw = await page.evaluate(() => {
+    const fish = window.psLab.assistant.localDraw('画一只鱼');
+    const flower = window.psLab.assistant.localDraw('一朵花');
+    const cat = window.psLab.assistant.localDraw('一只猫');
+    return {
+      w: fish.w, h: fish.h,
+      hasPath: /<path/.test(fish.svg),
+      differ: fish.svg !== flower.svg && flower.svg !== cat.svg
+    };
+  });
+  check(localDraw.w === 512 && localDraw.h === 512 && localDraw.hasPath && localDraw.differ,
+    '本地模板兜底：不同主体生成不同 SVG', localDraw.w + '×' + localDraw.h);
+
+  const localAsk = await page.evaluate(async () => {
+    const out = await window.psLab.assistant.ask('画一只鱼', { local: true });
+    const log = (document.getElementById('psAsstLog') || {}).textContent || '';
+    return { w: out && out.w, log: log };
+  });
+  check(localAsk.w === 512 && /本地模板/.test(localAsk.log) && !/Failed to fetch/.test(localAsk.log),
+    '模型不可用时助手自动改用本地模板出图', 'w=' + localAsk.w);
+
+  /* 分步绘制：每个 SVG 元素一个图层、统一进组，并输出可逐步撤回的步骤脚本 */
+  const paintRes = await page.evaluate(async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">' +
+      '<rect width="200" height="200" fill="#e8f4ff"/>' +
+      '<circle cx="100" cy="100" r="60" fill="#2f9db3"/>' +
+      '<circle cx="100" cy="100" r="24" fill="#fff"/>' +
+      '</svg>';
+    const before = window.psLab.__debug().doc.layers;
+    const res = await window.psLab.assistant.paint(svg, { name: '探针分步' });
+    const dbg = window.psLab.__debug();
+    const gi = dbg.doc.names.indexOf(res.group);
+    return {
+      before: before,
+      after: dbg.doc.layers,
+      count: res.count,
+      group: res.group,
+      groupType: gi >= 0 ? dbg.doc.types[gi] : '',
+      script: (window.psLab.assistant.script() || {}).script || ''
+    };
+  });
+  check(paintRes.after === paintRes.before + paintRes.count + 1 && paintRes.groupType === 'group',
+    '分步绘制：元素各成图层并收进一个图层组', paintRes.before + ' → ' + paintRes.after + ' · ' + paintRes.group);
+  check(paintRes.script.split('\n').length === paintRes.count && /1\. 背景/.test(paintRes.script),
+    '输出可撤回的步骤脚本', paintRes.script.replace(/\n/g, ' / '));
+
+  /* 语义命名：模型给的 id / data-name 翻成中文，path1 / layer2 这类机器 id 不带到图层名 */
+  const semantic = await page.evaluate(async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">' +
+      '<rect id="background" width="200" height="200" fill="#eef"/>' +
+      '<g id="body"><circle cx="100" cy="100" r="40" fill="#c33"/></g>' +
+      '<path id="tentacle-1" d="M60 140c0 20 40 20 40 0" stroke="#c33" fill="none"/>' +
+      '<circle id="eye-left" cx="88" cy="92" r="6" fill="#123"/>' +
+      '<circle id="path1" cx="120" cy="92" r="6" fill="#123"/>' +
+      '</svg>';
+    const res = await window.psLab.assistant.paint(svg, { name: '语义命名' });
+    return { names: res.steps.map(s => s.label) };
+  });
+  check(semantic.names.join(',') === '背景,组合 · 主体,触手 1,左眼,圆形',
+    '图层命名有语义：id 翻成中文，机器 id 退回形状', semantic.names.join(' | '));
+
+  /* token 统计：中转返回 usage 时按真实值累计；编排单轮 max_tokens 收敛到 600 */
+  const usageRes = await page.evaluate(async () => {
+    const router = window.LLMRouter;
+    const orig = router && router.postChat;
+    const calls = [];
+    router.postChat = async function (req) {
+      const sys = (req.messages[0] && req.messages[0].content) || '';
+      const chat = sys.indexOf('图像处理助手') >= 0;
+      calls.push({ max: req.max_tokens, chat: chat });
+      if (chat) {
+        return {
+          choices: [{ message: { content: '{"say":"收到","done":true}' } }],
+          usage: { prompt_tokens: 10, completion_tokens: 5 }
+        };
+      }
+      return {
+        choices: [{ message: { content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect id="background" width="64" height="64" fill="#fff"/><circle id="sun" cx="32" cy="32" r="16" fill="#fc0"/></svg>' } }],
+        usage: { prompt_tokens: 111, completion_tokens: 222 }
+      };
+    };
+    try {
+      await window.psLab.aiDraw('画个太阳');
+      await window.psLab.assistant.ask('随便聊聊');
+      return {
+        usage: window.psLab.assistant.usage(),
+        text: (document.getElementById('psAsstUsage') || {}).textContent || '',
+        drawMax: calls[0] && calls[0].max,
+        chatMax: calls[1] && calls[1].max
+      };
+    } finally {
+      router.postChat = orig;
+    }
+  });
+  check(usageRes.usage.calls === 2 && usageRes.usage.draw.calls === 1 && usageRes.usage.chat.calls === 1 &&
+    usageRes.usage.prompt === 121 && usageRes.usage.completion === 227,
+    'token 统计：按接口返回的 usage 累计', JSON.stringify(usageRes.usage));
+  check(/Token：348/.test(usageRes.text) && /提示 121/.test(usageRes.text),
+    '助手面板展示 token 消耗', usageRes.text);
+  check(usageRes.chatMax === 600, '编排调用 max_tokens 收敛到 600', 'chatMax=' + usageRes.chatMax);
+
+  /* 简化调用：用户只要一张图时，draw_svg 成功后直接结束，不再让模型回一轮 */
+  const singleCall = await page.evaluate(async () => {
+    const router = window.LLMRouter;
+    const orig = router && router.postChat;
+    let n = 0;
+    router.postChat = async function (req) {
+      n++;
+      const sys = (req.messages[0] && req.messages[0].content) || '';
+      if (sys.indexOf('图像处理助手') >= 0) {
+        return {
+          choices: [{ message: { content: '{"say":"画。","tool":"draw_svg","args":{"prompt":"太阳"}}' } }],
+          usage: { prompt_tokens: 5, completion_tokens: 2 }
+        };
+      }
+      return {
+        choices: [{ message: { content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle id="sun" cx="32" cy="32" r="16" fill="#fc0"/></svg>' } }],
+        usage: { prompt_tokens: 7, completion_tokens: 3 }
+      };
+    };
+    try {
+      await window.psLab.assistant.ask('画一个太阳');
+      return { n: n, hasSvg: window.psLab.assistant.state().hasSvg };
+    } finally {
+      router.postChat = orig;
+    }
+  });
+  check(singleCall.n === 2 && singleCall.hasSvg,
+    '只要图时不再多问一轮：1 次编排 + 1 次绘制', 'calls=' + singleCall.n);
+
+  const undoStep = await page.evaluate(() => {
+    const before = window.psLab.__debug().doc.layers;
+    window.psLab.__test.undo();
+    const mid = window.psLab.__debug().doc.layers;
+    window.psLab.__test.redo();
+    return { before: before, mid: mid, after: window.psLab.__debug().doc.layers };
+  });
+  check(undoStep.mid === undoStep.before - 1 && undoStep.after === undoStep.before,
+    '历史按步骤撤回 / 重做（一步一个图层）', undoStep.before + ' → ' + undoStep.mid + ' → ' + undoStep.after);
+
+  const asstPlaced = await page.evaluate(async () => {
+    const before = window.psLab.__debug().doc.layers;
+    document.querySelector('[data-asst="place"]').click();
+    await new Promise(r => setTimeout(r, 700));
+    return {
+      before: before,
+      after: window.psLab.__debug().doc.layers,
+      log: (document.getElementById('psAsstLog') || {}).textContent || ''
+    };
+  });
+  check(asstPlaced.after === asstPlaced.before + 1 && /place_svg/.test(asstPlaced.log),
+    '助手把生成的 SVG 放入画布（place_svg）', asstPlaced.before + ' → ' + asstPlaced.after);
+
+  /* 10. 关闭按钮 */
   const closed = await page.evaluate(() => {
     const b = document.querySelector('#imgLabWin .os-win-close');
     if (!b) return false;

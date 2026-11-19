@@ -97,13 +97,16 @@
   /* 一组面 ID → 这些面的全部面角（去重） */
   function cornersForFaces(mesh, faceIds) {
     if (!mesh) return [];
-    var map = null, out = [], seen = Object.create(null);
+    /* want = 请求的面 ID 集合。以前这里建的是「全网格 ID → 下标」的表，
+     * 再用它做过滤 —— 每个存在的 ID 都在表里，于是任何非空 faceIds 都会命中全部面。
+     * 表现就是「在 UV 里点一个壳，结果所有面都被选中」。 */
+    var want = null, out = [], seen = Object.create(null);
     if (faceIds && faceIds.length) {
-      map = Object.create(null);
-      for (var i = 0; i < faceCount(mesh); i++) map[mesh.faceIds[i]] = i;
+      want = Object.create(null);
+      for (var i = 0; i < faceIds.length; i++) want[faceIds[i]] = 1;
     }
     for (var f = 0; f < faceCount(mesh); f++) {
-      if (map && map[mesh.faceIds[f]] === undefined) continue;
+      if (want && want[mesh.faceIds[f]] !== 1) continue;
       var s = mesh.faceOffsets[f], e = mesh.faceOffsets[f + 1];
       for (var c = s; c < e; c++) {
         if (seen[c]) continue;

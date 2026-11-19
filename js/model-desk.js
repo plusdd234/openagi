@@ -33,7 +33,7 @@
     holdUntil: 0, frameSig: '',
     mode: 'translate', space: 'world', snap: false,
     rightTab: 'props', outlineQuery: '', showGrid: true, gridHelper: null,
-    shading: 'shaded-wire', quad: false, quadCams: null, viewName: '透视',
+    shading: 'shaded', quad: false, quadCams: null, viewName: '透视',
     /* 视口条上的下拉：灯光预设 / 大纲页签 / 工具架页签 / 面板显隐 */
     lightingPreset: 'default', outlineTab: 'all', shelfTab: 'poly',
     panels: { outline: true, right: true, shelf: true },
@@ -42,9 +42,11 @@
     isolate: false,
     /* 右侧工具箱两个页签：建模 / 绘画。绘画 = 把笔刷颜色直接画进当前材质槽的基础色贴图 */
     tbKind: 'model',
+    /* 绘画工具箱内部的两个页签：paint = 笔刷参数，layers = 材质图层列表 */
+    paintTab: 'paint',
     /* 编辑器模式（建模 / 绘制）：两套界面共用同一份 DOM 与状态，只换显隐与工具条。
-     * editorBack = 离开绘制模式时右侧要回到哪个页签（建模 / 属性）。 */
-    editor: 'model', editorBack: 'model',
+     * 模式只在左上角切换；右侧栏标题跟着模式走。 */
+    editor: 'model',
     paint: {
       brush: 'soft', size: 42, opacity: 90, color: '#d94f4f',
       /* tool = 绘制模式左侧工具栏选中的工具：brush / pencil / eraser / blur / smudge /
@@ -120,6 +122,62 @@
       faceCache: null
     }
   };
+
+  /* ---------------- 状态分区（P0：按所有者拆分） ----------------
+   * st 曾经是所有人共用的一张表：视口、选择、面板、绘画全挤在一起，谁都能写，
+   * 读 undefined 也不报错。这里先按所有者把字段收进三个分区：
+   *   st.view  视口 / 场景（渲染层写）
+   *   st.edit  编辑态（选择、工具、软选择、组件变换）
+   *   st.panel 外壳 UI（DOM、停靠、面板、状态栏）
+   * 迁移期为兼容旧调用点，st 上保留同名访问器，映射到分区里的真值；两者是同一字段，
+   * 不复制值。新代码一律写 st.view.* / st.edit.* / st.panel.*，旧调用点逐模块迁走。
+   * paint / uv / history 属于各自功能模块，等模块接管状态时再从 st 一级挪走。 */
+  var ST_GROUPS = {
+    view: ['host', 'stage', 'canvas', 'overlay', 'renderer', 'scene', 'camera', 'controls',
+      'gizmo', 'doc', 'node', 'mesh', 'pivot', 'running', 'raf', 'resizeObs', 'holdUntil',
+      'frameSig', 'showGrid', 'gridHelper', 'shading', 'quad', 'quadCams', 'viewName',
+      'isolate', 'lightingPreset', 'edgeLines', 'vertPoints', 'navAlt', 'lights', 'noPick',
+      'cube', 'pivots', 'quadCtl', 'quadActive', 'quadMax', 'quadDown', 'quadClick',
+      'objSelGroup', 'hoverPick', 'hoverAt'],
+    edit: ['selected', 'mode', 'space', 'snap', 'selMode', 'sel', 'nodeIds', 'soft', 'softDrag',
+      'softInfo', 'selGroup', 'pickDown', 'compPivot', 'compIdx', 'compDrag', 'edgeRecs',
+      'editBefore', 'txBefore', 'editor', 'tbKind', 'tool', 'gest'],
+    panel: ['statusEl', 'hudEl', 'uiReady', 'busy', 'statusTimer', 'texOpen', 'menu', 'toolPanel',
+      'prefs', 'dock', 'dockBody', 'dockOpen', 'dockLoading', 'dockAssets', 'dockErr',
+      'dockThumbs', 'dockToken', 'prim', 'autoName', 'rightTab', 'outlineQuery', 'outlineTab',
+      'shelfTab', 'panels', 'pop', 'popItems', 'paintTab', 'hbOpen', 'hbHover', 'hbZones',
+      'hbPanel', 'pointer']
+  };
+  (function partitionState() {
+    Object.keys(ST_GROUPS).forEach(function (name) {
+      var keys = ST_GROUPS[name];
+      var box = st[name] = {};
+      keys.forEach(function (k) {
+        /* 拼错的分区键直接暴露出来：静默丢字段比报错更难查 */
+        if (!(k in st)) { box[k] = undefined; return; }
+        box[k] = st[k];
+        Object.defineProperty(st, k, {
+          enumerable: true, configurable: true,
+          get: function () { return box[k]; },
+          set: function (v) { box[k] = v; }
+        });
+      });
+    });
+  })();
+
+  /* 材质槽贴图的读写、解码状态、底图读取统一收在 MDMaterialStore（js/md-material-store.js）。
+   * 外壳只保留材质工厂与释放：不再自己缓存贴图，也不再直接回答「底图从哪来」。 */
+  var STORE = global.MDMaterialStore.create({
+    THREE: THREE,
+    requestRender: requestRender,
+    eachViewPivot: eachViewPivot,
+    doc: function () { return st.doc; }
+  });
+  var sharedTexture = STORE.sharedTexture;
+  var applySlotTexture = STORE.applySlotTexture;
+  var liveSlotImage = STORE.liveSlotImage;
+  var liveSlotTexture = STORE.liveSlotTexture;
+  var slotBaseLoading = STORE.baseLoading;
 
   /* 挤出专用操纵器的私有状态（箭头 + 轴心缩放柄）。
    * 为什么不放 st：三个键和文档、选择、四视图全无关系，只属于这一个工具；
@@ -299,7 +357,9 @@
     surface: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M3.4 8c6-3.2 11.2-3.2 17.2 0"/><path d="M3.4 16.4c6-3.2 11.2-3.2 17.2 0"/><path d="M3.4 8v8.4M20.6 8v8.4M8.5 6.7v9.4M15.5 6.7v9.4" opacity=".4"/></svg>',
     anim: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M3.4 16.4h4.2l4.4-8.8h3.6l4.9 8.8" stroke-dasharray="2.2 1.8"/><path d="M12 19.4v-4.2M9.9 17.3 12 19.4l2.1-2.1" opacity=".55"/><circle cx="7.6" cy="16.4" r="1.5"/><circle cx="16.4" cy="16.4" r="1.5" opacity=".55"/></svg>',
     render: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><circle cx="12" cy="12" r="4"/><path d="M12 2.6v3.2M12 18.2v3.2M2.6 12h3.2M18.2 12h3.2M5.4 5.4l2.3 2.3M16.3 16.3l2.3 2.3M18.6 5.4l-2.3 2.3M7.7 16.3l-2.3 2.3" opacity=".65"/></svg>',
-    dyn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><circle cx="12" cy="12" r="2.4"/><ellipse cx="12" cy="12" rx="9.2" ry="4.2" transform="rotate(-32 12 12)"/><ellipse cx="12" cy="12" rx="9.2" ry="4.2" transform="rotate(32 12 12)" opacity=".55"/></svg>'
+    dyn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><circle cx="12" cy="12" r="2.4"/><ellipse cx="12" cy="12" rx="9.2" ry="4.2" transform="rotate(-32 12 12)"/><ellipse cx="12" cy="12" rx="9.2" ry="4.2" transform="rotate(32 12 12)" opacity=".55"/></svg>',
+    /* 法线：一条曲面 + 朝外的箭头（统一朝向 / 重算法线） */
+    normals: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M3.4 17.2c4.4-5.6 12.8-5.6 17.2 0"/><path d="M12 12.6V4.2"/><path d="m8.9 7.3 3.1-3.1 3.1 3.1"/><path d="M6.4 13.6 4.8 10M17.6 13.6l1.6-3.6" opacity=".5"/></svg>'
   };
 
   /* 工具箱面板：Blender 式分组 + 行状按钮（图标 + 名称），和截图一致 */
@@ -310,6 +370,7 @@
       { op: 'split-islands', label: '拆分岛', icon: 'islandSplit', title: '把选中的 UV 岛拆成一个独立对象（UV 岛模式 F12 选择）' },
       { op: 'smooth', label: '平滑', icon: 'smooth', title: '平滑选中顶点（不选 = 整体）' },
       { op: 'tris-to-quads', label: '三角转四边', icon: 'tris2quads', title: '把成对的共边三角面并成四边面（UV 接缝处不并）' },
+      { op: 'unify-normals', label: '统一法线', icon: 'normals', title: '把绕序不一致的面翻成统一朝外（修纯色黑块），并按 60° 平滑法线' },
       /* 阵列 / 细分一次都作用在**整份基础网格**：有修改器时先算 base，求值器再叠修改器 */
       { op: 'array', label: '阵列', icon: 'array', title: '线性复制多份（数量含原件；改间距实时预览）' },
       { op: 'subdivide-once', label: '细分一次', icon: 'subdivOnce', title: '整网格细分一级（四边→4 四边，三角→4 三角）' },
@@ -414,12 +475,8 @@
       '  </div>',
       '  <div class="md-toolbar">',
       '    <div class="md-tb-left">',
-      '      <button type="button" class="md-ico" data-md-tool="select" title="选择工具（Q）：点选；按住拖动 = 框选">➤</button>',
-      '      <span class="md-sep"></span>',
-      '      <button type="button" class="md-chip" data-md-mode="translate" title="移动手柄（W）">移动</button>',
-      '      <button type="button" class="md-chip" data-md-mode="rotate" title="旋转手柄（E）">旋转</button>',
-      '      <button type="button" class="md-chip" data-md-mode="scale" title="缩放手柄（R）">缩放</button>',
-      '      <span class="md-sep"></span>',
+      /* 工具与变换手柄统一由左侧工具条进入（图标 + 名称 + 快捷键），
+       * 这里只保留坐标 / 吸附这类「设置」，避免同一动作出现两个入口。 */
       '      <button type="button" class="md-chip" data-md-space="world" id="mdSpace" title="切换世界 / 局部坐标">世界</button>',
       '      <button type="button" class="md-chip" data-md-act="snap" id="mdSnap" title="吸附：平移 0.05 / 旋转 15° / 缩放 0.1">吸附</button>',
       '      <span class="md-tbst">对齐：禁用</span>',
@@ -440,7 +497,7 @@
        * 这里的大小 / 浓度 / 颜色 / 笔刷都是**同一份 st.paint** 的快捷入口，
        * 由 updatePaintUi() 双向同步，不是第二套状态。 */
       '  <div class="md-paintbar" id="mdPaintBar" hidden>',
-      '    <span class="md-pb-title"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M14.6 3.4 20.6 8l-9 8.6-4.9-4.6z"/><path d="M5 13.8c1.9-.3 3.5.7 3.8 2.5.3 1.9-.9 3.5-2.8 3.8-1 .2-1.8.1-2.6-.2.9-.6 1.2-1.4 1.2-2.4 0-1.6.5-2.9 1.4-3.7z"/></svg>绘制</span>',
+      '    <span class="md-pb-title"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M14.6 3.4 20.6 8l-9 8.6-4.9-4.6z"/><path d="M5 13.8c1.9-.3 3.5.7 3.8 2.5.3 1.9-.9 3.5-2.8 3.8-1 .2-1.8.1-2.6-.2.9-.6 1.2-1.4 1.2-2.4 0-1.6.5-2.9 1.4-3.7z"/></svg>绘制工具</span>',
       '    <span class="md-pb-sep"></span>',
       '    <div class="md-pb-group" role="group" aria-label="笔刷类型">',
       '      <button type="button" class="md-pb-btn on" data-md-pbrush="soft" title="软边笔刷：边缘渐隐">软边</button>',
@@ -489,6 +546,7 @@
       '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#a8a8a8" data-md-op="bevel" title="倒角：选中面内缩 + 深度">' + OP_ICONS.bevel + '</button>',
       '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#d98b3f" data-md-op="loopcut" title="环切：沿选中边所在的四边环切分">' + OP_ICONS.loopcut + '</button>',
       '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#8fc7a8" data-md-op="tris-to-quads" title="三角转四边：成对三角并成四边面">' + OP_ICONS.tris2quads + '</button>',
+      '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#9db4d8" data-md-op="unify-normals" title="统一法线：绕序不一致的面翻成朝外，修纯色黑块">' + OP_ICONS.normals + '</button>',
       '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#8fb5b8" data-md-op="separate" title="分离（大纲多选后可用结合）">' + OP_ICONS.separate + '</button>',
       '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#8fb5b8" data-md-op="split-islands" title="拆分岛：把选中的 UV 岛拆成独立对象">' + OP_ICONS.islandSplit + '</button>',
       '      <button type="button" class="md-sico" data-shelf="poly" style="--c:#c9b27c" data-md-op="smooth" title="平滑：选中顶点或整体">' + OP_ICONS.smooth + '</button>',
@@ -534,13 +592,13 @@
       '      <span class="md-prsw" id="mdPaintRailSw" title="当前笔刷颜色"></span>',
       '    </div>',
       '    <div class="md-strip" role="toolbar" aria-label="建模工具">',
-      '      <button type="button" class="md-tool" data-md-tool="select" title="选择工具（Q）：点选；按住拖动 = 框选">' + TOOL_ICONS.select + '</button>',
-      '      <button type="button" class="md-tool" data-md-tool="lasso" title="套索工具：按住画一圈，圈住的被选中">' + TOOL_ICONS.lasso + '</button>',
-      '      <button type="button" class="md-tool" data-md-tool="paint" title="绘制选择：按住刷，刷过的被选中（按住 Ctrl 刷掉）">' + TOOL_ICONS.paint + '</button>',
+      '      <button type="button" class="md-tool" data-md-tool="select" title="选择工具（Q）：点选；按住拖动 = 框选">' + TOOL_ICONS.select + '<span class="md-toolname">选择<kbd>Q</kbd></span></button>',
+      '      <button type="button" class="md-tool" data-md-tool="lasso" title="套索工具：按住画一圈，圈住的被选中">' + TOOL_ICONS.lasso + '<span class="md-toolname">套索</span></button>',
+      '      <button type="button" class="md-tool" data-md-tool="paint" title="绘制选择：按住刷，刷过的被选中（按住 Ctrl 刷掉）">' + TOOL_ICONS.paint + '<span class="md-toolname">绘制选择</span></button>',
       '      <span class="md-tool-sep"></span>',
-      '      <button type="button" class="md-tool" data-md-tool="move" title="移动工具（W）">' + TOOL_ICONS.move + '</button>',
-      '      <button type="button" class="md-tool" data-md-tool="rotate" title="旋转工具（E）">' + TOOL_ICONS.rotate + '</button>',
-      '      <button type="button" class="md-tool" data-md-tool="scale" title="缩放工具（R）">' + TOOL_ICONS.scale + '</button>',
+      '      <button type="button" class="md-tool" data-md-tool="move" title="移动工具（W）">' + TOOL_ICONS.move + '<span class="md-toolname">移动<kbd>W</kbd></span></button>',
+      '      <button type="button" class="md-tool" data-md-tool="rotate" title="旋转工具（E）">' + TOOL_ICONS.rotate + '<span class="md-toolname">旋转<kbd>E</kbd></span></button>',
+      '      <button type="button" class="md-tool" data-md-tool="scale" title="缩放工具（R）">' + TOOL_ICONS.scale + '<span class="md-toolname">缩放<kbd>R</kbd></span></button>',
       '    </div>',
       '    <aside class="md-outline">',
       '      <div class="md-panel-h"><span>大纲视图</span><em id="mdOutlineCount">0 个对象</em></div>',
@@ -554,12 +612,14 @@
       '        <button type="button" class="md-vplabel md-popbtn" id="mdViewLabel" data-md-pop="view" title="切换相机视图">透视 ▾</button>',
       '        <span class="md-vplabel">着色</span>',
       '        <select class="md-vpsel" id="mdShadeSel" title="着色模式">',
-      '          <option value="shaded-wire">实体 + 线框</option>',
       '          <option value="shaded">实体</option>',
-      '          <option value="wire">线框</option>',
       '          <option value="flat">平涂</option>',
+      '          <option value="normals">法线</option>',
       '          <option value="uv">UV 岛着色</option>',
       '        </select>',
+      /* 线框不再是「着色模式」，而是叠在当前着色之上的一层：可与实体 / 平涂 / 法线 / 岛色任意组合 */
+      '        <label class="md-vpck" title="线框叠加：在当前着色模式上显示拓扑边线（可与任意着色模式同时开）">' +
+      '          <input type="checkbox" id="mdWireChk"><span>线框</span></label>',
       '        <button type="button" class="md-vpi" data-md-act="isolate" id="mdIsolateBtn" title="单独显示：只显示当前选中对象；面 / UV 岛模式下只显示选中的面（再点退出）">' +
       '          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">' +
       '            <rect x="2.6" y="2.6" width="18.8" height="18.8" stroke-dasharray="2.6 2.2" opacity=".75"/>' +
@@ -572,7 +632,7 @@
       '        <button type="button" class="md-vplabel md-popbtn" data-md-pop="panel" title="显示 / 隐藏面板">面板 ▾</button>',
       '        <span class="md-sep"></span>',
       '        <button type="button" class="md-vpi" data-md-act="grid" id="mdGridBtn" title="显示 / 隐藏地面栅格">⌗</button>',
-      '        <button type="button" class="md-vpi" data-md-act="shade-cycle" id="mdShadeBtn" title="切换着色模式（实体 / 实体+线框 / 线框）">▦</button>',
+      '        <button type="button" class="md-vpi" data-md-act="shade-cycle" id="mdShadeBtn" title="切换着色模式（实体 / 平涂 / 法线 / UV 岛）">▦</button>',
       '        <button type="button" class="md-vpi" data-md-act="view-iso" title="复位到轴测视图（与双击 ViewCube 同效果）">◍</button>',
       '        <span class="md-vpnum"><span class="md-numb">0.00</span><i>/</i><span class="md-numb">1.00</span></span>',
       '        <button type="button" class="md-vpstyle md-popbtn" data-md-pop="render">ACES 1.0 SDR-video (sRGB)<i>▾</i></button>',
@@ -602,11 +662,8 @@
       '      </div>',
       '    </div>',
       '    <aside class="md-right">',
-      '      <div class="md-panel-h md-right-h"><span class="md-right-paint-t">绘制工具箱</span><span class="md-tbkinds">' +
-      '        <button type="button" class="md-otab on" data-md-tbk="model" title="建模工具箱">建模</button>' +
-      '        <button type="button" class="md-otab" data-md-tbk="paint" title="绘画工具箱：笔刷直接画进基础色贴图">绘画</button>' +
-      '        <button type="button" class="md-otab" data-md-tbk="props" title="属性编辑器：变换 / 材质槽 / 操作历史">属性</button>' +
-      '      </span><em id="mdTbMode">对象</em></div>',
+      '      <div class="md-panel-h md-right-h"><span class="md-right-t" id="mdRightTitle">建模工具箱</span><em id="mdTbMode">对象</em>' +
+      '        <button type="button" class="md-otab md-propstog" id="mdPropsToggle" title="属性编辑器：变换 / 材质槽 / 操作历史">属性</button></div>',
       '      <section class="md-tb">',
       '        <div class="md-tb-tabs"><button type="button" class="md-otab md-tbtab on" data-md-tbtab="object">对象</button><button type="button" class="md-otab md-tbtab" data-md-tbtab="component">多组件</button></div>',
       '        <div class="md-modebar" id="mdModeBar">',
@@ -621,6 +678,12 @@
       toolboxHtml(),
       '        </div>',
       '        <div class="md-paint" id="mdPaintBox" hidden>',
+      /* 顶部两个页签：笔刷参数与图层列表都很长，分段显示比一条长滚动更容易找 */
+      '          <div class="md-paint-tabs" role="tablist" aria-label="绘画工具箱">',
+      '            <button type="button" class="md-paint-tab on" role="tab" data-md-ptab="paint" aria-selected="true">绘画工具箱</button>',
+      '            <button type="button" class="md-paint-tab" role="tab" data-md-ptab="layers" aria-selected="false">图层</button>',
+      '          </div>',
+      '          <div class="md-paint-pane" data-md-pane="paint">',
       /* 预览条：笔刷当前状态一眼可读（形状 / 大小 / 不透明度 / 颜色 / 目标槽），
        * 棋盘底表示「笔迹是带透明的」；数值与下方滑杆保持同一份状态。 */
       '          <div class="md-paint-prev">',
@@ -667,7 +730,10 @@
       /* 提示放在笔刷卡片下面、纹理混合上面：右栏是整条滚动，
        * 放最后会被长图层列表推到看不见的地方。 */
       '          <div class="md-paint-hint"><b>操作：</b>左键拖动上色；<b>按住 Shift 拖动 = 模糊笔</b>（糊开笔刷覆盖到的纹素）；Alt+左键 / 中键导航。先在「材质槽」里选槽（默认自动 = 落笔面所在槽），笔画只写进选中的槽。</div>',
-      '          <div class="md-paint-mix" id="mdMixBox"></div>',
+      '          </div>',
+      '          <div class="md-paint-pane" data-md-pane="layers" hidden>',
+      '            <div class="md-paint-mix" id="mdMixBox"></div>',
+      '          </div>',
       '          <input type="file" id="mdBrushFile" accept="image/png,image/webp,image/jpeg" hidden>',
       '        </div>',
       '      </section>',
@@ -773,6 +839,7 @@
     });
 
     if (MIX) MIX.init();
+    setPaintTab(st.paintTab);
     st.uiReady = true;
   }
 
@@ -844,9 +911,6 @@
     var undoBtn = $('mdUndo'), redoBtn = $('mdRedo');
     if (undoBtn) undoBtn.disabled = !st.history.undo.length;
     if (redoBtn) redoBtn.disabled = !st.history.redo.length;
-    document.querySelectorAll('.md-chip[data-md-mode]').forEach(function (b) {
-      b.classList.toggle('on', b.dataset.mdMode === st.mode);
-    });
     var space = $('mdSpace');
     if (space) {
       space.textContent = st.space === 'local' ? '局部' : '世界';
@@ -858,8 +922,10 @@
     if (gridBtn) gridBtn.classList.toggle('on', st.showGrid);
     var shadeSel = $('mdShadeSel');
     if (shadeSel && shadeSel.value !== st.shading) shadeSel.value = st.shading;
+    var wireChk = $('mdWireChk');
+    if (wireChk) wireChk.checked = vfOn('wireframe');
     var shadeBtn = $('mdShadeBtn');
-    if (shadeBtn) shadeBtn.classList.toggle('on', st.shading === 'wire');
+    if (shadeBtn) shadeBtn.classList.toggle('on', st.shading === 'normals');
     var quadBtn = document.querySelector('.md-act[data-md-act="quad"]');
     if (quadBtn) quadBtn.classList.toggle('on', st.quad);
     var isoBtn = $('mdIsolateBtn');
@@ -891,9 +957,6 @@
     });
     var tbMode = $('mdTbMode');
     if (tbMode) tbMode.textContent = tbModeLabel();
-    document.querySelectorAll('[data-md-tbk]').forEach(function (b) {
-      b.classList.toggle('on', b.dataset.mdTbk === st.tbKind);
-    });
     var modeHint = $('mdModeHint');
     if (modeHint) {
       var keys = { object: 'F8', vertex: 'F9', edge: 'F10', face: 'F11', island: 'F12' };
@@ -1464,7 +1527,7 @@
       '<span>网格 <b>' + st.doc.revision.mesh + '</b></span>' +
       '<span><b>' + s.vertices + '</b> 点 / <b>' + s.faces + '</b> 面 / <b>' + s.edges + '</b> 边</span>' +
       '<span>视图 <b>' + (st.quad ? quadViewText() : (st.viewName || '透视')) + '</b></span>' +
-      '<span>着色 <b>' + shadeLabel(st.shading) + '</b></span>' +
+      '<span>着色 <b>' + shadeLabel(st.shading) + (vfOn('wireframe') ? ' + 线框' : '') + '</b></span>' +
       '<span>选择 <b>' + SEL_NOUN[st.selMode] +
         (st.selMode === 'object' ? ' ' + (st.nodeIds ? st.nodeIds.length : 0) : ' ' + selCount()) +
         (st.selMode === 'island' && st.sel.faceIds.length ? '（' + selectedIslandCount() + ' 岛）' : '') +
@@ -2300,13 +2363,27 @@
     nodeModsActive: nodeModsActive,
     /* 绘画和拾取共用同一条可见性口径：面级隔离时画到的就是视口里那份替身网格 */
     visibleMesh: function (id) { return ISO.visibleMesh(id); },
+    /* 拾取的剔背面口径跟视口一致：显示里「背面」开着（默认）就是双面渲染，
+     * 此时不能按绕序剔面，否则统一法线把开口网格翻到内侧后笔只能落到远面。 */
+    cullBackfaces: function () { return !vfOn('backface'); },
     paintScope: function (mesh) { return ISO.paintScope(mesh); },
     totalBytes: totalBytes, syncBytes: syncBytes, historyBudget: HISTORY_BUDGET,
     /* 材质落点与纹理混合：笔迹画在基础画布上，材质上挂的是「合成结果」 */
     applySlotTexture: applySlotTexture,
     baseImageFor: function (slot) { return MIX ? MIX.baseImageFor(slot) : null; },
+    /* 纹理混合的合成图（底座 + 图层）。绘画工作副本**不能**拿它当底座：
+     * 那会把图层像素永久烙进工作副本，之后隐藏 / 删除图层时
+     * composeAndApply 会把这个工作副本当成最终像素（adoptPaintCanvas），颜色退不掉。 */
+    composedImageFor: function (slot) {
+      return (MIX && MIX.composedCanvas) ? MIX.composedCanvas(slot) : null;
+    },
     /* 底图兜底：材质上真正挂着的那张（贴图只挂在 map 上、slotMaps 是空的老资产） */
     liveSlotImage: liveSlotImage,
+    /* 这一槽的底图还在解码：绘画据此拒绝建平铺底工作副本（吸管吸白 / 抬笔洗白模型） */
+    baseLoading: slotBaseLoading,
+    /* 老格式撤销补丁 / 落盘兜底：slotMaps 的读写也走仓储，模块不再自己拼数组 */
+    slotMap: STORE.slotMap,
+    setSlotMap: STORE.setSlotMap,
     onPaintBase: function (slot) { if (MIX) MIX.schedule(slot); },
     onPaintInk: function (slot) { if (MIX) MIX.schedule(slot); },
     onPaintReset: function (slot) { if (MIX) MIX.schedule(slot); },
@@ -2387,6 +2464,12 @@
         var p = st.paint;
         return (st.doc && p.doc === st.doc && p.slot === slot && p.tex) ? p.tex : null;
       },
+      /* 绘画工作副本是不是拿「合成图」当底座建的。是的话它含图层像素，
+       * 混合同步时不能把它当最终像素（否则隐藏 / 删除图层后颜色退不掉）。 */
+      paintSeedComposed: function (slot) {
+        var p = st.paint;
+        return !!(st.doc && p.doc === st.doc && p.slot === slot && p.seedComposed);
+      },
       /* 正在画的这一笔：还没入栈，合成时要单独盖到混合层之上。
        * type:'blur'（Shift 模糊笔）传的是遮罩 + 模糊半径，合成时按遮罩糊结果。
        * box = 自上次合成之后新增的像素：混合模块据此只补这一块（整笔范围另存 inkBox）。 */
@@ -2456,12 +2539,7 @@
     if (global.TexStack && patch.slot != null) {
       global.TexStack.setOps(st.doc, patch.slot, patch[side] || []);
       var mapSide = patch[side + 'Map'];
-      if (mapSide != null) {
-        var m = st.doc.materials || (st.doc.materials = {});
-        var arr = m.slotMaps || (m.slotMaps = []);
-        while (arr.length <= patch.slot) arr.push('');
-        arr[patch.slot] = mapSide;
-      }
+      if (mapSide != null) STORE.setSlotMap(patch.slot, mapSide);
     }
     /* 绘画工作区必须跟着作废：那张画布是「底座 ⊕ 层」的快照，
      * 栈变了它就不再成立。不作废的话撤销完笔迹还留在画布上，
@@ -2520,11 +2598,7 @@
   }
   function slotSetColor(i, color) {
     slotEdit('材质槽颜色', function () {
-      var m = st.doc.materials;
-      var colors = m.slotColors || (m.slotColors = []);
-      while (colors.length <= i) colors.push('#c9ccd4');
-      colors[i] = color;
-      return true;
+      return STORE.setSlotColor(i, color);
     });
   }
   function slotDelete(i) {
@@ -2604,7 +2678,6 @@
     return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
   }
   var PAINT_BRUSH_NAME = { soft: '软边', hard: '硬边', erase: '橡皮擦' };
-  var PAINT_SHAPE_NAME = { round: '圆形', square: '方形', diamond: '菱形', star: '星形', custom: '自定义' };
   var PAINT_TOOL_NAME = {
     brush: '画笔', pencil: '铅笔', eraser: '橡皮',
     blur: '模糊工具', smudge: '涂抹工具', picker: '吸管', wand: '魔棒'
@@ -2911,37 +2984,67 @@
     refreshSoftHeat();
   }
 
-  /* 从模式开关进入：绘制模式强制右侧显示绘画工具箱；
-   * 回建模模式时回到离开前的页签（属性编辑器不会被无声丢掉）。 */
+  /* 模式只从左上角切换：绘制 = 绘画工具箱，建模 = 建模工具箱。 */
   function setEditor(kind) {
     if (kind === 'paint') {
-      if (st.tbKind !== 'paint') {
-        st.editorBack = st.tbKind === 'props' ? 'props' : 'model';
-        setTbKind('paint');
-      } else {
-        applyEditorChrome('paint');
-      }
+      setTbKind('paint');
       updatePaintUi();
       setStatus('绘制模式：左键拖动上色 · Shift 拖动模糊 · Alt+左键 / 中键导航 · 右侧可换笔刷与材质槽');
     } else {
-      if (st.tbKind === 'paint') setTbKind(st.editorBack === 'props' ? 'props' : 'model');
-      else applyEditorChrome('model');
+      setTbKind('model');
       setStatus('建模模式：F8–F12 切换对象 / 顶点 / 边 / 面 / UV 岛 · 工具架取基础体与算子');
     }
   }
 
-  /* 右侧栏三个页签共用一行：建模工具箱 / 绘画工具箱 / 属性编辑器。
-   * 同时只显示一个，属性编辑器不再跟工具箱上下分摊高度。 */
+  /* 模式只有左上角一个入口：右侧栏标题跟着模式走，页签只在「工具箱 ↔ 属性」之间切换。 */
   function tbModeLabel() {
-    if (st.tbKind === 'paint') return '贴图绘制';
-    if (st.tbKind === 'props') return '属性编辑';
+    if (st.tbKind === 'paint') return '';   /* 标题已是「绘画工具箱」，不再重复口径 */
     return SEL_NOUN[st.selMode] || '对象';
   }
 
+  function syncRightChrome() {
+    var title = $('mdRightTitle');
+    if (title) {
+      title.textContent = st.tbKind === 'props' ? '属性编辑器'
+        : st.tbKind === 'paint' ? '绘画工具箱' : '建模工具箱';
+    }
+    var tog = $('mdPropsToggle');
+    if (tog) {
+      tog.textContent = st.tbKind === 'props' ? '工具箱' : '属性';
+      tog.classList.toggle('on', st.tbKind === 'props');
+      tog.title = st.tbKind === 'props'
+        ? '返回' + (st.editor === 'paint' ? '绘画' : '建模') + '工具箱'
+        : '属性编辑器：变换 / 材质槽 / 操作历史';
+    }
+    var tb = $('mdTbMode');
+    if (tb) tb.textContent = tbModeLabel();
+  }
+
+  /* 绘画工具箱内部只有两个页签：笔刷参数 / 材质图层。
+   * 两个 pane 都在 DOM 里，切页签只换 hidden —— 笔刷状态与图层列表都不重建。 */
+  function setPaintTab(tab) {
+    st.paintTab = tab === 'layers' ? 'layers' : 'paint';
+    var box = $('mdPaintBox');
+    if (!box) return;
+    box.querySelectorAll('[data-md-ptab]').forEach(function (b) {
+      var on = b.dataset.mdPtab === st.paintTab;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    box.querySelectorAll('[data-md-pane]').forEach(function (p) {
+      p.hidden = p.dataset.mdPane !== st.paintTab;
+    });
+    /* 图层面板在隐藏时也能渲染，但切回来时重画一次能拿到最新的槽列表 */
+    if (st.paintTab === 'layers' && MIX && MIX.renderUi) {
+      try { MIX.renderUi(); } catch (e) {}
+    }
+  }
+
   function setTbKind(kind) {
+    /* 属性编辑器只属于建模上下文：绘制模式没有变换手柄 / 网格统计，
+     * 材质槽与笔刷参数都在绘画工具箱里，所以绘制模式下拒绝切到属性。 */
+    if (kind === 'props' && st.editor === 'paint') kind = 'paint';
     st.tbKind = (kind === 'paint' || kind === 'props') ? kind : 'model';
-    /* 记住「离开绘制后回哪个页签」：属性编辑器也是一等入口，不能被绘画页签吞掉 */
-    if (st.tbKind !== 'paint') st.editorBack = st.tbKind === 'props' ? 'props' : 'model';
     applyEditorChrome(st.tbKind === 'paint' ? 'paint' : 'model');
     var right = document.querySelector('.md-right');
     if (right) right.classList.toggle('is-props', st.tbKind === 'props');
@@ -2949,11 +3052,7 @@
     if (sec) sec.classList.toggle('is-paint', st.tbKind === 'paint');
     var box = $('mdPaintBox');
     if (box) box.hidden = st.tbKind !== 'paint';
-    var tb = $('mdTbMode');
-    if (tb) tb.textContent = tbModeLabel();
-    document.querySelectorAll('[data-md-tbk]').forEach(function (b) {
-      b.classList.toggle('on', b.dataset.mdTbk === st.tbKind);
-    });
+    syncRightChrome();
     if (st.canvas) st.canvas.style.cursor = st.tbKind === 'paint' ? 'crosshair' : '';
     if (st.tbKind === 'paint') { syncPaintSlots(); updatePaintUi(); }
     syncGizmo();
@@ -3842,7 +3941,8 @@
       ',' + (st.selected | 0);
     s += '|g' + (st.gizmo && st.gizmo.group && st.gizmo.group.visible ? 1 : 0);
     s += '|v' + st.shading + (st.showGrid ? 1 : 0) + (st.isolate ? 1 : 0) +
-      (st.quad ? 1 : 0) + (st.quadMax || '') + (st.hoverPick ? 1 : 0);
+      (st.quad ? 1 : 0) + (st.quadMax || '') + (st.hoverPick ? 1 : 0) +
+      (vfOn('wireframe') ? 'w' : '');
     s += '|e' + ((st.edgeLines && st.edgeLines.material && st.edgeLines.material.opacity) || 0).toFixed(2);
     /* 软选择：开关 / 距离口径 / 半径 / 曲面 / 热力图 任一变化都要重画一帧 */
     s += '|so' + (st.soft.on ? 1 : 0) + (st.soft.heatmap ? 1 : 0) + st.soft.mode +
@@ -3919,24 +4019,8 @@
     return m;
   }
 
-  /* 基础色贴图按 data URL 全局共享。
-   * 拖动挤出时预览网格会反复重建材质，如果每次都 new Texture 重新解码一串 data URL，
-   * 解码完成前的那几帧就是黑的 —— 用户看到的「拖坐标轴时贴图短暂变黑」。
-   * 共享后同一张贴图只解码一次，新材质挂上去立刻就有像素。 */
-  var TEX_CACHE = Object.create(null);
-  function sharedTexture(url) {
-    var tex = TEX_CACHE[url];
-    if (tex) return tex;
-    /* 解码是异步的：首帧渲染时 image 还是空的，材质会被画成黑片。
-     * 之前解码完成后没有请求重绘，要等用户碰一下视口才恢复（「进入就乱面」）。
-     * 按需渲染下必须显式补一帧。 */
-    tex = new THREE.TextureLoader().load(url, function () { requestRender(0); });
-    if ('encoding' in tex && THREE.sRGBEncoding != null) tex.encoding = THREE.sRGBEncoding;
-    tex.anisotropy = 4;
-    tex.userData.mdShared = true;
-    TEX_CACHE[url] = tex;
-    return tex;
-  }
+  /* 贴图缓存 / 解码状态 / 挂图 / 底图读取都已搬到 js/md-material-store.js（STORE）：
+   * 写路径只留一个入口，绘画、混合、投射、UV 编辑器不再各自摸 material.map。 */
 
   /* 共享贴图不能跟着单个材质一起释放，否则别的对象下一次渲染直接黑 */
   function disposeMap(m) {
@@ -3945,61 +4029,7 @@
     try { m.map.dispose(); } catch (e) {}
   }
 
-  /* 把一张贴图挂到所有对象「第 slot 个材质」上（含平涂缓存材质）。
-   * 画笔与纹理混合共用这条路径：谁最后决定材质上放哪张图，都由调用方算好。
-   * mdBaseMap 一起换，显示开关「贴图」关掉再打开才不会回到上一张旧图。
-   * 返回实际挂上的材质数：0 = 视口里没有这个槽的材质（画笔用它提示「画了看不见」）。 */
-  function applySlotTexture(slot, tex) {
-    var applied = 0;
-    /* 只有「贴图的有无 / 编码 / 翻转」变了才需要重编译着色器。
-     * 同一张贴图换像素靠 texture.needsUpdate 就够 —— 每帧都置
-     * material.needsUpdate 会让 three 反复重编译程序，画起来一闪一卡
-     * （绘画时每帧都会走到这里）。 */
-    var sig = tex ? (tex.encoding || '') + '|' + (tex.flipY === false ? 'n' : 'y') : 'none';
-    function setMap(m) {
-      if (!m) return false;
-      if (!m.userData.mdPaintOrig) m.userData.mdPaintOrig = m.map || null;
-      m.map = tex || null;
-      m.userData.mdBaseMap = tex || null;
-      if (m.userData.mdMapSig !== sig) { m.userData.mdMapSig = sig; m.needsUpdate = true; }
-      return true;
-    }
-    eachViewPivot(function (pv) {
-      pv.traverse(function (o) {
-        if (!o.userData || o.userData.mdPart !== 'solid') return;
-        if (o.material) {
-          var arr = Array.isArray(o.material) ? o.material : [o.material];
-          if (setMap(arr[slot])) applied++;
-        }
-        if (o.userData.mdFlatMats) {
-          if (setMap(o.userData.mdFlatMats[slot])) applied++;
-        }
-      });
-    });
-    /* 换的是材质上的贴图，不是场景结构：指纹看不出来，必须显式请求一帧 */
-    requestRender(0);
-    return applied;
-  }
-
-  /* 「视口里这一槽现在真正显示的那张图」。
-   * 为什么不能只读 doc.materials.slotMaps：材质上的 map 还有别的来源 ——
-   * 纹理混合（MIX.texFor 合成出来的 canvas）、绘画工具写回、外部导入只挂了
-   * material.map 的老资产。烘焙 / 绘画工作区的**底图**必须是这一张：
-   * 取不到就会拿槽位底色起一张空画布，写回后整片贴图被洗掉。 */
-  function liveSlotImage(slot) {
-    var out = null;
-    eachViewPivot(function (pv) {
-      if (out) return;
-      pv.traverse(function (o) {
-        if (out || !o.userData || o.userData.mdPart !== 'solid') return;
-        var arr = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
-        var m = arr[slot];
-        var img = m && m.map && m.map.image;
-        if (img && (img.width || img.naturalWidth)) out = img;
-      });
-    });
-    return out;
-  }
+  /* 挂图 / 读图 / 解码状态见 js/md-material-store.js（STORE）。 */
 
   function makeMaterials() {
     var mats = st.doc.materials || {};
@@ -4016,6 +4046,12 @@
         polygonOffset: true,
         polygonOffsetFactor: 1,
         polygonOffsetUnits: 1,
+        /* 与视口「背面」开关同口径：视口默认双面渲染，材质创建时就得是双面。
+         * 只靠 applyViewFlags 补不行 —— 导出用的 pivot 是新建的材质、不会再走
+         * 一遍视口开关，单面材质的 GLB 到了外部查看器会把开口 / 翻内绕序的面
+         * （面部、发片、布料）整片剔掉：视口好好的，导出后「脸没了」。
+         * 反过来，用户关掉「背面」时导出也应是单面，所以这里跟随开关而不是写死。 */
+        side: vfOn('backface') ? THREE.DoubleSide : THREE.FrontSide,
         name: names[i] || (i === 0 ? '默认材质' : '插槽 ' + (i + 1))
       });
       /* 有合成纹理就优先用它：重建材质（撤销 / 修改器）后混合层不能「消失」；
@@ -4122,7 +4158,7 @@
     geo.computeBoundingSphere();
     var p = st.prefs || prefs();
     var mat = new THREE.LineBasicMaterial({
-      color: new THREE.Color(st.shading === 'wire' ? '#5a6470' : p.edgeColor),
+      color: new THREE.Color(p.edgeColor),
       /* 不透明 + 不混合：透明管线会把 1px 线再压一层，实测对比度掉 20 左右 */
       transparent: false,
       depthWrite: false
@@ -4192,10 +4228,10 @@
 
   function shadeLabel(mode) {
     return mode === 'shaded' ? '实体'
-      : mode === 'wire' ? '线框'
       : mode === 'flat' ? '平涂'
+      : mode === 'normals' ? '法线'
       : mode === 'uv' ? 'UV 岛着色'
-      : '实体 + 线框';
+      : '实体';
   }
 
   /* 显示开关的唯一读取口：表缺席时按默认（全开）处理 */
@@ -4245,6 +4281,8 @@
         mats.forEach(function (m) {
           if (!m) return;
           if (m.side !== side) { m.side = side; m.needsUpdate = true; }
+          /* 法线材质没有 color / map：法线色本身就是数据，别被材质 / 纹理开关改写 */
+          if (!m.color || typeof m.color.set !== 'function') return;
           var want = useMat ? (m.userData.mdBaseColor || CLAY) : CLAY;
           m.color.set(want);
           var baseMap = m.userData.mdBaseMap;
@@ -4268,12 +4306,31 @@
     '#46f0f0', '#f032e6', '#bcf60c', '#008080', '#e6beff', '#9a6324'
   ];
 
-  /* 实体在「平涂 / 受光」之间切换：原材质记在 mdLitMats，unlit 版本按需生成一份 */
-  function applySolidLook(o, unlit) {
+  /* 实体在「受光 / 平涂 / 法线」之间切换：原材质记在 mdLitMats，
+   * unlit 与法线版本各按需生成一份，切回来不会丢贴图与颜色。
+   * look：null = 受光（原材质）、'flat' = 平涂、'normals' = 法线。 */
+  function applySolidLook(o, look) {
     if (!o || !o.material) return;
     if (!o.userData.mdLitMats) o.userData.mdLitMats = o.material;
     var lit = o.userData.mdLitMats;
-    if (!unlit) {
+    if (look === 'normals') {
+      if (!o.userData.mdNormalMats) {
+        var srcN = Array.isArray(lit) ? lit : [lit];
+        var madeN = srcN.map(function (m) {
+          var n = new THREE.MeshNormalMaterial({
+            side: m.side,
+            toneMapped: false   /* 法线色是数据，不要被 ACES 压色 */
+          });
+          n.userData.mdBaseColor = (m.userData && m.userData.mdBaseColor) || CLAY;
+          n.userData.mdBaseMap = (m.userData && m.userData.mdBaseMap) || null;
+          return n;
+        });
+        o.userData.mdNormalMats = Array.isArray(lit) ? madeN : madeN[0];
+      }
+      if (o.material !== o.userData.mdNormalMats) o.material = o.userData.mdNormalMats;
+      return;
+    }
+    if (look !== 'flat') {
       if (o.material !== lit) o.material = lit;
       return;
     }
@@ -4378,7 +4435,7 @@
   function softHeatWanted() {
     return !!(st.soft.on && st.soft.heatmap && st.mesh && st.pivot &&
       st.editor !== 'paint' && st.selMode !== 'object' && !st.isoComp &&
-      st.shading !== 'wire' && global.MDSoft);
+      global.MDSoft);
   }
 
   function softMapSig() {
@@ -4486,14 +4543,17 @@
     var p = st.prefs || prefs();
     var mode = st.shading;
     var islands = mode === 'uv';
-    var unlit = mode === 'flat';
-    var showFaces = mode !== 'wire' && !islands;
-    var showEdges = mode !== 'shaded' && vfOn('edges');
+    /* look 只决定实体怎么画；线框是独立叠加层，不参与这里的判断 */
+    var look = mode === 'flat' ? 'flat' : mode === 'normals' ? 'normals' : null;
+    var showFaces = !islands;
+    /* 线框叠加 = 「线框」勾选 × 边线总开关；与当前着色模式无关 */
+    var showEdges = vfOn('wireframe') && vfOn('edges');
     /* 组件隔离（面 / 岛）时只显示替身网格，原件的面、边线、顶点一律让位 */
     var isoComp = !!st.isoComp;
     var side = vfOn('backface') ? THREE.DoubleSide : THREE.FrontSide;
+    var edgeColor = mode === 'normals' ? '#e6edf6' : p.edgeColor;
     if (st.edgeLines) {
-      st.edgeLines.material.color.set(mode === 'wire' ? '#5a6470' : p.edgeColor);
+      st.edgeLines.material.color.set(edgeColor);
     }
     /* 顶点只在顶点模式下显示（Maya 的行为）：816 面的球体上每个点都画会糊成一片 */
     var showVerts = st.selMode === 'vertex' && vfOn('verts');
@@ -4506,7 +4566,14 @@
         var part = o.userData && o.userData.mdPart;
         var off = !!(o.userData && o.userData.mdPreviewOff);
         if (part === 'solid') {
-          if (showFaces) applySolidLook(o, unlit);
+          if (showFaces) applySolidLook(o, look);
+          /* 法线材质没有 color / map，applyViewFlags 会跳过它，这里单独同步背面开关 */
+          if (showFaces && look === 'normals' && o.material) {
+            var nms = Array.isArray(o.material) ? o.material : [o.material];
+            nms.forEach(function (mm) {
+              if (mm && mm.side !== side) { mm.side = side; mm.needsUpdate = true; }
+            });
+          }
           o.visible = showFaces && !off && (!isoComp || !!o.userData.mdIsolate);
         } else if (part === 'edges') {
           o.visible = showEdges && !off && (!isoComp || !!o.userData.mdIsolate);
@@ -4517,17 +4584,17 @@
       if (layer && layer.material) layer.material.side = side;
       if (heat && heat.material) heat.material.side = side;
     });
-    /* 预览和正式模型一样吃着色开关（线框模式下实体收、边线亮） */
+    /* 预览和正式模型一样吃着色开关（面永远在，线框按勾选叠上去） */
     if (st.previewHost) {
       st.previewHost.traverse(function (o) {
         var part = o.userData && o.userData.mdPart;
         if (part === 'solid') {
           /* UV 岛模式正式对象换成岛色，预览没有 UV 分层：用平涂色保持「无光照」的一致观感 */
-          applySolidLook(o, unlit || islands);
-          o.visible = mode !== 'wire';
+          applySolidLook(o, look || (islands ? 'flat' : null));
+          o.visible = true;
         } else if (part === 'edges') {
           o.visible = showEdges;
-          if (o.material) o.material.color.set(mode === 'wire' ? '#5a6470' : p.edgeColor);
+          if (o.material) o.material.color.set(edgeColor);
         }
       });
     }
@@ -4535,6 +4602,10 @@
   }
 
   function releaseView() {
+    /* 换文档前先把绘画状态收干净：工作副本 / 显式材质槽 / 魔棒锁岛 / 粘面缓存
+     * 都属于上一份网格。留到新文档里，轻则笔落在一张无关的岛上「画不上」，
+     * 重则抬笔时把旧画布提交进新文档的材质栈。 */
+    if (PAINT && typeof PAINT.dropDoc === 'function') PAINT.dropDoc();
     /* 新建 / 打开 / 切换文档：四视图与最大化状态一并清干净，别把 pane controls 留在 enable 状态 */
     if (st.quad || st.quadMax) {
       st.quad = false;
@@ -4861,11 +4932,12 @@
     var VF = global.SeedViewFlags;
     if (VF) {
       VF.onChange(function (name, v) {
-        if (name === 'wireframe') { setShading(v ? 'wire' : 'shaded'); return; }
         st.showGrid = VF.get('grid') !== false;
         if (st.gridHelper) st.gridHelper.visible = st.showGrid;
-        applyShading();          /* edges / verts / backface / material / texture / lighting 一次收口 */
+        applyShading();          /* edges / verts / backface / material / texture / lighting / wireframe 一次收口 */
         updateChrome();
+        /* 线框 / 边线只改 visible，材质与帧指纹都不变，必须显式要一帧 */
+        requestRender(0);
       });
     }
   }
@@ -4952,6 +5024,30 @@
     var merged = base.faceIds.length - out.faceIds.length;
     applyMesh(out, '三角转四边');
     setStatus('三角转四边：合并 ' + merged + ' 对三角，面数 ' + out.faceIds.length);
+    return true;
+  }
+
+  /* 统一法线朝向：修「面结构正常但纯色发黑」——导入模型的三角形绕序不一致，
+   * 渲染法线按绕序重算后有一半朝内，光照里就是黑块。
+   * 只改绕序（UV / 材质槽 / 拓扑都不动），并把平滑角设成 60°，
+   * 避免重叠的头发卡片被焊成一根长度≈0 的法线。 */
+  function unifyNormalsNow() {
+    var SeedOps = global.SeedOps;
+    var base = baseMeshNow();
+    if (!SeedOps || !SeedOps.unifyWinding || !base) {
+      setStatus('统一法线朝向：当前没有可编辑的网格', true);
+      return false;
+    }
+    var out = SeedOps.unifyWinding(base);
+    if (!out) {
+      setStatus('统一法线朝向：网格里没有面', true);
+      return false;
+    }
+    var flipped = out._flipped || 0;
+    delete out._flipped;
+    out.smoothAngle = 60;
+    applyMesh(out, '统一法线朝向');
+    setStatus('统一法线朝向：翻转 ' + flipped + ' 个面，并按 60° 平滑法线');
     return true;
   }
 
@@ -5285,6 +5381,12 @@
         id: 'mesh.subdivideOnce', label: '细分一次', group: 'mesh', key: '', order: 25,
         when: function () { return !!(st.doc && baseMeshNow()); },
         run: function () { return subdivideOnceNow(); }
+      });
+      /* 修法线：导入模型绕序不一致时，视口里纯色会出现黑色三角形块 */
+      SeedCommands.define({
+        id: 'mesh.unifyNormals', label: '统一法线朝向', group: 'mesh', key: '', order: 26,
+        when: function () { return !!(st.doc && baseMeshNow()); },
+        run: function () { return unifyNormalsNow(); }
       });
     }
   }
@@ -5847,8 +5949,9 @@
       return true;
     }
     if (k === 'shading' || k === 'shade') {
-      if (['shaded-wire', 'shaded', 'wire', 'flat', 'uv'].indexOf(a) < 0) {
-        setStatus('shading 参数：shaded-wire / shaded / wire / flat / uv', true);
+      /* 保留 wire / shaded-wire 两个旧值：它们现在等于「打开线框叠加」，不再是一种独立着色 */
+      if (['shaded', 'flat', 'normals', 'uv', 'wire', 'shaded-wire'].indexOf(a) < 0) {
+        setStatus('shading 参数：shaded / flat / normals / uv（线框用 display wireframe）', true);
         return true;
       }
       setShading(a);
@@ -6132,6 +6235,12 @@
       setShading(el.value);
       return;
     }
+    if (el.id === 'mdWireChk') {
+      var VFW = global.SeedViewFlags;
+      if (VFW) VFW.set('wireframe', !!el.checked);
+      else { applyShading(); requestRender(0); }
+      return;
+    }
     if (el.dataset.mdSlotf) {
       var si = Number(el.dataset.mdSlot) || 0;
       if (el.dataset.mdSlotf === 'name') slotRename(si, el.value);
@@ -6149,12 +6258,18 @@
   }
 
   function setShading(mode) {
-    if (['shaded', 'wire', 'flat', 'uv'].indexOf(mode) < 0) mode = 'shaded-wire';
+    /* 线框已从着色模式里移出：旧值 / 旧命令统一翻译成「实体 + 线框叠加」 */
+    if (mode === 'wire' || mode === 'shaded-wire') {
+      var VF0 = global.SeedViewFlags;
+      if (VF0) VF0.set('wireframe', true);
+      mode = 'shaded';
+    }
+    if (['shaded', 'flat', 'normals', 'uv'].indexOf(mode) < 0) mode = 'shaded';
     st.shading = mode;
     applyShading();
     updateChrome();
     updateHud();
-    setStatus('着色模式：' + shadeLabel(st.shading));
+    setStatus('着色模式：' + shadeLabel(st.shading) + (vfOn('wireframe') ? ' + 线框' : ''));
     /* UV 岛着色要有 UV 才分得出岛：没 UV 就说清楚，别让人以为是着色坏了 */
     if (mode === 'uv' && st.mesh) {
       var info = SeedModel.Mesh.uvIslands(st.mesh);
@@ -6403,6 +6518,9 @@
       case 'tris-to-quads':
         trisToQuadsNow();
         return;
+      case 'unify-normals':
+        unifyNormalsNow();
+        return;
       case 'array':
         /* 阵列也是 live 工具（数量 / 间距可反复预览），别用 runToolNow 立刻提交 */
         if (beginTool('tool.array')) {
@@ -6617,7 +6735,9 @@
       { t: '切换世界 / 局部坐标', c: 'space' },
       { t: '吸附', c: 'snap' },
       { sep: 1 },
-      { t: '合并选中顶点', c: 'mergeVertices' }
+      { t: '合并选中顶点', c: 'mergeVertices' },
+      { sep: 1 },
+      { t: '统一法线朝向（修纯黑面）', c: 'unifyNormals' }
     ] },
     { k: '选择', items: [
       { t: '全选', c: 'selAll', s: 'Ctrl+A' },
@@ -6633,11 +6753,11 @@
     { k: '显示', items: [
       { t: '四视图', c: 'quad' },
       { sep: 1 },
-      { t: '着色：实体 + 线框', c: 'shade:shaded-wire' },
       { t: '着色：实体', c: 'shade:shaded' },
-      { t: '着色：线框', c: 'shade:wire' },
       { t: '着色：平涂', c: 'shade:flat' },
+      { t: '着色：法线', c: 'shade:normals' },
       { t: '着色：UV 岛着色', c: 'shade:uv' },
+      { t: '线框叠加', c: 'wireframe' },
       { sep: 1 },
       { t: '显示 / 隐藏栅格', c: 'grid' },
       { t: '单独显示所选（隔离）', c: 'isolate' },
@@ -6868,6 +6988,13 @@
       case 'redo': clickAct('redo'); break;
       case 'snap': clickAct('snap'); break;
       case 'grid': clickAct('grid'); break;
+      case 'wireframe': {
+        var VFWc = global.SeedViewFlags;
+        if (VFWc) VFWc.toggle('wireframe');
+        else { applyShading(); requestRender(0); }
+        setStatus('线框叠加：' + (vfOn('wireframe') ? '开' : '关'));
+        break;
+      }
       case 'quad': clickAct('quad'); break;
       case 'uv': clickAct('uv'); break;
       case 'projbake': openProjBake(); break;
@@ -6886,6 +7013,7 @@
         break;
       }
       case 'mergeVertices': runOp('mesh.mergeVertices'); break;
+      case 'unifyNormals': runOp('mesh.unifyNormals'); break;
       case 'frameAll': frameCamera(); setStatus('已框显（F）'); break;
       case 'isolate': toggleIsolate(); break;
       case 'dock': setDock(!st.dockOpen); break;
@@ -6920,8 +7048,8 @@
      * 否则「点图标」永远点不到（竖条那六个工具按钮就踩过这个坑）。 */
     if (t && t.tagName !== 'BUTTON' && t.closest) t = t.closest('button');
     if (!t || t.tagName !== 'BUTTON') return;
-    if (t.dataset.mdTbk) {
-      setTbKind(t.dataset.mdTbk);
+    if (t.id === 'mdPropsToggle') {
+      setTbKind(st.tbKind === 'props' ? (st.editor === 'paint' ? 'paint' : 'model') : 'props');
       updateChrome();
       return;
     }
@@ -6971,6 +7099,10 @@
     if (t.dataset.mdTodo) {
       setStatus('「' + t.dataset.mdTodo + '」尚未接入' +
         (t.dataset.mdPlan ? '（计划表 ' + t.dataset.mdPlan + '）' : ''), true);
+      return;
+    }
+    if (t.dataset.mdPtab) {
+      setPaintTab(t.dataset.mdPtab);
       return;
     }
     if (t.dataset.mdTab) {
@@ -7107,7 +7239,7 @@
         setStatus(st.showGrid ? '视图栅格已显示' : '视图栅格已隐藏');
         break;
       case 'shade-cycle': {
-        var order = ['shaded-wire', 'shaded', 'wire'];
+        var order = ['shaded', 'flat', 'normals', 'uv'];
         var next = order[(order.indexOf(st.shading) + 1) % order.length];
         setShading(next);
         break;
@@ -7375,11 +7507,14 @@
         hbItem('缩放', 'R', function () { setTool('scale'); }, st.tool === 'scale')
       ] },
       { k: 'w', title: '显示 / 编辑', items: [
-        hbItem('实体 + 线框', '', function () { setShading('shaded-wire'); }, st.shading === 'shaded-wire'),
         hbItem('实体', '', function () { setShading('shaded'); }, st.shading === 'shaded'),
-        hbItem('线框', '', function () { setShading('wire'); }, st.shading === 'wire'),
         hbItem('平涂', '', function () { setShading('flat'); }, st.shading === 'flat'),
+        hbItem('法线', '', function () { setShading('normals'); }, st.shading === 'normals'),
         hbItem('UV 岛着色', '', function () { setShading('uv'); }, st.shading === 'uv'),
+        hbItem('线框叠加', '', function () {
+          var VFh = global.SeedViewFlags;
+          if (VFh) VFh.toggle('wireframe');
+        }, vfOn('wireframe')),
         hbItem('四视图', '', function () { toggleQuad(); }, st.quad),
         hbItem('撤销', 'Ctrl+Z', function () { undo(); }),
         hbItem('重做', 'Ctrl+Y', function () { redo(); })
@@ -8413,10 +8548,17 @@
        * material.map 上，slotMaps 只是它的底座。底座优先会导出「旧的」那张图 ——
        * 用户配好的混合层在 GLB 里看不到，就是这条顺序造成的。 */
       var img = null;
+      /* 保存前已由 MIX.bakeForSave() 合成到最新：直接取那张画布，
+       * 不依赖视口是否渲染过 / 材质上挂的是哪张。 */
       try {
-        var lv0 = liveSlotImage(i);
-        if (lv0 && (lv0.naturalWidth || lv0.width)) img = lv0;
-      } catch (e) { /* 视口还没起来就跳过 */ }
+        if (MIX && MIX.composedCanvas) img = MIX.composedCanvas(i);
+      } catch (e) { img = null; }
+      if (!img) {
+        try {
+          var lv0 = liveSlotImage(i);
+          if (lv0 && (lv0.naturalWidth || lv0.width)) img = lv0;
+        } catch (e) { /* 视口还没起来就跳过 */ }
+      }
       if (!img && arr[i]) {
         try {
           img = await new Promise(function (res) {
@@ -8447,6 +8589,11 @@
   async function currentGLB() {
     /* 空场景也允许导出：GLB 里只有 scene 与 seedModel，重开时按空文档还原 */
     if (!st.doc) throw new Error('还没有文档');
+    /* 保存前自动烘焙：把每个材质槽的「底座 + 图层 + 笔迹」合成到最新。
+     * 放在这里而不是 save() 里，是因为导出到电脑（GLB/GLTF）也走同一条路径。 */
+    if (MIX && MIX.bakeForSave) {
+      try { await MIX.bakeForSave(); } catch (e) { /* 单槽失败不阻断保存 */ }
+    }
     /* exportBytes() 这条测试路径也走这里，所以贴图不能只挂在 save() 上 */
     var owns = !GLB_MAPS;
     if (owns) GLB_MAPS = await prepareExportMaps();
@@ -8476,6 +8623,9 @@
     var n = Math.max((mats.slotNames || []).length, arr.length, 1);
     for (var i = 0; i < n; i++) {
       if (!global.TexStack.has(st.doc, i)) continue;
+      /* 有材质图层 / 烘焙图的槽：底座保持原样，交给 MIX.bakeForSave() 一次性合成
+       * 「底座 ⊕ 图层 ⊕ 笔迹」。这里再换一次会把笔迹叠两遍（半透明笔会变深）。 */
+      if (MIX && MIX.needsBake && MIX.needsBake(i)) continue;
       /* 这一槽原本有贴图、却读不出像素：宁可导出旧 URL，也**不许**写一张
        * 「槽位灰 + 几个岛」的花图 —— 那正是「导出后贴图不见了」的形态。 */
       var r0 = global.TexSource ? global.TexSource.resolveBase(i) : null;
@@ -8522,7 +8672,8 @@
       var painted = [];
       for (var i = 0; i < maps.length; i++) {
         var hasOps = !!(TS && TS.has && TS.has(st.doc, i));
-        var layered = !!(MIX && typeof MIX.hasLayers === 'function' && MIX.hasLayers(i));
+        var layered = !!(MIX && ((typeof MIX.needsBake === 'function' && MIX.needsBake(i)) ||
+          (typeof MIX.hasLayers === 'function' && MIX.hasLayers(i))));
         if (!hasOps && !layered) {
           /* 没叠过任何东西：GLB 的 baseColorTexture 就是这张底座本身，重开时
            * backfill 会从 images 解回来，extras 不再存第二份。 */
@@ -8613,37 +8764,25 @@
     glb: { label: 'GLB', ext: 'glb', mime: 'model/gltf-binary', desc: '二进制 glTF，单文件带贴图' },
     gltf: { label: 'GLTF', ext: 'gltf', mime: 'model/gltf+json', desc: 'JSON glTF，贴图内嵌为 data URI' },
     obj: { label: 'OBJ', ext: 'obj', mime: 'text/plain', desc: '通用网格格式（不带贴图）' },
-    stl: { label: 'STL', ext: 'stl', mime: 'model/stl', desc: '打印常用格式（不带贴图）' }
+    stl: { label: 'STL', ext: 'stl', mime: 'model/stl', desc: '打印常用格式（不带贴图）' },
+    /* 压缩包：模型 + 贴图分开存。OBJ 用 MTL 指路，FBX 用 Texture/Video 节点指路，
+     * 贴图统一放 textures/，解压后直接打开模型文件即可看到贴图。 */
+    objz: { label: 'OBJ 包', ext: 'zip', mime: 'application/zip', desc: 'OBJ + MTL + PNG 贴图压缩包' },
+    fbxz: { label: 'FBX 包', ext: 'zip', mime: 'application/zip', desc: 'FBX + PNG 贴图压缩包（ASCII 7.4）' }
   };
   function expNum(n) {
     if (!isFinite(n)) return '0';
     var r = Math.round(n * 1e6) / 1e6;
     return String(r);
   }
-  /* OBJ / STL 没有标准的内嵌贴图：只写几何。坐标统一乘世界矩阵，
-   * 多对象导出后在外部查看器里的位置 / 朝向与视口一致。 */
-  function eachExportTriangle(root, cb) {
+  /* OBJ：默认只写几何；opt.usemtl 时按几何分组写 usemtl，配 MTL 就能带贴图。
+   * mtllibName 写进文件头，外部查看器 / Blender 打开时会自动找同名 .mtl。 */
+  function exportOBJText(root, opt) {
+    opt = opt || {};
     root.updateMatrixWorld(true);
-    var v = new THREE.Vector3();
-    root.traverse(function (o) {
-      if (!o.isMesh || !o.geometry || !o.userData || o.userData.mdPart !== 'solid') return;
-      var g = o.geometry, pos = g.attributes.position;
-      if (!pos) return;
-      var m = o.matrixWorld, idx = g.index, seq = idx ? idx.array : null;
-      var count = seq ? seq.length : pos.count;
-      for (var i = 0; i + 2 < count; i += 3) {
-        var tri = [];
-        for (var k = 0; k < 3; k++) {
-          v.fromBufferAttribute(pos, seq ? seq[i + k] : (i + k)).applyMatrix4(m);
-          tri.push([v.x, v.y, v.z]);
-        }
-        cb(tri, o);
-      }
-    });
-  }
-  function exportOBJText(root) {
-    root.updateMatrixWorld(true);
-    var out = ['# modeldesk OBJ export', 'o ' + String((st.doc && st.doc.name) || 'model').replace(/\s+/g, '_')];
+    var out = ['# modeldesk OBJ export'];
+    if (opt.mtllibName) out.push('mtllib ' + opt.mtllibName);
+    out.push('o ' + String((st.doc && st.doc.name) || 'model').replace(/\s+/g, '_'));
     var vBase = 1, tBase = 1, nBase = 1;
     var v = new THREE.Vector3();
     root.traverse(function (o) {
@@ -8665,21 +8804,370 @@
       }
       var seq = g.index ? g.index.array : null;
       var count = seq ? seq.length : pos.count;
-      for (i = 0; i + 2 < count; i += 3) {
-        var face = [];
-        for (var k = 0; k < 3; k++) {
-          var vi = (seq ? seq[i + k] : (i + k)) + vBase;
-          var ti = (seq ? seq[i + k] : (i + k)) + tBase;
-          var ni = (seq ? seq[i + k] : (i + k)) + nBase;
-          face.push(uv && nor ? (vi + '/' + ti + '/' + ni) : uv ? (vi + '/' + ti) : nor ? (vi + '//' + ni) : String(vi));
+      function faceRange(start, end, mi) {
+        if (opt.usemtl) out.push('usemtl slot_' + (mi || 0));
+        for (var f = start; f + 2 < end; f += 3) {
+          var face = [];
+          for (var k = 0; k < 3; k++) {
+            var b = f + k;
+            var vi = (seq ? seq[b] : b) + vBase;
+            var ti = (seq ? seq[b] : b) + tBase;
+            var ni = (seq ? seq[b] : b) + nBase;
+            face.push(uv && nor ? (vi + '/' + ti + '/' + ni) : uv ? (vi + '/' + ti) : nor ? (vi + '//' + ni) : String(vi));
+          }
+          out.push('f ' + face.join(' '));
         }
-        out.push('f ' + face.join(' '));
+      }
+      var groups = g.groups || [];
+      if (groups.length) {
+        for (var gi = 0; gi < groups.length; gi++) {
+          var gr = groups[gi];
+          faceRange(gr.start, Math.min(gr.start + gr.count, count), gr.materialIndex || 0);
+        }
+      } else {
+        faceRange(0, count, 0);
       }
       vBase += pos.count;
       if (uv) tBase += uv.count;
       if (nor) nBase += nor.count;
     });
     return out.join('\n') + '\n';
+  }
+
+  /* MTL：一个材质槽一条 newmtl，有贴图的槽用相对路径 textures/tex_<槽>.png。
+   * Kd 用槽颜色（贴图缺失时外部查看器仍能看到正确底色）。 */
+  function exportMTLText(hasTex) {
+    var mats = (st.doc && st.doc.materials) || {};
+    var names = mats.slotNames || [], colors = mats.slotColors || [];
+    var n = Math.max(names.length, colors.length, hasTex.length, 1);
+    var out = ['# modeldesk MTL export'];
+    for (var i = 0; i < n; i++) {
+      out.push('newmtl slot_' + i);
+      var c = hexToRGB(colors[i] || '#c9ccd4');
+      out.push('Ka 0 0 0');
+      out.push('Kd ' + expNum(c[0]) + ' ' + expNum(c[1]) + ' ' + expNum(c[2]));
+      out.push('Ks 0 0 0');
+      out.push('d 1');
+      out.push('illum 2');
+      if (hasTex[i]) out.push('map_Kd textures/tex_' + i + '.png');
+      out.push('');
+    }
+    return out.join('\n');
+  }
+  function hexToRGB(hex) {
+    var m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+    var n = m ? parseInt(m[1], 16) : 0xc9ccd4;
+    return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+  }
+
+  /* ---------------- FBX（ASCII 7.4）----------------
+   * three.js 没有 FBX 导出器，这里写一份最小的 ASCII FBX：几何 + 逐面材质 +
+   * Texture/Video 节点指到压缩包里的 PNG。目标是 Blender / Maya / 3ds Max
+   * 能直接打开；不写动画、骨骼、相机这些建模 App 不产出的东西。 */
+  function exportFBXText(root, hasTex) {
+    root.updateMatrixWorld(true);
+    var mats = (st.doc && st.doc.materials) || {};
+    var slotNames = mats.slotNames || [], slotColors = mats.slotColors || [];
+    var nSlots = Math.max(slotNames.length, slotColors.length, hasTex.length, 1);
+    var nextId = 1000000;
+    var records = [];
+    var v = new THREE.Vector3();
+    var nm = new THREE.Matrix3();
+
+    root.traverse(function (o) {
+      if (!o.isMesh || !o.geometry || !o.userData || o.userData.mdPart !== 'solid') return;
+      var g = o.geometry, pos = g.attributes.position;
+      if (!pos) return;
+      var uv = g.attributes.uv, nor = g.attributes.normal;
+      var seq = g.index ? g.index.array : null;
+      var count = seq ? seq.length : pos.count;
+      var polys = Math.floor(count / 3);
+      if (!polys) return;
+      var m = o.matrixWorld;
+      nm.getNormalMatrix(m);
+      var verts = [], pvi = [], normals = [], uvs = [], polyMat = [];
+      for (var i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(m);
+        verts.push(v.x, v.y, v.z);
+      }
+      var groups = g.groups || [];
+      for (var p = 0; p < polys; p++) {
+        var mi = 0;
+        for (var gi = 0; gi < groups.length; gi++) {
+          var gr = groups[gi];
+          if (p * 3 >= gr.start && p * 3 < gr.start + gr.count) { mi = gr.materialIndex || 0; break; }
+        }
+        polyMat.push(mi);
+        var ax = 0, ay = 0, az = 0, bx = 0, by = 0, bz = 0, cx = 0, cy = 0, cz = 0;
+        for (var k = 0; k < 3; k++) {
+          var b = p * 3 + k, idx = seq ? seq[b] : b;
+          pvi.push(k === 2 ? -(idx + 1) : idx);
+          if (uv) uvs.push(uv.getX(idx), uv.getY(idx));
+          if (nor) {
+            v.fromBufferAttribute(nor, idx).applyMatrix3(nm).normalize();
+            normals.push(v.x, v.y, v.z);
+          } else if (k === 0) { ax = verts[idx * 3]; ay = verts[idx * 3 + 1]; az = verts[idx * 3 + 2]; }
+          else if (k === 1) { bx = verts[idx * 3]; by = verts[idx * 3 + 1]; bz = verts[idx * 3 + 2]; }
+          else { cx = verts[idx * 3]; cy = verts[idx * 3 + 1]; cz = verts[idx * 3 + 2]; }
+        }
+        if (!nor) {
+          var ux = bx - ax, uy = by - ay, uz = bz - az;
+          var vx = cx - ax, vy = cy - ay, vz = cz - az;
+          var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+          var len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+          nx /= len; ny /= len; nz /= len;
+          for (var k2 = 0; k2 < 3; k2++) normals.push(nx, ny, nz);
+        }
+      }
+      var mid = nextId++, gid = nextId++;
+      records.push({
+        name: fbxName(o.name || ('Mesh' + records.length)),
+        mid: mid, gid: gid,
+        verts: verts, pvi: pvi, normals: normals, uvs: uvs, polyMat: polyMat
+      });
+    });
+
+    var matsOut = [], texsOut = [], vidsOut = [];
+    for (var mi = 0; mi < nSlots; mi++) {
+      var mid = nextId++;
+      var c = hexToRGB(slotColors[mi] || '#c9ccd4');
+      matsOut.push({ id: mid, name: fbxName(slotNames[mi] || ('slot_' + mi)), color: c });
+      if (hasTex[mi]) {
+        var tid = nextId++, vid = nextId++;
+        var png = 'textures/tex_' + mi + '.png';
+        texsOut.push({ id: tid, vid: vid, mat: mid, name: fbxName(slotNames[mi] || ('slot_' + mi)), file: png });
+        vidsOut.push({ id: vid, name: fbxName(slotNames[mi] || ('slot_' + mi)), file: png });
+      }
+    }
+
+    var out = [];
+    out.push('; FBX 7.4.0 project file');
+    out.push('; Generated by modeldesk');
+    out.push('FBXHeaderExtension:  {');
+    out.push('  FBXHeaderVersion: 1003');
+    out.push('  FBXVersion: 7400');
+    out.push('  Creator: "modeldesk"');
+    out.push('}');
+    out.push('GlobalSettings:  {');
+    out.push('  Version: 1000');
+    out.push('  Properties70:  {');
+    out.push('    P: "UpAxis", "int", "Integer", "",1');
+    out.push('    P: "UpAxisSign", "int", "Integer", "",1');
+    out.push('    P: "FrontAxis", "int", "Integer", "",2');
+    out.push('    P: "FrontAxisSign", "int", "Integer", "",1');
+    out.push('    P: "CoordAxis", "int", "Integer", "",0');
+    out.push('    P: "CoordAxisSign", "int", "Integer", "",1');
+    out.push('    P: "UnitScaleFactor", "double", "Number", "",1');
+    out.push('  }');
+    out.push('}');
+    out.push('Definitions:  {');
+    out.push('  Version: 100');
+    out.push('  Count: ' + (1 + records.length * 2 + matsOut.length + texsOut.length * 2));
+    out.push('  ObjectType: "GlobalSettings" {');
+    out.push('    Count: 1');
+    out.push('  }');
+    out.push('  ObjectType: "Model" {');
+    out.push('    Count: ' + records.length);
+    out.push('  }');
+    out.push('  ObjectType: "Geometry" {');
+    out.push('    Count: ' + records.length);
+    out.push('  }');
+    out.push('  ObjectType: "Material" {');
+    out.push('    Count: ' + matsOut.length);
+    out.push('  }');
+    out.push('  ObjectType: "Texture" {');
+    out.push('    Count: ' + texsOut.length);
+    out.push('  }');
+    out.push('  ObjectType: "Video" {');
+    out.push('    Count: ' + vidsOut.length);
+    out.push('  }');
+    out.push('}');
+    out.push('Objects:  {');
+    records.forEach(function (r) {
+      out.push('  Geometry: ' + r.gid + ', "Geometry::' + r.name + '", "Mesh" {');
+      out.push('    GeometryVersion: 124');
+      out.push('    Vertices: *' + r.verts.length + ' {');
+      out.push('      a: ' + r.verts.map(expNum).join(','));
+      out.push('    }');
+      out.push('    PolygonVertexIndex: *' + r.pvi.length + ' {');
+      out.push('      a: ' + r.pvi.join(','));
+      out.push('    }');
+      out.push('    LayerElementNormal: 0 {');
+      out.push('      Version: 101');
+      out.push('      Name: ""');
+      out.push('      MappingInformationType: "ByPolygonVertex"');
+      out.push('      ReferenceInformationType: "Direct"');
+      out.push('      Normals: *' + r.normals.length + ' {');
+      out.push('        a: ' + r.normals.map(expNum).join(','));
+      out.push('      }');
+      out.push('    }');
+      if (r.uvs.length) {
+        out.push('    LayerElementUV: 0 {');
+        out.push('      Version: 101');
+        out.push('      Name: "UVMap"');
+        out.push('      MappingInformationType: "ByPolygonVertex"');
+        out.push('      ReferenceInformationType: "Direct"');
+        out.push('      UV: *' + r.uvs.length + ' {');
+        out.push('        a: ' + r.uvs.map(expNum).join(','));
+        out.push('      }');
+        out.push('    }');
+      }
+      out.push('    LayerElementMaterial: 0 {');
+      out.push('      Version: 101');
+      out.push('      Name: ""');
+      out.push('      MappingInformationType: "ByPolygon"');
+      out.push('      ReferenceInformationType: "IndexToDirect"');
+      out.push('      Materials: *' + r.polyMat.length + ' {');
+      out.push('        a: ' + r.polyMat.join(','));
+      out.push('      }');
+      out.push('    }');
+      out.push('    Layer: 0 {');
+      out.push('      Version: 100');
+      out.push('      LayerElement:  {');
+      out.push('        Type: "LayerElementNormal"');
+      out.push('        TypedIndex: 0');
+      out.push('      }');
+      if (r.uvs.length) {
+        out.push('      LayerElement:  {');
+        out.push('        Type: "LayerElementUV"');
+        out.push('        TypedIndex: 0');
+        out.push('      }');
+      }
+      out.push('      LayerElement:  {');
+      out.push('        Type: "LayerElementMaterial"');
+      out.push('        TypedIndex: 0');
+      out.push('      }');
+      out.push('    }');
+      out.push('  }');
+      out.push('  Model: ' + r.mid + ', "Model::' + r.name + '", "Mesh" {');
+      out.push('    Version: 232');
+      out.push('    Properties70:  {');
+      out.push('      P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0');
+      out.push('      P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0');
+      out.push('      P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1');
+      out.push('      P: "Visibility", "Visibility", "", "A",1');
+      out.push('    }');
+      out.push('    Shading: true');
+      out.push('    Culling: "CullingOff"');
+      out.push('  }');
+    });
+    matsOut.forEach(function (mt) {
+      out.push('  Material: ' + mt.id + ', "Material::' + mt.name + '", "" {');
+      out.push('    Version: 102');
+      out.push('    ShadingModel: "phong"');
+      out.push('    MultiLayer: 0');
+      out.push('    Properties70:  {');
+      out.push('      P: "DiffuseColor", "Color", "", "A",' + expNum(mt.color[0]) + ',' + expNum(mt.color[1]) + ',' + expNum(mt.color[2]));
+      out.push('      P: "DiffuseFactor", "Number", "", "A",1');
+      out.push('      P: "SpecularColor", "Color", "", "A",0,0,0');
+      out.push('      P: "Shininess", "Number", "", "A",20');
+      out.push('      P: "Opacity", "Number", "", "A",1');
+      out.push('    }');
+      out.push('  }');
+    });
+    texsOut.forEach(function (t) {
+      out.push('  Texture: ' + t.id + ', "Texture::' + t.name + '", "" {');
+      out.push('    Type: "TextureVideoClip"');
+      out.push('    Version: 202');
+      out.push('    TextureName: "Texture::' + t.name + '"');
+      out.push('    Media: "Video::' + t.name + '"');
+      out.push('    FileName: "' + t.file + '"');
+      out.push('    RelativeFilename: "' + t.file + '"');
+      out.push('    ModelUVTranslation: 0,0');
+      out.push('    ModelUVScaling: 1,1');
+      out.push('    Texture_Alpha_Source: "None"');
+      out.push('    Cropping: 0,0,0,0');
+      out.push('  }');
+    });
+    vidsOut.forEach(function (vv) {
+      out.push('  Video: ' + vv.id + ', "Video::' + vv.name + '", "Clip" {');
+      out.push('    Type: "Clip"');
+      out.push('    Version: 202');
+      out.push('    UseMipMap: 0');
+      out.push('    Filename: "' + vv.file + '"');
+      out.push('    RelativeFilename: "' + vv.file + '"');
+      out.push('  }');
+    });
+    out.push('}');
+    out.push('Connections:  {');
+    records.forEach(function (r) {
+      out.push('  C: "OO",' + r.mid + ',0');
+      out.push('  C: "OO",' + r.gid + ',' + r.mid);
+    });
+    matsOut.forEach(function (mt) {
+      records.forEach(function (r) {
+        if (r.polyMat.indexOf(matsOut.indexOf(mt)) < 0) return;
+        out.push('  C: "OO",' + mt.id + ',' + r.mid);
+      });
+    });
+    texsOut.forEach(function (t) {
+      out.push('  C: "OP",' + t.id + ',' + t.mat + ', "DiffuseColor"');
+      out.push('  C: "OO",' + t.vid + ',' + t.id);
+    });
+    out.push('}');
+    return out.join('\n') + '\n';
+  }
+  function fbxName(s) {
+    return String(s == null ? '' : s).replace(/[\r\n"]/g, ' ').trim() || 'Object';
+  }
+
+  /* ---------------- 压缩包 ----------------
+   * fflate 已在 index.html 里加载（vendor/fflate.js）。level 6 对文本有效，
+   * PNG 本身已压缩，不会再变大多少。 */
+  function textBytes(s) { return new TextEncoder().encode(String(s)); }
+  function dataURLBytes(url) {
+    var b64 = String(url || '').split(',')[1] || '';
+    var bin = atob(b64);
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  function bytesToDataURL(bytes, mime) {
+    var bin = '';
+    for (var i = 0; i < bytes.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return 'data:' + mime + ';base64,' + btoa(bin);
+  }
+  function exportTextureFiles() {
+    var files = [], has = [];
+    for (var i = 0; i < GLB_MAPS.length; i++) {
+      var tex = GLB_MAPS[i];
+      var cv = tex && tex.image;
+      if (!cv || typeof cv.toDataURL !== 'function') { has.push(false); continue; }
+      try {
+        files.push({ name: 'textures/tex_' + i + '.png', bytes: dataURLBytes(cv.toDataURL('image/png')) });
+        has.push(true);
+      } catch (e) { has.push(false); }
+    }
+    return { files: files, has: has };
+  }
+  function makeZip(files) {
+    var F = global.fflate;
+    if (!F || typeof F.zipSync !== 'function') throw new Error('fflate 未加载（vendor/fflate.js）');
+    var input = {};
+    files.forEach(function (f) { input[f.name] = f.bytes; });
+    return F.zipSync(input, { level: 6 });
+  }
+  /* STL 专用：把每个面拆成世界坐标三角形，统一算法线 */
+  function eachExportTriangle(root, cb) {
+    root.updateMatrixWorld(true);
+    var v = new THREE.Vector3();
+    root.traverse(function (o) {
+      if (!o.isMesh || !o.geometry || !o.userData || o.userData.mdPart !== 'solid') return;
+      var g = o.geometry, pos = g.attributes.position;
+      if (!pos) return;
+      var m = o.matrixWorld, idx = g.index, seq = idx ? idx.array : null;
+      var count = seq ? seq.length : pos.count;
+      for (var i = 0; i + 2 < count; i += 3) {
+        var tri = [];
+        for (var k = 0; k < 3; k++) {
+          v.fromBufferAttribute(pos, seq ? seq[i + k] : (i + k)).applyMatrix4(m);
+          tri.push([v.x, v.y, v.z]);
+        }
+        cb(tri, o);
+      }
+    });
   }
   function exportSTLText(root) {
     var name = String((st.doc && st.doc.name) || 'model').replace(/\s+/g, '_');
@@ -8709,18 +9197,47 @@
       }, rej, { binary: false, onlyVisible: true });
     });
   }
-  /* 按格式产出导出数据。GLB 返回 ArrayBuffer，其余返回文本。
+  /* 按格式产出导出数据。GLB 返回 ArrayBuffer，其余返回文本；
+   * 压缩包返回 Uint8Array（bytes）与文件名清单（files，探针 / 调试用）。
    * 贴图准备与 save() 共用 prepareExportMaps（导出专用、同步有像素的贴图）。 */
-  async function buildExportData(format) {
+  async function buildExportData(format, baseName) {
     if (!st.doc) throw new Error('还没有文档');
     format = EXPORT_FORMATS[format] ? format : 'glb';
+    /* 导出前自动烘焙：OBJ/FBX 包也要拿到图层叠加后的最终贴图 */
+    if (MIX && MIX.bakeForSave) {
+      try { await MIX.bakeForSave(); } catch (e) { /* 单槽失败不阻断导出 */ }
+    }
     var owns = !GLB_MAPS;
     if (owns) GLB_MAPS = await prepareExportMaps();
     var root = buildExportRoot();
+    var base = String(baseName || (st.doc && st.doc.name) || 'model')
+      .replace(/[\\/:*?"<>|]/g, '_').trim() || 'model';
     try {
       if (format === 'obj') return { text: exportOBJText(root), mime: EXPORT_FORMATS.obj.mime };
       if (format === 'stl') return { text: exportSTLText(root), mime: EXPORT_FORMATS.stl.mime };
       if (format === 'gltf') return { text: await exportGLTFText(root), mime: EXPORT_FORMATS.gltf.mime };
+      if (format === 'objz') {
+        var ot = exportTextureFiles();
+        var objText = exportOBJText(root, { mtllibName: base + '.mtl', usemtl: true });
+        var mtlText = exportMTLText(ot.has);
+        var objFiles = [{ name: base + '.obj', bytes: textBytes(objText) },
+          { name: base + '.mtl', bytes: textBytes(mtlText) }].concat(ot.files);
+        return {
+          bytes: makeZip(objFiles), mime: EXPORT_FORMATS.objz.mime,
+          files: objFiles.map(function (f) { return f.name; }),
+          texts: { obj: objText, mtl: mtlText }
+        };
+      }
+      if (format === 'fbxz') {
+        var ft = exportTextureFiles();
+        var fbxText = exportFBXText(root, ft.has);
+        var fbxFiles = [{ name: base + '.fbx', bytes: textBytes(fbxText) }].concat(ft.files);
+        return {
+          bytes: makeZip(fbxFiles), mime: EXPORT_FORMATS.fbxz.mime,
+          files: fbxFiles.map(function (f) { return f.name; }),
+          texts: { fbx: fbxText }
+        };
+      }
       return { buffer: await exportGLB(root), mime: EXPORT_FORMATS.glb.mime };
     } finally {
       disposeObject(root);
@@ -8750,7 +9267,7 @@
     }).join('');
     overlayShow([
       '<div class="md-ov-head"><b>导出到电脑</b>',
-      '<span class="md-ov-sub">GLB / GLTF / OBJ / STL · 允许重名，同名文件不会覆盖</span>',
+      '<span class="md-ov-sub">GLB / GLTF / OBJ / STL · 或 OBJ / FBX 压缩包（模型 + 贴图）</span>',
       '<button type="button" class="md-ov-x" data-md-act="close-overlay">×</button></div>',
       '<div class="md-ov-body"><div class="md-prim">',
       '<div class="md-prim-tabs">' + tabs + '</div>',
@@ -8758,7 +9275,7 @@
       '<input id="mdExpName" type="text" value="' + esc(st.doc.name || 'model') + '"></label>',
       '<button type="button" class="md-wide md-prim-go" data-md-act="export-go">导出到电脑</button>',
       '<div class="md-note" id="mdExpDesc">' + esc(EXPORT_FORMATS[st.expFmt].desc) +
-      '<br><b>GLB / GLTF</b> 带材质贴图，<b>OBJ / STL</b> 只写几何。网页版会走浏览器下载。</div>',
+      '<br><b>GLB / GLTF</b> 带内嵌材质贴图；<b>OBJ 包 / FBX 包</b> 把模型和 textures/ 里的 PNG 一起打包，解压后直接打开模型文件；<b>OBJ / STL</b> 单文件只写几何。网页版会走浏览器下载。</div>',
       '</div></div>'
     ].join(''), 'export');
     return true;
@@ -8778,7 +9295,7 @@
       var restoreTex = glbTexSwap();
       var data, docJson;
       try {
-        data = await buildExportData(fmt);
+        data = await buildExportData(fmt, name);
       } finally { restoreTex(); }
       docJson = data.buffer ? exportDocJson(data.buffer) : null;
       var dataURL;
@@ -8786,6 +9303,8 @@
         /* GLB 自带 seedModel，重新导回本 App 时能恢复可编辑网格与材质槽 */
         var withExtras = SeedGLB.injectSeedModel(data.buffer, docJson);
         dataURL = SeedGLB.toDataURL(withExtras);
+      } else if (data.bytes) {
+        dataURL = bytesToDataURL(data.bytes, data.mime);
       } else {
         dataURL = textToDataURL(data.text, data.mime);
       }
@@ -8929,6 +9448,8 @@
     setStatus: setStatus, updateChrome: updateChrome,
     paintAll: paintAll, rebuildModel: rebuildModel,
     sharedTexture: sharedTexture, applySlotTexture: applySlotTexture,
+    /* slotMaps 的读写统一走仓储：投射的兜底 / 固化 / 采纳底图都不自己拼数组 */
+    slotMap: STORE.slotMap, setSlotMap: STORE.setSlotMap,
     /* 烘焙/绘画工作区的底图：取「视口里真实显示的那张」，不只是 slotMaps */
     liveSlotImage: liveSlotImage,
     /* 投射把结果推进编辑层栈之后，视口要靠混合管线重新合成才会更新
@@ -9017,6 +9538,7 @@
         space: st.space,
         snap: st.snap,
         shading: st.shading,
+        wireframe: vfOn('wireframe'),
         /* 单独显示：探针按 isolate / visibleObjects 断言隔离真的只留一个对象 */
         isolate: !!st.isolate,
         /* 组件隔离：面 / 岛选择下只显示替身网格 */
@@ -9127,7 +9649,6 @@
         /* 右侧工具箱页签 + 绘画笔刷（探针用它断言状态，不点 UI 也能读） */
         tbKind: st.tbKind,
         editor: st.editor,
-        editorBack: st.editorBack,
         brush: st.paint.brush,
         brushShape: st.paint.shape,
         brushCustom: st.paint.customBrush ? st.paint.customBrush.name : '',
@@ -9180,6 +9701,20 @@
       if (!st.doc) throw new Error('没有文档');
       return currentGLB();
     },
+    /* 测试用：产出 OBJ/FBX 压缩包结构（不落盘，只回文件名与文本头） */
+    exportPackage: async function (format, name) {
+      if (!st.doc) throw new Error('没有文档');
+      var restoreTex = glbTexSwap();
+      try {
+        var d = await buildExportData(format, name || st.doc.name || 'test');
+        return {
+          mime: d.mime, size: d.bytes ? d.bytes.length : 0,
+          files: d.files || [], texts: d.texts || null,
+          /* 探针解包用：zip 以 data URL 回传，避免把二进制塞进 JSON 数组 */
+          zip: d.bytes ? bytesToDataURL(d.bytes, d.mime) : ''
+        };
+      } finally { restoreTex(); }
+    },
     /* M6a：命令表 / 工具会话 / 吸附 / 显示开关（外壳只暴露四个口，不长算子分支） */
     commands: function () { return global.SeedCommands || null; },
     tools: function () { return global.SeedTools || null; },
@@ -9218,8 +9753,12 @@
         extrudeGizmo: EXGZ.gizmo,
         uv: st.uv,
         mesh: st.mesh, doc: st.doc,
+        /* 状态分区：view / edit / panel。st.doc 与 stateGroups.view.doc 是同一字段，
+         * 探针用它守住「分区只是换归属、不复制值」这条约定。 */
+        stateGroups: { view: st.view, edit: st.edit, panel: st.panel },
+        store: STORE,
         /* 性能基准直接读这两项：上传字节数 / 合成次数不再靠估算 */
-        paint: PAINT, upload: UPLOAD, paintState: st.paint, renderStats: function () {
+        paint: PAINT, upload: UPLOAD, paintState: st.paint, mix: MIX, renderStats: function () {
           var i = st.renderer && st.renderer.info;
           return { frame: i ? i.render.frame : 0, tris: i ? i.render.triangles : 0, calls: i ? i.render.calls : 0 };
         }

@@ -172,7 +172,7 @@ window.MV_BODY = `<div class="mv-wrap"> … </div>`;
 | `store` | `apps/store/` | |
 | `comfy` | `apps/comfy/` | |
 | `gallery` | `apps/gallery/` | 同时注册 `modelLib`，两者共用 `#libWin` |
-| `imglab` | `apps/imglab/` | |
+| `imglab` | `apps/imglab/` | 壳在 App 目录，编辑器在 `js/ps-*.js`；位图 / 矢量 / 3D 绘制三工作区（F2 / F3 / F4）。3D 仍是 PS 界面：工具箱、选项栏、图层面板与文档标签都保留，只把中间画布换成 three.js 视口；`js/ps-3d.js` 支持「生成遮罩」（UV 空间单图）与「添加遮罩」（按当前视角正交投影，每个可见 UV 岛生成一个带蒙版的图层，收进图层组，可到位图模式逐层绘制）。「文件 → AI 绘制 SVG…」由语言模型直接产出矢量 SVG 并保存（对外 `psLab.aiDraw / saveSvg / aiSvg`）。右侧「历史记录 / 色板 / 助手」标签里的「助手」是图像处理助手：对话调用 `draw_svg`（生成 SVG）、`save_svg`（保存）、`paint_svg`（分图层 / 分组 / 分步骤画进画布，每步单独入历史，Ctrl+Z 逐步撤回）、`place_svg`（单图层放入画布）四个工具，模型回复走「一轮一个 JSON」协议；图层名优先取 SVG 元素的 `data-name / aria-label / <title> / id / class` 并翻成中文（eye-left → 左眼、tentacle-1 → 触手 1），`path1 / layer2` 这类机器 id 退回形状兜底；助手面板底部显示 token 消耗（提示 / 输出、对话 / 绘制次数，接口未返回 usage 时标注估算）；模型不可用（断网 / CORS / 未配置）时整轮降级到本地模板绘制（鱼 / 企鹅 / 猫 / 风景 / 树 / 花 / 房子 / 星空 / 抽象）并自动分步绘制到画布，只提示一次原因、不再连环报错；编排调用 `max_tokens` 600，`paint_svg` 成功后不再多问一轮，用户说「画到画布 / 分图层 / 分步骤」时 draw 完直接绘制；对外 `psLab.assistant.ask / open / localDraw / paint / script / usage / state` |
 | `modeldesk` | `apps/modeldesk/` | |
 | `player` | `apps/player/` | |
 | `studio` | `apps/studio/` | 时间线剪辑；菜单栏 / 选择·剃刀工具 / 循环与逐帧 / 动态轨道 / 关键帧 / 四种精细剪辑 / 标记 / 片段右键菜单（含分离音频、文字转语音）/ `.hfstudio` 导入导出；素材可读视频库与图库（图库经 `window.assetBridge`，项目只存 `assetId`）；图库删除前会检查剪辑台项目引用 |

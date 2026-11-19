@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { URL } = require('url');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 
 const PORT = Number(process.env.PORT || process.env.RUNTIME_PORT || 8794);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -25,6 +25,10 @@ const KOKORO_DIR = TTS_DIR ? path.join(TTS_DIR, 'kokoro') : '';
 const MELO_DIR = TTS_DIR ? path.join(TTS_DIR, 'melo') : '';
 const VITS_DIR = TTS_DIR ? path.join(TTS_DIR, 'vits-theresa') : '';
 const ZIPVOICE_DIR = TTS_DIR ? path.join(TTS_DIR, 'zipvoice') : '';
+/* 系统机械音（Windows SAPI）：不下载任何模型，用系统自带的中文语音做对照实验。
+ * 渲染脚本必须是纯 ASCII —— PowerShell 5.1 会把无 BOM 脚本按 GBK 解析。 */
+const SAPI_SCRIPT = path.join(__dirname, 'tts-sapi.ps1');
+const SAPI_READY = process.platform === 'win32' && fs.existsSync(SAPI_SCRIPT);
 /* 内置参数音库：随项目分发，用户没蒸馏过也能直接用「快速合成」。
  * 用户目录里蒸馏出音库时优先用用户的。 */
 const PARAM_BUILTIN_DIR = path.join(__dirname, 'param-bank');
@@ -171,6 +175,7 @@ function ttsStatus() {
     vits: vitsReady,
     zipvoice: zipReady,
     clone: cloneReady,
+    sapi: SAPI_READY,
     param: !!param.ready,
     paramUnits: Number(param.units) || 0,
     paramChars: Number(param.chars) || 0,
@@ -212,6 +217,8 @@ function speakTts(req, res) {
     const engine = String(body.engine || 'piper');
     /* 参数合成自己解析 [[r]]/[[p]]/[[f]]/[[e]]/[[t]]，不走逐段子进程那条路 */
     if (engine === 'param') { speakParam(res, body, text); return; }
+    /* 系统机械音同样自己解析标记，再翻成 SSML */
+    if (engine === 'sys') { speakSys(res, body, text); return; }
     /* 韵律标记对所有支持分段语速的本地引擎生效（Piper / Kokoro / MeloTTS / VITS）。
      * 没带标记时仍然走原来的单次合成，不增加任何开销。 */
     if (PROSODY_ENGINES[engine]) {
@@ -467,6 +474,55 @@ function speakParam(res, body, text) {
     return;
   }
   sendWavBuffer(res, wav);
+}
+
+/* 标准机械音对照实验：Windows 自带 SAPI，不下载任何模型。
+ * 把 LLM 的韵律标记翻成 SSML —— 语速走相对百分比、音调走 ±%、
+ * [[p=]]/标点走 <break>、[[e=]] 走 emphasis，验证「参数控制」本身是否成立。 */
+function buildSysSsml(plan) {
+  const parts = [];
+  for (let i = 0; i < plan.segments.length; i++) {
+    const seg = plan.segments[i];
+    const rate = Math.round(Math.max(0.5, Math.min(2, Number(seg.rate) || 1)) * 100);
+    const pitchPct = Math.round((Math.max(0.7, Math.min(1.5, Number(seg.pitch) || 1)) - 1) * 100);
+    let bodyText = String(seg.text)
+      .replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    if ((Number(seg.gain) || 1) >= 1.15) bodyText = '<emphasis level="strong">' + bodyText + '</emphasis>';
+    parts.push('<prosody rate="' + rate + '%" pitch="' + (pitchPct >= 0 ? '+' : '') + pitchPct + '%">' +
+      bodyText + '</prosody>');
+    const after = Number(seg.after) || 0;
+    if (after >= 0.02) parts.push('<break time="' + Math.round(after * 1000) + 'ms"/>');
+  }
+  return '<?xml version="1.0" encoding="utf-8"?><speak version="1.0" ' +
+    'xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="zh-CN">' + parts.join('') + '</speak>';
+}
+
+function speakSys(res, body, text) {
+  if (!SAPI_READY) {
+    sendJson(res, 404, { error: '系统机械音只在 Windows 上可用' });
+    return;
+  }
+  const plan = parseProsody(text, Math.max(0.5, Math.min(2, Number(body.rate) || 1)));
+  const ssml = buildSysSsml(plan);
+  const stamp = Date.now() + '-' + process.pid + '-' + Math.random().toString(36).slice(2, 8);
+  const ssmlFile = path.join(os.tmpdir(), 'openagi-sys-' + stamp + '.ssml');
+  const wavFile = path.join(os.tmpdir(), 'openagi-sys-' + stamp + '.wav');
+  fs.writeFileSync(ssmlFile, ssml, 'utf8');
+  const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', SAPI_SCRIPT, '-SsmlFile', ssmlFile, '-OutFile', wavFile];
+  if (body.voice) args.push('-Voice', String(body.voice));
+  execFile('powershell.exe', args, { timeout: 30000, windowsHide: true }, (err, stdout, stderr) => {
+    try { fs.unlinkSync(ssmlFile); } catch (e) { /* 已删 */ }
+    let wav = null;
+    try { wav = fs.readFileSync(wavFile); } catch (e) { /* 没产出 */ }
+    try { fs.unlinkSync(wavFile); } catch (e) { /* 已删 */ }
+    if (err || !wav || wav.length < 64) {
+      const line = String(stderr || (err && err.message) || '').trim().split(/\r?\n/)[0];
+      sendJson(res, 500, { error: '系统语音合成失败：' + (line || '没有产出音频') });
+      return;
+    }
+    sendWavBuffer(res, wav);
+  });
 }
 
 /* ZipVoice 零样本克隆：参考音频与参考文本由设置页写入 zipvoice/ref.wav + ref.txt。

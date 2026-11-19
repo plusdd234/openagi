@@ -109,9 +109,24 @@ let d = wavData(wav);
 eq(d.rate, RATE, '采样率沿用音库');
 eq(d.ch, 1, '单声道');
 eq(d.bits, 16, '16-bit');
-ok(d.len > RATE * 0.4 * 2, '两个 0.25s 单元 + 间隔', 'len=' + d.len);
+/* 单元被 0.75 时长补偿压缩（孤立朗读自带句末拉长），接缝再重叠 12ms。 */
+near(d.len / 2 / RATE, 0.25 * 2 * 0.75 - 0.012, 0.03, '两个 0.25s 单元压缩后拼接');
 eq(synth('', { dir: DIR }), null, '空文本返回 null');
 eq(synth('你好', { dir: path.join(DIR, 'nope') }), null, '没有音库返回 null');
+
+console.log('\n=== 连续拼接 ===');
+/* 逐字拼接不允许在字间插入静音；接缝靠 12ms 交叉淡化。旧实现每个音节
+ * 之间会留下 35ms 静音 + 单元自带的 50ms 首尾静音，听感就是断断续续。 */
+const joined = wavData(synth('你好你好你好', { dir: DIR }));
+let zeroRun = 0;
+let maxZeroRun = 0;
+for (let i = 0; i + 1 < joined.data.length; i += 2) {
+  if (Math.abs(joined.data.readInt16LE(i)) < 30) {
+    zeroRun++;
+    if (zeroRun > maxZeroRun) maxZeroRun = zeroRun;
+  } else zeroRun = 0;
+}
+ok(maxZeroRun / RATE < 0.02, '字间最长静音 < 20ms', (maxZeroRun / RATE * 1000).toFixed(1) + 'ms');
 
 console.log('\n=== 语速 / 停顿 ===');
 const normal = wavData(synth('你好', { dir: DIR }));

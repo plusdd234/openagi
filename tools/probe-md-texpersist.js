@@ -36,7 +36,7 @@ async function openPaint(page) {
   await page.evaluate(() => window.openDeskApp && window.openDeskApp('modeldesk'));
   await page.waitForTimeout(1400);
   await page.evaluate(() => {
-    const b = document.querySelector('[data-md-tbk="paint"]');
+    const b = document.querySelector('[data-md-editor-btn="paint"]');
     if (b) b.click();
   });
   await page.waitForTimeout(400);

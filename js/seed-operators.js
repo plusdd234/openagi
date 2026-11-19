@@ -2391,6 +2391,102 @@
     return mesh;
   }
 
+  /* 统一法线朝向（等价 Blender 的 Recalculate Outside）：只改面的绕序（winding），
+   * 不动拓扑 / UV / 材质槽。渲染法线由绕序算出来，绕序一错法线就朝内，光照里就是纯黑。
+   *
+   * 1) 沿共享边 BFS：同一条边被两个面以**相同方向**走过 = 绕序相反，翻其中一个；
+   *    非流形边（≥3 面）不参与，避免把两片独立壳体强行对齐。
+   * 2) 每个连通块按有向体积判整体朝向：体积为负 → 整块翻（处理整体里外翻的模型）。
+   * 返回新 mesh（_flipped = 翻了多少面）；没有面返回 null。 */
+  function unifyWinding(mesh) {
+    var M = meshCore();
+    if (!M || !mesh || !mesh.faceIds.length) return null;
+    var out = M.clone(mesh);
+    var off = out.faceOffsets, fi = out.faceIndices, pos = out.positions;
+    var nf = out.faceIds.length;
+    var edges = Object.create(null);
+    var f, i, n, s, e, a, b, k, rec;
+    for (f = 0; f < nf; f++) {
+      s = off[f]; e = off[f + 1]; n = e - s;
+      if (n < 3) continue;
+      for (i = 0; i < n; i++) {
+        a = fi[s + i]; b = fi[s + (i + 1) % n];
+        if (a === b) continue;
+        k = a < b ? a + '_' + b : b + '_' + a;
+        rec = edges[k] || (edges[k] = []);
+        rec.push({ f: f, dir: a < b ? 1 : -1 });
+      }
+    }
+    var adj = new Array(nf);
+    for (f = 0; f < nf; f++) adj[f] = [];
+    for (k in edges) {
+      rec = edges[k];
+      if (rec.length !== 2) continue;                 /* 非流形 / 边界边不传朝向 */
+      var same = rec[0].dir === rec[1].dir;
+      adj[rec[0].f].push({ f: rec[1].f, flip: same });
+      adj[rec[1].f].push({ f: rec[0].f, flip: same });
+    }
+    var seen = new Uint8Array(nf), flip = new Uint8Array(nf), comps = [];
+    for (f = 0; f < nf; f++) {
+      if (seen[f]) continue;
+      var comp = [], queue = [f];
+      seen[f] = 1;
+      while (queue.length) {
+        var cur = queue.pop();
+        comp.push(cur);
+        var nb = adj[cur];
+        for (i = 0; i < nb.length; i++) {
+          var g = nb[i].f;
+          if (seen[g]) continue;
+          seen[g] = 1;
+          flip[g] = flip[cur] ^ (nb[i].flip ? 1 : 0);
+          queue.push(g);
+        }
+      }
+      comps.push(comp);
+    }
+    var flipped = 0;
+    for (var ci = 0; ci < comps.length; ci++) {
+      var list = comps[ci], vol = 0;
+      for (var li = 0; li < list.length; li++) {
+        f = list[li]; s = off[f]; e = off[f + 1];
+        var p0 = fi[s] * 3, fv = 0;
+        for (i = s + 1; i < e - 1; i++) {
+          var ia = fi[i] * 3, ib = fi[i + 1] * 3;
+          var ax = pos[ia], ay = pos[ia + 1], az = pos[ia + 2];
+          var bx = pos[ib], by = pos[ib + 1], bz = pos[ib + 2];
+          fv += pos[p0] * (ay * bz - az * by) + pos[p0 + 1] * (az * bx - ax * bz) + pos[p0 + 2] * (ax * by - ay * bx);
+        }
+        vol += flip[f] ? -fv : fv;                    /* 翻过的面有向体积取反 */
+      }
+      if (vol < 0) { for (var fj = 0; fj < list.length; fj++) flip[list[fj]] ^= 1; }
+    }
+    var newIdx = [], newUv = [], newOff = [0];
+    var hasUv = out.uvs && out.uvs.length === fi.length * 2;
+    for (f = 0; f < nf; f++) {
+      s = off[f]; e = off[f + 1]; n = e - s;
+      if (flip[f]) {
+        for (i = n - 1; i >= 0; i--) {
+          newIdx.push(fi[s + i]);
+          if (hasUv) newUv.push(out.uvs[(s + i) * 2], out.uvs[(s + i) * 2 + 1]);
+        }
+        flipped++;
+      } else {
+        for (i = 0; i < n; i++) {
+          newIdx.push(fi[s + i]);
+          if (hasUv) newUv.push(out.uvs[(s + i) * 2], out.uvs[(s + i) * 2 + 1]);
+        }
+      }
+      newOff.push(newIdx.length);
+    }
+    out.faceIndices = newIdx;
+    out.faceOffsets = newOff;
+    if (hasUv) out.uvs = newUv;
+    M.bump(out);
+    out._flipped = flipped;
+    return out;
+  }
+
   global.SeedOps = {
     edgeRing: edgeRing,
     loopCut: loopCut,
@@ -2413,6 +2509,7 @@
     arrayMesh: arrayMesh,
     dissolve: dissolve,
     subdivideOnce: subdivideOnce,
+    unifyWinding: unifyWinding,
     /* 上一次布尔失败的中文原因（成功 / 未调用时为空串）。外壳提示用，不改 booleanMeshes 返回值 */
     lastOpError: ''
   };

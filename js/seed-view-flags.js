@@ -26,7 +26,7 @@
     { name: 'material', label: '材质', def: true },
     { name: 'texture', label: '纹理', def: true },
     { name: 'lighting', label: '光照', def: true },
-    { name: 'wireframe', label: '线框', def: false }
+    { name: 'wireframe', label: '线框', def: true }
   ];
 
   var state = Object.create(null);

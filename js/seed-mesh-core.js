@@ -50,6 +50,10 @@
        * 每顶点一份就表达不了接缝，UV 岛无从判定。显示几何暂时不读它（那需要按 UV 拆顶点），
        * 它现在只服务两件事：UV 岛选取、以及将来的贴图 / UV 视图。 */
       uvs: [],
+      /* 平滑角（度）：渲染法线按这个夹角决定「硬边 / 平滑」。
+       * 180 = 全平滑（与旧行为一致，导入模型默认）；小于 180 时按面夹角聚类拆法线，
+       * 避免把重叠的头发卡片 / 硬表面拐角焊成一片导致法线互相抵消。 */
+      smoothAngle: 180,
       /* UV 缝：边一旦标了 seam，uvIslands 不再沿它合并面（即使两端 UV 连续）。
        * key = 两端顶点 ID 的规范组合（min + '_' + max），用对象当集合，值恒为 1。
        * 它只影响 UV 岛判定，不改拓扑；撤销 / 指纹 / 落盘都要带上它。 */
@@ -859,15 +863,98 @@
     var hasUv = !!(mesh.uvs && mesh.uvs.length === mesh.faceIndices.length * 2);
     var posOut = posArr, uvOut = null, uvMap = null, origOut = null;
     if (hasUv) { posOut = []; uvOut = []; uvMap = Object.create(null); origOut = []; }
-    function uvVert(v, corner) {
+
+    /* 平滑角 < 180 时不让所有共点面共享一条法线：
+     * 先把相邻面按夹角聚成「平滑组」，同一个顶点在不同组里各拿一条法线。
+     * 这样重叠的头发卡片不会被焊成一根长度≈0 的法线（那是纯黑块的来源），
+     * 硬表面拐角也不会被平均成一片灰。 */
+    var smoothAngle = Number(mesh.smoothAngle) > 0 ? Number(mesh.smoothAngle) : 180;
+    var angleNormals = smoothAngle < 179.9 ? [] : null;
+    var clusterOf = null, clusterNorm = null, rvCluster = null;
+    if (angleNormals) {
+      var nv = mesh.positions.length / 3;
+      var tmpN = [0, 0, 0];
+      (function () {
+        var pos = mesh.positions, offs = mesh.faceOffsets, fi = mesh.faceIndices;
+        var nf = mesh.faceIds.length;
+        function faceNormal(f, out) {
+          var s = offs[f], e = offs[f + 1];
+          if (e - s < 3) { out[0] = out[1] = out[2] = 0; return out; }
+          var p0 = fi[s] * 3, x0 = pos[p0], y0 = pos[p0 + 1], z0 = pos[p0 + 2];
+          var sx = 0, sy = 0, sz = 0;
+          for (var k = s + 1; k < e - 1; k++) {
+            var a = fi[k] * 3, b = fi[k + 1] * 3;
+            var ax = pos[a] - x0, ay = pos[a + 1] - y0, az = pos[a + 2] - z0;
+            var bx = pos[b] - x0, by = pos[b + 1] - y0, bz = pos[b + 2] - z0;
+            sx += ay * bz - az * by; sy += az * bx - ax * bz; sz += ax * by - ay * bx;
+          }
+          out[0] = sx; out[1] = sy; out[2] = sz;
+          return out;
+        }
+        var fn = new Float32Array(nf * 3), f;
+        for (f = 0; f < nf; f++) {
+          faceNormal(f, tmpN);
+          var l0 = Math.sqrt(tmpN[0] * tmpN[0] + tmpN[1] * tmpN[1] + tmpN[2] * tmpN[2]) || 1;
+          fn[f * 3] = tmpN[0] / l0; fn[f * 3 + 1] = tmpN[1] / l0; fn[f * 3 + 2] = tmpN[2] / l0;
+        }
+        var vFaces = new Array(nv);
+        for (f = 0; f < nf; f++) {
+          for (var c = offs[f]; c < offs[f + 1]; c++) {
+            var vi = fi[c];
+            (vFaces[vi] || (vFaces[vi] = [])).push(f);
+          }
+        }
+        var cosA = Math.cos(smoothAngle * Math.PI / 180);
+        clusterOf = new Map();
+        clusterNorm = new Map();
+        var cc = 0;
+        for (var v = 0; v < nv; v++) {
+          var list = vFaces[v];
+          if (!list) continue;
+          var reps = [];
+          for (var li = 0; li < list.length; li++) {
+            var ff = list[li];
+            var nx = fn[ff * 3], ny = fn[ff * 3 + 1], nz = fn[ff * 3 + 2];
+            var best = -2, bestKey = '';
+            for (var ri = 0; ri < reps.length; ri++) {
+              var d = nx * reps[ri].x + ny * reps[ri].y + nz * reps[ri].z;
+              if (d > best) { best = d; bestKey = reps[ri].k; }
+            }
+            var key;
+            if (bestKey && best >= cosA) key = bestKey;
+            else {
+              key = 'c' + (cc++);
+              reps.push({ x: nx, y: ny, z: nz, k: key });
+              clusterNorm.set(key, [0, 0, 0]);
+            }
+            clusterOf.set(v + ':' + ff, key);
+            var acc = clusterNorm.get(key);
+            faceNormal(ff, tmpN);          /* 面积加权：大面对法线贡献更大 */
+            acc[0] += tmpN[0]; acc[1] += tmpN[1]; acc[2] += tmpN[2];
+          }
+        }
+        /* 归一化。真正长度为 0 的组（退化三角形）给一个朝上的兜底，绝不留 (0,0,0)：
+         * 零法线在光照里就是纯黑，这正是「面结构正常却发黑」的另一半原因。 */
+        clusterNorm.forEach(function (cn) {
+          var l = Math.sqrt(cn[0] * cn[0] + cn[1] * cn[1] + cn[2] * cn[2]);
+          if (l < 1e-12) { cn[0] = 0; cn[1] = 1; cn[2] = 0; }
+          else { cn[0] /= l; cn[1] /= l; cn[2] /= l; }
+        });
+      })();
+      rvCluster = [];
+    }
+
+    function uvVert(v, corner, f) {
       var u = mesh.uvs[corner * 2], w = mesh.uvs[corner * 2 + 1];
-      var key = v + '|' + Math.round(u * 8192) + '|' + Math.round(w * 8192);
+      var ck = clusterOf ? (clusterOf.get(v + ':' + f) || '') : '';
+      var key = v + '|' + Math.round(u * 8192) + '|' + Math.round(w * 8192) + (ck ? '|' + ck : '');
       var r = uvMap[key];
       if (r == null) {
         r = uvOut.length / 2;
         posOut.push(mesh.positions[v * 3], mesh.positions[v * 3 + 1], mesh.positions[v * 3 + 2]);
         uvOut.push(u, w);
         origOut.push(v);
+        if (rvCluster) rvCluster.push(ck);
         uvMap[key] = r;
       }
       return r;
@@ -885,9 +972,9 @@
       var v0 = mesh.faceIndices[start];
       for (var k = 1; k < end - start - 1; k++) {
         if (hasUv) {
-          idx.push(uvVert(v0, start),
-            uvVert(mesh.faceIndices[start + k], start + k),
-            uvVert(mesh.faceIndices[start + k + 1], start + k + 1));
+          idx.push(uvVert(v0, start, f),
+            uvVert(mesh.faceIndices[start + k], start + k, f),
+            uvVert(mesh.faceIndices[start + k + 1], start + k + 1, f));
         } else {
           idx.push(v0, mesh.faceIndices[start + k], mesh.faceIndices[start + k + 1]);
         }
@@ -900,25 +987,43 @@
     geo.setAttribute('position', new THREE.Float32BufferAttribute(posOut, 3));
     if (uvOut) geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvOut, 2));
     if (idx.length) geo.setIndex(idx);
-    geo.computeVertexNormals();
-    /* 拆出来的渲染顶点要把法线按「原顶点」合回去：否则 UV 缝两侧的拐角变成逐面法线，
-     * 平滑物体的光影会突然变硬（盒子这种本来靠平均法线出来的渐变也会消失）。 */
-    if (hasUv) {
-      var nr = geo.getAttribute('normal');
-      var acc = mesh.positions.length ? new Float32Array(mesh.positions.length) : null;
-      var cnt = new Uint32Array(mesh.positions.length / 3);
-      for (var si = 0; si < origOut.length; si++) {
-        var oi = origOut[si];
-        acc[oi * 3] += nr.getX(si); acc[oi * 3 + 1] += nr.getY(si); acc[oi * 3 + 2] += nr.getZ(si);
-        cnt[oi]++;
+    if (angleNormals) {
+      var nOut = new Float32Array(rvCluster.length * 3);
+      for (var ai = 0; ai < rvCluster.length; ai++) {
+        var cn = clusterNorm.get(rvCluster[ai]);
+        if (cn) { nOut[ai * 3] = cn[0]; nOut[ai * 3 + 1] = cn[1]; nOut[ai * 3 + 2] = cn[2]; }
+        else { nOut[ai * 3 + 1] = 1; }
       }
-      for (var sj = 0; sj < origOut.length; sj++) {
-        var oj = origOut[sj], cj = cnt[oj] || 1;
-        var sx = acc[oj * 3] / cj, sy = acc[oj * 3 + 1] / cj, sz = acc[oj * 3 + 2] / cj;
-        var len = Math.sqrt(sx * sx + sy * sy + sz * sz) || 1;
-        nr.setXYZ(sj, sx / len, sy / len, sz / len);
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(nOut, 3));
+    } else {
+      geo.computeVertexNormals();
+      /* 拆出来的渲染顶点要把法线按「原顶点」合回去：否则 UV 缝两侧的拐角变成逐面法线，
+       * 平滑物体的光影会突然变硬（盒子这种本来靠平均法线出来的渐变也会消失）。 */
+      if (hasUv) {
+        var nr = geo.getAttribute('normal');
+        var acc = mesh.positions.length ? new Float32Array(mesh.positions.length) : null;
+        var cnt = new Uint32Array(mesh.positions.length / 3);
+        for (var si = 0; si < origOut.length; si++) {
+          var oi = origOut[si];
+          acc[oi * 3] += nr.getX(si); acc[oi * 3 + 1] += nr.getY(si); acc[oi * 3 + 2] += nr.getZ(si);
+          cnt[oi]++;
+        }
+        for (var sj = 0; sj < origOut.length; sj++) {
+          var oj = origOut[sj], cj = cnt[oj] || 1;
+          var sx = acc[oj * 3] / cj, sy = acc[oj * 3 + 1] / cj, sz = acc[oj * 3 + 2] / cj;
+          var len = Math.sqrt(sx * sx + sy * sy + sz * sz);
+          /* 平均后长度≈0 = 该顶点挂着方向相反的面（重叠卡片 / 反向绕序）。
+           * 归一化后会得到一个随机方向，光照里就是纯黑；这里退回它自己那条法线。 */
+          if (len < 1e-6) {
+            var fx = nr.getX(sj), fy = nr.getY(sj), fz = nr.getZ(sj);
+            len = Math.sqrt(fx * fx + fy * fy + fz * fz) || 1;
+            nr.setXYZ(sj, fx / len, fy / len, fz / len);
+            continue;
+          }
+          nr.setXYZ(sj, sx / len, sy / len, sz / len);
+        }
+        nr.needsUpdate = true;
       }
-      nr.needsUpdate = true;
     }
     groups.forEach(function (g) { geo.addGroup(g.start, g.count, g.slot); });
     /* 渲染顶点 → 原顶点 的映射（UV 缝会把同一个顶点拆成多个渲染顶点）。
@@ -949,6 +1054,8 @@
       faceIds: packI32(mesh.faceIds),
       faceSlots: packI32(mesh.faceSlots),
       uvs: packF32(mesh.uvs),
+      /* 平滑角：老文件没有该字段 → 180（全平滑，与旧渲染一致） */
+      smoothAngle: Number(mesh.smoothAngle) > 0 ? Number(mesh.smoothAngle) : 180,
       /* 缝是字符串 key 的集合，直接存数组；老文件没有这个字段 → 空缝 */
       uvSeams: Object.keys(mesh.uvSeams || {}),
       stats: stats(mesh)
@@ -970,6 +1077,7 @@
     if (obj.uvSeams && obj.uvSeams.length) {
       for (var sm = 0; sm < obj.uvSeams.length; sm++) mesh.uvSeams[String(obj.uvSeams[sm])] = 1;
     }
+    mesh.smoothAngle = Number(obj.smoothAngle) > 0 ? Number(obj.smoothAngle) : 180;
 
     var errs = validate(mesh);
     if (errs.length) throw new Error('mesh 数据损坏：' + errs.join('；'));
@@ -1101,6 +1209,7 @@
     if (mesh.uvSeams) Object.keys(mesh.uvSeams).forEach(function (k) { m.uvSeams[k] = 1; });
     m.nextVertexId = mesh.nextVertexId || 0;
     m.nextFaceId = mesh.nextFaceId || 0;
+    m.smoothAngle = Number(mesh.smoothAngle) > 0 ? Number(mesh.smoothAngle) : 180;
     m.version = mesh.version || 0;
     return m;
   }

@@ -728,12 +728,9 @@
 
     /* 重网格（>400 面）把「面」这一层画进一张 UV 空间的离屏位图：
      * 画布路径 API 在这个环境里每条约 2–3µs，3000 个四边形光建路径就要 30ms+，
-     * 平移 / 缩放时每帧重建必卡。位图只需在网格版本变化时重建，之后 drawImage 一次就够。
+     * 平移 / 缩放时每帧重建必卡。位图只在网格版本或缩放档位变化时重建。
      * 选中的面仍然按屏幕坐标实时画在上面，避免「点一个点就整张重建」。 */
     function uvFaceCache(mesh) {
-      var key = mesh.version + '|' + mesh.faceIds.length;
-      var fc = st.uv.faceCache;
-      if (fc && fc.key === key && fc.mesh === mesh) return fc;
       var eminU = Infinity, eminV = Infinity, emaxU = -Infinity, emaxV = -Infinity;
       for (var c = 0; c < mesh.uvs.length; c += 2) {
         var u = mesh.uvs[c] || 0, v = mesh.uvs[c + 1] || 0;
@@ -747,17 +744,25 @@
       var pad = Math.max(du, dv) * 0.02;
       var u0 = eminU - pad, u1 = emaxU + pad, v0 = eminV - pad, v1 = emaxV + pad;
       du = u1 - u0; dv = v1 - v0;
-      var W = 2048;
-      var H = Math.max(128, Math.min(2048, Math.round(W * dv / du)));
-      if (dv / du < 0.125) { H = 256; W = Math.min(2048, Math.round(H * du / dv)); }
+      /* 位图是「按 UV 单位画、再缩到屏幕」的，分辨率不能写死 2048：
+       * 缩放到 700% 时 0.6 UV 单位要占 1600+ 屏幕像素，2048 的位图被放大后
+       * 1px 的线会变成 4–5px 的粗线。这里按当前缩放取 2 的幂：位图至少和屏幕一样密，
+       * 只有缩放跨过一档（≈2×）才需要重建。 */
+      var dpr = Math.min(2, st.uv.dpr || global.devicePixelRatio || 1);
+      var screenW = Math.max(1, du * st.uv.scale);
+      var W = Math.pow(2, Math.ceil(Math.log2(Math.max(512, screenW * dpr))));
+      W = Math.min(4096, Math.max(256, W));
+      var H = Math.max(128, Math.min(4096, Math.round(W * dv / du)));
+      var key = mesh.version + '|' + mesh.faceIds.length + '|' + W + 'x' + H;
+      var fc = st.uv.faceCache;
+      if (fc && fc.key === key && fc.mesh === mesh) return fc;
       if (!fc) { fc = st.uv.faceCache = { cv: document.createElement('canvas'), ctx: null, key: '' }; }
       if (fc.cv.width !== W || fc.cv.height !== H) { fc.cv.width = W; fc.cv.height = H; }
       var cx = fc.cv.getContext('2d');
       cx.setTransform(1, 0, 0, 1, 0, 0);
       cx.clearRect(0, 0, W, H);
-      /* 位图 1px 对应多少屏幕像素：反推线宽，避免缩到屏幕上细得看不见 */
-      var pxPerUnit = W / du;
-      var lw = Math.max(1.2, Math.min(8, pxPerUnit / Math.max(1, st.uv.scale) * 1.2));
+      /* 目标屏幕线宽 0.9 CSS px：位图里该画多宽 = 0.9 × (位图像素 / 屏幕像素) */
+      var lw = Math.max(0.4, Math.min(4, 0.9 * W / screenW));
       var path = typeof global.Path2D === 'function' ? new global.Path2D() : null;
       var mx = function (uu) { return (uu - u0) / du * W; };
       var my = function (vv) { return (v1 - vv) / dv * H; };
@@ -783,6 +788,8 @@
       cx.lineJoin = 'round';
       if (path) { cx.fill(path); cx.stroke(path); } else { cx.fill(); cx.stroke(); }
       fc.key = key; fc.mesh = mesh; fc.u0 = u0; fc.u1 = u1; fc.v0 = v0; fc.v1 = v1;
+      /* 调试口径：位图线宽 × 屏幕/位图比例 = 屏幕上的实际线宽（CSS px） */
+      fc.lw = lw; fc.screenW = screenW;
       return fc;
     }
 

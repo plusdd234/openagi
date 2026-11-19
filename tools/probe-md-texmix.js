@@ -74,38 +74,69 @@ function writePNG(file, w, h, rgb) {
   const browser = await chromium.launch({ channel: 'msedge' });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
   const errors = [];
-  page.on('pageerror', e => errors.push(String(e && e.message)));
+  page.on('pageerror', e => errors.push(String(e && (e.stack || e.message))));
   try {
     await page.goto(pathToFileURL(path.join(ROOT, 'index.html')).href + '?nostore=1', { waitUntil: 'load' });
     await page.waitForTimeout(600);
     await page.evaluate(() => window.openDeskApp('modeldesk'));
     await page.waitForTimeout(1600);
     await page.evaluate(() => {
-      const b = document.querySelector('[data-md-tbk="paint"]');
+      const b = document.querySelector('[data-md-editor-btn="paint"]');
       if (b) b.click();
     });
     await page.waitForTimeout(300);
+
+    /* 绘画工具箱顶部有两个页签：默认「绘画工具箱」，图层列表在「图层」里 */
+    const tab0 = await page.evaluate(() => {
+      const box = document.getElementById('mdPaintBox');
+      const btns = Array.from(box.querySelectorAll('[data-md-ptab]'));
+      const on = btns.filter(b => b.classList.contains('on')).map(b => b.dataset.mdPtab);
+      const pane = k => box.querySelector('[data-md-pane="' + k + '"]');
+      return {
+        tabs: btns.map(b => b.textContent.trim()), on,
+        paintShown: !pane('paint').hidden, layersShown: !pane('layers').hidden
+      };
+    });
+    check('绘画工具箱有「绘画工具箱 / 图层」两个页签，默认停在笔刷页',
+      tab0.tabs.length === 2 && tab0.on.join(',') === 'paint' && tab0.paintShown && !tab0.layersShown,
+      JSON.stringify(tab0));
+
+    await page.evaluate(() => {
+      const b = document.querySelector('[data-md-ptab="layers"]');
+      if (b) b.click();
+    });
+    await page.waitForTimeout(250);
+    const tab1 = await page.evaluate(() => {
+      const box = document.getElementById('mdPaintBox');
+      const pane = k => box.querySelector('[data-md-pane="' + k + '"]');
+      return {
+        on: Array.from(box.querySelectorAll('[data-md-ptab].on')).map(b => b.dataset.mdPtab).join(','),
+        paintShown: !pane('paint').hidden, layersShown: !pane('layers').hidden
+      };
+    });
+    check('点「图层」后只显示图层列表（笔刷页收起）',
+      tab1.on === 'layers' && !tab1.paintShown && tab1.layersShown, JSON.stringify(tab1));
 
     const ui0 = await page.evaluate(() => {
       const box = document.getElementById('mdMixBox');
       return {
         box: !!box,
         head: !!(box && box.querySelector('.md-mix-head')),
-        add: !!(box && Array.from(box.querySelectorAll('button')).find(x => x.textContent.indexOf('＋ 贴图') === 0)),
+        add: !!(box && box.querySelector('.md-mix-add')),
         rows: box ? box.querySelectorAll('.md-mix-row').length : -1
       };
     });
-    check('绘画页签出现纹理混合面板（标题 / 加层按钮都在）', ui0.head && ui0.add, JSON.stringify(ui0));
-    check('初始没有混合层', ui0.rows === 0, 'rows=' + ui0.rows);
+    check('绘画页签出现材质图层面板（标题 / 加层按钮都在）', ui0.head && ui0.add, JSON.stringify(ui0));
+    check('初始没有图层', ui0.rows === 0, 'rows=' + ui0.rows);
 
-    /* 真上传：点「＋ 贴图」→ 接住 filechooser → 塞纯红 PNG */
+    /* 真上传：点「＋ 图层」→ 接住 filechooser → 塞纯红 PNG */
     const chooser = page.waitForEvent('filechooser', { timeout: 3000 }).catch(() => null);
     await page.evaluate(() => {
-      const b = Array.from(document.querySelectorAll('#mdMixBox button')).find(x => x.textContent.indexOf('＋ 贴图') === 0);
+      const b = document.querySelector('#mdMixBox .md-mix-add');
       if (b) b.click();
     });
     const fc = await chooser;
-    check('点「＋ 贴图」能打开文件选择', !!fc);
+    check('点「＋ 图层」能打开文件选择', !!fc);
     if (fc) await fc.setFiles(TMP_PNG);
     await page.waitForTimeout(900);
 
@@ -125,9 +156,214 @@ function writePNG(file, w, h, rgb) {
         w: img ? img.width : 0, h: img ? img.height : 0, px
       };
     });
-    check('上传后出现 1 个混合层卡片', afterAdd.rows === 1, JSON.stringify(afterAdd));
+    check('上传后出现 1 个图层卡片', afterAdd.rows === 1, JSON.stringify(afterAdd));
     check('材质上挂的是合成图，中心像素是纯红', !!afterAdd.px && afterAdd.px[0] > 250 && afterAdd.px[1] < 10 && afterAdd.px[2] < 10,
       JSON.stringify(afterAdd.px));
+
+    /* 图层显隐（图像工坊同一套「眼睛」语义）：关掉 → 行变淡、合成图不再有红 */
+    await page.evaluate(() => {
+      const b = document.querySelector('#mdMixBox .md-mix-eye');
+      if (b) b.click();
+    });
+    await page.waitForTimeout(450);
+    const hidden = await page.evaluate(() => {
+      const d = window.modelDesk.__debug();
+      let m = null;
+      if (d.pivot) d.pivot.traverse(o => { if (!m && o.userData && o.userData.mdPart === 'solid') m = o; });
+      const mat = m && (Array.isArray(m.material) ? m.material[0] : m.material);
+      const img = mat && mat.map && mat.map.image;
+      let px = null;
+      if (img && img.getContext) {
+        px = Array.from(img.getContext('2d').getImageData(Math.floor(img.width / 2), Math.floor(img.height / 2), 1, 1).data);
+      }
+      return { off: document.querySelectorAll('#mdMixBox .md-mix-row.is-off').length, px };
+    });
+    check('点眼睛后图层置为隐藏且不再参与合成',
+      hidden.off === 1 && (!hidden.px || !(hidden.px[0] > 250 && hidden.px[1] < 10)),
+      JSON.stringify(hidden));
+
+    await page.evaluate(() => {
+      const b = document.querySelector('#mdMixBox .md-mix-eye');
+      if (b) b.click();
+    });
+    await page.waitForTimeout(450);
+    const shown = await page.evaluate(() => {
+      const d = window.modelDesk.__debug();
+      let m = null;
+      if (d.pivot) d.pivot.traverse(o => { if (!m && o.userData && o.userData.mdPart === 'solid') m = o; });
+      const mat = m && (Array.isArray(m.material) ? m.material[0] : m.material);
+      const img = mat && mat.map && mat.map.image;
+      let px = null;
+      if (img && img.getContext) {
+        px = Array.from(img.getContext('2d').getImageData(Math.floor(img.width / 2), Math.floor(img.height / 2), 1, 1).data);
+      }
+      return { off: document.querySelectorAll('#mdMixBox .md-mix-row.is-off').length, px };
+    });
+    check('再点眼睛恢复显示且合成图变回红色',
+      shown.off === 0 && !!shown.px && shown.px[0] > 250 && shown.px[1] < 10, JSON.stringify(shown));
+
+    /* 双击改名：图像工坊的图层名同样支持双击改 */
+    page.once('dialog', d => d.accept('旧化层'));
+    await page.dblclick('#mdMixBox .md-mix-name');
+    await page.waitForTimeout(350);
+    const renamed = await page.evaluate(() => (document.querySelector('#mdMixBox .md-mix-name') || {}).textContent || '');
+    check('双击图层名可重命名', renamed === '旧化层', renamed);
+
+    /* 保存自动烘焙：save() 必须先把图层合成到最新，再导出带贴图的 GLB */
+    const saved = await page.evaluate(async () => {
+      window.Model3D.saveDataURL = function () {};
+      const r = await window.modelDesk.save();
+      let imgs = -1, jsonOk = false, px = null;
+      try {
+        const b64 = String(r && r.dataURL || '').split(',')[1] || '';
+        const bin = atob(b64);
+        const buf = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+        const j = window.SeedGLB.readJson(buf);
+        imgs = (j.images || []).length;
+        jsonOk = Array.isArray(j.meshes);
+      } catch (e) { imgs = -1; }
+      /* 烘焙缓存就是导出贴图：中心应仍是图层叠出来的红色 */
+      try {
+        const mix = window.modelDesk.__debug().mix;
+        const cv = mix && mix.composedCanvas(0);
+        if (cv && cv.getContext) {
+          px = Array.from(cv.getContext('2d').getImageData(cv.width >> 1, cv.height >> 1, 1, 1).data);
+        }
+      } catch (e) { px = null; }
+      return { ok: !!(r && r.ok), bake: window.modelDesk.mixStats().bake, imgs, jsonOk, px };
+    });
+    check('保存时自动烘焙图层并导出贴图',
+      saved.ok && saved.bake >= 1 && saved.jsonOk && saved.imgs >= 1 &&
+      !!saved.px && saved.px[0] > 250 && saved.px[1] < 10, JSON.stringify(saved));
+
+    /* 模型 + 贴图压缩包：OBJ 用 MTL 指路，FBX 用 Texture/Video 节点指路 */
+    const pkg = await page.evaluate(async () => {
+      const API = window.modelDesk, out = {};
+      for (const f of ['objz', 'fbxz']) {
+        const d = await API.exportPackage(f, '贴图包');
+        const b64 = String(d.zip || '').split(',')[1] || '';
+        const bin = atob(b64);
+        const u8 = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+        const un = window.fflate.unzipSync(u8, {});
+        out[f] = { files: Object.keys(un), mtl: d.texts.mtl || '', fbx: d.texts.fbx || '' };
+      }
+      return out;
+    });
+    check('OBJ 包：贴图进 textures/ 且 MTL 用 map_Kd 引用',
+      pkg.objz.files.indexOf('textures/tex_0.png') >= 0 &&
+      /map_Kd textures\/tex_0\.png/.test(pkg.objz.mtl), JSON.stringify(pkg.objz.files));
+    check('FBX 包：贴图进 textures/ 且 Texture/Video 节点指到同一文件',
+      pkg.fbxz.files.indexOf('textures/tex_0.png') >= 0 &&
+      /TextureVideoClip/.test(pkg.fbxz.fbx) &&
+      /textures\/tex_0\.png/.test(pkg.fbxz.fbx), JSON.stringify(pkg.fbxz.files));
+
+    /* 改名 / 显隐各留了一条历史，撤销 3 次回到「刚加完 1 层」 */
+    for (let i = 0; i < 3; i++) {
+      await page.evaluate(() => window.modelDesk.undo());
+      await page.waitForTimeout(220);
+    }
+
+    /* 回归：已经有绘画工作副本时，隐藏图层必须仍然把颜色退掉。
+     * 工作副本曾经把「合成图」当底座，图层像素被烙进去之后
+     * composeAndApply 会把工作副本当最终像素，隐层失效（头发一直有色）。
+     * 吸管只读颜色、不产生笔迹，正好用来「只建工作副本、不改像素」。 */
+    await page.evaluate(() => {
+      const b = document.querySelector('#mdPaintRail [data-md-ptool="picker"]');
+      if (b) b.click();
+    });
+    const pickPt = await page.evaluate(() => {
+      const d = window.modelDesk.__debug();
+      const T = window.THREE, m = d.mesh, canvas = d.canvas;
+      const r = canvas.getBoundingClientRect();
+      const camPos = d.camera.getWorldPosition(new T.Vector3());
+      let bestDot = -Infinity, bestC = null;
+      for (let f = 0; f < m.faceIds.length; f++) {
+        const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+        if (e - s < 3) continue;
+        const c = new T.Vector3();
+        for (let k = s; k < e; k++) {
+          const vi = m.faceIndices[k] * 3;
+          c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
+        }
+        c.multiplyScalar(1 / (e - s));
+        const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
+        const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+        const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+        const n = new T.Vector3().crossVectors(v1, v2).normalize();
+        const wc = d.pivot.localToWorld(c.clone());
+        const wn = n.clone().transformDirection(d.pivot.matrixWorld);
+        const dot = wn.dot(camPos.clone().sub(wc).normalize());
+        if (dot > bestDot) { bestDot = dot; bestC = wc; }
+      }
+      if (!bestC) return null;
+      const q = bestC.clone().project(d.camera);
+      return { x: r.left + (q.x * 0.5 + 0.5) * r.width, y: r.top + (-q.y * 0.5 + 0.5) * r.height };
+    });
+    if (pickPt) {
+      await page.mouse.move(pickPt.x, pickPt.y);
+      await page.mouse.down();
+      await page.mouse.up();
+      await page.waitForTimeout(400);
+    }
+    const beforeHide = await page.evaluate(() => {
+      const d = window.modelDesk.__debug();
+      let m = null;
+      if (d.pivot) d.pivot.traverse(o => { if (!m && o.userData && o.userData.mdPart === 'solid') m = o; });
+      const mat = m && (Array.isArray(m.material) ? m.material[0] : m.material);
+      const img = mat && mat.map && mat.map.image;
+      return img && img.getContext
+        ? Array.from(img.getContext('2d').getImageData(img.width >> 1, img.height >> 1, 1, 1).data) : null;
+    });
+    check('建过绘画工作副本后，图层仍正常参与合成（中心还是红）',
+      !!beforeHide && beforeHide[0] > 250 && beforeHide[1] < 20, JSON.stringify(beforeHide));
+
+    await page.evaluate(() => {
+      const b = document.querySelector('#mdMixBox .md-mix-eye');
+      if (b) b.click();
+    });
+    await page.waitForTimeout(600);
+    const hideWithPc = await page.evaluate(() => {
+      const d = window.modelDesk.__debug();
+      let m = null;
+      if (d.pivot) d.pivot.traverse(o => { if (!m && o.userData && o.userData.mdPart === 'solid') m = o; });
+      const mat = m && (Array.isArray(m.material) ? m.material[0] : m.material);
+      const img = mat && mat.map && mat.map.image;
+      return {
+        off: document.querySelectorAll('#mdMixBox .md-mix-row.is-off').length,
+        px: img && img.getContext
+          ? Array.from(img.getContext('2d').getImageData(img.width >> 1, img.height >> 1, 1, 1).data) : null
+      };
+    });
+    check('存在绘画工作副本时隐藏图层也能退掉颜色（工作副本不再烙入合成图）',
+      hideWithPc.off === 1 && !!hideWithPc.px && !(hideWithPc.px[0] > 200 && hideWithPc.px[1] < 40),
+      JSON.stringify(hideWithPc));
+
+    await page.evaluate(() => {
+      const b = document.querySelector('#mdMixBox .md-mix-eye');
+      if (b) b.click();
+    });
+    await page.waitForTimeout(550);
+    const showAgain = await page.evaluate(() => {
+      const d = window.modelDesk.__debug();
+      let m = null;
+      if (d.pivot) d.pivot.traverse(o => { if (!m && o.userData && o.userData.mdPart === 'solid') m = o; });
+      const mat = m && (Array.isArray(m.material) ? m.material[0] : m.material);
+      const img = mat && mat.map && mat.map.image;
+      return img && img.getContext
+        ? Array.from(img.getContext('2d').getImageData(img.width >> 1, img.height >> 1, 1, 1).data) : null;
+    });
+    check('再显示图层后颜色恢复', !!showAgain && showAgain[0] > 250 && showAgain[1] < 20, JSON.stringify(showAgain));
+    /* 这两次显隐只是为了回归验证：撤销掉，保持后面的历史深度不变 */
+    for (let i = 0; i < 2; i++) {
+      await page.evaluate(() => window.modelDesk.undo());
+      await page.waitForTimeout(250);
+    }
+    await page.evaluate(() => {
+      const b = document.querySelector('#mdPaintRail [data-md-ptool="brush"]');
+      if (b) b.click();
+    });
 
     /* 比例滑杆：100 → 30，再等一帧重合成 */
     await page.evaluate(() => {
@@ -244,9 +480,15 @@ function writePNG(file, w, h, rgb) {
     }));
     check('撤销四次后混合层清空', afterUndo.rows === 0, JSON.stringify(afterUndo));
 
-    /* 材质槽（P5）：新增 → 改名 → 删除 → 连撤三步 */
+    /* 材质槽（P5）：新增 → 改名 → 删除 → 连撤三步
+     * 槽管理属于建模 / 材质上下文，先回建模模式再开属性面板。 */
     await page.evaluate(() => {
-      const b = document.querySelector('[data-md-tbk="props"]');
+      const m = document.querySelector('[data-md-editor-btn="model"]');
+      if (m) m.click();
+    });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => {
+      const b = document.getElementById('mdPropsToggle');
       if (b) b.click();
     });
     await page.waitForTimeout(300);
@@ -304,13 +546,13 @@ function writePNG(file, w, h, rgb) {
 
     /* 3D 遮罩绘制提交：再叠一层 → 在模型表面涂 → 完成后红色区域仍可见 */
     await page.evaluate(() => {
-      const b = document.querySelector('[data-md-tbk="paint"]');
+      const b = document.querySelector('[data-md-editor-btn="paint"]');
       if (b) b.click();
     });
     await page.waitForTimeout(300);
     const chooser2 = page.waitForEvent('filechooser', { timeout: 3000 }).catch(() => null);
     await page.evaluate(() => {
-      const b = Array.from(document.querySelectorAll('#mdMixBox button')).find(x => x.textContent.indexOf('＋ 贴图') === 0);
+      const b = document.querySelector('#mdMixBox .md-mix-add');
       if (b) b.click();
     });
     const fc2 = await chooser2;

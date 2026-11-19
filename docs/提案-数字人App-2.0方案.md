@@ -147,6 +147,12 @@
   剩余缺失集中在只有生僻字可用的轻声音节。
 - 运行时：`plugins/runtime/tts-param.js` 纯 JS 合成，不启动子进程、不加载 onnx：
   - 文字按「单字 → 音节」查音库，TD-PSOLA 同时控制时长与音调；
+  - 拼接按标准拼接合成（concatenative TTS）做法：播放前剪掉单元首尾静音（蒸馏留了 25ms 余量），
+    字间**不插静音**，相邻浊音段做 12ms 等功率交叉淡化，整段只保留 3ms 起停淡化；
+    静音只出现在标点、空格与 `[[p=]]` 处。早期版本每字 35ms 静音 + 4ms 淡出叠加 50ms 余量，
+    听感是逐字断开，现已修正；
+  - 单元自带孤立朗读的句末拉长（音库中位 0.365s，自然语流约 0.2s），运行时按 0.75 做时长补偿，
+    `[[r=]]` 在此之上缩放；整句音高从首字到末字线性下倾 6%，模拟自然语句的 declination；
   - 标点自带基础停顿，段落按 LLM 标记叠加 `[[r]]/[[p]]/[[t]]`，并支持 `[[f]]` 音调、`[[e]]` 重音；
   - 相同请求走 LRU 缓存；音库缺失返回 404 由前端提示蒸馏，损坏才报 500。
 - 桥接层：`/tts/speak` 新增 `engine=param`；`/tts/status` 回报 `param/paramUnits/paramChars`。
@@ -155,10 +161,39 @@
 - 入口替换：删除「深海机娘 · 二次元机械音」目录项、`vits:mecha`、`tts-mecha.js` 与 DSP 效果器；
   设置页第二页签与数字人快照都改为「快速合成」（`param:fast`），音库未蒸馏时显示引导文案。
   数字人的 AI 控制开关改用中性命名 `l2dAiCtrl` / `data-l2d-ai`，状态键统一为 `hf_ttsAiMode`。
-- 验证：`tools/tts-param.js` 21/21（状态、拼接、语速、停顿、PSOLA 变调、重音、缓存、坏索引）、
-  `tools/tts-prosody.js` 45/45。本机已用 VITS Theresa 全量蒸馏出内置音库；
+- 验证：`tools/tts-param.js` 26/26（状态、拼接、语速、停顿、PSOLA 变调、重音、缓存、坏索引、内置音库、
+  字间静音），`tools/tts-prosody.js` 45/45。本机已用 VITS Theresa 全量蒸馏出内置音库；
   另在本机用空的 `TTS_DIR` 起 runtime 验证：`/tts/status` 返回 `param:true`（1220 单元 / 20649 字），
   `/tts/speak`（`engine=param`）返回合法 WAV，证明内置回退生效。
+
+### S10 标准机械合成音对照实验（2026-11-18 追加）
+
+目的：先不蒸馏，用系统自带的拼接式机械音验证「LLM 参数控制」这条链路本身是否成立，
+作为 S9 参数音库的对照组。
+
+- 引擎：Windows SAPI（`System.Speech`），不下载任何模型；`plugins/runtime/tts-sapi.ps1`
+  优先选 `Culture.Name -like 'zh*'` 的音色（本机为 Microsoft Huihui Desktop，22.05 kHz）。
+  脚本必须纯 ASCII：PowerShell 5.1 会把无 BOM 脚本按 GBK 解析，中文注释会破坏语法。
+- 桥接层：`/tts/speak` 新增 `engine=sys`，`/tts/status` 回报 `sapi`。
+  `buildSysSsml()` 把同一份 `parseProsody()` 结果翻成 SSML：
+  `[[r=]]` → `<prosody rate="N%">`（百分比相对默认，正常语速是 100%）、
+  `[[f=]]` → `pitch="±N%"`、`[[e=]]` → gain ≥ 1.15 时包 `<emphasis level="strong">`、
+  `[[p=]]` 与段尾停顿 → `<break time="Nms"/>`。
+- 前端：设置页与数字人音色清单在 `status.sapi` 为真时出现「系统机械音 · SAPI」（`sys:std`），
+  走与本地音色相同的「AI 控制 / 直接朗读」开关。
+- 验证（`.workbuddy/runs/sapi-check/` 一次性脚本，空 `TTS_DIR` 起 runtime）：
+  `status.sapi=true`；三条 `engine=sys` 请求均返回合法 WAV。
+  标记对照实测（同一句 4.62s / f0 192Hz 为基线）：
+
+  | 用例 | 时长 | 中位 f0 | 最长静音 |
+  |---|---|---|---|
+  | `[[r=0.8]]` | 5.76s | 187Hz | 1.00s |
+  | `[[r=1.3]]` | 3.72s | 190Hz | 0.64s |
+  | `[[f=1.3]]` | 4.62s | 230Hz | 0.80s |
+  | `[[p=0.5]]` | 3.64s（无标记 3.14s） | 199Hz | 1.42s（无标记 0.93s） |
+
+  结论：四类标记全部生效。SAPI 默认语速偏慢（约 0.3s/字），短问答建议 `r=1.2~1.4`；
+  音色本身是标准拼接音，不做音质优化——它是对照组，不是最终音色。
 
 ## 3. 多 AI 分工（文件所有权）
 
@@ -222,3 +257,4 @@
 - 2026-11-17：参数合成 · 快问快答（S9）——`tools/distill-voice.js` 离线蒸馏带调音节音库，`plugins/runtime/tts-param.js` 纯 JS PSOLA 拼接，`/tts/speak` 增 `engine=param`，数字人音色清单自动出现该音色；`[[f]]/[[e]]` 扩展到 LLM 可控制的音调与重音；`tools/tts-param.js` 21/21、`tools/tts-prosody.js` 45/45。
 - 2026-11-17：下线深海机娘机械音（S7），第二个音色页签改为「快速合成」——删除 `vits-mecha` 目录项、`vits:mecha` 启用值、`plugins/runtime/tts-mecha.js` 与 `tools/tts-mecha.js`；数字人 AI 控制行改为 `l2dAiCtrl`，状态键统一 `hf_ttsAiMode`；`tools/model-store.js` 增加「机械音已下线」断言。
 - 2026-11-17：快速合成音库转为内置模型（S9）——用 VITS Theresa 全量蒸馏出 `plugins/runtime/param-bank/`（1220 音节 / 20649 字 / 14 MB），runtime 按「用户音库 → 内置音库」回退，不装老师模型也能直接用；`distill-voice.js` 增加候选字重试（最多 40 个）、单字补句号绕过 sherpa 的 GB2312 误判、`--jobs N` 并发与 `--out <dir>`。
+- 2026-11-18：标准机械合成音对照实验（S10）——新增 `engine=sys`（Windows SAPI + `tts-sapi.ps1`），把 `[[r]]/[[p]]/[[f]]/[[e]]` 翻成 SSML；`/tts/status` 增 `sapi`，设置页与数字人音色清单增「系统机械音 · SAPI」（`sys:std`）；实测四类标记全部生效（语速 ±30% 时长 3.72/5.76s，音调 +30% f0 192→230Hz，0.5s 停顿拉长 0.5s）。

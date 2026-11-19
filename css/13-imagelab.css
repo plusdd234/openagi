@@ -188,6 +188,8 @@
   transition: background .13s ease, border-color .13s ease, color .13s ease;
 }
 .ps-mini:hover { background: #f7f8fa; border-color: #c9ced6; color: #1f2328; }
+.ps-mini:disabled { opacity: .45; cursor: default; }
+.ps-mini:disabled:hover { background: #fff; border-color: #dfe2e7; color: #3a4048; }
 
 /* ---------- 中间：选项栏 + 文档标签 + 画布 ---------- */
 .ps-center { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -358,7 +360,12 @@
 .ps-rail-btn:hover { background: #f2f3f5; color: #1f2328; }
 .ps-rail-btn.is-on { background: #eef3fb; border-color: #cfe0f5; color: #3d6ea8; }
 .ps-rail-lab { font-size: 9px; line-height: 1; color: #98a0ae; letter-spacing: .4px; }
-.ps-panels { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.ps-panels {
+  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0;
+  overflow-y: auto; scrollbar-width: thin;
+}
+.ps-panels::-webkit-scrollbar { width: 6px; }
+.ps-panels::-webkit-scrollbar-thumb { background: #dfe3e9; border-radius: 3px; }
 
 .ps-card { display: flex; flex-direction: column; min-height: 0; border-bottom: 1px solid #eff1f3; }
 .ps-history { flex: 0 0 224px; }
@@ -458,6 +465,21 @@
 .ps-lay-lock { flex: 0 0 13px; width: 13px; height: 13px; color: #b3bac5; display: flex; align-items: center; justify-content: center; }
 .ps-lay-lock svg { width: 10px; height: 10px; }
 .ps-lay-lock.is-locked { color: #6a7488; }
+/* 图层组：组行比普通行略深一点；子图层缩进，和组的关系一眼能看出来 */
+.ps-lay-group { background: #f4f7fb; }
+.ps-lay-group:hover { background: #eef3fa; }
+.ps-lay.is-child { padding-left: 22px; box-shadow: inset 0 0 0 1px rgba(47, 111, 208, .05); }
+.ps-grp-tog {
+  flex: 0 0 14px; width: 14px; height: 18px; padding: 0;
+  border: 0; background: transparent; color: #7d8797; cursor: pointer;
+  font-size: 10px; line-height: 1;
+}
+.ps-grp-tog:hover { color: var(--ps-accent); }
+.ps-grp-ico {
+  flex: 0 0 32px; width: 32px; height: 32px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  background: #e8eef8; color: #5a7fae; font-size: 15px; border: 1px solid #dbe5f2;
+}
 .ps-empty-panel { padding: 18px 12px; color: #98a0ae; font-size: 11px; text-align: center; line-height: 1.7; }
 .ps-empty-panel span { color: #b3bac5; font-size: 10px; }
 .ps-layer-acts {
@@ -497,6 +519,90 @@
   border: 1px solid #e3e6ea; cursor: pointer; border-radius: 3px;
 }
 .ps-swatch-cell:hover { outline: 2px solid var(--ps-accent); outline-offset: 0; }
+
+/* 图像处理助手（色板右侧的「助手」标签）：与面板其余部分共用密度 / 描边 / 强调色 */
+.ps-history.is-assistant { flex: 1 1 auto; min-height: 280px; }
+.ps-assistant {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+  background: #fff;
+}
+.ps-asst-head {
+  flex: 0 0 27px; height: 27px;
+  display: flex; align-items: center; gap: 5px;
+  padding: 0 9px;
+  background: #fbfcfd; border-bottom: 1px solid #eff1f3;
+  font-size: 9px; color: #a3aab5; letter-spacing: .2px;
+}
+.ps-asst-head b { color: #2a2f36; font-size: 10px; font-weight: 600; letter-spacing: .3px; }
+.ps-asst-head span { margin-left: auto; white-space: nowrap; }
+.ps-asst-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #3f9b4a; box-shadow: 0 0 0 1px rgba(63, 155, 74, .22);
+}
+.ps-asst-log {
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 8px 9px;
+  background: #fbfcfd;
+  scrollbar-width: thin;
+}
+.ps-asst-log::-webkit-scrollbar { width: 6px; }
+.ps-asst-log::-webkit-scrollbar-thumb { background: #dfe3e9; border-radius: 3px; }
+.ps-asst-msg {
+  max-width: 90%; padding: 5px 8px; border-radius: 6px;
+  font-size: 10.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+}
+.ps-asst-user {
+  align-self: flex-end;
+  background: #eef3fb; border: 1px solid #d9e5f5; color: #2d3e52;
+}
+.ps-asst-bot {
+  align-self: flex-start;
+  background: #fff; border: 1px solid #e7ebf0; color: #2a3138;
+}
+.ps-asst-trace {
+  align-self: flex-start; max-width: 100%;
+  padding: 2px 0 2px 7px;
+  border-left: 2px solid #dfe5ec;
+  font-size: 9.5px; line-height: 1.5; color: #7b8593;
+  word-break: break-word;
+}
+.ps-asst-trace.is-err { color: #b4341f; border-left-color: #e2a495; }
+.ps-asst-prev { flex: 0 0 auto; padding: 6px 9px 0; background: #fbfcfd; }
+.ps-asst-prev img {
+  display: block; width: 100%; height: 56px; object-fit: contain;
+  border-radius: 4px; background: #fff; border: 1px solid #e3e6ea;
+}
+.ps-asst-foot {
+  flex: 0 0 auto; display: flex; flex-direction: column; gap: 5px;
+  padding: 6px 9px 8px; background: #fff; border-top: 1px solid #eff1f3;
+}
+.ps-asst-usage {
+  font-size: 9.5px; line-height: 1.35; color: #8a9098;
+  padding: 0 1px; font-variant-numeric: tabular-nums; word-break: break-word;
+}
+.ps-asst-acts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.ps-asst-acts .ps-mini { height: 22px; min-width: 0; padding: 0 4px; font-size: 9.5px; }
+.ps-asst-input { display: flex; align-items: flex-end; gap: 5px; }
+.ps-asst-input textarea {
+  flex: 1 1 auto; min-width: 0; height: 40px; resize: none;
+  padding: 5px 7px; border: 1px solid #dfe3e9; border-radius: 6px;
+  font: inherit; font-size: 10.5px; line-height: 1.5; color: #1f2328;
+  background: #fff; outline: none;
+  transition: border-color .13s ease, box-shadow .13s ease;
+}
+.ps-asst-input textarea:focus { border-color: var(--ps-accent); box-shadow: 0 0 0 2px var(--ps-accent-soft); }
+.ps-asst-send {
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
+  display: grid; place-items: center;
+  border: 1px solid #4a7bc4; border-radius: 6px;
+  background: linear-gradient(180deg, #6d9fe0, #4a7bc4); color: #fff; cursor: pointer;
+  transition: filter .13s ease;
+}
+.ps-asst-send:hover { filter: brightness(1.05); }
+.ps-asst-send:disabled { opacity: .45; cursor: default; filter: none; }
+.ps-asst-send svg { width: 14px; height: 14px; }
 
 /* 导航 / 信息 */
 .ps-nav { flex: 0 0 auto; padding: 8px 9px 4px; background: #fff; }
@@ -834,4 +940,159 @@
 /* 矢量模式：画布边缘与选项栏给一点冷色提示，提醒当前在矢量编辑 */
 .ps-app.is-vector .ps-opt-tool { color: #245ba8; }
 .ps-app .ps-bool-seg { margin-right: 2px; }
+
+/* ================= 3D 绘制工作区（.ps3d-*） =================
+   3D 模式仍然是 PS 界面：工具箱 / 选项栏 / 右侧图层面板 / 文档标签全部保留，
+   只把中间的画布换成 three.js 视口。UV 岛列表与遮罩预览是视口内的浮层面板，
+   随时可以收起；生成的遮罩直接进右侧的图层栈（图层 / 图层蒙版）。 */
+.ps-app .ps-3d-host {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  background: #171b22;
+}
+
+.ps-3d-host .ps3d {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  color: #d7dfe9; font-size: 11px;
+  background: #171b22;
+}
+
+/* --- 顶部工具条 --- */
+.ps-3d-host .ps3d-bar {
+  flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 7px 10px; background: #1e242d; border-bottom: 1px solid #2b3441;
+}
+.ps-3d-host .ps3d-group { display: flex; align-items: center; gap: 6px; }
+.ps-3d-host .ps3d-name {
+  color: #8e9bab; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ps-3d-host .ps3d-btn {
+  height: 24px; padding: 0 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #33404f; background: #252d38; color: #cfd8e3;
+  font: inherit; font-size: 10.5px;
+}
+.ps-3d-host .ps3d-btn:hover { background: #2d3744; border-color: #3f4c5d; }
+.ps-3d-host .ps3d-btn.is-primary { background: #2f6fd0; border-color: #2f6fd0; color: #fff; }
+.ps-3d-host .ps3d-btn.is-primary:hover { background: #357be0; }
+.ps-3d-host .ps3d-seg {
+  display: inline-flex; padding: 2px; gap: 2px;
+  background: #161b22; border: 1px solid #2b3441; border-radius: 7px;
+}
+.ps-3d-host .ps3d-seg button {
+  height: 20px; padding: 0 9px; border: 0; border-radius: 5px; cursor: pointer;
+  font: inherit; font-size: 10.5px; color: #93a1b2; background: transparent;
+}
+.ps-3d-host .ps3d-seg button:hover { color: #e6edf5; background: #232b35; }
+.ps-3d-host .ps3d-seg button.is-on { color: #fff; background: #2f6fd0; }
+.ps-3d-host .ps3d-check {
+  display: inline-flex; align-items: center; gap: 5px; color: #a9b6c5; cursor: pointer;
+}
+.ps-3d-host .ps3d-check input { accent-color: #2f6fd0; }
+.ps-3d-host .ps3d-field { display: inline-flex; align-items: center; gap: 5px; color: #93a1b2; }
+.ps-3d-host .ps3d-field select {
+  height: 22px; border-radius: 5px; border: 1px solid #33404f; background: #252d38;
+  color: #cfd8e3; font: inherit; font-size: 10.5px; padding: 0 4px;
+}
+
+/* --- 主体：视口铺满，左右两栏浮在视口上 --- */
+.ps-3d-host .ps3d-main {
+  position: relative; flex: 1 1 auto; min-height: 0; display: flex; overflow: hidden;
+}
+.ps-3d-host .ps3d-left,
+.ps-3d-host .ps3d-right {
+  position: absolute; top: 8px; bottom: 8px; z-index: 4;
+  width: 200px; display: flex; flex-direction: column;
+  background: rgba(24, 30, 38, .94);
+  border: 1px solid #2b3441; border-radius: 9px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .34);
+  overflow: hidden;
+}
+.ps-3d-host .ps3d-left { left: 8px; }
+.ps-3d-host .ps3d-right { right: 8px; overflow-y: auto; }
+.ps-3d-host .ps3d-h {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px 6px; color: #7f8d9d; font-size: 10px;
+  letter-spacing: .04em; text-transform: uppercase;
+}
+.ps-3d-host .ps3d-h b { color: #6fd8ff; font-weight: 600; }
+.ps-3d-host .ps3d-acts { margin-left: auto; display: inline-flex; gap: 4px; }
+.ps-3d-host .ps3d-acts button {
+  border: 0; background: #252d38; color: #a9b6c5; border-radius: 5px;
+  font: inherit; font-size: 10px; padding: 2px 7px; cursor: pointer;
+}
+.ps-3d-host .ps3d-acts button:hover { background: #303a47; color: #e6edf5; }
+
+.ps-3d-host .ps3d-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 6px 8px; }
+.ps-3d-host .ps3d-island {
+  width: 100%; display: flex; align-items: center; gap: 6px;
+  padding: 4px 6px; margin-bottom: 2px; border-radius: 6px; cursor: pointer;
+  border: 1px solid transparent; background: transparent; color: #b8c4d2;
+  font: inherit; font-size: 10.5px; text-align: left;
+}
+.ps-3d-host .ps3d-island:hover { background: #252d38; }
+.ps-3d-host .ps3d-island.is-on { background: #26364d; border-color: #365a8c; color: #e8f2ff; }
+.ps-3d-host .ps3d-dot {
+  flex: 0 0 auto; width: 9px; height: 9px; border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.18) inset;
+}
+.ps-3d-host .ps3d-isl-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ps-3d-host .ps3d-isl-meta { color: #7f8d9d; font-size: 9.5px; }
+.ps-3d-host .ps3d-isl-uv { color: #5f6d7d; font-size: 9px; font-variant-numeric: tabular-nums; }
+.ps-3d-host .ps3d-empty { padding: 8px 6px; color: #5f6d7d; font-size: 10px; line-height: 1.5; }
+.ps-3d-host .ps3d-info { padding: 0 10px 8px; color: #8e9bab; line-height: 1.65; font-size: 10px; }
+
+/* --- 3D 视口 --- */
+.ps-3d-host .ps3d-view {
+  position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden;
+  background: radial-gradient(120% 100% at 50% 0%, #232c38 0%, #141920 100%);
+}
+.ps-3d-host .ps3d-view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.ps-3d-host .ps3d-view.is-drop::after {
+  content: ''; position: absolute; inset: 8px; border: 1.5px dashed #6fd8ff;
+  border-radius: 10px; pointer-events: none;
+}
+.ps-3d-host .ps3d-hint {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  padding: 10px 16px; border-radius: 9px; pointer-events: none;
+  background: rgba(20, 25, 32, .82); border: 1px solid #2f3a49; color: #93a1b2;
+  font-size: 11px; white-space: nowrap;
+}
+.ps-3d-host .ps3d-hint.is-err { color: #e5a08a; border-color: #6b3a30; }
+.ps-3d-host .ps3d-badge {
+  position: absolute; left: 10px; bottom: 9px; right: 10px;
+  padding: 4px 8px; border-radius: 6px; pointer-events: none;
+  background: rgba(16, 21, 28, .72); border: 1px solid #26313d;
+  color: #93a1b2; font-size: 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ps-3d-host .ps3d-brush {
+  position: absolute; transform: translate(-50%, -50%); pointer-events: none;
+  border: 1.4px solid rgba(111, 216, 255, .9); border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .35) inset, 0 0 8px rgba(111, 216, 255, .25);
+}
+
+/* --- 右侧遮罩预览 / 笔刷 --- */
+.ps-3d-host .ps3d-preview { padding: 0 10px 6px; }
+.ps-3d-host .ps3d-preview canvas {
+  width: 100%; height: auto; display: block; border-radius: 8px;
+  border: 1px solid #2b3441; background: #10151c;
+}
+.ps-3d-host .ps3d-range {
+  display: flex; align-items: center; gap: 6px; padding: 3px 10px;
+  color: #93a1b2; font-size: 10px;
+}
+.ps-3d-host .ps3d-range input[type="range"] { flex: 1 1 auto; accent-color: #2f6fd0; height: 14px; }
+.ps-3d-host .ps3d-range i {
+  flex: 0 0 30px; text-align: right; font-style: normal; color: #cfd8e3;
+  font-variant-numeric: tabular-nums;
+}
+.ps-3d-host .ps3d-right .ps3d-btn { margin: 8px 10px 12px; }
+
+/* 窄窗口：浮层收窄，尽量把模型让出来 */
+@media (max-width: 1180px) {
+  .ps-3d-host .ps3d-left,
+  .ps-3d-host .ps3d-right { width: 168px; }
+}
+
+
 

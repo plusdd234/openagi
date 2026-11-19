@@ -104,6 +104,7 @@
     }
     if (s.indexOf('zipvoice:') === 0) return 'ZipVoice · 我的克隆声音';
     if (s.indexOf('param:') === 0) return '参数合成 · 快问快答';
+    if (s.indexOf('sys:') === 0) return '系统机械音 · SAPI';
     return '';
   }
 
@@ -124,6 +125,8 @@
     if (s.indexOf('zipvoice:') === 0) return { engine: 'zipvoice' };
     /* 参数合成不吃权重：运行时只查蒸馏音库，所以没有额外参数 */
     if (s.indexOf('param:') === 0) return { engine: 'param' };
+    /* 系统机械音走 Windows SAPI，语速/音调/停顿由 SSML 控制 */
+    if (s.indexOf('sys:') === 0) return { engine: 'sys' };
     return null;
   }
 
@@ -433,6 +436,10 @@
     /* 参数合成音库是蒸馏产物，不在模型商店的下载清单里；有就自动出现 */
     if (status.param) {
       local.push({ value: 'param:fast', name: '参数合成 · 快问快答' });
+    }
+    /* 系统机械音：不依赖任何下载，Windows 上始终可用 */
+    if (status.sapi) {
+      local.push({ value: 'sys:std', name: '系统机械音 · SAPI' });
     }
 
     sel.innerHTML = '';
@@ -754,13 +761,17 @@
     if (status.param) {
       local.push({ value: 'param:fast', name: '参数合成 · 快问快答', engine: 'param', local: true, ready: true });
     }
+    /* 系统机械音不是下载项：Windows 自带 SAPI，用来做参数控制的对照实验 */
+    if (status.sapi) {
+      local.push({ value: 'sys:std', name: '系统机械音 · SAPI', engine: 'sys', local: true, ready: true });
+    }
     return {
       system: sys,
       local: local,
       status: {
         sys: sys.length, piper: !!status.piper, kokoro: !!status.kokoro, melo: !!status.melo,
         vits: !!status.vits, zipvoice: !!status.zipvoice, param: !!status.param, clone: !!status.clone,
-        refText: status.refText, probed: !!status.probed
+        sapi: !!status.sapi, refText: status.refText, probed: !!status.probed
       },
       defaultVoice: readVoice(),
       rate: readRate(),
@@ -814,6 +825,7 @@
         payload.engine = 'param';
         payload.pitch = Math.min(1.5, Math.max(0.7, Number(o.pitch) || 1));
       }
+      else if (spec.engine === 'sys') { payload.engine = 'sys'; }
       else { payload.engine = 'piper'; payload.voice = spec.voice; }
       return fetch(base + '/tts/speak', {
         method: 'POST',

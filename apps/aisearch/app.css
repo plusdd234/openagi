@@ -149,6 +149,26 @@
 
 .ais-headtools { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
+.ais-assist {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid #e4e8ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #7b828c;
+  font-size: 11.5px;
+  cursor: pointer;
+  user-select: none;
+}
+.ais-assist i {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #c7ccd4;
+  box-shadow: 0 0 0 3px rgba(199, 204, 212, .18);
+}
+.ais-assist.is-on { color: #2f6fed; border-color: #cfe0ff; background: #f4f8ff; }
+.ais-assist.is-on i { background: #2f6fed; box-shadow: 0 0 0 3px rgba(47, 111, 237, .16); }
+
 .ais-net {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 9px;

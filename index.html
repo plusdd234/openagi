@@ -1369,6 +1369,8 @@
 <script src="js/tex-source.js"></script>
 <!-- 贴图编辑层栈：底座 + 可重放的编辑层（投射 / 笔迹），排在取图与各工具模块之前 -->
 <script src="js/tex-stack.js"></script>
+<!-- 材质槽贴图仓储：贴图解码状态 / 挂图 / 底图读取的唯一写入口，必须排在所有工具模块之前 -->
+<script src="js/md-material-store.js"></script>
 <!-- 外壳拆出的小模块必须排在 model-desk 之前 -->
 <script src="js/md-uv-editor.js"></script>
 <script src="js/md-isolate.js"></script>
@@ -1403,11 +1405,13 @@
 <script src="js/comfy-app.js"></script>
 <script src="js/library.js"></script>
 <script src="js/image-editor.js"></script>
-<!-- 图像工坊：内核 → 视口 → 滤镜 → 工具 → 外壳（顺序不能调，各层按此依赖） -->
+<!-- 图像工坊：内核 → 视口 → 滤镜 → 工具 → 3D 工作区 → 外壳（顺序不能调，各层按此依赖） -->
 <script src="js/ps-core.js"></script>
 <script src="js/ps-view.js"></script>
 <script src="js/ps-filters.js"></script>
 <script src="js/ps-tools.js"></script>
+<!-- 3D 绘制工作区：依赖 three / GLTFLoader / OBJLoader / OrbitControls（见本文件上方 vendor） -->
+<script src="js/ps-3d.js"></script>
 <script src="js/ps-app.js"></script>
 <script src="js/gateway-client.js"></script>
 <script src="js/llm-router.js"></script>

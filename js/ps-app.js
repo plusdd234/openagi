@@ -87,6 +87,7 @@
       { label: '快速导出 PNG', act: 'export:png' },
       { label: '复制图像', hint: 'Ctrl+Shift+C', act: 'copyImage' },
       { sep: true },
+      { label: 'AI 绘制 SVG…', act: 'aiSvg' },
       { label: '存入图库', act: 'library' },
       { label: '拼合图像', hint: 'Ctrl+Shift+F', act: 'flatten' }
     ] },
@@ -153,7 +154,8 @@
       { label: '智能参考线（对齐）', act: 'toggleSnap' },
       { sep: true },
       { label: '图像编辑器（位图）', hint: 'F2', act: 'mode:raster' },
-      { label: '矢量编辑器', hint: 'F3', act: 'mode:vector' }
+      { label: '矢量编辑器', hint: 'F3', act: 'mode:vector' },
+      { label: '3D 绘制工作区（UV 岛 / 遮挡遮罩）', hint: 'F4', act: 'mode:3d' }
     ] },
     { id: 'vector', name: '矢量', modes: ['vector'], items: [
       { label: '合并（添加）', act: 'shapeOp:add' },
@@ -198,7 +200,16 @@
     channel: 'rgb',
     mode: 'raster',
     opacityType: { digits: '', at: 0 },
-    keyBound: false
+    keyBound: false,
+    /* 图像处理助手：对话记录、最近一次生成的 SVG、忙状态、token 消耗 */
+    asst: {
+      log: [], svg: '', w: 0, h: 0, prompt: '', busy: false, bound: false, greeted: false, script: null,
+      usage: {
+        calls: 0, prompt: 0, completion: 0, est: 0,
+        chat: { calls: 0, prompt: 0, completion: 0 },
+        draw: { calls: 0, prompt: 0, completion: 0 }
+      }
+    }
   };
 
   /* ---------------- 空白画布 / 演示内容 ---------------- */
@@ -288,7 +299,7 @@
         });
       }
       if (typeof s.sideW === 'number' && s.sideW >= 240 && s.sideW <= 560) uiState.sideW = s.sideW;
-      if (s.mode === 'vector' || s.mode === 'raster') uiState.mode = s.mode;
+      if (s.mode === 'vector' || s.mode === '3d' || s.mode === 'raster') uiState.mode = s.mode;
     } catch (e) { /* 忽略损坏的本地偏好 */ }
   }
 
@@ -472,6 +483,7 @@
             '<span class="ps-mode-switch" id="psModeSwitch" role="group" aria-label="编辑器模式">' +
               '<button type="button" data-mode="raster" title="图像编辑器：画笔、选区、滤镜（F2）">位图</button>' +
               '<button type="button" data-mode="vector" title="矢量编辑器：钢笔、形状、布尔（F3）">矢量</button>' +
+              '<button type="button" data-mode="3d" title="3D 绘制：UV 岛 + 遮挡动态遮罩（F4）">3D</button>' +
             '</span>' +
             '<span class="ps-workspace" id="psWorkspace">' +
               '<button type="button" class="ps-ws-btn" data-ws="tools" title="显示 / 隐藏工具箱"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16"/></svg></button>' +
@@ -513,6 +525,7 @@
               '</button>' +
             '</div>' +
             '<div class="ps-stage-host" id="psStageHost"></div>' +
+            '<div class="ps-3d-host" id="ps3dHost"></div>' +
           '</div>' +
           '<div class="ps-side-resize" id="psSideResize" title="拖动调整面板宽度，双击复位"></div>' +
           '<aside class="ps-side">' +
@@ -522,11 +535,35 @@
                 '<div class="ps-tabs" id="psHistTabs">' +
                   '<button type="button" class="ps-tab is-on" data-htab="history">历史记录</button>' +
                   '<button type="button" class="ps-tab" data-htab="swatch">色板</button>' +
+                  '<button type="button" class="ps-tab" data-htab="assistant" title="图像处理助手：对话式调用工具绘制 SVG">助手</button>' +
                   '<span class="ps-tab-n" id="psHistCount">0</span>' +
                   '<button type="button" class="ps-tab-col" data-col="hist" title="收起 / 展开面板">▴</button>' +
                 '</div>' +
                 '<div class="ps-hist-list" id="psHistList"></div>' +
                 '<div class="ps-swatches hidden" id="psSwatches"></div>' +
+                '<div class="ps-assistant hidden" id="psAssistant">' +
+                  '<div class="ps-asst-head">' +
+                    '<i class="ps-asst-dot"></i><b>图像处理助手</b>' +
+                    '<span>SVG · 分图层 · 可撤回</span>' +
+                  '</div>' +
+                  '<div class="ps-asst-log" id="psAsstLog"></div>' +
+                  '<div class="ps-asst-prev hidden" id="psAsstPrev"><img id="psAsstImg" alt="最近生成的 SVG 预览"></div>' +
+                  '<div class="ps-asst-foot">' +
+                    '<div class="ps-asst-usage" id="psAsstUsage">Token：0（本地模板不消耗额度）</div>' +
+                    '<div class="ps-asst-acts">' +
+                      '<button type="button" class="ps-mini" data-asst="save" disabled title="把最近生成的 SVG 保存为 .svg">保存 SVG</button>' +
+                      '<button type="button" class="ps-mini" data-asst="paint" disabled title="分图层、分组、分步骤画进当前画布（每步可撤回）">分步绘制</button>' +
+                      '<button type="button" class="ps-mini" data-asst="place" disabled title="把最近生成的 SVG 作为单个图层放进画布">放入画布</button>' +
+                      '<button type="button" class="ps-mini" data-asst="dialog" title="打开 AI 绘制 SVG 对话框">对话框</button>' +
+                    '</div>' +
+                    '<div class="ps-asst-input">' +
+                      '<textarea id="psAsstInput" rows="2" placeholder="描述画面，例如：一只站在冰面上的企鹅"></textarea>' +
+                      '<button type="button" class="ps-asst-send" id="psAsstSend" title="发送（Ctrl+Enter）">' +
+                        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h14"/><path d="m13 6.5 5.5 5.5-5.5 5.5"/></svg>' +
+                      '</button>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>' +
               '</section>' +
               '<section class="ps-card ps-layers" id="psLayersCard">' +
                 '<div class="ps-tabs" id="psLayerTabs">' +
@@ -582,12 +619,13 @@
 
     app.host = $id('psApp');
     var e = app.els;
-    ['psMenus', 'psDocTitle', 'psTools', 'psPhTools', 'psOptions', 'psOptPh', 'psStageHost', 'psLayerProps',
+    ['psMenus', 'psDocTitle', 'psTools', 'psPhTools', 'psOptions', 'psOptPh', 'psStageHost', 'ps3dHost', 'psLayerProps',
       'psLayerList', 'psLayerCount', 'psHistList', 'psHistCount', 'psInfo', 'psNavCanvas',
       'psHistogram',
       'psStatZoom', 'psStatSize', 'psStatMode', 'psStatEditor', 'psStatTiles', 'psStatFps', 'psStatMem', 'psNote',
       'psFg', 'psBg', 'psSwap', 'psColorHex', 'psFile', 'psProjFile', 'psRail', 'psSwatches', 'psStatusIcons',
-      'psDocTabName', 'psLayersCard', 'psHistCard', 'psNavCard', 'psSideResize', 'psWorkspace', 'psZoomCtl', 'psModeSwitch'
+      'psDocTabName', 'psLayersCard', 'psHistCard', 'psNavCard', 'psSideResize', 'psWorkspace', 'psZoomCtl', 'psModeSwitch',
+      'psAssistant', 'psAsstLog', 'psAsstPrev', 'psAsstImg', 'psAsstInput', 'psAsstSend', 'psAsstUsage'
     ].forEach(function (id) { e[id] = $id(id); });
 
     var navFit = $id('psNavFit');
@@ -624,12 +662,18 @@
     bindWorkspace();
     app.ui = true;
     applyUiState();
-    app.mode = uiState.mode === 'vector' ? 'vector' : 'raster';
+    app.mode = uiState.mode === 'vector' ? 'vector' : uiState.mode === '3d' ? '3d' : 'raster';
     app.tools.setOption('vectorAppend', app.mode === 'vector');
     updateModeUI();
     buildMenus();
     buildToolbar();
     buildPlaceholderTools();
+    /* 上次退出时停在 3D：把视口和选项栏内容一起补上，否则只剩一块空画布 */
+    if (app.mode === '3d') {
+      buildOptions();
+      var three0 = ensure3D();
+      if (three0) three0.enter();
+    }
   }
 
   function buildMenus() {
@@ -730,6 +774,10 @@
   }
 
   function selectTool(id) {
+    if (app.mode === '3d') {
+      setNote('3D 模式下用视口上方的 3D 工具条；按 F2 回到位图工具。');
+      return false;
+    }
     var meta = null;
     TOOLS.forEach(function (t) { if (t.id === id) meta = t; });
     if (!toolAllowed(meta)) {
@@ -745,7 +793,7 @@
     return true;
   }
 
-  /* ---------------- 位图 / 矢量双编辑器 ---------------- */
+  /* ---------------- 位图 / 矢量 / 3D 三编辑器 ---------------- */
   function updateModeUI() {
     var sw = app.els.psModeSwitch;
     if (sw) {
@@ -754,21 +802,42 @@
         b.setAttribute('aria-pressed', b.dataset.mode === app.mode ? 'true' : 'false');
       });
     }
+    var is3d = app.mode === '3d';
     if (app.els.psStatEditor) {
-      app.els.psStatEditor.textContent = app.mode === 'vector' ? '矢量' : '位图';
+      app.els.psStatEditor.textContent = is3d ? '3D' : app.mode === 'vector' ? '矢量' : '位图';
       app.els.psStatEditor.classList.toggle('is-vector', app.mode === 'vector');
     }
     if (app.host) {
       app.host.classList.toggle('is-vector', app.mode === 'vector');
-      app.host.classList.toggle('is-raster', app.mode !== 'vector');
+      app.host.classList.toggle('is-raster', !is3d && app.mode !== 'vector');
+      app.host.classList.toggle('is-3d', is3d);
     }
+    if (app.els.psStageHost) app.els.psStageHost.classList.toggle('hidden', is3d);
+    if (app.els.ps3dHost) app.els.ps3dHost.classList.toggle('hidden', !is3d);
   }
 
   function setMode(mode, silent) {
-    mode = mode === 'vector' ? 'vector' : 'raster';
+    mode = mode === 'vector' ? 'vector' : mode === '3d' ? '3d' : 'raster';
+    var prev = app.mode;
     app.mode = mode;
     uiState.mode = mode;
     saveUiState();
+
+    if (mode === '3d') {
+      var three = ensure3D();
+      updateModeUI();
+      buildMenus();
+      buildOptions();
+      if (three) three.enter();
+      if (!silent) {
+        setNote(three
+          ? '3D 绘制：载入模型后按 UV 岛 + 遮挡生成动态遮罩，F2 / F3 回到位图与矢量。'
+          : '3D 模块不可用：检查 vendor/three.min.js 是否加载。');
+      }
+      return;
+    }
+
+    if (prev === '3d' && app.three) app.three.leave();
     updateModeUI();
     buildMenus();
     buildToolbar();
@@ -786,6 +855,176 @@
         : '图像编辑器：画笔、选区、渐变与滤镜等像素工具。');
     }
     app.view.schedule();
+  }
+
+  /* ---------------- 3D 绘制工作区桥接 ----------------
+   * 真正的 3D 逻辑在 js/ps-3d.js，这里只负责把「生成的遮罩」落到 2D 文档：
+   * 要么新建一个白底遮罩图层，要么写成当前图层的蒙版。
+   */
+  function fitRect(sw, sh, dw, dh) {
+    var k = Math.min(dw / sw, dh / sh);
+    var w = sw * k, h = sh * k;
+    return { x: (dw - w) / 2, y: (dh - h) / 2, w: w, h: h };
+  }
+
+  function maskToCanvas(src, w, h) {
+    var box = fitRect(src.width, src.height, w, h);
+    var cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(w));
+    cv.height = Math.max(1, Math.round(h));
+    cv.getContext('2d').drawImage(src, box.x, box.y, box.w, box.h);
+    return cv;
+  }
+
+  function commit3DLayer(src, meta) {
+    meta = meta || {};
+    var doc = app.doc;
+    if (!doc) { setNote('没有打开的文档，无法生成遮罩图层', true); return null; }
+    var layer = meta.layerId ? PS.layerById(doc, meta.layerId) : null;
+    if (!layer) {
+      layer = PS.addLayer(doc, { name: meta.name || '3D 遮罩' });
+      if (!layer) return null;
+    } else {
+      PS.clearLayer(layer);
+    }
+    var cv = maskToCanvas(src, doc.width, doc.height);
+    PS.ensureAllTiles(layer).forEach(function (t) {
+      if (!t) return;
+      t.ctx.drawImage(cv, t.x, t.y, t.w, t.h, 0, 0, t.w, t.h);
+    });
+    PS.touch(layer);
+    doc.activeId = layer.id;
+    doc.version++;
+    refreshAll();
+    setNote('已生成遮罩图层「' + layer.name + '」' + (meta.layerId ? '（动态更新）' : ''));
+    return layer.id;
+  }
+
+  function apply3DMask(src, meta) {
+    meta = meta || {};
+    var doc = app.doc;
+    if (!doc) { setNote('没有打开的文档，无法套用遮罩', true); return null; }
+    var layer = meta.layerId ? PS.layerById(doc, meta.layerId) : PS.activeLayer(doc);
+    if (!layer || layer.type !== 'pixel') {
+      setNote('先选中一个像素图层，再套用 3D 遮罩蒙版', true);
+      return null;
+    }
+    var mask = PS.addLayerMask(doc, layer);
+    if (!mask) return null;
+    /* 蒙版语义：alpha = 隐藏量。整片填黑（全隐藏），再用遮罩把可见区域挖出来 */
+    var cv = maskToCanvas(src, layer.width, layer.height);
+    mask.tiles.clear();
+    var cols = Math.ceil(layer.width / PS.TILE), rows = Math.ceil(layer.height / PS.TILE);
+    for (var ty = 0; ty < rows; ty++) {
+      for (var tx = 0; tx < cols; tx++) {
+        var mt = PS.ensureMaskTile(mask, tx, ty, true);
+        if (!mt) continue;
+        mt.ctx.clearRect(0, 0, mt.w, mt.h);
+        mt.ctx.fillStyle = '#000';
+        mt.ctx.fillRect(0, 0, mt.w, mt.h);
+        mt.ctx.globalCompositeOperation = 'destination-out';
+        mt.ctx.drawImage(cv, mt.x, mt.y, mt.w, mt.h, 0, 0, mt.w, mt.h);
+        mt.ctx.globalCompositeOperation = 'source-over';
+      }
+    }
+    mask.version++;
+    layer.version++;
+    doc.version++;
+    app.maskEditId = null;
+    refreshAll();
+    setNote('已把 3D 遮罩套到「' + layer.name + '」的图层蒙版' + (meta.layerId ? '（动态更新）' : ''));
+    return layer.id;
+  }
+
+  /* 3D → 文档：一次写入一个图层组，组里每个 UV 岛一个像素图层 + 岛形蒙版。
+   * items 由 ps-3d 按当前相机正交投影算好，坐标 / 尺寸都已经是文档像素。 */
+  function commit3DGroup(items, meta) {
+    meta = meta || {};
+    var doc = app.doc;
+    if (!doc) { setNote('没有打开的文档，无法添加遮罩组', true); return null; }
+    if (!items || !items.length) { setNote('当前视角没有可见的 UV 岛', true); return null; }
+
+    var prevActive = doc.activeId;
+    var before = doc.layers.slice();
+    var group = PS.createLayer(doc, { name: meta.name || '3D 遮罩组', type: 'group' });
+    if (!group) return null;
+    var made = [];
+    items.forEach(function (it, idx) {
+      var x = Math.max(0, Math.min(doc.width - 1, Math.round(it.x)));
+      var y = Math.max(0, Math.min(doc.height - 1, Math.round(it.y)));
+      var w = Math.max(1, Math.min(doc.width - x, Math.round(it.w)));
+      var h = Math.max(1, Math.min(doc.height - y, Math.round(it.h)));
+      var layer = PS.createLayer(doc, {
+        name: it.name || ('UV 岛 ' + (idx + 1)),
+        x: x, y: y, width: w, height: h, group: group.id
+      });
+      /* 蒙版语义：alpha = 隐藏量。整块填黑，再把岛形挖掉（destination-out），
+       * 于是平面模式下只有岛内能画上颜色。 */
+      var mask = PS.createMask(layer);
+      mask.tiles.clear();
+      var cols = Math.ceil(w / PS.TILE), rows = Math.ceil(h / PS.TILE);
+      for (var ty = 0; ty < rows; ty++) {
+        for (var tx = 0; tx < cols; tx++) {
+          var mt = PS.ensureMaskTile(mask, tx, ty, true);
+          if (!mt) continue;
+          mt.ctx.clearRect(0, 0, mt.w, mt.h);
+          mt.ctx.fillStyle = '#000';
+          mt.ctx.fillRect(0, 0, mt.w, mt.h);
+          if (it.mask) {
+            mt.ctx.globalCompositeOperation = 'destination-out';
+            mt.ctx.drawImage(it.mask, mt.x, mt.y, mt.w, mt.h, 0, 0, mt.w, mt.h);
+            mt.ctx.globalCompositeOperation = 'source-over';
+          }
+        }
+      }
+      mask.version++;
+      layer.mask = mask;
+      layer.version++;
+      made.push(layer);
+    });
+
+    /* 组条目放到数组末尾 = 显示在子图层上方（图层栈是自下而上存的） */
+    var gi = doc.layers.indexOf(group);
+    if (gi >= 0) { doc.layers.splice(gi, 1); doc.layers.push(group); }
+    group.collapsed = false;
+    doc.activeId = made.length ? made[0].id : group.id;
+    doc.version++;
+
+    var after = doc.layers.slice();
+    var nextActive = doc.activeId;
+    PS.pushEntry(doc, {
+      label: '添加 UV 岛遮罩组',
+      touched: made.concat([group]),
+      undo: function () { doc.layers = before.slice(); doc.activeId = prevActive; doc.version++; },
+      redo: function () { doc.layers = after.slice(); doc.activeId = nextActive; doc.version++; }
+    });
+    refreshAll();
+    setNote('已添加遮罩组「' + group.name + '」：' + made.length +
+      ' 个岛图层，每层都带岛形蒙版；按 F2 到位图模式逐层绘制');
+    return group.id;
+  }
+
+  function ensure3D() {
+    if (app.three) return app.three;
+    var host = app.els.ps3dHost;
+    if (!host) return null;
+    if (!global.PS3D || typeof global.PS3D.create !== 'function') {
+      setNote('3D 模块未加载：缺少 js/ps-3d.js', true);
+      return null;
+    }
+    try {
+      app.three = global.PS3D.create(host, {
+        note: function (msg, err) { setNote(msg, err); },
+        getDoc: function () { return app.doc; },
+        commitLayer: commit3DLayer,
+        applyMask: apply3DMask,
+        commitGroup: commit3DGroup
+      });
+    } catch (err) {
+      app.three = null;
+      setNote('3D 工作区初始化失败：' + (err && err.message), true);
+    }
+    return app.three;
   }
 
   /* 占位工具按钮：只为还原 PS 的工具位，点击不改当前工具 */
@@ -956,6 +1195,13 @@
 
   function buildOptions() {
     var wrap = app.els.psOptions;
+    if (app.mode === '3d') {
+      /* 3D 模式保留 PS 选项栏，但内容换成当前工作流的提示：
+       * 真正的控制都在视口上方的 3D 工具条，这里只负责把人引过去。 */
+      wrap.innerHTML = '<div class="ps-opt-tool">3D 绘制</div>' +
+        '<div class="ps-opt-hint">点选模型上的 UV 岛（可多选）→ 选「遮罩图层 / 图层蒙版」→ 生成遮罩。结果进右侧图层栈。</div>';
+      return;
+    }
     var tool = app.tools.tool();
     var o = app.tools.options();
     var def = TOOLS.find(function (t) { return t.id === tool; }) || { name: '', svg: '' };
@@ -1130,6 +1376,11 @@
         refreshAll();
         return;
       }
+      if (ev.target.closest('[data-toggle]')) {
+        layer.collapsed = !layer.collapsed;
+        refreshAll();
+        return;
+      }
       app.doc.activeId = layer.id;
       var maskHit = ev.target.closest('[data-surface="mask"]');
       if (maskHit && layer.mask) {
@@ -1187,7 +1438,7 @@
     });
     e.psLayerList.addEventListener('dragstart', function (ev) {
       var row = ev.target.closest('.ps-lay');
-      if (!row || !app.doc) return;
+      if (!row || !app.doc || row.dataset.group) return;
       app.layerDragId = row.dataset.id;
       row.classList.add('is-dragging');
       if (ev.dataTransfer) {
@@ -1278,24 +1529,17 @@
       });
     }
 
-    /* 历史记录 / 色板 切换：色板是可用的（点色块设前景色），
-     * 只是没有 PS 的「新建色板 / 存储色板」那套管理。 */
+    /* 历史记录 / 色板 / 助手 切换：色板点色块设前景色；
+     * 助手是对话面板，可调用工具生成 / 保存 / 置入 SVG。 */
     var histTabs = $id('psHistTabs');
     if (histTabs) {
       histTabs.addEventListener('click', function (ev) {
         var b = ev.target.closest('[data-htab]');
         if (!b) return;
-        app.histTab = b.dataset.htab;
-        Array.prototype.forEach.call(histTabs.querySelectorAll('[data-htab]'), function (x) {
-          x.classList.toggle('is-on', x === b);
-        });
-        var showSw = app.histTab === 'swatch';
-        e.psHistList.classList.toggle('hidden', showSw);
-        e.psSwatches.classList.toggle('hidden', !showSw);
-        if (e.psHistCount) e.psHistCount.style.visibility = showSw ? 'hidden' : '';
-        if (showSw) setNote('色板：点击色块可直接设置前景色。');
+        setHistTab(b.dataset.htab);
       });
     }
+    bindAssistant();
 
     /* 图层 / 通道 / 路径 切换：三个面板都是真实内容 */
     var layerTabs = $id('psLayerTabs');
@@ -1588,8 +1832,25 @@
     var count = doc.layers.length;
     if (app.els.psLayerCount) app.els.psLayerCount.textContent = String(count);
     var rows = '';
+    var groupMap = {};
+    doc.layers.forEach(function (l) { if (l.type === 'group') groupMap[l.id] = l; });
     doc.layers.slice().reverse().forEach(function (layer) {
       var active = layer.id === doc.activeId;
+      if (layer.type === 'group') {
+        var kids = doc.layers.filter(function (l) { return l.group === layer.id; }).length;
+        rows += '<div class="ps-lay ps-lay-group' + (active ? ' is-on' : '') + (layer.visible ? '' : ' is-off') +
+          '" draggable="false" data-id="' + esc(layer.id) + '" data-group="1">' +
+          '<button type="button" class="ps-eye" data-vis="1" title="显示 / 隐藏整组">' + (layer.visible ? '◉' : '○') + '</button>' +
+          '<button type="button" class="ps-grp-tog" data-toggle="1" title="' + (layer.collapsed ? '展开组' : '收起组') + '">' +
+          (layer.collapsed ? '▸' : '▾') + '</button>' +
+          '<span class="ps-lay-slot"><span class="ps-grp-ico">▤</span></span>' +
+          '<div class="ps-lay-meta"><div class="ps-lay-name">' + esc(layer.name) + '</div>' +
+          '<div class="ps-lay-kind">组 · ' + kids + ' 个图层 · ' + Math.round(layer.opacity * 100) + '%</div></div>' +
+          '<span class="ps-lay-lock"></span></div>';
+        return;
+      }
+      var parent = layer.group ? groupMap[layer.group] : null;
+      if (parent && parent.collapsed) return;
       var kindText = layer.type === 'adjust'
         ? '调整 · ' + esc(PS.ADJUST_DEFS[layer.adjust.kind].name)
         : layer.type === 'shape'
@@ -1601,7 +1862,8 @@
         layer.locks.transparent ? '透明像素' : '', layer.locks.image ? '图像像素' : '',
         layer.locks.position ? '位置' : ''
       ].filter(Boolean).join(' / ');
-      rows += '<div class="ps-lay' + (active ? ' is-on' : '') + (layer.visible ? '' : ' is-off') + '" draggable="true" data-id="' + esc(layer.id) + '">' +
+      rows += '<div class="ps-lay' + (active ? ' is-on' : '') + (layer.visible ? '' : ' is-off') +
+        (parent ? ' is-child' : '') + '" draggable="true" data-id="' + esc(layer.id) + '">' +
         '<button type="button" class="ps-eye" data-vis="1" title="显示 / 隐藏">' + (layer.visible ? '◉' : '○') + '</button>' +
         '<span class="ps-lay-slot">' +
         '<canvas class="ps-lay-thumb' + (maskEditing ? ' is-dim' : '') + '" width="34" height="34" data-surface="pixels" title="图层内容"></canvas>' +
@@ -1924,10 +2186,11 @@
       && act !== 'paste' && act !== 'about' && act !== 'shortcuts' && act !== 'libraryPlace'
       && act !== 'focusMode' && act !== 'toggleTools' && act !== 'toggleOptions'
       && act !== 'toggleSide' && act !== 'toggleStatus' && act !== 'resetWorkspace'
-      && act !== 'mode:raster' && act !== 'mode:vector') return;
+      && act !== 'mode:raster' && act !== 'mode:vector' && act !== 'mode:3d') return;
     var doc = app.doc;
     if (act === 'mode:raster') return setMode('raster');
     if (act === 'mode:vector') return setMode('vector');
+    if (act === 'mode:3d') return setMode('3d');
     if (act.indexOf('shapeOp:') === 0) {
       if (app.tools.setShapeOp(act.slice(8))) buildOptions();
       return;
@@ -2017,6 +2280,7 @@
     if (act === 'export:jpeg') return exportDoc('image/jpeg');
     if (act === 'export:webp') return exportDoc('image/webp');
     if (act === 'copyImage') return copyImage();
+    if (act === 'aiSvg') return aiSvgDialog();
     if (act === 'library') return saveToLibrary();
     if (act === 'shortcuts') return showShortcuts();
     if (act === 'about') return showAbout();
@@ -2618,6 +2882,975 @@
     });
   }
 
+  /* ---------------- AI 绘制 SVG ----------------
+   * 一句描述 → 语言模型直接产出矢量 SVG → 落盘 .svg。
+   * 和位图导出分工不同：这里不经过画布拼合，产出的是可继续编辑的矢量文件。
+   * 对外 API（window.psLab）：
+   *   aiDraw(prompt, opts)  只生成，返回 { svg, w, h }
+   *   saveSvg(svg, opts)    只保存，返回 { name, size, w, h, svg }
+   *   aiSvg(prompt, opts)   生成 + 保存；opts.svg 可直接给现成 SVG（离线 / 测试用），
+   *                         opts.download=false 只生成不下载。
+   */
+  var AI_SVG_SYS = [
+    '你是一名资深矢量插画师。',
+    '任务：把用户描述的画面画成一幅完整、可直接渲染的 SVG。',
+    '硬性要求：',
+    '1. 只输出一个 <svg>…</svg> 文档，不要 Markdown 代码块，不要任何解释文字。',
+    '2. 根节点带 xmlns="http://www.w3.org/2000/svg"、viewBox（例如 "0 0 1024 1024"）和 width / height。',
+    '3. 只用 SVG 原生元素：path / circle / ellipse / rect / line / polyline / polygon / g / defs / linearGradient / radialGradient。',
+    '4. 禁止 <script>、<foreignObject>、<image>、外链资源、on* 事件属性，不要依赖外部字体。',
+    '5. 构图完整、比例准确、配色协调，至少 8 个图形元素；需要底色时用一个整幅矩形。',
+    '6. 每个顶层元素 / 分组必须带语义化 id（英文小写短横线，如 background / body / head / eye / tentacle-1 / bubble），不要用 path1、layer2 这类无意义 id；图层名会直接取这个 id。',
+    '7. 坐标保留不超过 1 位小数，避免冗余精度浪费输出。'
+  ].join('\n');
+
+  /* 从模型回复里抠出 SVG，顺手做尺寸归一化和危险内容过滤 */
+  function normalizeSvg(raw) {
+    var s = String(raw == null ? '' : raw).trim();
+    s = s.replace(/^```[a-z]*\s*/i, '').replace(/```\s*$/, '').trim();
+    var a = s.search(/<svg[\s>]/i);
+    var b = s.toLowerCase().lastIndexOf('</svg>');
+    if (a < 0 || b < a) throw new Error('模型没有返回 SVG');
+    s = s.slice(a, b + 6);
+    if (/<script[\s>]|<foreignObject|<image[\s>]|javascript:/i.test(s)) {
+      throw new Error('返回的 SVG 含不允许的元素');
+    }
+    s = s.replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*')/gi, '');
+    var doc = new DOMParser().parseFromString(s, 'image/svg+xml');
+    var root = doc && doc.documentElement;
+    if (!root || String(root.nodeName).toLowerCase() !== 'svg' || doc.querySelector('parsererror')) {
+      throw new Error('返回的 SVG 不是合法 XML');
+    }
+    if (!root.getAttribute('xmlns')) root.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    function px(v) {
+      var m = /^\s*(\d+(?:\.\d+)?)(?:px)?\s*$/.exec(String(v || ''));
+      return m ? Number(m[1]) : 0;
+    }
+    var vb = String(root.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    var w = vb.length === 4 && isFinite(vb[2]) && vb[2] > 0 ? vb[2] : px(root.getAttribute('width'));
+    var h = vb.length === 4 && isFinite(vb[3]) && vb[3] > 0 ? vb[3] : px(root.getAttribute('height'));
+    if (!w || !h) {
+      w = 1024;
+      h = 1024;
+      setNote('SVG 缺少有效尺寸，已按 1024×1024 处理', true);
+    }
+    if (!root.getAttribute('viewBox')) root.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    if (!root.getAttribute('width')) root.setAttribute('width', String(w));
+    if (!root.getAttribute('height')) root.setAttribute('height', String(h));
+    return { svg: new XMLSerializer().serializeToString(root), w: Math.round(w), h: Math.round(h) };
+  }
+
+  /* ---- 本地模板兜底：语言模型连不上时也能产出结构完整的 SVG ----
+   * 不是 AI 原创，只覆盖常见主体；认不出时给一张几何海报。
+   * 真正联通模型时仍走 AI 绘制，这里只是断网 / CORS / 未配置时的降级路径。 */
+  var LOCAL_PALETTES = [
+    { bg: '#eef6f8', ink: '#1d3a4a', a: '#2f9db3', b: '#ffb454', c: '#e2604a', soft: '#cfe8ee' },
+    { bg: '#fdf2e9', ink: '#33251d', a: '#e2703a', b: '#f6c453', c: '#4e8d7c', soft: '#f9dcc7' },
+    { bg: '#eef0fb', ink: '#242b52', a: '#5a6bd8', b: '#ff8fa3', c: '#3fc1c9', soft: '#d9ddf7' },
+    { bg: '#f2f7ee', ink: '#253a24', a: '#3f8f4f', b: '#e9b949', c: '#d1603d', soft: '#d8ebd4' },
+    { bg: '#f6eef7', ink: '#3a2340', a: '#9b59b6', b: '#f0a868', c: '#3aa6a0', soft: '#e8d7ec' },
+    { bg: '#eaf0f4', ink: '#202a33', a: '#33566e', b: '#f2b134', c: '#e4572e', soft: '#d4e2ea' }
+  ];
+
+  function localHash(s) {
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+
+  function tplFish(p) {
+    return [
+      '<rect id="background" width="512" height="512" fill="' + p.bg + '"/>',
+      '<circle id="bubble" cx="416" cy="104" r="58" fill="' + p.soft + '"/>',
+      '<path id="waves" d="M0 410c64-26 118 22 186 0s122-30 182 0 96 20 144-2v104H0z" fill="' + p.soft + '"/>',
+      '<ellipse id="body" cx="238" cy="268" rx="132" ry="88" fill="' + p.a + '"/>',
+      '<path id="tail" d="M362 268l118-72v144z" fill="' + p.a + '"/>',
+      '<path id="body-shade" d="M362 268l118-72-34 72 34 72z" fill="' + p.ink + '" opacity=".18"/>',
+      '<path id="fin" d="M196 196c26-42 74-54 108-24-30 44-78 52-108 24z" fill="' + p.b + '"/>',
+      '<circle id="eye" cx="168" cy="248" r="11" fill="#fff"/>',
+      '<circle id="pupil" cx="170" cy="248" r="5" fill="' + p.ink + '"/>',
+      '<path id="mouth" d="M128 296c18 14 40 14 58 4" stroke="' + p.c + '" stroke-width="8" fill="none" stroke-linecap="round"/>',
+      '<circle id="bubble-small" cx="424" cy="188" r="9" fill="none" stroke="' + p.b + '" stroke-width="5"/>',
+      '<circle id="bubble-tiny" cx="452" cy="152" r="6" fill="none" stroke="' + p.b + '" stroke-width="4"/>'
+    ].join('');
+  }
+
+  function tplPenguin(p) {
+    return [
+      '<rect id="background" width="512" height="512" fill="' + p.bg + '"/>',
+      '<circle id="sun" cx="96" cy="96" r="42" fill="' + p.soft + '"/>',
+      '<ellipse id="ice" cx="256" cy="452" rx="220" ry="46" fill="' + p.soft + '"/>',
+      '<ellipse id="body" cx="256" cy="300" rx="104" ry="132" fill="' + p.ink + '"/>',
+      '<circle id="head" cx="256" cy="176" r="74" fill="' + p.ink + '"/>',
+      '<ellipse id="belly" cx="256" cy="316" rx="66" ry="96" fill="#f7fbff"/>',
+      '<ellipse id="face" cx="256" cy="196" rx="52" ry="50" fill="#f7fbff"/>',
+      '<circle id="eye-left" cx="236" cy="188" r="7" fill="' + p.ink + '"/>',
+      '<circle id="eye-right" cx="276" cy="188" r="7" fill="' + p.ink + '"/>',
+      '<path id="beak" d="M244 210h24l-12 18z" fill="' + p.b + '"/>',
+      '<ellipse id="foot-left" cx="216" cy="446" rx="30" ry="13" fill="' + p.b + '"/>',
+      '<ellipse id="foot-right" cx="296" cy="446" rx="30" ry="13" fill="' + p.b + '"/>',
+      '<path id="wing-left" d="M152 288c-24 42-20 84 8 104" stroke="' + p.ink + '" stroke-width="26" stroke-linecap="round" fill="none"/>',
+      '<path id="wing-right" d="M360 288c24 42 20 84-8 104" stroke="' + p.ink + '" stroke-width="26" stroke-linecap="round" fill="none"/>'
+    ].join('');
+  }
+
+  function tplCat(p) {
+    return [
+      '<rect id="background" width="512" height="512" fill="' + p.bg + '"/>',
+      '<circle id="head" cx="256" cy="276" r="132" fill="' + p.a + '"/>',
+      '<path id="ear-left" d="M148 190l-14-92 92 44z" fill="' + p.a + '"/>',
+      '<path id="ear-right" d="M364 190l14-92-92 44z" fill="' + p.a + '"/>',
+      '<path id="inner-ear-left" d="M166 176l-6-44 44 22z" fill="' + p.b + '"/>',
+      '<path id="inner-ear-right" d="M346 176l6-44-44 22z" fill="' + p.b + '"/>',
+      '<ellipse id="eye-left" cx="210" cy="258" rx="14" ry="20" fill="' + p.ink + '"/>',
+      '<ellipse id="eye-right" cx="302" cy="258" rx="14" ry="20" fill="' + p.ink + '"/>',
+      '<path id="nose" d="M244 300h24l-12 16z" fill="' + p.c + '"/>',
+      '<path id="mouth" d="M232 330q12 12 24 0 12 12 24 0" stroke="' + p.ink + '" stroke-width="6" fill="none" stroke-linecap="round"/>',
+      '<path id="whiskers" d="M170 306h-70M170 328l-66 14M342 306h70M342 328l66 14" stroke="' + p.ink + '" stroke-width="5" stroke-linecap="round"/>'
+    ].join('');
+  }
+
+  function tplLandscape(p) {
+    return [
+      '<defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="' + p.soft + '"/><stop offset="1" stop-color="' + p.bg + '"/></linearGradient></defs>',
+      '<rect id="sky" width="512" height="512" fill="url(#lg)"/>',
+      '<circle id="sun" cx="372" cy="150" r="56" fill="' + p.b + '"/>',
+      '<path id="mountains" d="M0 360l128-150 96 108 76-86 118 130 94-70v220H0z" fill="' + p.a + '"/>',
+      '<path id="mountains-front" d="M0 400l150-96 110 68 118-92 134 96v136H0z" fill="' + p.ink + '" opacity=".82"/>',
+      '<path id="lake" d="M0 436c96-22 170 18 256 0s160-26 256 0v76H0z" fill="' + p.c + '" opacity=".5"/>'
+    ].join('');
+  }
+
+  function tplTree(p) {
+    return [
+      '<rect id="background" width="512" height="512" fill="' + p.bg + '"/>',
+      '<ellipse id="ground" cx="256" cy="452" rx="210" ry="42" fill="' + p.soft + '"/>',
+      '<rect id="trunk" x="232" y="300" width="48" height="150" rx="10" fill="' + p.c + '"/>',
+      '<circle id="canopy" cx="256" cy="222" r="104" fill="' + p.a + '"/>',
+      '<circle id="canopy-left" cx="180" cy="268" r="70" fill="' + p.a + '"/>',
+      '<circle id="canopy-right" cx="332" cy="268" r="70" fill="' + p.a + '"/>',
+      '<circle id="highlight" cx="256" cy="156" r="58" fill="' + p.b + '" opacity=".55"/>'
+    ].join('');
+  }
+
+  function tplFlower(p) {
+    var petals = '';
+    for (var i = 0; i < 8; i++) {
+      petals += '<ellipse id="petal-' + (i + 1) + '" cx="256" cy="132" rx="34" ry="54" fill="' + (i % 2 ? p.c : p.b) +
+        '" transform="rotate(' + (i * 45) + ' 256 200)"/>';
+    }
+    return [
+      '<rect id="background" width="512" height="512" fill="' + p.bg + '"/>',
+      '<path id="stem" d="M256 456V254" stroke="' + p.a + '" stroke-width="16" stroke-linecap="round"/>',
+      '<ellipse id="leaf-left" cx="196" cy="360" rx="58" ry="26" fill="' + p.a + '" transform="rotate(-28 196 360)"/>',
+      '<ellipse id="leaf-right" cx="318" cy="316" rx="58" ry="26" fill="' + p.a + '" transform="rotate(26 318 316)"/>',
+      petals,
+      '<circle id="flower-center" cx="256" cy="200" r="34" fill="' + p.ink + '" opacity=".75"/>'
+    ].join('');
+  }
+
+  function tplHouse(p) {
+    return [
+      '<rect id="sky" width="512" height="512" fill="' + p.bg + '"/>',
+      '<circle id="sun" cx="108" cy="108" r="44" fill="' + p.b + '"/>',
+      '<path id="ground" d="M0 400h512v112H0z" fill="' + p.soft + '"/>',
+      '<rect id="house" x="140" y="250" width="232" height="160" fill="' + p.a + '"/>',
+      '<path id="roof" d="M112 254l144-104 144 104z" fill="' + p.c + '"/>',
+      '<rect id="door" x="236" y="320" width="60" height="90" fill="' + p.ink + '"/>',
+      '<rect id="window-left" x="172" y="286" width="44" height="40" fill="' + p.bg + '"/>',
+      '<rect id="window-right" x="312" y="286" width="44" height="40" fill="' + p.bg + '"/>',
+      '<path id="smoke" d="M388 196c18-10 36-10 54 0" stroke="' + p.ink + '" stroke-width="6" fill="none" stroke-linecap="round"/>'
+    ].join('');
+  }
+
+  function tplStarry(p, seed) {
+    var stars = '';
+    var s = seed || 1;
+    for (var i = 0; i < 18; i++) {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      var x = 20 + (s % 472);
+      s = (s * 1664525 + 1013904223) >>> 0;
+      var y = 20 + (s % 300);
+      var r = 1.5 + (s % 5) * 0.8;
+      stars += '<circle id="star-' + (i + 1) + '" cx="' + x + '" cy="' + y + '" r="' + r.toFixed(1) +
+        '" fill="#fff" opacity="' + (0.4 + (s % 5) / 10).toFixed(1) + '"/>';
+    }
+    return [
+      '<rect id="sky" width="512" height="512" fill="' + p.ink + '"/>',
+      stars,
+      '<circle id="moon" cx="392" cy="126" r="48" fill="' + p.b + '"/>',
+      '<circle id="moon-shadow" cx="376" cy="112" r="44" fill="' + p.ink + '"/>',
+      '<path id="mountains" d="M0 392l120-118 92 96 86-74 118 108 96-64v172H0z" fill="' + p.a + '" opacity=".75"/>',
+      '<path id="foreground" d="M0 440l150-92 110 66 120-84 132 92v90H0z" fill="' + p.bg + '" opacity=".3"/>'
+    ].join('');
+  }
+
+  function tplAbstract(p) {
+    return [
+      '<rect id="background" width="512" height="512" fill="' + p.bg + '"/>',
+      '<circle id="shape-a" cx="196" cy="196" r="132" fill="' + p.a + '"/>',
+      '<circle id="shape-b" cx="340" cy="320" r="118" fill="' + p.b + '" opacity=".85"/>',
+      '<path id="wave" d="M84 420c66-56 130-56 196 0s130 56 196 0" stroke="' + p.c + '" stroke-width="18" fill="none" stroke-linecap="round"/>',
+      '<rect id="square" x="300" y="96" width="76" height="76" rx="16" fill="' + p.c + '" opacity=".7"/>',
+      '<circle id="dot-left" cx="120" cy="360" r="14" fill="' + p.ink + '"/>',
+      '<circle id="dot-right" cx="420" cy="200" r="10" fill="' + p.ink + '"/>'
+    ].join('');
+  }
+
+  function localSvg(prompt) {
+    var text = String(prompt == null ? '' : prompt);
+    var seed = localHash(text);
+    var p = LOCAL_PALETTES[seed % LOCAL_PALETTES.length];
+    var body;
+    if (/企鹅|企鵝|penguin/i.test(text)) body = tplPenguin(p);
+    else if (/鱼|魚|fish/i.test(text)) body = tplFish(p);
+    else if (/猫|貓|\bcat\b/i.test(text)) body = tplCat(p);
+    else if (/星空|夜空|galaxy|space|star/i.test(text)) body = tplStarry(p, seed);
+    else if (/山|风景|風景|日落|日出|海|湖|landscape|mountain|sunset|sunrise/i.test(text)) body = tplLandscape(p);
+    else if (/树|樹|森林|tree|forest/i.test(text)) body = tplTree(p);
+    else if (/花|flower|bloom/i.test(text)) body = tplFlower(p);
+    else if (/房子|小屋|house|cabin/i.test(text)) body = tplHouse(p);
+    else body = tplAbstract(p);
+    return normalizeSvg('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">' + body + '</svg>');
+  }
+
+  async function aiDraw(prompt, opts) {
+    opts = opts || {};
+    if (opts.svg) return normalizeSvg(opts.svg);
+    var text = String(prompt == null ? '' : prompt).trim();
+    if (!text) throw new Error('请先写一句画面描述');
+    var router = global.LLMRouter;
+    if (!router || typeof router.postChat !== 'function') throw new Error('语言模型路由还没就绪，请先到设置里配置接口');
+    var messages = [
+      { role: 'system', content: AI_SVG_SYS },
+      { role: 'user', content: text }
+    ];
+    var data = await router.postChat({
+      app: 'imglab',
+      messages: messages,
+      temperature: 0.5,
+      max_tokens: 6000,
+      timeoutMs: Math.max(15000, Number(opts.timeoutMs) || 180000)
+    });
+    var msg = data && data.choices && data.choices[0] && data.choices[0].message;
+    var content = msg && msg.content;
+    if (Array.isArray(content)) {
+      content = content.map(function (p) { return (p && (p.text || p.content)) || ''; }).join('');
+    }
+    if (typeof content !== 'string' || !content.trim()) {
+      throw new Error('模型没有返回内容' + (data && data.error ? '：' + JSON.stringify(data.error).slice(0, 120) : ''));
+    }
+    asstUsageAdd('draw', data, messages, content);
+    return normalizeSvg(content);
+  }
+
+  function saveSvg(svgText, opts) {
+    opts = opts || {};
+    var meta = normalizeSvg(svgText);
+    var base = safeName(opts.filename || 'AI绘制').replace(/\.svg$/i, '') || 'AI绘制';
+    var blob = new Blob([meta.svg], { type: 'image/svg+xml;charset=utf-8' });
+    var name = base + '.svg';
+    if (opts.download !== false) downloadBlob(blob, name);
+    return { name: name, size: blob.size, w: meta.w, h: meta.h, svg: meta.svg };
+  }
+
+  async function aiSvg(prompt, opts) {
+    opts = opts || {};
+    var got = await aiDraw(prompt, opts);
+    var saved = saveSvg(got.svg, Object.assign({}, opts, {
+      filename: opts.filename || String(prompt == null ? '' : prompt).trim().slice(0, 24) || 'AI绘制'
+    }));
+    setNote('AI 绘制完成：' + saved.name + '（' + saved.w + '×' + saved.h + ' · ' + fmtBytes(saved.size) + '）');
+    return { svg: got.svg, w: got.w, h: got.h, name: saved.name, size: saved.size };
+  }
+
+  function aiSvgDialog() {
+    if (app.busy) return setNote('正在处理上一个任务，请稍候', true);
+    modal({
+      title: 'AI 绘制 SVG',
+      wide: true,
+      note: '用一句画面描述让语言模型直接产出矢量 SVG，生成后保存为 .svg。需要先在设置里配好语言模型。',
+      fields: [
+        { key: 'prompt', label: '画面描述', type: 'text', value: app.aiLastPrompt || '一只站在冰面上的企鹅，扁平插画风格' },
+        { key: 'name', label: '文件名', type: 'text', value: 'AI绘制' }
+      ]
+    }).then(function (v) {
+      if (!v) return;
+      var prompt = String(v.prompt || '').trim();
+      if (!prompt) return setNote('先写一句画面描述', true);
+      app.aiLastPrompt = prompt;
+      setNote('AI 正在绘制 SVG…');
+      aiSvg(prompt, { filename: v.name }).catch(function (e) {
+        setNote('AI 绘制失败：' + ((e && e.message) || e), true);
+      });
+    });
+  }
+
+  /* ---------------- 图像处理助手（右侧面板 · 色板右侧） ----------------
+   * 面板只是聊天壳，真正干活的是三个工具：
+   *   draw_svg  → aiDraw()   按描述生成 SVG
+   *   save_svg  → saveSvg()  保存为 .svg
+   *   place_svg → PS.loadBitmap + 置入当前文档 / 新建文档
+   * 模型按「一轮一个 JSON」的协议回复；解析失败时退化成直接把输入当绘制描述。
+   */
+  var ASST_SYS = [
+    '你是图像工坊里的「图像处理助手」，负责把自然语言变成 SVG 矢量插画。',
+    '可用工具：',
+    '1. draw_svg {"prompt":"画面描述","filename":"可选文件名"} —— 生成一幅 SVG；',
+    '2. save_svg {"filename":"可选文件名"} —— 把最近生成的 SVG 保存成 .svg 文件；',
+    '3. paint_svg {"name":"可选组名"} —— 把最近生成的 SVG 分图层、分组、分步骤画进当前画布，每一步都能撤回；',
+    '4. place_svg {} —— 把最近生成的 SVG 作为单个图层放进当前画布。',
+    '回复规则：',
+    '- 每轮只输出一个 JSON 对象，不要 Markdown 代码块，不要额外解释；',
+    '- 调用工具：{"say":"给用户看的一句话","tool":"draw_svg","args":{...}}；',
+    '- 不调用工具：{"say":"...","done":true}；',
+    '- 用户只是要画图时只调用 draw_svg；',
+    '- 用户说「画到画布 / 绘制到软件 / 分图层 / 分步骤」时，在 draw_svg 之后调用 paint_svg；',
+    '- 只有明确说「保存」时才调用 save_svg。'
+  ].join('\n');
+
+  function asstPush(role, text) {
+    var log = app.els.psAsstLog;
+    var body = String(text == null ? '' : text);
+    app.asst.log.push({ role: role, text: body });
+    if (!log) return;
+    var div = document.createElement('div');
+    div.className = 'ps-asst-msg ps-asst-' + role;
+    div.textContent = body;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function asstTrace(text, err) {
+    var log = app.els.psAsstLog;
+    if (!log) return;
+    var div = document.createElement('div');
+    div.className = 'ps-asst-trace' + (err ? ' is-err' : '');
+    div.textContent = String(text == null ? '' : text);
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  /* ---- token 统计 ----
+   * 中转返回 usage 时用真实值，没返回就按「中文 0.9 字 / 英文 4 字符 1 token」估算，
+   * 面板上会标出估算次数，避免把估算当账单。 */
+  function fmtNum(n) {
+    return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  }
+
+  function estTokens(text) {
+    var s = typeof text === 'string' ? text : JSON.stringify(text == null ? '' : text);
+    var cjk = (s.match(/[\u3400-\u9fff\uf900-\ufaff]/g) || []).length;
+    return Math.max(1, Math.round(cjk * 0.9 + (s.length - cjk) / 4));
+  }
+
+  function asstSyncUsage() {
+    var el = app.els.psAsstUsage;
+    if (!el) return;
+    var u = app.asst.usage;
+    if (!u.calls) {
+      el.textContent = 'Token：0（本地模板不消耗额度）';
+      return;
+    }
+    var txt = 'Token：' + fmtNum(u.prompt + u.completion) +
+      '（提示 ' + fmtNum(u.prompt) + ' · 输出 ' + fmtNum(u.completion) + '）' +
+      ' · 对话 ' + u.chat.calls + ' / 绘制 ' + u.draw.calls + ' 次';
+    if (u.est) txt += ' · 含估算 ' + u.est + ' 次';
+    el.textContent = txt;
+  }
+
+  function asstUsageAdd(kind, data, msgs, content) {
+    var u = app.asst.usage;
+    var raw = data && data.usage && typeof data.usage === 'object' ? data.usage : null;
+    var p = raw ? Number(raw.prompt_tokens != null ? raw.prompt_tokens : raw.input_tokens) : NaN;
+    var c = raw ? Number(raw.completion_tokens != null ? raw.completion_tokens : raw.output_tokens) : NaN;
+    var est = false;
+    if (!isFinite(p) || !isFinite(c) || (!p && !c)) {
+      est = true;
+      p = estTokens((msgs || []).map(function (m) { return m && m.content != null ? m.content : ''; }).join('\n'));
+      c = estTokens(content);
+    }
+    var bucket = kind === 'draw' ? u.draw : u.chat;
+    u.calls++;
+    u.prompt += p;
+    u.completion += c;
+    bucket.calls++;
+    bucket.prompt += p;
+    bucket.completion += c;
+    if (est) u.est++;
+    asstSyncUsage();
+    return { prompt: p, completion: c, estimated: est };
+  }
+
+  function asstSyncPreview() {
+    var has = !!app.asst.svg;
+    if (app.els.psAsstPrev) app.els.psAsstPrev.classList.toggle('hidden', !has);
+    if (app.els.psAsstImg) {
+      app.els.psAsstImg.src = has ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(app.asst.svg) : '';
+    }
+    Array.prototype.forEach.call(app.host.querySelectorAll('[data-asst="save"], [data-asst="paint"], [data-asst="place"]'), function (b) {
+      b.disabled = !has;
+    });
+  }
+
+  function asstBusy(on) {
+    app.asst.busy = !!on;
+    if (app.els.psAsstSend) app.els.psAsstSend.disabled = !!on;
+    if (app.els.psAsstInput) app.els.psAsstInput.disabled = !!on;
+  }
+
+  function asstParse(text) {
+    var t = String(text == null ? '' : text).trim().replace(/^```[a-z]*\s*/i, '').replace(/```\s*$/, '').trim();
+    var a = t.indexOf('{');
+    var b = t.lastIndexOf('}');
+    if (a < 0 || b <= a) return null;
+    try {
+      var o = JSON.parse(t.slice(a, b + 1));
+      return o && typeof o === 'object' ? o : null;
+    } catch (e) { return null; }
+  }
+
+  async function asstChat(msgs) {
+    var router = global.LLMRouter;
+    if (!router || typeof router.postChat !== 'function') throw new Error('语言模型路由还没就绪，请先到设置里配置接口');
+    var messages = [{ role: 'system', content: ASST_SYS }].concat(msgs);
+    var data = await router.postChat({
+      app: 'imglab',
+      messages: messages,
+      temperature: 0.3,
+      /* 编排回复只是一个 JSON，600 足够；给太大只会纵容模型长篇解释 */
+      max_tokens: 600,
+      timeoutMs: 120000
+    });
+    var msg = data && data.choices && data.choices[0] && data.choices[0].message;
+    var content = msg && msg.content;
+    if (Array.isArray(content)) {
+      content = content.map(function (p) { return (p && (p.text || p.content)) || ''; }).join('');
+    }
+    if (typeof content !== 'string' || !content.trim()) {
+      throw new Error('模型没有返回内容' + (data && data.error ? '：' + JSON.stringify(data.error).slice(0, 120) : ''));
+    }
+    asstUsageAdd('chat', data, messages, content);
+    return content;
+  }
+
+  /* ---- SVG → 画布：拆步骤、分图层、进图层组，每步单独入历史 ----
+   * 顶层元素（含 g）各算一步，超过 8 步时把尾部细节合并；
+   * 每步单独渲染成透明位图，叠在同一个组里，Ctrl+Z 可逐步撤回。 */
+  /* 图层名尽量用「人话」：优先 data-name / aria-label / <title> / id / class，
+   * 英文 id 按词表翻成中文（eye-left → 左眼、tentacle-1 → 触手 1），
+   * path1 / layer2 / g3 这类机器 id 直接丢掉，退回形状兜底。 */
+  var LABEL_DICT = {
+    background: '背景', bg: '背景', backdrop: '背景', sky: '天空', skyline: '天际线',
+    ground: '地面', floor: '地面', grass: '草地', lawn: '草坪', snow: '积雪', ice: '冰面',
+    water: '水面', lake: '湖面', sea: '海面', ocean: '海洋', river: '河流', beach: '沙滩', sand: '沙滩',
+    sun: '太阳', moon: '月亮', cloud: '云朵', clouds: '云朵', star: '星星', stars: '星星',
+    light: '光', glow: '光晕', ray: '光线', shadow: '阴影', highlight: '高光', shine: '光泽',
+    mountain: '山脉', mountains: '山脉', hill: '山丘', hills: '山丘', rock: '岩石', stone: '石头',
+    tree: '树', forest: '森林', trunk: '树干', canopy: '树冠', branch: '树枝', branches: '树枝',
+    leaf: '叶子', leaves: '叶子', flower: '花', flowers: '花', petal: '花瓣', petals: '花瓣',
+    stem: '花茎', root: '根', seed: '种子', bush: '灌木',
+    house: '房子', cabin: '小屋', roof: '屋顶', door: '门', window: '窗户', windows: '窗户',
+    chimney: '烟囱', smoke: '炊烟', wall: '墙', fence: '围栏', garden: '花园',
+    body: '主体', head: '头部', face: '脸', eye: '眼', eyes: '眼', pupil: '瞳孔',
+    brow: '眉毛', nose: '鼻子', mouth: '嘴', lip: '嘴唇', ear: '耳', ears: '耳',
+    hair: '头发', belly: '肚子', chest: '胸', neck: '脖子', back: '背',
+    wing: '翅膀', wings: '翅膀', tail: '尾巴', fin: '鱼鳍', finleft: '左鳍',
+    tentacle: '触手', tentacles: '触手', whiskers: '胡须', feather: '羽毛',
+    foot: '脚', feet: '脚', leg: '腿', arm: '手臂', hand: '手', finger: '手指',
+    penguin: '企鹅', fish: '鱼', cat: '猫', bird: '鸟', animal: '动物', character: '角色',
+    outline: '轮廓', pattern: '图案', stripe: '条纹', stripes: '条纹', texture: '纹理',
+    frame: '边框', border: '边框', bubble: '气泡', bubbles: '气泡',
+    wave: '波浪', waves: '波浪', splash: '水花', drop: '水滴', drip: '水滴',
+    rain: '雨', snowflake: '雪花', sparkle: '闪光', sparkles: '闪光',
+    dot: '圆点', dots: '圆点', spot: '斑点', spots: '斑点',
+    circle: '圆形', ellipse: '椭圆', rect: '矩形', square: '方形',
+    triangle: '三角形', polygon: '多边形', line: '线条', curve: '曲线', arrow: '箭头',
+    heart: '爱心', detail: '细节', details: '细节', decoration: '装饰', decorations: '装饰',
+    shape: '形状', starfield: '星野', constellation: '星座'
+  };
+  var LABEL_POS = { left: '左', right: '右', top: '上', bottom: '下', upper: '上', lower: '下', center: '中', middle: '中' };
+  var LABEL_MODS = { inner: '内', outer: '外', front: '前', back: '后', main: '主', small: '小', big: '大', large: '大', tiny: '微', deep: '深', soft: '柔' };
+
+  function semanticName(raw) {
+    var src = String(raw == null ? '' : raw).trim();
+    if (!src) return '';
+    if (/[\u4e00-\u9fa5]/.test(src)) return src.slice(0, 12);
+    if (/^\d+$/.test(src)) return '';
+    /* 机器生成的 id：path1 / layer-2 / g3 / 单个字母，一律视为无意义 */
+    if (/^(?:path|layer|shape|rect|circle|ellipse|polygon|polyline|line|group|g|node|element|svg|cls|item|obj|object|tmp|temp|untitled|figma)[-_]?\d*$/i.test(src)) return '';
+    if (/^[a-z]{1,2}\d*$/i.test(src)) return '';
+    var words = src.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/).filter(Boolean);
+    if (!words.length) return '';
+    var pos = [], mod = [], noun = [], hit = 0;
+    words.forEach(function (w) {
+      var k = w.toLowerCase();
+      if (/^\d+$/.test(k)) { noun.push(k); return; }
+      if (LABEL_POS[k]) { pos.push(LABEL_POS[k]); hit++; return; }
+      if (LABEL_MODS[k]) { mod.push(LABEL_MODS[k]); hit++; return; }
+      if (LABEL_DICT[k]) { noun.push(LABEL_DICT[k]); hit++; return; }
+    });
+    if (!hit) {
+      /* 词表里没有，但本身像个正常英文单词（whiskers / doodle）时保留原文 */
+      return /^[a-z][a-z-]{2,}$/.test(src) ? src.replace(/-/g, ' ') : '';
+    }
+    return (pos.join('') + mod.join('') + noun.join(' ')).slice(0, 14);
+  }
+
+  function svgNodeLabel(el, vbW, vbH) {
+    var tag = el.tagName.toLowerCase();
+    var titleEl = el.querySelector ? el.querySelector('title') : null;
+    var pool = [
+      el.getAttribute('data-name'),
+      el.getAttribute('aria-label'),
+      el.getAttribute('data-label'),
+      titleEl && titleEl.textContent,
+      el.getAttribute('id'),
+      el.getAttribute('inkscape:label'),
+      el.getAttribute('class')
+    ];
+    for (var i = 0; i < pool.length; i++) {
+      var raw = String(pool[i] == null ? '' : pool[i]).trim();
+      if (!raw) continue;
+      if (i === pool.length - 1) raw = raw.split(/\s+/)[0];
+      var name = semanticName(raw);
+      if (name) return tag === 'g' ? '组合 · ' + name : name;
+    }
+    if (tag === 'rect') {
+      var rw = parseFloat(el.getAttribute('width') || '0');
+      var rh = parseFloat(el.getAttribute('height') || '0');
+      var rx = parseFloat(el.getAttribute('x') || '0');
+      var ry = parseFloat(el.getAttribute('y') || '0');
+      var full = rx === 0 && ry === 0 && vbW > 0 && vbH > 0 && rw >= vbW * 0.95 && rh >= vbH * 0.95;
+      return full ? '背景' : '矩形';
+    }
+    if (tag === 'g') return '组合';
+    if (tag === 'text') return '文字 · ' + String(el.textContent || '').trim().slice(0, 8);
+    if (tag === 'circle') return '圆形';
+    if (tag === 'ellipse') return '椭圆';
+    if (tag === 'path') return '路径';
+    if (tag === 'polygon') return '多边形';
+    if (tag === 'polyline') return '折线';
+    if (tag === 'line') return '线条';
+    if (tag === 'image') return '图片';
+    return tag;
+  }
+
+  function svgPaintSteps(svgText, w, h) {
+    var parsed = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+    if (!parsed || !parsed.documentElement || parsed.querySelector('parsererror')) throw new Error('SVG 解析失败');
+    var root = parsed.documentElement;
+    var vb = String(root.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    var vbW = vb.length === 4 && vb[2] > 0 ? vb[2] : w;
+    var vbH = vb.length === 4 && vb[3] > 0 ? vb[3] : h;
+    var defs = [];
+    var nodes = [];
+    Array.prototype.forEach.call(root.children, function (el) {
+      var tag = el.tagName.toLowerCase();
+      if (tag === 'defs' || tag === 'style') { defs.push(el); return; }
+      if (/^(title|desc|metadata|script)$/.test(tag)) return;
+      nodes.push(el);
+    });
+    var MAX = 8;
+    var chunks = [];
+    var used = {};
+    /* 同名元素（两个「圆形」）加序号，避免图层组里出现重名 */
+    function uniq(label) {
+      var n = used[label] || 0;
+      used[label] = n + 1;
+      return n ? label + ' ' + (n + 1) : label;
+    }
+    if (nodes.length > MAX) {
+      nodes.slice(0, MAX - 1).forEach(function (el) {
+        chunks.push({ label: uniq(svgNodeLabel(el, vbW, vbH)), nodes: [el] });
+      });
+      var rest = nodes.slice(MAX - 1);
+      chunks.push({ label: '细节与装饰（' + rest.length + ' 个元素）', nodes: rest });
+    } else {
+      nodes.forEach(function (el) {
+        chunks.push({ label: uniq(svgNodeLabel(el, vbW, vbH)), nodes: [el] });
+      });
+    }
+    return chunks.map(function (c) {
+      /* 只保留根属性（viewBox / fill 等）+ 必要 defs + 本步元素，
+       * 单独序列化成一个完整 SVG，再交给 Image 渲染 */
+      var shell = root.cloneNode(false);
+      while (shell.firstChild) shell.removeChild(shell.firstChild);
+      shell.setAttribute('width', String(w));
+      shell.setAttribute('height', String(h));
+      defs.forEach(function (d) { shell.appendChild(d.cloneNode(true)); });
+      c.nodes.forEach(function (n) { shell.appendChild(n.cloneNode(true)); });
+      return { label: c.label, svg: new XMLSerializer().serializeToString(shell) };
+    });
+  }
+
+  function svgStepImage(svgText, w, h) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () {
+        var cv = document.createElement('canvas');
+        cv.width = w;
+        cv.height = h;
+        cv.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(cv);
+      };
+      img.onerror = function () { reject(new Error('SVG 元素渲染失败')); };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgText);
+    });
+  }
+
+  async function paintSvgToDoc(svgText, opts) {
+    opts = opts || {};
+    var doc = app.doc;
+    if (!doc) throw new Error('没有打开的文档，先新建或打开一张图');
+    var got = normalizeSvg(svgText);
+    var label = safeName(opts.name || app.asst.prompt || 'AI 绘制') || 'AI 绘制';
+    /* 模型给的绘制描述常常是一整句话，组名截断，图层面板才读得清 */
+    if (label.length > 18) label = label.slice(0, 18) + '…';
+    var fit = fitRect(got.w, got.h, doc.width, doc.height);
+    var x = Math.max(0, Math.round(fit.x));
+    var y = Math.max(0, Math.round(fit.y));
+    var w = Math.max(1, Math.min(doc.width - x, Math.round(fit.w)));
+    var h = Math.max(1, Math.min(doc.height - y, Math.round(fit.h)));
+    var steps = svgPaintSteps(got.svg, w, h);
+    if (!steps.length) throw new Error('SVG 里没有可绘制的元素');
+
+    var prevActive = doc.activeId;
+    var group = PS.createLayer(doc, { name: 'AI 绘制 · ' + label, type: 'group' });
+    var made = [];
+    var script = [];
+    for (var i = 0; i < steps.length; i++) {
+      var st = steps[i];
+      var cv = null;
+      try {
+        cv = await svgStepImage(st.svg, w, h);
+      } catch (e) { continue; }
+      var layer = PS.createLayer(doc, {
+        name: '步骤 ' + (i + 1) + ' · ' + st.label,
+        x: x, y: y, width: w, height: h, group: group.id
+      });
+      PS.ensureAllTiles(layer).forEach(function (t) {
+        if (!t) return;
+        t.ctx.drawImage(cv, t.x, t.y, t.w, t.h, 0, 0, t.w, t.h);
+      });
+      PS.touch(layer);
+      made.push({ layer: layer, label: st.label });
+      script.push((script.length + 1) + '. ' + st.label);
+    }
+    if (!made.length) {
+      var gi0 = doc.layers.indexOf(group);
+      if (gi0 >= 0) doc.layers.splice(gi0, 1);
+      throw new Error('SVG 元素渲染失败，没有写入图层');
+    }
+
+    /* 组条目放到数组末尾 = 面板里显示在子图层上方 */
+    var gi = doc.layers.indexOf(group);
+    if (gi >= 0) { doc.layers.splice(gi, 1); doc.layers.push(group); }
+    group.collapsed = false;
+    doc.activeId = made[made.length - 1].layer.id;
+    doc.version++;
+
+    PS.pushEntry(doc, {
+      label: 'AI 绘制 · 新建图层组「' + group.name + '」',
+      touched: [group],
+      undo: function () {
+        var i2 = doc.layers.indexOf(group);
+        if (i2 >= 0) doc.layers.splice(i2, 1);
+        doc.activeId = prevActive;
+        doc.version++;
+      },
+      redo: function () {
+        if (doc.layers.indexOf(group) < 0) doc.layers.push(group);
+        doc.version++;
+      }
+    });
+    made.forEach(function (m) {
+      var idx = doc.layers.indexOf(m.layer);
+      PS.pushEntry(doc, {
+        label: 'AI 绘制 · 步骤 · ' + m.label,
+        touched: [m.layer],
+        undo: function () {
+          var i2 = doc.layers.indexOf(m.layer);
+          if (i2 >= 0) doc.layers.splice(i2, 1);
+          doc.version++;
+        },
+        redo: function () {
+          if (doc.layers.indexOf(m.layer) < 0) doc.layers.splice(Math.min(idx, doc.layers.length), 0, m.layer);
+          doc.version++;
+        }
+      });
+    });
+
+    var out = {
+      group: group.name,
+      count: made.length,
+      steps: made.map(function (m) { return { name: m.layer.name, id: m.layer.id, label: m.label }; }),
+      script: script.join('\n')
+    };
+    app.asst.script = out;
+    refreshAll();
+    setNote('已分 ' + made.length + ' 步绘制到画布：' + group.name);
+    return out;
+  }
+
+  /* 把模型 / 网络错误翻成一句人话，避免 Failed to fetch 这类原文吓人 */
+  function asstErrText(e) {
+    var m = String((e && e.message) || e || '');
+    if (/Failed to fetch|NetworkError|Load failed|Network request failed/i.test(m)) return '网络或 CORS 拦截';
+    if (/未配置/.test(m)) return '语言模型未配置';
+    if (/超时|timeout/i.test(m)) return '请求超时';
+    return m.slice(0, 80) || '未知错误';
+  }
+
+  /* 工具执行器：统一返回一句给人看的结果，抛错交给调用方记轨迹 */
+  async function asstTool(name, args, opts) {
+    args = args || {};
+    opts = opts || {};
+    if (name === 'draw_svg') {
+      var prompt = String(args.prompt || '').trim();
+      if (!prompt) throw new Error('draw_svg 缺少 prompt');
+      var got = null;
+      var via = 'AI';
+      if (opts.local) {
+        got = localSvg(prompt);
+        via = '本地模板';
+      } else {
+        try {
+          got = await aiDraw(prompt, opts.svg ? { svg: opts.svg } : {});
+        } catch (e) {
+          got = localSvg(prompt);
+          via = '本地模板';
+          asstTrace('语言模型不可用（' + asstErrText(e) + '），改用本地模板绘制', true);
+        }
+      }
+      app.asst.svg = got.svg;
+      app.asst.w = got.w;
+      app.asst.h = got.h;
+      app.asst.prompt = prompt;
+      asstSyncPreview();
+      return '已生成 ' + got.w + '×' + got.h + ' SVG（' + via + ' · ' + fmtBytes(new Blob([got.svg]).size) + '）';
+    }
+    if (name === 'save_svg') {
+      if (!app.asst.svg) throw new Error('还没有可保存的 SVG');
+      var saved = saveSvg(app.asst.svg, { filename: args.filename || app.asst.prompt || 'AI绘制' });
+      return '已保存 ' + saved.name + '（' + fmtBytes(saved.size) + '）';
+    }
+    if (name === 'paint_svg') {
+      if (!app.asst.svg) throw new Error('还没有可绘制的 SVG');
+      var painted = await paintSvgToDoc(app.asst.svg, { name: args.name || app.asst.prompt });
+      asstPush('bot', '步骤脚本（每一步都能在历史记录里单独撤回）：\n' + painted.script);
+      return '已分 ' + painted.count + ' 步绘制到画布，图层组「' + painted.group + '」';
+    }
+    if (name === 'place_svg') {
+      if (!app.asst.svg) throw new Error('还没有可置入的 SVG');
+      var label = safeName(args.name || app.asst.prompt || 'AI绘制') || 'AI绘制';
+      var url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(app.asst.svg);
+      var loaded = await PS.loadBitmap(url);
+      var dims = loaded.width + '×' + loaded.height;
+      try {
+        if (app.doc) {
+          var res = PS.placeImageLayer(app.doc, loaded.bitmap, {
+            name: label, sourceW: loaded.width, sourceH: loaded.height, label: '助手置入 · ' + label
+          });
+          app.doc.activeId = res.layer.id;
+          refreshAll();
+        } else {
+          await openBitmap(loaded, label, { quiet: true });
+        }
+      } finally {
+        loaded.release();
+      }
+      return '已放入画布：' + label + '（' + dims + '）';
+    }
+    throw new Error('未知工具：' + name);
+  }
+
+  /* 对话主流程：最多三轮工具调用。opts.svg 用于离线 / 测试直接给现成 SVG。 */
+  async function asstAsk(text, opts) {
+    opts = opts || {};
+    var input = String(text == null ? '' : text).trim();
+    if (!input) return null;
+    if (app.asst.busy) { setNote('助手正在处理上一个任务，请稍候', true); return null; }
+    asstBusy(true);
+    asstPush('user', input);
+    setNote('助手正在思考…');
+    var msgs = [{ role: 'user', content: input }];
+    /* 模型不可用时整轮改走本地模板；此时顺手把图分步画进画布，用户不用再点按钮 */
+    var forceLocal = !!opts.local;
+    var autoPaint = false;
+    /* 先看用户还要不要后续动作：只要图、要保存、要放进画布、要分图层，
+     * 决定 draw_svg 成功后是直接结束、直接绘制，还是再问模型一轮。
+     * 把「放进 / 放到」从画布意图里去掉，避免「放在冰面上的企鹅」这类构图描述误触发。 */
+    var wantCanvas = /画到|画进|绘制到|绘制进|画布|图层组|分图层|分步骤|分步/.test(input);
+    var wantSave = /保存|存成|存到|导出|下载|\.svg/i.test(input);
+    var wantPlace = /置入|放进画布|放到画布|放入画布/.test(input);
+    var seenTools = {};
+    try {
+      for (var round = 0; round < 3; round++) {
+        var reply = null;
+        if (round === 0 && opts.svg) {
+          reply = { say: opts.say || '我来画这张图。', tool: 'draw_svg', args: { prompt: input } };
+        } else if (round === 0 && opts.local) {
+          reply = { say: opts.say || '我用本地模板画一张。', tool: 'draw_svg', args: { prompt: input } };
+        } else {
+          var raw = null;
+          try {
+            raw = await asstChat(msgs);
+          } catch (e) {
+            asstTrace('语言模型连接失败（' + asstErrText(e) + '）', true);
+            if (round === 0) {
+              forceLocal = true;
+              autoPaint = true;
+              reply = {
+                say: '模型暂时连不上，我先用本地模板给你画一张。要 AI 原创，请在设置里检查接口，或打开本地中转后再试。',
+                tool: 'draw_svg',
+                args: { prompt: input }
+              };
+            } else {
+              break;
+            }
+          }
+          if (raw != null) {
+            var parsed = asstParse(raw);
+            if (!parsed) {
+              asstTrace('模型没有按工具协议回复，按绘制描述处理', true);
+              parsed = round === 0
+                ? { say: '我直接按描述生成 SVG。', tool: 'draw_svg', args: { prompt: input } }
+                : { say: String(raw).replace(/\s+/g, ' ').slice(0, 200), done: true };
+            }
+            reply = parsed;
+          }
+        }
+        if (reply.say) asstPush('bot', reply.say);
+        msgs.push({ role: 'assistant', content: JSON.stringify(reply) });
+        if (!reply.tool) break;
+        var toolKey = reply.tool + ':' + JSON.stringify(reply.args || {});
+        if (seenTools[toolKey]) {
+          asstTrace('工具 ' + reply.tool + ' 已经执行过，停止重复调用');
+          break;
+        }
+        seenTools[toolKey] = true;
+        var out = '';
+        var ok = false;
+        try {
+          out = await asstTool(reply.tool, reply.args, { svg: opts.svg, local: forceLocal });
+          ok = true;
+          asstTrace('调用工具 · ' + reply.tool + ' → ' + out);
+        } catch (e) {
+          out = '失败：' + ((e && e.message) || e);
+          asstTrace('调用工具 · ' + reply.tool + ' → ' + out, true);
+        }
+        msgs.push({ role: 'user', content: '【工具结果】' + reply.tool + '：' + out });
+        /* 绘制完成就是终点：模型已经没活可干，再问一轮只会白烧 token */
+        if (ok && reply.tool === 'paint_svg') break;
+        if (ok && reply.tool === 'place_svg') break;
+        if (ok && reply.tool === 'save_svg' && !wantPlace) break;
+        if (ok && reply.tool === 'draw_svg' && app.asst.svg) {
+          if (autoPaint || wantCanvas) {
+            try {
+              var paintedOut = await asstTool('paint_svg', {}, { local: forceLocal });
+              asstTrace('调用工具 · paint_svg → ' + paintedOut);
+            } catch (e2) {
+              asstTrace('调用工具 · paint_svg → 失败：' + ((e2 && e2.message) || e2), true);
+            }
+            break;
+          }
+          /* 用户只要一张图：SVG 已经生成，保存 / 放入画布 / 分步绘制都有面板按钮，
+           * 不必再让模型回一轮「画好了」 */
+          if (!wantSave && !wantPlace) break;
+        }
+        if (opts.svg || forceLocal) break;
+      }
+      setNote(app.asst.svg ? '助手已生成 SVG，可点「保存 SVG」或「放入画布」' : '助手已回复');
+    } catch (e) {
+      asstTrace('助手出错：' + ((e && e.message) || e), true);
+      setNote('助手出错：' + ((e && e.message) || e), true);
+    } finally {
+      asstBusy(false);
+    }
+    return app.asst.svg ? { svg: app.asst.svg, w: app.asst.w, h: app.asst.h } : null;
+  }
+
+  function setHistTab(tab) {
+    var tabs = $id('psHistTabs');
+    if (!tabs) return;
+    var btn = tabs.querySelector('[data-htab="' + tab + '"]');
+    if (!btn) return;
+    app.histTab = tab;
+    Array.prototype.forEach.call(tabs.querySelectorAll('[data-htab]'), function (x) {
+      x.classList.toggle('is-on', x === btn);
+    });
+    var showHist = tab === 'history';
+    var showSw = tab === 'swatch';
+    var showAsst = tab === 'assistant';
+    /* 面板收起时切到色板 / 助手会看不到内容，顺手展开（状态一起落盘） */
+    if (!showHist && uiState.cards.hist) {
+      uiState.cards.hist = false;
+      saveUiState();
+      applyUiState();
+    }
+    if (app.els.psHistList) app.els.psHistList.classList.toggle('hidden', !showHist);
+    if (app.els.psSwatches) app.els.psSwatches.classList.toggle('hidden', !showSw);
+    if (app.els.psAssistant) app.els.psAssistant.classList.toggle('hidden', !showAsst);
+    if (app.els.psHistCard) app.els.psHistCard.classList.toggle('is-assistant', showAsst);
+    if (app.els.psHistCount) app.els.psHistCount.style.visibility = showHist ? '' : 'hidden';
+    if (showSw) setNote('色板：点击色块可直接设置前景色。');
+    else if (showAsst) {
+      if (!app.asst.greeted) {
+        app.asst.greeted = true;
+        asstPush('bot', '我是图像处理助手。描述要画的画面，我会调用工具生成 SVG，还可以保存或放进画布。试试「画一只企鹅」。');
+      }
+      setNote('图像处理助手：描述画面即可调用工具绘制 SVG');
+      if (app.els.psAsstInput) app.els.psAsstInput.focus();
+    } else {
+      setNote('历史记录');
+    }
+  }
+
+  function bindAssistant() {
+    if (app.asst.bound) { asstSyncPreview(); asstSyncUsage(); return; }
+    app.asst.bound = true;
+    var send = app.els.psAsstSend;
+    var input = app.els.psAsstInput;
+    if (send) {
+      send.addEventListener('click', function () {
+        var v = input ? input.value : '';
+        if (input) input.value = '';
+        asstAsk(v);
+      });
+    }
+    if (input) {
+      input.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+          ev.preventDefault();
+          if (send) send.click();
+        }
+      });
+    }
+    Array.prototype.forEach.call(app.host.querySelectorAll('[data-asst]'), function (b) {
+      b.addEventListener('click', function () {
+        var act = b.dataset.asst;
+        if (act === 'dialog') return aiSvgDialog();
+        var tool = act === 'save' ? 'save_svg' : act === 'paint' ? 'paint_svg' : act === 'place' ? 'place_svg' : '';
+        if (tool) {
+          asstTool(tool, {}, {}).then(function (msg) {
+            asstTrace('调用工具 · ' + tool + ' → ' + msg);
+            setNote(msg);
+          }).catch(function (e) {
+            asstTrace(tool + ' → ' + ((e && e.message) || e), true);
+            setNote('助手操作失败：' + ((e && e.message) || e), true);
+          });
+        }
+      });
+    });
+    asstSyncPreview();
+    asstSyncUsage();
+  }
+
   async function copyImage() {
     if (!app.doc || app.busy) return null;
     app.busy = true;
@@ -2898,6 +4131,9 @@
     if (!mod && e.shiftKey && k === 'tab') { e.preventDefault(); toggleWorkspace('side'); return; }
     if (e.key === 'F2') { e.preventDefault(); setMode('raster'); return; }
     if (e.key === 'F3') { e.preventDefault(); setMode('vector'); return; }
+    if (e.key === 'F4') { e.preventDefault(); setMode('3d'); return; }
+    /* 3D 工作区里不再走 2D 工具快捷键，免得按 B / M 之类偷偷改了隐藏的画布工具 */
+    if (app.mode === '3d') return;
     /* PS 习惯：Alt+Backspace 填前景色，Ctrl+Backspace 填背景色（选区存在时只填选区） */
     if ((e.key === 'Backspace' || e.key === 'Delete') && (e.altKey || mod) && app.doc) {
       var lf = PS.activeLayer(app.doc);
@@ -3039,6 +4275,13 @@
     }
     refreshAll();
     switchLayerTab(app.mode === 'vector' ? 'paths' : 'layers');
+    if (app.mode === '3d') {
+      var three = ensure3D();
+      updateModeUI();
+      if (three) three.enter();
+      setNote('3D 绘制工作区 · 载入模型后按 UV 岛和遮挡生成动态遮罩 · F2 位图 / F3 矢量');
+      return;
+    }
     setNote(app.mode === 'vector'
       ? '矢量编辑器 · 钢笔曲线 / 形状布尔 / 路径选择 · F2 切回位图'
       : '图像工坊 · 瓦片图层 / 选区 / 滤镜 · 滚轮平移，Ctrl+滚轮缩放');
@@ -3058,6 +4301,7 @@
       pan: app.view ? { x: app.view.panX, y: app.view.panY } : null,
       channel: app.channel,
       mode: app.mode,
+      three: app.three ? app.three.debug() : null,
       fg: app.fg,
       bg: app.bg,
       layerTab: app.layerTab,
@@ -3175,6 +4419,20 @@
     },
     mode: function () { return app.mode; },
     setMode: function (mode) { setMode(mode); return app.mode; },
+    three: function () { return app.three ? app.three.debug() : null; },
+    threeDemo: function () {
+      setMode('3d');
+      var t = ensure3D();
+      return t ? t.loadDemo() : false;
+    },
+    threeSelect: function (id, on) { return app.three ? app.three.selectIsland(id, on) : null; },
+    threeSelectAll: function (on) { if (app.three) app.three.selectAll(on !== false); return app.three ? app.three.debug() : null; },
+    threeOcclude: function (on) { return app.three ? app.three.setOcclude(on !== false) : null; },
+    threeRebuild: function () { return app.three ? app.three.rebuild() : 0; },
+    threeOrbit: function (dx, dy) { return app.three ? app.three.orbit(dx, dy) : false; },
+    threeCommit: function () { return app.three ? app.three.commit() : false; },
+    threeAddMaskGroup: function () { return app.three ? app.three.addMaskGroup() : false; },
+    threeSetKind: function (kind) { return app.three ? app.three.setCommitKind(kind) : null; },
     shapes: function () {
       var l = PS.activeLayer(app.doc);
       if (!l || l.type !== 'shape' || !l.shapes) return [];
@@ -3365,6 +4623,27 @@
     openProject: function () { if (app.els.psProjFile) app.els.psProjFile.click(); },
     saveProject: saveProject,
     exportDialog: exportDialog,
+    aiDraw: aiDraw,
+    saveSvg: saveSvg,
+    aiSvg: aiSvg,
+    assistant: {
+      ask: asstAsk,
+      open: function () { setHistTab('assistant'); },
+      localDraw: function (prompt) {
+        var got = localSvg(prompt);
+        return { svg: got.svg, w: got.w, h: got.h };
+      },
+      paint: function (svg, opts) { return paintSvgToDoc(svg || app.asst.svg, opts); },
+      script: function () { return app.asst.script; },
+      usage: function () { return JSON.parse(JSON.stringify(app.asst.usage)); },
+      state: function () {
+        return {
+          hasSvg: !!app.asst.svg, w: app.asst.w, h: app.asst.h,
+          messages: app.asst.log.length, tab: app.histTab,
+          usage: JSON.parse(JSON.stringify(app.asst.usage))
+        };
+      }
+    },
     copyImage: copyImage,
     libraryPlace: placeFromLibrary,
     __debug: __debug,

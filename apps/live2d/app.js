@@ -842,7 +842,7 @@
   }
   function prosodyEngine(spec) {
     /* param 是纯 JS 参数合成，[[f]]/[[e]] 也能直接用上，所以和神经引擎一起算支持韵律 */
-    return !!(spec && /^(piper|kokoro|melo|vits|param)$/.test(String(spec.engine || '')));
+    return !!(spec && /^(piper|kokoro|melo|vits|param|sys)$/.test(String(spec.engine || '')));
   }
   /* 只有「本地 + 支持韵律 + AI 控制」才让模型去写节奏标记；直接朗读时写标记只会被剥掉 */
   function aiCtrlOn() {
@@ -1072,11 +1072,13 @@
         : (s.indexOf('melo:') === 0 ? 'melo'
           : (s.indexOf('vits:') === 0 ? 'vits'
             : (s.indexOf('zipvoice:') === 0 ? 'zipvoice'
-              : (s.indexOf('param:') === 0 ? 'param' : '')))));
+              : (s.indexOf('param:') === 0 ? 'param'
+                : (s.indexOf('sys:') === 0 ? 'sys' : ''))))));
     if (!head) return null;
     /* melo / vits / zipvoice 是单一份共享模型，启用值里没有可查的目录 id */
     if (head === 'melo') return { engine: 'melo', label: 'MeloTTS · 中英混读女声' };
     if (head === 'vits') return { engine: 'vits', label: 'VITS · 海星 · 俏皮甜美（近似）' };
+    if (head === 'sys') return { engine: 'sys', label: '系统机械音 · SAPI' };
     if (head === 'zipvoice') return { engine: 'zipvoice', label: 'ZipVoice · 我的克隆声音' };
     if (head === 'param') return { engine: 'param', label: '参数合成 · 快问快答' };
     var item = (typeof catalogGet === 'function') ? catalogGet(s.slice(head.length + 1)) : null;

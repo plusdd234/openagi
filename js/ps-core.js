@@ -145,6 +145,10 @@ const PS = (function () {
       id: 'L' + (++seq),
       name: opts.name || ('图层 ' + (doc.layers.length + 1)),
       type: opts.type || 'pixel',
+      /* 组：type==='group' 的条目只做容器，不参与合成；
+       * 子图层用 group 记组 id，可见性 / 不透明度沿组链累乘 */
+      group: opts.group || null,
+      collapsed: opts.collapsed === true,
       visible: opts.visible !== false,
       opacity: typeof opts.opacity === 'number' ? opts.opacity : 1,
       blend: opts.blend || 'normal',
@@ -172,6 +176,28 @@ const PS = (function () {
 
   function layerById(doc, id) { return doc.layers.find(function (l) { return l.id === id; }) || null; }
   function activeLayer(doc) { return layerById(doc, doc.activeId); }
+
+  /* 组链：子图层 → 组 → 组的上级组。防止脏数据成环 */
+  function groupVisible(doc, layer) {
+    var gid = layer && layer.group, guard = 0;
+    while (gid && guard++ < 32) {
+      var g = layerById(doc, gid);
+      if (!g) break;
+      if (!g.visible) return false;
+      gid = g.group;
+    }
+    return true;
+  }
+  function groupOpacity(doc, layer) {
+    var k = 1, gid = layer && layer.group, guard = 0;
+    while (gid && guard++ < 32) {
+      var g = layerById(doc, gid);
+      if (!g) break;
+      k *= typeof g.opacity === 'number' ? g.opacity : 1;
+      gid = g.group;
+    }
+    return k;
+  }
 
   function touch(layer) {
     if (!layer) return;
@@ -1519,6 +1545,24 @@ const PS = (function () {
   function removeLayer(doc, layer) {
     var i = doc.layers.indexOf(layer);
     if (i < 0) return false;
+    /* 组按整体删除：组条目本身不参与合成，留下的子图层会变成孤儿，
+     * 既看不见也删不掉，所以一次删掉组 + 全部子图层，撤销时整块还原。 */
+    if (layer.type === 'group') {
+      var prev = doc.layers.slice();
+      var prevActive = doc.activeId;
+      var next = prev.filter(function (l) { return l !== layer && l.group !== layer.id; });
+      doc.layers = next;
+      doc.activeId = next.length ? next[Math.min(i, next.length - 1)].id : null;
+      var nextActive = doc.activeId;
+      doc.version++;
+      pushEntry(doc, {
+        label: '删除图层组',
+        touched: prev.filter(function (l) { return l === layer || l.group === layer.id; }),
+        undo: function () { doc.layers = prev.slice(); doc.activeId = prevActive; doc.version++; },
+        redo: function () { doc.layers = next.slice(); doc.activeId = nextActive; doc.version++; }
+      });
+      return true;
+    }
     var prevActive = doc.activeId;
     doc.layers.splice(i, 1);
     doc.activeId = doc.layers.length ? doc.layers[Math.min(i, doc.layers.length - 1)].id : null;
@@ -1991,14 +2035,23 @@ const PS = (function () {
     var scratch = view.scratch || null;
     for (var i = 0; i < doc.layers.length; i++) {
       var layer = doc.layers[i];
+      if (layer.type === 'group') continue;
       if (!layer.visible || layer.opacity <= 0) continue;
+      if (!groupVisible(doc, layer)) continue;
+      var gop = groupOpacity(doc, layer);
+      if (gop <= 0) continue;
+      var baseOp = layer.opacity;
+      layer.opacity = baseOp * gop;
       if (layer.mask && layer.mask.enabled && layer.mask.tiles.size) {
         drawMaskedLayer(ctx, doc, layer, view, stats, scratch);
-        continue;
+      } else if (layer.type === 'pixel') {
+        drawPixelLayer(ctx, doc, layer, view, stats);
+      } else if (layer.type === 'shape') {
+        drawShapeLayer(ctx, doc, layer, view, stats);
+      } else {
+        drawAdjustLayer(ctx, doc, layer, view, scratch);
       }
-      if (layer.type === 'pixel') drawPixelLayer(ctx, doc, layer, view, stats);
-      else if (layer.type === 'shape') drawShapeLayer(ctx, doc, layer, view, stats);
-      else drawAdjustLayer(ctx, doc, layer, view, scratch);
+      layer.opacity = baseOp;
     }
     ctx.restore();
     return stats;
@@ -2081,6 +2134,7 @@ const PS = (function () {
   function sampleAt(layers, x, y) {
     var r = 0, g = 0, b = 0, a = 0;
     layers.forEach(function (layer) {
+      if (layer.type === 'group') return;
       if (!layer.visible || layer.opacity <= 0 || layer.type !== 'pixel') return;
       var lx = x - layer.x;
       var ly = y - layer.y;
@@ -2132,7 +2186,9 @@ const PS = (function () {
   function topLayerAt(doc, x, y) {
     for (var i = doc.layers.length - 1; i >= 0; i--) {
       var l = doc.layers[i];
+      if (l.type === 'group') continue;
       if (!l.visible || l.opacity <= 0) continue;
+      if (!groupVisible(doc, l)) continue;
       if (l.type === 'shape') {
         var shapes = l.shapes || [];
         for (var s = 0; s < shapes.length; s++) {
@@ -2337,12 +2393,17 @@ const PS = (function () {
       layers: [],
       selection: null
     };
+    /* 工程里不存图层 id（打开时会重新生成），组关系用「组在 layers 里的下标」表示 */
+    var groupIndex = {};
+    doc.layers.forEach(function (l, idx) { if (l.type === 'group') groupIndex[l.id] = idx; });
     for (var i = 0; i < doc.layers.length; i++) {
       var l = doc.layers[i];
       var item = {
         name: l.name, type: l.type, x: l.x, y: l.y,
         width: l.width, height: l.height,
         opacity: l.opacity, blend: l.blend, visible: l.visible,
+        group: l.group && groupIndex[l.group] != null ? groupIndex[l.group] : null,
+        collapsed: l.type === 'group' ? !!l.collapsed : undefined,
         locks: {
           transparent: !!l.locks.transparent, image: !!l.locks.image,
           position: !!l.locks.position, all: !!l.locks.all
@@ -2390,6 +2451,8 @@ const PS = (function () {
     if (!w || !h) throw new Error('工程尺寸无效');
     var doc = createDoc(w, h, String(meta.name || '未命名工程'), { fill: false });
     var list = Array.isArray(payload.layers) ? payload.layers : [];
+    /* 组关系记的是 layers 下标，建完之后再回填，和加载顺序无关 */
+    var created = [];
     for (var i = 0; i < list.length; i++) {
       var it = list[i] || {};
       var lw = Math.max(1, Math.round(Number(it.width) || w));
@@ -2406,10 +2469,16 @@ const PS = (function () {
         locks: it.locks || null,
         locked: it.locked === true
       };
+      if (it.type === 'group') {
+        common.type = 'group';
+        common.collapsed = it.collapsed === true;
+        created.push(createLayer(doc, common));
+        continue;
+      }
       if (it.type === 'shape') {
         common.type = 'shape';
         common.shapes = Array.isArray(it.shapes) ? it.shapes : [];
-        createLayer(doc, common);
+        created.push(createLayer(doc, common));
         continue;
       }
       if (it.type === 'adjust') {
@@ -2419,10 +2488,11 @@ const PS = (function () {
           kind: ADJUST_DEFS[adj.kind] ? adj.kind : 'brightness',
           params: { value: Number(adj.params && adj.params.value) || 0 }
         };
-        createLayer(doc, common);
+        created.push(createLayer(doc, common));
         continue;
       }
       var layer = createLayer(doc, common);
+      created.push(layer);
       if (!it.png && !it.empty) continue;
       var loaded = null;
       try {
@@ -2500,6 +2570,13 @@ const PS = (function () {
           layer.mask = mask;
         }
       }
+    }
+    for (var gi = 0; gi < list.length; gi++) {
+      var gItem = list[gi] || {};
+      if (gItem.group == null) continue;
+      var gLayer = created[Math.round(Number(gItem.group))];
+      var owner = created[gi];
+      if (gLayer && gLayer.type === 'group' && owner && owner.type !== 'group') owner.group = gLayer.id;
     }
     if (!doc.layers.length) createLayer(doc, { name: '图层 1' });
     var ai = Math.max(0, Math.min(doc.layers.length - 1, Math.round(Number(meta.activeIndex) || 0)));

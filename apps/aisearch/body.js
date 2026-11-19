@@ -39,6 +39,10 @@ window.AIS_BODY = `
     </form>
 
     <div class="ais-headtools">
+      <button type="button" class="ais-assist is-on" data-act="assist" aria-pressed="true"
+              title="AI 辅助脚本：开启（点击关闭）">
+        <i></i><span>辅助脚本</span>
+      </button>
       <span class="ais-net" data-act="net" title="联网检索与语言模型状态">
         <i class="ais-dot"></i><span class="ais-net-txt">联网</span>
       </span>
