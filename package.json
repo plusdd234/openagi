@@ -33,7 +33,14 @@
     "test:browser": "node tools/probe-browser.js",
     "test:browser-wv": "node tools/probe-browser-webview.js",
     "test:browser-guest": "node tools/probe-browser-guest.js",
-    "test:browser-real": "node tools/probe-browser-real.js"
+    "test:browser-real": "node tools/probe-browser-real.js",
+    "test:mdcomp": "node tools/probe-modeldesk-component.js",
+    "test:mdlive": "node tools/probe-md-live.js",
+    "test:mdface": "node tools/probe-md-face.js",
+    "test:mdrestore": "node tools/probe-md-restore.js",
+    "test:mdparity": "node tools/probe-md-parity.js",
+    "test:mdsculpt": "node tools/probe-md-sculpt.js",
+    "test:mdshape": "node tools/probe-md-shape.js"
   },
   "dependencies": {
     "playwright-core": "^1.64.1"

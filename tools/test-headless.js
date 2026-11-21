@@ -49,6 +49,7 @@ const ALIASES = {
   chat: 'tools/desk-chat.js',
   code: 'tools/test-code-run.js',
   desk: 'tools/desk-tabs.js',
+  featlab: 'tools/probe-featlab.js',
   gallery: 'tools/probe-library-rename.js',
   library: 'tools/probe-library-rename.js',
   imglab: 'tools/probe-imglab.js',

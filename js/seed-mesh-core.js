@@ -58,6 +58,12 @@
        * key = 两端顶点 ID 的规范组合（min + '_' + max），用对象当集合，值恒为 1。
        * 它只影响 UV 岛判定，不改拓扑；撤销 / 指纹 / 落盘都要带上它。 */
       uvSeams: Object.create(null),
+      /* 形态键（morph targets）：**只读资产**（deltas 只读，weight 可调）。
+       * 导入 / 组件过桥时带进来，编辑算子一律不碰 deltas。
+       * 每项 { id, name, weight, deltas: Float32Array(顶点数*3) }，deltas 是相对基形的位移。
+       * ⚠ 它**参与**序列化 / 指纹 / 撤销（weight 部分）：形态键是几何数据的一部分，
+       *   不存就等于存盘后丢光；不参与指纹就等于改表情撤销不回去。 */
+      morphs: [],
       /* 缓存：不参与序列化 */
       version: 0,
       _geometry: null,
@@ -400,7 +406,16 @@
 
     var mesh = create();
     var uvAttr = geo.getAttribute ? (geo.getAttribute('uv') || (geo.attributes && geo.attributes.uv)) : null;
-    var weld = opts.weld !== false;
+    /* 形态键：three 把每个形态键放在 geometry.morphAttributes.position[i]，
+     * 长度与 position 相同；morphTargetsRelative 为 false 时存的是**绝对位置**，
+     * 要先减基形才是位移。
+     *
+     * ⚠ 有形态键时必须关掉焊接：接缝处两个顶点位置相同、delta 却常常不同（嘴角、
+     * 眼睑最典型），按位置一焊只能留一个 —— 那会自己撕出一条缝，正好污染
+     * 「形态键撕裂巡检」的结论。宁可多几个重合顶点，也不能让工具造出假裂缝。 */
+    var morphSrc = (geo.morphAttributes && geo.morphAttributes.position) || null;
+    if (morphSrc && !morphSrc.length) morphSrc = null;
+    var weld = opts.weld !== false && !morphSrc;
     var map = Object.create(null);
     var remap = new Array(pos.count);
     var nextVid = 0;
@@ -421,7 +436,46 @@
     }
     mesh.nextVertexId = nextVid;
 
+    /* 把每个形态键的 delta 搬到本网格的顶点序上（焊接关掉时是恒等映射，
+     * 但 remap 那张表仍然要过一遍：将来若放开「delta 感知焊接」，这里不用改）。 */
+    if (morphSrc) {
+      var relative = geo.morphTargetsRelative !== false;
+      var names = (opts.morphNames && opts.morphNames.length) ? opts.morphNames : null;
+      mesh.morphs = [];
+      for (var mi = 0; mi < morphSrc.length; mi++) {
+        var attr = morphSrc[mi];
+        if (!attr || attr.count !== pos.count) continue;   /* 长度对不上 = 数据坏了，宁可不要 */
+        var deltas = new Float32Array(mesh.positions.length);
+        for (var mv = 0; mv < remap.length; mv++) {
+          var d = remap[mv] * 3;
+          var dx = attr.getX(mv), dy = attr.getY(mv), dz = attr.getZ(mv);
+          if (!relative) { dx -= pos.getX(mv); dy -= pos.getY(mv); dz -= pos.getZ(mv); }
+          deltas[d] = dx; deltas[d + 1] = dy; deltas[d + 2] = dz;
+        }
+        mesh.morphs.push({
+          id: mesh.morphs.length,
+          name: (names && names[mi]) || ('morph ' + (mi + 1)),
+          weight: 0,
+          deltas: deltas
+        });
+      }
+      /* 权重初值只能从调用方拿：GLTFLoader 把默认权重放在 Mesh 对象上，
+       * geometry 里没有这个信息（fromBufferGeometry 只收到几何）。 */
+      var initW = opts.morphWeights;
+      if (initW && initW.length === mesh.morphs.length) {
+        for (var wi = 0; wi < initW.length; wi++) {
+          mesh.morphs[wi].weight = Number(initW[wi]) || 0;
+        }
+      }
+    }
+
     var slot = opts.slot != null ? Math.max(0, Math.round(opts.slot)) : 0;
+    /* 多材质几何（three 的 geometry.groups）：按 groups 给每个三角定槽。
+     * 不这么做的话整块都会落到 opts.slot（通常是 0），组信息当场丢失 ——
+     * 头模的眼睛是独立一层（FaceEyes，透明叠在皮肤上），丢组就等于丢眼睛：
+     * 转眼球骨骼时皮肤上的眼睛纹丝不动，看起来是「眼球完全没动」。
+     * 只有一个 group 时仍按 opts.slot，保持老行为。 */
+    var gs = (geo.groups && geo.groups.length > 1) ? geo.groups : null;
     for (var t = 0; t < triTotal; t++) {
       var i0 = index ? index.getX(t * 3) : t * 3;
       var i1 = index ? index.getX(t * 3 + 1) : t * 3 + 1;
@@ -432,10 +486,18 @@
       /* 角序决定 UV 归属：翻转过的三角形，UV 也要跟着交换后两个角 */
       var corners = opts.flip ? [i0, i1, i2] : [i0, i1, i2];
       if (opts.flip) { var tmp = corners[1]; corners[1] = corners[2]; corners[2] = tmp; }
+      var tSlot = slot;
+      if (gs) {
+        var at = t * 3;
+        for (var gi = 0; gi < gs.length; gi++) {
+          var g = gs[gi];
+          if (at >= g.start && at < g.start + g.count) { tSlot = g.materialIndex | 0; break; }
+        }
+      }
       mesh.faceIndices.push(tri[0], tri[1], tri[2]);
       mesh.faceOffsets.push(mesh.faceIndices.length);
       mesh.faceIds.push(mesh.nextFaceId);
-      mesh.faceSlots.push(slot);
+      mesh.faceSlots.push(tSlot);
       mesh.nextFaceId += 1;
       if (uvAttr) {
         for (var ci = 0; ci < 3; ci++) {
@@ -839,6 +901,43 @@
     };
   }
 
+  /* ---------------- 紧包围盒 ----------------
+   * ⚠ 不能直接用 geo.computeBoundingBox() / computeBoundingSphere()：
+   *   three 在 morphTargetsRelative 下会把**所有形态键的位移累加**着往外扩
+   *   （它把「全部权重同时 = 1」当成最坏情况）。实测流明头模 112 个形态键各 5–6mm，
+   *   累加起来包围盒从 0.16×0.20×0.17 胀到 0.9×1.0×1.5 —— 选框画到五倍大、
+   *   自动取景缩成一个小点、避让摆放算错位置（头埋进立方体里）。
+   * 这里按**静止几何**算紧盒，再用「最大单键位移」把球半径放大一点点兜住形变：
+   * 严格正确的最坏情况是全部叠加，但没有哪个表情会同时把 112 个键拉满，
+   * 收紧的代价只是极少数情况下提前剔除，比整体错位划算得多。 */
+  function tightBounds(geo, THREE) {
+    var pos = geo.attributes && geo.attributes.position;
+    if (!THREE || !pos || !pos.count) return;
+    var box = new THREE.Box3();
+    var v = new THREE.Vector3();
+    for (var i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      box.expandByPoint(v);
+    }
+    geo.boundingBox = box;
+    var center = box.getCenter(new THREE.Vector3());
+    var radius = box.getSize(new THREE.Vector3()).length() / 2;
+    var list = geo.morphAttributes && geo.morphAttributes.position;
+    if (list && geo.morphTargetsRelative !== false) {
+      var extra = 0;
+      for (var m = 0; m < list.length; m++) {
+        var arr = list[m].array;
+        for (var k = 0; k < arr.length; k += 3) {
+          var ax = Math.abs(arr[k]), ay = Math.abs(arr[k + 1]), az = Math.abs(arr[k + 2]);
+          var mx = ax > ay ? (ax > az ? ax : az) : (ay > az ? ay : az);
+          if (mx > extra) extra = mx;
+        }
+      }
+      radius += extra;
+    }
+    geo.boundingSphere = new THREE.Sphere(center, radius);
+  }
+
   /* ---------------- 显示几何 ----------------
    * 面（可能是多边形）按扇形三角化；材质槽按连续段切成 groups，
    * 上层只要按 slotNames 顺序准备材质数组即可。
@@ -1026,11 +1125,31 @@
       }
     }
     groups.forEach(function (g) { geo.addGroup(g.start, g.count, g.slot); });
+    /* 形态键：渲染顶点是按 (顶点,UV) 拆过的，delta 必须跟着 origOut 重排一遍。
+     * 不重排的话眼睛 / 嘴这类"顶点顺序被打乱"的区域位移会整体错位。 */
+    if (mesh.morphs && mesh.morphs.length) {
+      var nRender = posOut.length / 3;
+      geo.morphTargetsRelative = true;
+      geo.morphAttributes.position = mesh.morphs.map(function (m) {
+        var out = new Float32Array(nRender * 3);
+        if (origOut) {
+          for (var r = 0; r < nRender; r++) {
+            var o = origOut[r] * 3;
+            out[r * 3] = m.deltas[o]; out[r * 3 + 1] = m.deltas[o + 1]; out[r * 3 + 2] = m.deltas[o + 2];
+          }
+        } else {
+          out.set(m.deltas.subarray(0, out.length));
+        }
+        return new THREE.Float32BufferAttribute(out, 3);
+      });
+      /* 名字与权重跟着几何走：建 Object3D 的地方要用它填 morphTargetInfluences */
+      geo.userData.mdMorphNames = mesh.morphs.map(function (m) { return m.name; });
+      geo.userData.mdMorphWeights = mesh.morphs.map(function (m) { return Number(m.weight) || 0; });
+    }
     /* 渲染顶点 → 原顶点 的映射（UV 缝会把同一个顶点拆成多个渲染顶点）。
      * 拖动顶点时只能按这张表回写缓冲区；按下标直拷会让整块网格炸开。 */
     if (origOut) geo.userData.mdOrig = origOut;
-    geo.computeBoundingSphere();
-    geo.computeBoundingBox();
+    tightBounds(geo, THREE);
 
     if (opts.cache !== false) {
       mesh._geometry = geo;
@@ -1058,6 +1177,12 @@
       smoothAngle: Number(mesh.smoothAngle) > 0 ? Number(mesh.smoothAngle) : 180,
       /* 缝是字符串 key 的集合，直接存数组；老文件没有这个字段 → 空缝 */
       uvSeams: Object.keys(mesh.uvSeams || {}),
+      /* 形态键要跟着网格走：它和 position 一样是「几何数据」，不是运行期状态。
+       * 早先不存这一项的直接后果 —— 存盘重开 / 撤销一次之后，头模那 112 个键
+       * 全部消失，只剩一张静态的脸皮（组件还声称自己有形态键，一点就报错）。 */
+      morphs: (mesh.morphs || []).map(function (m) {
+        return { name: m.name, weight: Number(m.weight) || 0, deltas: packF32(m.deltas) };
+      }),
       stats: stats(mesh)
     };
   }
@@ -1078,6 +1203,24 @@
       for (var sm = 0; sm < obj.uvSeams.length; sm++) mesh.uvSeams[String(obj.uvSeams[sm])] = 1;
     }
     mesh.smoothAngle = Number(obj.smoothAngle) > 0 ? Number(obj.smoothAngle) : 180;
+    /* 形态键（可选字段）：老文件没有就是「没有形态键」，不是损坏。
+     * deltas 长度必须等于 positions.length，对不上就整条丢掉 ——
+     * 半截位移会让渲染出一张撕裂的脸，比没有形态键难查得多。 */
+    if (Array.isArray(obj.morphs) && obj.morphs.length) {
+      mesh.morphs = [];
+      for (var mo = 0; mo < obj.morphs.length; mo++) {
+        var src0 = obj.morphs[mo];
+        if (!src0 || !src0.deltas) continue;
+        var deltas0 = unpackTyped(src0.deltas, Float32Array, 'morphs[' + mo + '].deltas');
+        if (deltas0.length !== mesh.positions.length) continue;
+        mesh.morphs.push({
+          id: mesh.morphs.length,
+          name: String(src0.name || ('morph ' + (mo + 1))),
+          weight: Number(src0.weight) || 0,
+          deltas: deltas0
+        });
+      }
+    }
 
     var errs = validate(mesh);
     if (errs.length) throw new Error('mesh 数据损坏：' + errs.join('；'));
@@ -1133,6 +1276,10 @@
       mesh.faceIndices.length * 4 + mesh.faceOffsets.length * 4 +
       mesh.faceIds.length * 4 + mesh.faceSlots.length * 4 +
       (mesh.uvs ? mesh.uvs.length * 4 : 0);
+    /* 形态键的 deltas 也要算：112 个键 ≈ 4.8MB，不算进来会把历史预算估轻一个量级 */
+    if (mesh.morphs) {
+      for (var mi = 0; mi < mesh.morphs.length; mi++) raw += (mesh.morphs[mi].deltas || []).length * 4;
+    }
     return Math.round(raw * 1.37);   // base64 约 4/3，加 JSON 字段名损耗
   }
 
@@ -1187,6 +1334,18 @@
     /* 缝同样进指纹：只加缝（UV 一个字节没动）也必须是一次可撤销的编辑 */
     var seamKeys = Object.keys(mesh.uvSeams || {});
     if (seamKeys.length) a = hashStr(seamKeys.sort().join('|'), a);
+    /* 形态键的「名字 + 当前权重」也进指纹：改表情不改一个顶点，
+     * 但它是用户做的一次编辑，撤销栈必须看得见 —— 而且历史按指纹认网格，
+     * 不进指纹的话 before / after 会落到同一个副本上，撤销撤不回去、重做还会丢表情。
+     * 只取权重（保留 3 位小数），不扫 4.8MB 的 deltas，代价可以忽略。 */
+    if (mesh.morphs && mesh.morphs.length) {
+      var mw = [];
+      for (var mi = 0; mi < mesh.morphs.length; mi++) {
+        var mo = mesh.morphs[mi];
+        mw.push(mo.name || '', Math.round((Number(mo.weight) || 0) * 1000) / 1000);
+      }
+      a = hashStr(mw.join('|'), a);
+    }
     return (a >>> 0).toString(36) + '-' + (b >>> 0).toString(36) +
       '-' + mesh.positions.length + '-' + mesh.faceIds.length;
   }
@@ -1211,6 +1370,14 @@
     m.nextFaceId = mesh.nextFaceId || 0;
     m.smoothAngle = Number(mesh.smoothAngle) > 0 ? Number(mesh.smoothAngle) : 180;
     m.version = mesh.version || 0;
+    /* 形态键：**deltas 共享引用，不拷贝**。它是只读的资产数据（112 × 10818 × 4B ≈ 4.8MB），
+     * 历史里每一步都复制一份会瞬间吃掉几十 MB；而 weight 是可变的，必须各自一份。
+     * ⚠ 由此的约束：任何要改 delta 的代码必须先 new 一个数组，不能原地写。 */
+    if (mesh.morphs && mesh.morphs.length) {
+      m.morphs = mesh.morphs.map(function (x) {
+        return { id: x.id, name: x.name, weight: Number(x.weight) || 0, deltas: x.deltas };
+      });
+    }
     return m;
   }
 
@@ -1219,6 +1386,7 @@
     EDGE_STRIDE: EDGE_STRIDE,
     create: create,
     fromBufferGeometry: fromBufferGeometry,
+    tightBounds: tightBounds,
     append: append,
     merge: merge,
     translate: translate,

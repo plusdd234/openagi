@@ -25,7 +25,7 @@
     },
     "tripo": {
       "name": "Tripo 网页桥",
-      "description": "有头浏览器 + 人工登录的 Tripo 生图 / 图片转 3D 网页自动化桥。",
+      "description": "Tripo 生图 / 图片转 3D 网页自动化桥：桌面版优先驱动工坊内嵌 <webview>（CDP），外部有头浏览器 + 人工登录作为兜底。",
       "entry": "tripo-web.js",
       "port": 8790,
       "args": ["--serve"],

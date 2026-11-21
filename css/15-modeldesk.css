@@ -307,6 +307,18 @@
   background: linear-gradient(180deg, #6aa9e8 0%, #3d8ee0 100%);
   box-shadow: inset 0 0 0 1px rgba(0,0,0,.3);
 }
+/* 组件图标（大纲里带 comp 身份的节点）：外面一层壳 + 里面一层芯。
+ * 普通网格是实心方块，组件是「套着的两层」—— 扫视时先看形状差异，
+ * 再看第三列的「组件」二字；两处都写是有意的，图标管扫视、文字管确认。 */
+.md-cicon {
+  position: relative; width: 9px; height: 9px; border-radius: 2px;
+  background: linear-gradient(180deg, #b98be8 0%, #8e63cf 100%);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.3);
+}
+.md-cicon::after {
+  content: ''; position: absolute; left: 2.5px; top: 2.5px;
+  width: 4px; height: 4px; border-radius: 1px; background: #6f47a8;
+}
 .md-part-id { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md-part-shape { flex: 0 0 auto; font-size: 9px; color: #6a7488; }
 .md-part-row.sel .md-part-shape, .md-part-row.sel em { color: #2b7cd3; }
@@ -992,6 +1004,216 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-overlay.prim .md-ov-body { flex: 0 0 auto; }
 .md-prim-go { height: 25px; font-size: 10.5px; }
 
+/* ---------- 10b. 添加组件（组件源驱动的零件生成器） ----------
+ * 面板不认识任何具体零件：卡片、预设、字段全由 window.MDComponents 自报，
+ * 所以这里的样式只按「一栏列表 + 一栏参数」的通用骨架写，加零件不用改 CSS。 */
+.md-otab-add { margin-left: auto; color: #3f6f9e; }
+.md-otab-add:hover { background: #eaf2fb; border-color: #b7d2ee; color: #1f4f7a; }
+
+.md-comp { display: flex; width: 100%; min-height: 0; }
+.md-comp-side {
+  flex: 0 0 134px; padding: 10px; display: grid; gap: 6px; align-content: start;
+  border-right: 1px solid #e3e6ea; background: #f9fafb;
+}
+.md-comp-card {
+  display: grid; gap: 3px; padding: 7px 8px;
+  font: inherit; text-align: left; cursor: pointer;
+  border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 3px;
+  background: #fbfbfc; color: #2a2f36;
+}
+.md-comp-card:hover { border-color: #7db3e6; }
+.md-comp-card.on {
+  border-color: #e88a00; background: #fff8ec;
+  box-shadow: inset 0 0 0 1px rgba(232, 138, 0, .16);
+}
+.md-comp-card b { font-size: 11px; font-weight: 600; }
+.md-comp-card em { font-style: normal; font-size: 9px; line-height: 1.45; color: #6a7488; }
+.md-comp-soon {
+  padding: 7px 8px; text-align: center;
+  font-size: 9px; line-height: 1.5; color: #98a0ab;
+  border: 1px dashed #e3e6ea; border-radius: 3px;
+}
+
+.md-comp-main {
+  flex: 1 1 auto; min-width: 0; display: grid; gap: 10px;
+  padding: 12px 14px; align-content: start;
+}
+.md-comp-preview {
+  display: flex; justify-content: center; align-items: center; padding: 2px;
+  border: 1px solid #e3e6ea; border-radius: 3px;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f6f8 100%);
+}
+/* 正视填实、侧视描边：一眼能分清哪个是哪个，不用再加图例 */
+.md-comp-front { fill: #dfe8f2; stroke: #7fa9d8; stroke-width: .9; }
+.md-comp-side { fill: rgba(159, 180, 201, .16); stroke: #9fb4c9; stroke-width: .9; }
+.md-comp-tag { font-size: 7px; fill: #9aa4b0; }
+.md-comp-presets { margin-top: -2px; }
+.md-comp-fields { display: grid; gap: 2px; }
+.md-comp-field { display: flex; align-items: center; gap: 7px; height: 20px; }
+.md-comp-field > span { flex: 0 0 28px; font-size: 9.5px; color: #5a6068; }
+/* 下拉行（形态键这种枚举字段）：标签要放得下「形态键」，控件自己撑满 */
+.md-comp-field.wide { height: 24px; }
+.md-comp-field.wide > span { flex: 0 0 40px; }
+.md-comp-field select {
+  flex: 1 1 auto; min-width: 0; height: 20px;
+  padding: 0 4px; cursor: pointer;
+  font: inherit; font-size: 10px; color: #2a2f36;
+  border: 1px solid #d8dce2; border-radius: 3px; background: #fff;
+}
+.md-comp-field select:hover { border-color: #7db3e6; }
+.md-comp-field select:focus { outline: none; border-color: #6aa6e0; box-shadow: 0 0 0 2px rgba(106, 166, 224, .16); }
+/* 异步组件源在读资产时的占位：一定要有字，空白和「载入失败」在屏幕上长一样 */
+.md-comp-wait {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; min-height: 132px;
+  font-size: 10px; color: #8892a0;
+}
+.md-comp-field > b {
+  flex: 0 0 40px; text-align: right;
+  font-size: 9.5px; font-weight: 500; color: #3b4147;
+  font-variant-numeric: tabular-nums;
+}
+.md-comp-main .md-note { margin: 0; }
+
+/* ---------- 10c. 特殊组件：组件自报的面板（流明头模） ----------
+ * 这一块不是建模 App 画的，是组件自己吐的 HTML（def.panel）——
+ * 样式也跟着组件走：接新组件时在这里加自己的一节，别去改上面的通用字段。
+ * 好处是「加一个特殊组件」不碰通用面板；代价是它得有自己的一段样式。 */
+.md-comp-special { display: grid; gap: 8px; }
+.md-md-sec { display: grid; gap: 4px; }
+.md-md-h {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 9.5px; font-weight: 600; color: #4a5462;
+}
+.md-md-h em { font-style: normal; font-weight: 400; font-size: 9px; color: #98a0ab; }
+.md-md-exprs { display: flex; flex-wrap: wrap; gap: 4px; }
+.md-md-expr {
+  height: 20px; padding: 0 8px; cursor: pointer;
+  font: inherit; font-size: 10px; color: #3b4147;
+  border: 1px solid #d8dce2; border-radius: 10px; background: #fff;
+}
+.md-md-expr:hover { border-color: #7db3e6; color: #1f4f7a; }
+.md-md-expr.on {
+  border-color: #e88a00; background: #fff8ec; color: #8a5200;
+  box-shadow: inset 0 0 0 1px rgba(232, 138, 0, .14);
+}
+.md-md-keys { display: flex; flex-wrap: wrap; gap: 4px; }
+/* 形态键搜索框：112 个键靠翻 optgroup 太慢，和 select 用同一套外观 */
+.md-comp-field input[type="search"] {
+  flex: 1 1 auto; min-width: 0; height: 20px;
+  padding: 0 6px;
+  font: inherit; font-size: 10px; color: #2a2f36;
+  border: 1px solid #d8dce2; border-radius: 3px; background: #fff;
+}
+.md-comp-field input[type="search"]:hover { border-color: #7db3e6; }
+.md-comp-field input[type="search"]:focus {
+  outline: none; border-color: #6aa6e0; box-shadow: 0 0 0 2px rgba(106, 166, 224, .16);
+}
+.md-comp-field input[type="search"]::-webkit-search-cancel-button { cursor: pointer; }
+/* 「全部清零」：靠右的小字按钮，和标题同一行 */
+.md-md-h .md-md-clr {
+  margin-left: auto;
+  height: 16px; padding: 0 6px; cursor: pointer;
+  font: inherit; font-size: 9px; color: #8a5200;
+  border: 1px solid #e8cfa8; border-radius: 8px; background: #fff8ec;
+}
+.md-md-h .md-md-clr:hover { border-color: #e88a00; color: #6a3d00; }
+/* 叠加键的 chip：名字 + 数值 + ×，三段一体。
+ * ⚠ 外层**不是 button**（这里改过）：里面要放 number 输入框，而点击委托会把
+ *   任何子节点 closest('button') 之后当成「点了这个 chip」—— 若外层是 button，
+ *   点数值框就等于点了删除。容器用 span，里面三段各管各的事件。 */
+.md-md-key {
+  display: inline-flex; align-items: center; height: 18px;
+  border: 1px solid #cfe0f0; border-radius: 3px;
+  background: #f2f7fc; font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+.md-md-key:hover { border-color: #a9cbe8; }
+.md-md-keyn {
+  height: 16px; padding: 0 5px; cursor: pointer;
+  font: inherit; font-size: 9px; color: #35597d;
+  border: 0; background: transparent; white-space: nowrap;
+}
+.md-md-keyn:hover { color: #1f4f7a; text-decoration: underline; }
+/* 单键微调：只改这一个键，不镜像对侧（理由见 onEvent 的 chipw 分支） */
+.md-md-keyv {
+  width: 34px; height: 16px; padding: 0 2px; margin: 0;
+  font: inherit; font-size: 9px; color: #35597d; text-align: right;
+  border: 0; border-left: 1px solid #dbe7f3; background: transparent;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+.md-md-keyv::-webkit-outer-spin-button,
+.md-md-keyv::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.md-md-keyv:hover { background: #e7f1fa; }
+.md-md-keyv:focus { outline: none; background: #fff; box-shadow: inset 0 0 0 1px #6aa6e0; }
+.md-md-keyx {
+  width: 15px; height: 16px; padding: 0; cursor: pointer;
+  font: inherit; font-size: 10px; line-height: 1; color: #7d94a8;
+  border: 0; border-left: 1px solid #dbe7f3; background: transparent;
+}
+.md-md-keyx:hover { color: #fff; background: #e08b8b; }
+/* 自存表情：与「出厂预设」同一套语义（点击 = 整批套用），所以用暖色区分 */
+.md-md-key.md-md-mine { border-color: #e8cfa8; background: #fff8ec; }
+.md-md-key.md-md-mine .md-md-keyn { color: #8a5200; }
+.md-md-key.md-md-mine .md-md-keyx { border-left-color: #f0dfc4; }
+.md-md-key.md-md-mine .md-md-keyx:hover { color: #fff; background: #e08b8b; }
+/* 存表情那一行：输入框 + 按钮 */
+.md-md-row { display: flex; align-items: center; gap: 4px; }
+.md-md-mine-name {
+  flex: 1 1 auto; min-width: 0; height: 20px; padding: 0 6px;
+  font: inherit; font-size: 10px; color: #2a2f36;
+  border: 1px solid #d8dce2; border-radius: 3px; background: #fff;
+}
+.md-md-mine-name:hover { border-color: #7db3e6; }
+.md-md-mine-name:focus {
+  outline: none; border-color: #6aa6e0; box-shadow: 0 0 0 2px rgba(106, 166, 224, .16);
+}
+.md-md-row .md-md-expr:disabled { opacity: .45; cursor: default; }
+.md-md-row .md-md-expr:disabled:hover { border-color: #d8dce2; color: #3b4147; }
+/* 主强度的精确输入（滑杆给手感，这里给准头） */
+.md-comp-field input[type="range"] { flex: 1 1 auto; min-width: 0; height: 18px; margin: 0; }
+.md-comp-field input[type="number"].md-md-num {
+  flex: 0 0 40px; height: 18px; padding: 0 3px; text-align: right;
+  font: inherit; font-size: 9.5px; color: #3b4147;
+  border: 1px solid #d8dce2; border-radius: 3px; background: #fff;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+.md-comp-field input[type="number"].md-md-num::-webkit-outer-spin-button,
+.md-comp-field input[type="number"].md-md-num::-webkit-inner-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.md-comp-field input[type="number"].md-md-num:hover { border-color: #7db3e6; }
+.md-comp-field input[type="number"].md-md-num:focus {
+  outline: none; border-color: #6aa6e0; box-shadow: 0 0 0 2px rgba(106, 166, 224, .16);
+}
+.md-md-none { font-size: 9px; color: #98a0ab; }
+/* 组件面板里的复选框行（自动眨眼这类「开关型」参数）：
+ * 滑杆放不了布尔值，按钮又表达不了「当前是开还是关」——只有复选框两件都能说。 */
+.md-md-chk {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; color: #3b4147; cursor: pointer; user-select: none;
+}
+.md-md-chk input { margin: 0; width: 12px; height: 12px; }
+/* 「对称已关」这种状态词要能一眼看出来，否则用户会以为自己把脸捏歪了 */
+.md-md-chk b { font-weight: 600; color: #8a5200; }
+
+/* 属性面板里的组件摘要：只读，改动入口统一是下面那个「调整组件属性」 */
+.md-md-name { font-size: 11px; font-weight: 600; color: #2a2f36; }
+.md-md-name em {
+  display: block; margin-top: 1px;
+  font-style: normal; font-weight: 400; font-size: 9px; color: #7a8390;
+}
+.md-md-sum { margin: 4px 0 2px; font-size: 10px; line-height: 1.55; color: #3b4147; }
+.md-md-sum i { font-style: normal; font-weight: 600; color: #8a5200; }
+.md-md-sum b { font-weight: 500; color: #35597d; }
+
+/* 组件面板是小表单：居中、限宽，别铺满视口 */
+.md-overlay.comp { justify-content: center; align-items: flex-start; padding-top: 26px; }
+.md-overlay.comp .md-ov { flex: 0 0 auto; width: 468px; max-width: 96%; }
+.md-overlay.comp .md-ov-body { flex: 0 0 auto; }
+
 /* ---------- 10. 左侧工具条（Maya 那一列的还原） ---------- */
 .md-strip { gap: 1px; padding: 4px 0; }
 .md-tool {
@@ -1396,12 +1618,13 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 }
 
 /* 滑杆：系统默认的蓝色圆点太扁，这里换成细轨 + 亮色圆钮 */
-.md-paint input[type=range], .md-mix-line input[type=range] {
+.md-paint input[type=range], .md-mix-line input[type=range], .md-comp-field input[type=range] {
   -webkit-appearance: none; appearance: none;
   flex: 1 1 auto; min-width: 0; height: 16px; margin: 0;
   background: transparent; cursor: pointer;
 }
 .md-paint input[type=range]::-webkit-slider-runnable-track,
+.md-comp-field input[type=range]::-webkit-slider-runnable-track,
 .md-mix-line input[type=range]::-webkit-slider-runnable-track {
   height: 4px; border-radius: 2px;
   background: #f3f5f7;
@@ -1409,6 +1632,7 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   box-shadow: inset 0 1px 2px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.04);
 }
 .md-paint input[type=range]::-webkit-slider-thumb,
+.md-comp-field input[type=range]::-webkit-slider-thumb,
 .md-mix-line input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
   width: 12px; height: 12px; margin-top: -5px; border-radius: 50%;
@@ -1418,6 +1642,7 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
   transition: box-shadow .12s, border-color .12s;
 }
 .md-paint input[type=range]:hover::-webkit-slider-thumb,
+.md-comp-field input[type=range]:hover::-webkit-slider-thumb,
 .md-mix-line input[type=range]:hover::-webkit-slider-thumb {
   border-color: #7db3e6;
   box-shadow: 0 0 0 3px rgba(91,155,213,.18), 0 1px 3px rgba(0,0,0,.45);
@@ -2334,15 +2559,29 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
   background: #2b7cd3;
   box-shadow: inset 2px 0 0 var(--md-on-hi);
 }
-/* 类型图标：三种（面 / 视图 / 节点）尺寸要一致，否则行首像没对齐 */
-.md-app .md-ficon, .md-app .md-vicon, .md-app .md-nicon {
+/* 类型图标：四种（面 / 视图 / 节点 / 组件）尺寸要一致，否则行首像没对齐 */
+.md-app .md-ficon, .md-app .md-vicon, .md-app .md-nicon, .md-app .md-cicon {
   width: 10px; height: 10px;
 }
-.md-app .md-nicon { width: 9px; height: 9px; }
+.md-app .md-nicon, .md-app .md-cicon { width: 9px; height: 9px; }
 .md-app .md-hint { color: #8a9098; font-size: 9px; line-height: 1.6; border-top-color: var(--md-line-soft); }
 
 /* ---------- 15.9 右侧面板 ---------- */
 .md-app .md-right { background: var(--md-panel); }
+/* 属性面板里的「控制器」容器：组件自己的那块参数区。
+ * 左边一条紫色竖条 = 「这一块归组件，不归对象变换」，和下面的变换 / 材质槽分开。
+ * 空的容器直接收掉 —— 没有控制器的组件（只有标量字段）不该留一个空框。 */
+.md-app .md-ctl {
+  margin: 6px 0 8px;
+  padding: 8px 9px 4px;
+  display: grid; gap: 8px;
+  border: 1px solid var(--md-line-soft);
+  border-left: 2px solid #8e63cf;
+  border-radius: 6px;
+  background: #f9f7fc;
+}
+.md-app .md-ctl:empty { display: none; }
+.md-app .md-ctl-miss { color: #8a6d3b; }
 /* 页签条：左边是当前栏目标题，右边是「对象」回显与属性开关 */
 .md-app .md-right-h { padding: 0 6px; gap: 8px; }
 .md-app .md-right-h .md-right-t { font-size: 11px; font-weight: 600; color: var(--md-txt); }
@@ -4054,3 +4293,86 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
 .md-app .md-paint-pane .md-paint-mix { margin-top: 0; padding-top: 0; border-top: 0; }
 
 
+
+/* ---------------- 捏脸（脸型变形器） ----------------
+ * 面板：分组标题 + 行（名字双击恢复 / range / number）。
+ * 视口：DOM 覆盖层（照抄流明 .l3-gizmos / .l3-gizmo / .l3-pull）。 */
+
+/* 面板行 */
+.md-shape-g {
+  margin: 8px 0 3px; font-size: 9px; color: #6b7f92; letter-spacing: 1px;
+}
+.md-shape-row {
+  display: flex; align-items: center; gap: 5px; height: 20px; margin-bottom: 2px;
+}
+.md-shape-name {
+  width: 52px; flex: none; font-size: 10px; color: #35597d; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.md-shape-name:hover { color: #1f6fd0; text-decoration: underline; }
+.md-shape-row input[type="range"] { flex: 1 1 auto; min-width: 0; margin: 0; }
+.md-shape-num {
+  width: 40px; flex: none; height: 18px; padding: 0 3px; font-size: 9px;
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+
+/* 视口覆盖层：层本身不接事件，手柄才接 */
+.md-ctrl3d {
+  position: absolute; inset: 0; z-index: 3; pointer-events: none;
+}
+.md-ctrl3d.is-off { display: none; }
+
+.md3-gizmo {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.md3-gizmo:active { cursor: grabbing; }
+
+.md3-dot {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid #2f6fd0;
+  background: rgba(255, 255, 255, .82);
+  box-shadow: 0 1px 6px rgba(31, 35, 40, .2);
+  transition: background .15s ease, transform .15s ease;
+  display: block;
+}
+.md3-gizmo:hover .md3-dot,
+.md3-gizmo.on .md3-dot {
+  background: #5b8fd9;
+  transform: scale(1.12);
+}
+.md3-gizmo.is-dragging .md3-dot {
+  background: #2f6fd0;
+  box-shadow: 0 0 0 6px rgba(91, 143, 217, .18);
+}
+.md3-tag {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .92);
+  border: 1px solid rgba(229, 232, 235, .95);
+  color: #4a5563;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(31, 35, 40, .08);
+}
+
+/* 拖拽引线：从静止锚点连到手柄 */
+.md3-pull {
+  position: absolute; display: block; height: 0;
+  border-top: 1.5px dashed rgba(47, 111, 208, .9);
+  transform-origin: 0 0;
+  pointer-events: none;
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, .95));
+}

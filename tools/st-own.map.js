@@ -30,7 +30,9 @@ module.exports = {
     viewport: {
       title: '视口与渲染（宿主 DOM / 渲染器 / 相机 / 主循环）',
       keys: ['host', 'stage', 'canvas', 'overlay', 'statusEl', 'hudEl', 'renderer', 'scene',
-        'camera', 'controls', 'running', 'raf', 'resizeObs', 'lights', 'edgeLines', 'vertPoints', 'navAlt']
+        'camera', 'controls', 'running', 'raf', 'resizeObs', 'lights', 'edgeLines', 'vertPoints', 'navAlt',
+        /* 按需渲染的两个判据 + 视口条上的灯光预设（真光源在 lights 里，这里只是选中的名字） */
+        'holdUntil', 'frameSig', 'lightingPreset']
     },
     doc: {
       title: '文档与当前对象（多对象 v2.1 的指针，不是真源）',
@@ -39,11 +41,17 @@ module.exports = {
     },
     selection: {
       title: '选择与拾取态（S1）',
-      keys: ['selMode', 'sel', 'selGroup', 'pickDown', 'noPick', 'isolate']
+      keys: ['selMode', 'sel', 'selGroup', 'pickDown', 'noPick', 'isolate',
+        /* 对象选择的 12 棱包围盒高亮 + 组件预选幽灵（挂 scene，跨 pivot） */
+        'objSelGroup', 'hoverPick', 'hoverAt']
     },
     transform: {
       title: '变换与操纵器（模式 / 吸附 / 组件变换中间量）',
       keys: ['mode', 'space', 'snap', 'gizmo', 'compPivot', 'compIdx', 'compDrag', 'edgeRecs']
+    },
+    faceCtrl: {
+      title: '捏脸控制器（流明同款：脸上操控点 / 增益 / 线圈高亮）',
+      keys: ['ctrlLayer', 'ctrlSig', 'ctrlHi']
     },
     quad: {
       title: '四视图（V7）：每格一个控制器，只有激活那个 enable',
@@ -55,7 +63,9 @@ module.exports = {
     },
     panels: {
       title: '面板 / 菜单 / 全局小状态（页签、浮层、忙锁、状态条计时器）',
-      keys: ['rightTab', 'tbKind', 'menu', 'toolPanel', 'texOpen', 'prefs', 'uiReady', 'busy', 'statusTimer']
+      keys: ['rightTab', 'tbKind', 'menu', 'toolPanel', 'texOpen', 'prefs', 'uiReady', 'busy', 'statusTimer',
+        /* 编辑器模式（建模/绘制）+ 视口条下拉 + 面板显隐 + 浮动菜单 */
+        'editor', 'paintTab', 'outlineTab', 'shelfTab', 'panels', 'pop', 'popItems', 'popAnchor', 'expFmt']
     },
     dock: {
       title: '内容浏览器（底部 dock）：token 用来作废旧请求',
@@ -63,7 +73,7 @@ module.exports = {
     },
     tools: {
       title: '工具会话（M6a）+ 各工具的私有拖拽态 + 软选择 + 热盒',
-      keys: ['tool', 'gest', 'soft', 'softDrag', 'hbOpen', 'hbHover', 'hbZones',
+      keys: ['tool', 'gest', 'soft', 'softDrag', 'softInfo', 'hbOpen', 'hbHover', 'hbZones',
         'hbPanel', 'pointer', 'uv'],
       /* ⚠ 这个域仍是增长热点：10 个键里 6 个是「某个功能的私有瞬时态」。
        * 每加一个工具就往这里长 3 个键。
@@ -84,19 +94,36 @@ module.exports = {
       keys: ['cube']
     },
     paint: { title: '绘画工作区（笔刷参数 + 工作副本 canvas）', keys: ['paint'] },
-    prim: { title: '基础体面板（M5）', keys: ['prim'] },
+    /* 两个「生成器面板」：prim 只放参数（形状/尺寸/段数），真正的几何在生成时才算；
+     * comp 同理 —— 只存用户上次的选择，参数本身归组件源（js/md-lumen-bridge.js）。
+     * compLive = 组件的**运行时状态**（眨眼相位…），按节点 id 存、不存盘、不进历史。
+     * 它和 comp.params 是两回事：混在一起存盘会把当前相位写进文档。 */
+    prim: { title: '基础体 / 组件面板（M5 + 生成器）', keys: ['prim', 'comp', 'compLive'] },
     preview: {
       title: '工具预览替身（M6a 把真网格藏起来、临时画一份预览）',
       keys: ['previewHost', 'previewMesh', 'previewHiddenObjs']
     },
     iso: { title: '隔离显示（只影响视口，不写 node.visible）', keys: ['isoComp', 'isoFaceCount'] },
-    misc: { title: '杂项（进了组件模式后回到物体模式用）', keys: ['lastCompMode', 'toolsBooted'] }
+    misc: {
+      title: '杂项（进了组件模式后回到物体模式用）+ P0 状态分区访问器',
+      /* st.view / st.edit / st.panel 是 partitionState() 建出来的三张分区表，
+       * 每个字段仍是定义块里那个键（getter/setter 指回原处），这里登记是为了让
+       * 「未登记的 st 键被读写」不误报。 */
+      keys: ['lastCompMode', 'toolsBooted', 'view', 'edit', 'panel']
+    }
   },
 
   /* 定义块里没有、运行期才挂上去的键。守卫会核对：
    * 这里的键**必须**真的不在 `var st = {` 里；不在这里的键**必须**在定义块里。 */
   dynamic: ['previewHost', 'previewMesh', 'previewHiddenObjs',
-    'toolsBooted', 'isoComp', 'isoFaceCount', 'lastCompMode'],
+    'toolsBooted', 'isoComp', 'isoFaceCount', 'lastCompMode',
+    /* 导出格式页签：第一次点开导出面板时才赋值（默认值由 EXPORT_FORMATS[st.expFmt] 兜着） */
+    'expFmt',
+    /* 下拉菜单的锚点按钮：openPop() 时才第一次赋值 */
+    'popAnchor',
+    /* P0 状态分区 st.view / st.edit / st.panel：定义块里没有，由 partitionState() 建；
+     * 三者是同一批字段的**访问器**（defineProperty 指回原键），不是新状态。 */
+    'view', 'edit', 'panel'],
 
   /* 建模 App 读 `st` 的文件。已抽出去的 7 个部件也是通过 ctx.st 读写同一份状态，
    * 所以它们必须一起扫 —— 只扫外壳会漏掉一半的写入方。 */

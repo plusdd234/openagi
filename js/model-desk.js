@@ -85,6 +85,24 @@
     dockAssets: null, dockErr: '', dockThumbs: Object.create(null), dockToken: 0,
     /* 基础体面板（M5）：形状 / 三向尺寸 / 段数；autoName 表示名字还是系统起的 */
     prim: { shape: 'box', size: [1, 1, 1], seg: 16 },
+    /* 组件面板：只存「用户在上次面板里的选择」，参数本身由组件源定义。
+     * target = '' 表示「新增一个」；有值表示正在调**已经加进场景的那个对象**。
+     * 加进文档的组件参数在 node.comp.params 里（纯数据），这里只是面板的草稿。 */
+    comp: { kind: 'lumen-head', preset: 'standard', params: null, paramsFor: '', target: '', loadSeq: 0,
+      /* host = 这份「面板草稿」正被谁在编：''（没人在编）/ 'overlay'（添加/调整对话框）
+       * / 'props'（属性面板里的控制器）。同一时刻只能有一个宿主 ——
+       * 两处同时编同一个节点，后写的一方会把前一方的手工值覆盖掉。 */
+      host: '',
+      /* 控制器的一次编辑事务（拖动中只改内存，松手才记一条历史）。见 compTxnBegin */
+      txn: null },
+    /* 组件的「运行时状态」：**不存盘、不进历史、不进撤销**。
+     * 与 node.comp.params（持久参数）严格分离。眨眼 / 呼吸 / 头发飘这类东西
+     * 一旦写进文档，存盘会把当前相位带进去 —— 重开文件就停在「半闭眼」，
+     * 而且每帧一次改动会把撤销栈冲成几十条。键 = 节点 id，值由组件自报。 */
+    compLive: Object.create(null),
+    /* 视口里的 3D 捏脸控制器（js/md-ctrl-layer.js）。ctrlSig = 当前摆的是「谁的一套杆」，
+     * 变了才重建几何；值的变化不走它（值由 syncCtrlValues 直写旋钮）。 */
+    ctrlLayer: null, ctrlSig: '', ctrlHi: null,
     autoName: true,
     /* 选择（M3/S1）：模式 + 三组稳定 ID + 高亮组 */
     selMode: 'object',
@@ -602,7 +620,8 @@
       '    </div>',
       '    <aside class="md-outline">',
       '      <div class="md-panel-h"><span>大纲视图</span><em id="mdOutlineCount">0 个对象</em></div>',
-      '      <div class="md-otabs"><button type="button" class="md-otab on" data-md-otab="all">显示</button><button type="button" class="md-otab" data-md-otab="hidden">隐藏</button><button type="button" class="md-otab" data-md-otab="help">帮助</button></div>',
+      '      <div class="md-otabs"><button type="button" class="md-otab on" data-md-otab="all">显示</button><button type="button" class="md-otab" data-md-otab="hidden">隐藏</button><button type="button" class="md-otab" data-md-otab="help">帮助</button>' +
+      '        <button type="button" class="md-otab md-otab-add" id="mdAddCompBtn" data-md-act="comp-open" title="添加组件：把现成零件（二次元头模等）并进当前场景">＋ 组件</button></div>',
       '      <div class="md-osearch"><input id="mdOutlineSearch" type="search" placeholder="按名称搜索节点" autocomplete="off" spellcheck="false"></div>',
       '      <div class="md-tree" id="mdOutlineList"></div>',
       '      <div class="md-hint">F8–F11 切对象 / 顶点 / 边 / 面，Shift 加选、Ctrl 减选；框选随 S3、挤出等算子随 M6。</div>',
@@ -1036,10 +1055,22 @@
       } catch (e) {}
       var isAct = n.id === st.doc.activeNodeId;
       var inMulti = st.nodeIds && st.nodeIds.indexOf(n.id) >= 0;
-      return '<button type="button" class="md-part-row' + (isAct ? ' sel' : '') + (inMulti && !isAct ? ' multi' : '') + (vis ? '' : ' off') + '" data-md-node="' + esc(n.id) + '">' +
-        '<i class="md-nicon"></i>' +
+      /* 带组件身份的节点要和普通网格分开：图标换组件图标、第三列写「组件」。
+       * 第三列不写零件名 —— 名称列已经是 def.name 了（添加时自动命名），再写一遍只是重复。
+       * 组件源被删 / 改名时回落成 id 原文，**不能画成空白**：空白和「本来没有组件」
+       * 长得一样，用户只会以为这个对象坏了。 */
+      var cid = (n.comp && n.comp.id) ? String(n.comp.id) : '';
+      var cdef = cid ? componentDefById(cid) : null;
+      var kindTxt = vis ? (cid ? '组件' : '网格') : '隐藏';
+      var tip = cid ? '组件：' + (cdef ? cdef.name : cid + '（组件源未加载）') : '';
+      return '<button type="button" class="md-part-row' + (cid ? ' comp' : '') +
+        (isAct ? ' sel' : '') + (inMulti && !isAct ? ' multi' : '') + (vis ? '' : ' off') +
+        '" data-md-node="' + esc(n.id) + '"' +
+        (cid ? ' data-md-comp-row="' + esc(cid) + '"' : '') +
+        (tip ? ' title="' + esc(tip) + '"' : '') + '>' +
+        '<i class="' + (cid ? 'md-cicon' : 'md-nicon') + '"></i>' +
         '<span class="md-part-id">' + esc(n.name) + '</span>' +
-        '<span class="md-part-shape">' + esc(vis ? '网格' : '隐藏') + '</span>' +
+        '<span class="md-part-shape">' + esc(kindTxt) + '</span>' +
         '<em>' + faces + ' 面</em>' +
         '</button>';
     }).join('');
@@ -1101,6 +1132,10 @@
       target = next[next.length - 1];
     }
     if (!target && next.length) target = next[next.length - 1];
+
+    /* 换激活对象之前，先把控制器里没提交的改动落掉：
+     * activeChanged 会重建整个视口，缓存网格被丢弃，之后再 setMesh 写的已经是新对象。 */
+    compTxnCommit();
 
     var activeChanged = !!target && st.doc.activeNodeId !== target;
     if (activeChanged && !SeedModel.Scene.setActiveNode(st.doc, target)) return false;
@@ -1489,6 +1524,7 @@
       '</div>',
       '</div>',
       modsHtml(),
+      componentSectionHtml(),
       '<div class="md-sec">',
       '<div class="md-h2">变换（手柄拖动）</div>',
       '<div class="md-sec-b md-ch-list">',
@@ -1518,8 +1554,44 @@
     ].join('');
   }
 
-  function updateHud() {
-    if (!st.hudEl || !st.doc) return;
+  /* 属性面板里的「组件」区：只有带 comp 身份的节点才有。
+   * 这是「流明头模不是普通网格」在 UI 上的落点 —— 它一直知道自己是谁、有哪套参数，
+   * 而且能从这里直接调（控制器改的就是这个对象，不新增、不重建）。
+   *
+   * 有 panel 的组件把 panel 直接嵌进来（= 控制器），不再重复画 props 摘要 ——
+   * 摘要说的是「现在什么表情」，panel 里的 chips 已经在说同一件事，两处并排只会打架。 */
+  function componentSectionHtml() {
+    var node = st.node;
+    if (!node || !node.comp || !node.comp.id) return '';
+    var def = componentDefById(node.comp.id);
+    var info = (def && typeof def.info === 'function') ? def.info() : null;
+    var hasPanel = !!(def && typeof def.panel === 'function');
+    var detail = '';
+    if (!def) {
+      detail = '<div class="md-note">组件源「' + esc(node.comp.id) + '」未加载，参数只读。</div>';
+    } else if (!hasPanel && typeof def.props === 'function') {
+      detail = def.props(node) || '';
+    }
+    var src = info && info.source ? String(info.source) : '';
+    if (src.length > 64) src = src.slice(0, 61) + '…';
+    return '<div class="md-sec">' +
+      '<div class="md-h2">组件</div>' +
+      '<div class="md-sec-b">' +
+      '<div class="md-md-name">' + esc(def ? def.name : node.comp.id) +
+        '<em>' + esc(def ? (def.note || '') : '') + '</em></div>' +
+      detail +
+      /* 控制器容器：data-md-ctl 带着节点 id，事件回到 componentEvent(type, el, nodeId)。
+       * 容器 id 只用于「重铺这一块」，不参与选择逻辑。 */
+      '<div class="md-ctl" data-md-ctl="' + esc(node.id) + '">' + controllerHtml(node) + '</div>' +
+      (info ? '<div class="md-note">来源 ' + esc(src || '—') + ' · 许可 ' + esc(info.license || '—') +
+        '<br>' + (info.verts || 0) + ' 点 · ' + (info.morphs || 0) + ' 个形态键 · ' +
+        (info.groups || 0) + ' 个材质槽</div>' : '') +
+      '<button type="button" class="md-wide" data-md-act="comp-edit"' +
+        (def ? '' : ' disabled') + '>' + (hasPanel ? '在大面板里编辑（带预览）' : '调整组件属性') + '</button>' +
+      '</div></div>';
+  }
+
+  function updateHud() {    if (!st.hudEl || !st.doc) return;
     var s = statsNow();
     var t = st.node ? st.node.transform : null;
     st.hudEl.innerHTML =
@@ -1989,6 +2061,153 @@
   }
 
   /* 拖动中：按增量矩阵重写选中顶点的局部坐标（每帧从 base 重算，绝不叠乘） */
+  /* ---------------- 视口 3D 捏脸控制器 ----------------
+   * 摆什么：激活节点带组件、组件自报 controls()、当前在主视口的建模页签。
+   * 摆在哪：组件给的局部坐标（由资产顶点簇量出来的质心），这里只做 localToWorld ——
+   *         所以对象被移动 / 缩放 / 旋转之后，杆自动跟着脸走，不需要任何重算。
+   * 值从哪来：node.comp.params.weights（面板是唯一真源），拖动写回同一个地方。
+   *
+   * ⚠ 只在「建模页签 + 主视口」出现：
+   *   绘画页签左键就是落笔，杆抢了事件就画不上；
+   *   四视图一格一个相机，杆只认主相机，摆进去会在四格里画在错的地方。 */
+  function ctrlAllowed() {
+    if (st.tbKind === 'paint') return false;
+    if (st.quad) return false;
+    return !!(st.node && st.node.id);
+  }
+
+  /* ---------------- 视口捏脸控制器（流明同款） ----------------
+   * 摆什么：激活节点是头模时，当前分组的**脸上操控点**（shapeInfo × anchors）。
+   * 摆在哪：锚点是组件从资产顶点量出来的（网格局部坐标），这里只做投影 ——
+   *         对象被移动 / 旋转之后，点自动跟着脸走。
+   * 值从哪来：node.comp.params.shape（面板是唯一真源），拖动写回同一个地方。
+   * 悬停 / 拖动时写 st.ctrlHi，每帧的 syncShapeOf 把线圈高亮（l3Hi/l3SelA）送进 shader。 */
+  function ctrlItemsOf(node, info, anchors) {
+    var shp = (node.comp.params && node.comp.params.shape) || {};
+    return info.defs.map(function (d) {
+      return {
+        id: d.key, key: d.key, label: d.label, group: d.group,
+        at: anchors[d.key] || null,
+        value: Math.round(Number(shp[d.key]) || 50)
+      };
+    }).filter(function (x) { return !!x.at; });
+  }
+
+  function syncCtrlLayer() {
+    var layer = st.ctrlLayer;
+    if (!layer) return false;
+    var node = st.node;
+    var def = (node && node.comp && node.comp.id) ? componentDefById(node.comp.id) : null;
+    var info = (def && ctrlAllowed() && ISO.nodeVisible(node.id) &&
+      typeof def.shapeInfo === 'function') ? def.shapeInfo() : null;
+    var anchors = (info && typeof def.shapeAnchors === 'function') ? def.shapeAnchors() : null;
+    var host = (info && anchors && Object.keys(anchors).length) ? morphObjectOf(node.id) : null;
+    var group = (info && typeof def.shapeGroup === 'function') ? def.shapeGroup() : null;
+    var sig = host ? (node.id + '|' + info.defs.length + '|' + group) : '';
+    if (sig === st.ctrlSig) { if (host) layer.setGroup(group); return !!host; }
+    st.ctrlSig = sig;
+    if (!host) { layer.clear(); return false; }
+    layer.setItems(ctrlItemsOf(node, info, anchors));
+    layer.setGroup(group);
+    layer.setVisible(true);
+    return true;
+  }
+
+  /* 值变了（面板滑杆 / 数值框 / 撤销 / 读盘 / 拖动手柄）只改数据；
+   * 手柄位置每帧由 update() 重投影，值写在 items 里，update 顺带保持。 */
+  function syncCtrlValues() {
+    var layer = st.ctrlLayer;
+    if (!layer || !st.node || layer.isDragging()) return;
+    var node = st.node;
+    var def = (node.comp && node.comp.id) ? componentDefById(node.comp.id) : null;
+    if (!def || typeof def.shapeInfo !== 'function') return;
+    var info = def.shapeInfo();
+    var anchors = def.shapeAnchors();
+    if (!anchors) return;
+    var items = ctrlItemsOf(node, info, anchors);
+    for (var i = 0; i < items.length; i++) layer.setValue(items[i].id, items[i].value);
+  }
+
+  /* 增益：该参数 +1 格时锚点在**屏幕上**的位移方向（照抄 gizmoGain 的投影半截）。
+   * 组件给资产系的 (dx, dy)，这里乘 host 世界旋转、投影两点成像素。 */
+  var CTRL_TMP = null;
+  function ctrlGainOf(item) {
+    var node = st.node;
+    var def = (node && node.comp && node.comp.id) ? componentDefById(node.comp.id) : null;
+    var host = morphObjectOf(node.id);
+    if (!def || !host || !st.camera) return [0, 0];
+    var g = def.shapeGain(item.key);
+    if (!g || (!g[0] && !g[1])) return [0, 0];
+    if (!CTRL_TMP) CTRL_TMP = { a: new THREE.Vector3(), b: new THREE.Vector3(), q: new THREE.Quaternion() };
+    host.getWorldQuaternion(CTRL_TMP.q);
+    CTRL_TMP.a.set(item.at[0], item.at[1], item.at[2]);
+    /* ⚠ 增益只有两个分量 (dx, dy)：z 抄 g[2] 是 undefined → NaN，
+     *   整条投影失效，拖动全部掉进 (dx−dy)×0.6 的兜底启发式。 */
+    CTRL_TMP.b.set(item.at[0] + g[0], item.at[1] + g[1], item.at[2]);
+    host.localToWorld(CTRL_TMP.a);
+    host.localToWorld(CTRL_TMP.b);
+    CTRL_TMP.a.project(st.camera);
+    CTRL_TMP.b.project(st.camera);
+    var r = st.canvas.getBoundingClientRect();
+    return [
+      (CTRL_TMP.b.x - CTRL_TMP.a.x) * 0.5 * r.width,
+      -(CTRL_TMP.b.y - CTRL_TMP.a.y) * 0.5 * r.height
+    ];
+  }
+
+  /* 投影 + 背面隐藏：点在「头中心」背面时就地藏起（照抄 projectAnchor 的 facing）。
+   * 头中心用网格局部包围盒中心（rest 姿态不变，可以缓存）。 */
+  var CTRL_FACING = null;
+  function ctrlProjectAt(at) {
+    var host = morphObjectOf(st.node.id);
+    if (!host || !st.camera || !st.canvas) return null;
+    if (!CTRL_FACING) CTRL_FACING = { w: new THREE.Vector3(), c: new THREE.Vector3(), dir: new THREE.Vector3(), p: new THREE.Vector3() };
+    CTRL_FACING.w.set(at[0], at[1], at[2]);
+    host.localToWorld(CTRL_FACING.w);
+    var bb = host.geometry && host.geometry.boundingBox;
+    if (bb) {
+      CTRL_FACING.c.copy(bb.getCenter(CTRL_FACING.p));
+      host.localToWorld(CTRL_FACING.c);
+      CTRL_FACING.dir.copy(CTRL_FACING.w).sub(CTRL_FACING.c);
+      st.camera.getWorldDirection(CTRL_FACING.p);
+      /* 点在脸心中线之后就被脸挡住，不再显示手柄 */
+      if (CTRL_FACING.dir.dot(CTRL_FACING.p) >= 0.015) return { x: 0, y: 0, visible: false };
+    }
+    CTRL_FACING.p.copy(CTRL_FACING.w).project(st.camera);
+    var r = st.canvas.getBoundingClientRect();
+    var host2 = st.stage ? st.stage.getBoundingClientRect() : r;
+    return {
+      x: r.left + (CTRL_FACING.p.x * 0.5 + 0.5) * r.width - host2.left,
+      y: r.top + (-CTRL_FACING.p.y * 0.5 + 0.5) * r.height - host2.top,
+      visible: CTRL_FACING.p.z < 1
+    };
+  }
+
+  /* 悬停 / 拖动 → 线圈高亮。strength 口径照抄流明：悬停 0.5 / 拖动 0.85。 */
+  function ctrlHi(it, strength) {
+    st.ctrlHi = it ? { key: it.key, strength: strength } : null;
+    requestRender(60);
+  }
+
+  /* 拖动 / 悬停时状态栏说清楚「这个点是什么、现在多少」。
+   * 不走 setStatus（它 4.2 秒自动清空）：悬停要一直显示，离开才收。 */
+  function ctrlStatus(it) {
+    if (!st.statusEl) return;
+    clearTimeout(st.statusTimer);
+    st.statusEl.classList.remove('err');
+    st.statusEl.textContent = it
+      ? (it.label + ' · ' + Math.round(it.value || 0) +
+        '（50 = 原始 · 顺着箭头方向拖 · 双击恢复）')
+      : '';
+  }
+
+  function ctrlSend(item, v, type) {
+    if (!item || !st.node || !st.node.comp) return;
+    var pct = Math.round(v < 0 ? 0 : (v > 100 ? 100 : v));
+    dispatchComponent({ type: type, act: 'shape', arg: item.key, value: pct, el: null }, st.node.id);
+    if (type === 'change') compTxnCommit();
+  }
+
   function applyCompDelta() {
     var d = st.compDrag;
     if (!d) return;
@@ -3571,6 +3790,23 @@
     /* 吸附开关只有一个状态：工具条的 st.snap 写进 SeedSnap，手柄只读偏好 */
     if (global.SeedSnap) global.SeedSnap.setEnabled(st.snap);
 
+    /* 视口捏脸控制器：独立一层，不参与变换手柄的模式切换（translate / rotate / scale 与它无关）。
+     * 它在 canvas 的捕获阶段抢 pointerdown —— 命中才算它的，没命中一律放行，
+     * 所以选对象、按 Alt 环绕、框选都照旧。 */
+    if (global.MDCtrlLayer) {
+      st.ctrlLayer = new global.MDCtrlLayer({
+        hostEl: st.stage,
+        projectAt: ctrlProjectAt,
+        gainOf: ctrlGainOf,
+        onStart: function (it) { ctrlHi(it, 0.85); ctrlStatus(it); },
+        onDrag: function (it, v) { ctrlSend(it, v, 'input'); },
+        onEnd: function (it, v) { ctrlSend(it, v, 'change'); ctrlHi(null); ctrlStatus(null); },
+        onReset: function (it) { ctrlSend(it, 50, 'change'); },
+        onHover: function (it) { ctrlHi(it, 0.5); ctrlStatus(it); },
+        onNeedRender: function () { requestRender(120); }
+      });
+    }
+
     global.addEventListener('keydown', onSpaceDown, false);
     global.addEventListener('keyup', onSpaceUp, false);
 
@@ -3944,6 +4180,8 @@
       (st.quad ? 1 : 0) + (st.quadMax || '') + (st.hoverPick ? 1 : 0) +
       (vfOn('wireframe') ? 'w' : '');
     s += '|e' + ((st.edgeLines && st.edgeLines.material && st.edgeLines.material.opacity) || 0).toFixed(2);
+    /* 形态键权重：只取版本号，不逐帧拼接 112 个数字 */
+    s += '|m' + ((st.mesh && st.mesh._morphVersion) || 0);
     /* 软选择：开关 / 距离口径 / 半径 / 曲面 / 热力图 任一变化都要重画一帧 */
     s += '|so' + (st.soft.on ? 1 : 0) + (st.soft.heatmap ? 1 : 0) + st.soft.mode +
       Number(st.soft.size).toFixed(2) + st.soft.falloff +
@@ -3954,6 +4192,10 @@
   function tick() {
     if (!st.running) return;
     st.raf = requestAnimationFrame(tick);
+    /* 组件的运行时状态（眨眼）在降频与按需渲染**之前**推进：
+     * 它是时间驱动的，跟着跳帧只会让相位错乱，省不下任何开销。
+     * 要不要画由 applyLive 自己 requestRender，这里不用管。 */
+    applyLive();
     /* UV 编辑器基本盖住视口，底下 3D 还在全速画就是白烧 GPU：
      * 开着 UV 窗口时 3D 降到约 30fps，留出预算给画布重绘和指针响应。 */
     if (st.uv.open) {
@@ -3964,6 +4206,9 @@
     var moving = false;
     if (st.controls && !st.quad) { if (st.controls.update()) moving = true; }
     if (st.gizmo) st.gizmo.update();
+    /* 捏脸控制器：结构那一层每帧对齐（内部按签名短路，签名没变就只做一次字符串比较），
+     * 值那一层由 syncMorphWeightsOf 推，不在这里重复算。 */
+    if (st.ctrlLayer) { syncCtrlLayer(); st.ctrlLayer.update(); }
     /* 挤出会话每帧同步专用手柄：参数可能从面板 / 热盒 / 键盘任何一路改 */
     updateExtrudeGizmo();
     if (!st.renderer || !st.scene || !st.camera) return;
@@ -3976,7 +4221,8 @@
     var paintDirty = !!(PAINT && PAINT.hasPendingUpload && PAINT.hasPendingUpload());
     if (PAINT && PAINT.flushPreview) PAINT.flushPreview();
     var interacting = !!(st.gest || st.pickDown || st.paint.stroke ||
-      (st.gizmo && st.gizmo.drag) || st.quadDown || EXGZ.drag || st.busy);
+      (st.gizmo && st.gizmo.drag) || (st.ctrlLayer && st.ctrlLayer.isDragging()) ||
+      st.quadDown || EXGZ.drag || st.busy);
     var sig = frameSig();
     /* 场景没变、没有输入、没有待上传像素 → 这一帧什么也不用做。
      * 静止时 GPU / CPU 都归零，拖动时照旧每帧渲染。 */
@@ -4067,6 +4313,233 @@
     return list;
   }
 
+  /* 组件自报的材质组语义（可选口）。组件不认识 three，只交纯数据：
+   * { transparent, opacity, alphaTest, depthWrite, doubleSide }[]。 */
+  function componentGroupMats(node) {
+    if (!node || !node.comp || !node.comp.id) return null;
+    var def = componentDefById(node.comp.id);
+    if (!def || typeof def.groupMats !== 'function') return null;
+    try { return def.groupMats(node); } catch (e) { return null; }
+  }
+
+  /* 组件几何按 group 声明了自己的材质语义（groupMats，见 md-lumen-bridge）。
+   * 文档里的材质槽数量是**用户**决定的（新建文档只有一个默认槽），跟组数不一定对得上，
+   * 所以这里按组补齐：不足就克隆最后一份，再逐组套上清单里的渲染开关。
+   *
+   * ⚠ 头模的眼睛是**独立一层几何**（FaceEyes，1800 三角，与皮肤几乎共面），
+   *   清单里它是 `transparent + depthWrite:false`。若按不透明渲染，皮肤先写深度、
+   *   眼睛整片被剔掉 —— 转眼球骨骼时屏幕上的眼睛纹丝不动，看起来就是「没看向相机」。
+   *   流明建材质时就是照清单设的这几个开关（apps/lumen3d/app.js:948）。 */
+  function fitGroupMaterials(mats, defs) {
+    if (!defs || !defs.length) return mats;
+    var need = defs.length;
+    var list = (mats || []).slice();
+    if (!list.length) list.push(new THREE.MeshStandardMaterial({ color: 0xc9ccd4 }));
+    while (list.length < need) list.push(list[list.length - 1].clone());
+    for (var k = 0; k < defs.length && k < list.length; k++) {
+      var d = defs[k], m = list[k];
+      if (!d || !m) continue;
+      if (d.transparent) {
+        m.transparent = true;
+        m.depthWrite = false;
+        /* 透明层默认后画：皮肤在同一深度先落色，眼睛再叠上去 */
+        m.renderOrder = 2;
+      } else {
+        m.transparent = false;
+        m.depthWrite = true;
+      }
+      m.opacity = d.opacity == null ? 1 : d.opacity;
+      m.alphaTest = d.alphaTest || 0;
+      if (d.doubleSide) m.side = THREE.DoubleSide;
+      m.needsUpdate = true;
+    }
+    return list;
+  }
+
+  /* ---------------- 眼片位移：让「画在脸上的眼睛」真的看向相机 ---------------- */
+  /* 结论先行（全部实测，见 .workbuddy/runs 里的染色 / 形态键量测）：
+   *   ① 屏幕上那双眼睛**不是**眼球几何画的。把 mats[1]（FaceEyes，1800 三角）染红 +
+   *      不透明 + 写深度，屏幕上一点红都没有；把 mats[0] 染绿，整颗头连眼睛一起变绿。
+   *      也就是说那两颗眼球几何被皮肤整片挡住 —— 流明自己的注释也这么写
+   *      （apps/lumen3d/app.js:455「FaceEyes 那块几何整块被皮肤挡住」）。
+   *   ② 所以转左/右眼骨骼在画面上是**零效果**，这正是「眼球完全没动」的根因。
+   *   ③ 作者给眼睛留的转向通道是 eyeshighlight_move_L / _R 两个形态键：
+   *      288 顶点、位移均值 (−2.25,0,0) / (+2.89,0,0) mm、标准差 0.00 —— 纯刚体平移。
+   *
+   * 于是这里照抄流明 l3Deform 的做法（apps/lumen3d/app.js:989）：在
+   * `#include <skinning_vertex>` **之后**位移顶点，掩码用原始 position 现算。
+   * 贴图骑着顶点走，虹膜就跟着动了 —— 而位移是连续的（跟着 sin(yaw) / sin(pitch)），
+   * 所以相机一转眼睛就跟着转，不是开关。椭圆中心 / 半径 / 正脸闸门全部来自组件
+   * eyeSheet()（数值出处是资产自己的形态键，桥里有推导）。
+   *
+   * ⚠ 注入点必须是 skinning_vertex **之后**：放 begin_vertex 会被蒙皮再乘一次权重，
+   *   而眼周顶点是 0.5 眼球 + 0.5 Head，位移会凭空减半（流明也是放在后面）。
+   * ⚠ 掩码算 `length()` 而不是分轴比：分轴会让椭圆四角变成方形，边界出现折角。
+   * ⚠ 过渡带是 0.82→1.0，不是 0.35→1.0：资产的 eyeshighlight_move_* 是**刚性平移**
+   *   （288 顶点位移标准差 0.00），所以掩码在贴片内必须恒等于 1，只在外圈一圈收敛。
+   *   用 0.35 起过渡会把有效位移砍到一半（实测眼片平均权重 0.45），
+   *   表现就是「明明给了 4mm，画面上只挪了 2mm」。 */
+  var MD_GAZE_VERT = [
+    '  {',
+    '    float mdZ = smoothstep(uMdEyeZ.x, uMdEyeZ.y, position.z);',
+    '    if (mdZ > 0.001) {',
+    '      vec2 mdD = vec2(abs(position.x) - uMdEyeC.x, position.y - uMdEyeC.y) / uMdEyeC.zw;',
+    '      float mdM = 1.0 - smoothstep(0.72, 1.0, length(mdD));',
+    '      transformed.xy += uMdGaze * (mdM * mdZ);',
+    '    }',
+    '  }'
+  ].join('\n');
+
+  /* 组件自报的眼片规格（纯数据；没声明的组件返回 null，一个 shader 都不挂）。
+   * { center:[cx,cy], radius:[rx,ry], zGate:[lo,hi], sway:[ax,ay] } */
+  function componentEyeSheet(node) {
+    if (!node || !node.comp || !node.comp.id) return null;
+    var def = componentDefById(node.comp.id);
+    if (!def || typeof def.eyeSheet !== 'function') return null;
+    var s = null;
+    try { s = def.eyeSheet(); } catch (e) { s = null; }
+    if (!s || !s.center || !s.radius || !s.zGate || !s.sway) return null;
+    return s;
+  }
+
+  /* 把眼片位移挂到一组材质上。uniform 对象存在 mat.userData 里，
+   * 材质重编译（onBeforeCompile 再跑一遍）时复用同一个引用 —— 否则每帧新建的
+   * uniform 会把上一帧写的角度丢掉，表现是「眼睛只动一下然后弹回正中」。 */
+  function applyGazeShader(mats, sheet) {
+    if (!sheet || !mats || !mats.length) return;
+    var C = new THREE.Vector4(sheet.center[0], sheet.center[1], sheet.radius[0], sheet.radius[1]);
+    var Z = new THREE.Vector2(sheet.zGate[0], sheet.zGate[1]);
+    for (var i = 0; i < mats.length; i++) {
+      (function (m) {
+        if (!m || (m.userData && m.userData.mdGazeU)) return;
+        var U = { value: new THREE.Vector2(0, 0) };
+        if (!m.userData) m.userData = {};
+        m.userData.mdGazeU = U;
+        var prev = m.onBeforeCompile;
+        m.onBeforeCompile = function (shader, renderer) {
+          if (typeof prev === 'function') { try { prev.call(this, shader, renderer); } catch (e) {} }
+          shader.uniforms.uMdGaze = U;
+          shader.uniforms.uMdEyeC = { value: C };
+          shader.uniforms.uMdEyeZ = { value: Z };
+          shader.vertexShader = 'uniform vec2 uMdGaze;\nuniform vec4 uMdEyeC;\nuniform vec2 uMdEyeZ;\n' +
+            shader.vertexShader;
+          var at = '#include <skinning_vertex>';
+          if (shader.vertexShader.indexOf(at) >= 0) {
+            shader.vertexShader = shader.vertexShader.replace(at, at + '\n' + MD_GAZE_VERT);
+          }
+        };
+        m.needsUpdate = true;
+      })(mats[i]);
+    }
+  }
+
+  /* ---------------- 捏脸：脸型变形器（shader） ----------------
+   * 组件给两段 GLSL（与流明逐字节相同）+ 资产系偏移，App 负责建 uniform 并挂到材质上。
+   * 关键：建模 App 的网格顶点是「资产 − center」，而 GLSL 里的绝对 z 阈值是资产系的数 ——
+   * 注入时用 l3Org 把顶点抬回资产系变形、算完减回来，GLSL 一个字不动。
+   * uniform 引用存在 mat.userData.mdShapeU：材质重编译时复用同一引用（与 gaze 同一套理由）。 */
+  function applyShapeShader(node, mats, groups) {
+    if (!node || !node.comp || !node.comp.id || !mats || !mats.length) return null;
+    var def = componentDefById(node.comp.id);
+    if (!def || typeof def.shapeGlsl !== 'function') return null;
+    var glsl = def.shapeGlsl();
+    var origin = def.shapeOrigin();
+    var bounds = def.shapeBounds();
+    if (!glsl || !glsl.vert || !origin || !bounds) return null;
+    /* 全部材质共用一份 uniform bundle（流明也这么做）：App 写一处，所有材质同步。 */
+    var U = {
+      l3Shape: { value: [0, 1, 2, 3, 4].map(function () { return new THREE.Vector4(); }) },
+      l3CoilU: { value: null },
+      l3Bounds: { value: new THREE.Vector3(bounds[0], bounds[1], 1 / Math.max(bounds[1] - bounds[0], 1e-6)) },
+      l3Hi: { value: new THREE.Vector4(0.5, 0.5, 0.5, 0.2) },
+      l3SelKind: { value: 0 },
+      l3SelColor: { value: new THREE.Color(0.62, 0.78, 1.0) },
+      l3SelA: { value: 0 },
+      l3Out: { value: [new THREE.Vector3(1, 1, 1), new THREE.Vector3(1, 1, 1), new THREE.Vector3(1, 1, 0)] },
+      l3EyeX: { value: new THREE.Vector4(0, 0, 0, 1) },
+      l3MouthX: { value: new THREE.Vector4(0, 0, 0, 1) },
+      l3EyeC: { value: new THREE.Vector3(0.42, 0, 0) },
+      l3EyeR: { value: new THREE.Vector3(0.03, 0.02, 0.03) },
+      l3MouthC: { value: new THREE.Vector3(0, 0, 0) },
+      l3MouthR: { value: new THREE.Vector3(0.03, 0.02, 0.04) },
+      l3Org: { value: new THREE.Vector3(origin[0], origin[1], origin[2]) }
+    };
+    if (typeof def.shapeInfo === 'function') {
+      var defs = def.shapeInfo().defs || [];
+      U.l3CoilU = { value: defs.map(function (d) {
+        var c = (typeof def.shapeCoilOf === 'function') ? def.shapeCoilOf(d.key) : null;
+        return new THREE.Vector4(c ? c[0] : 0, c ? c[1] : 0, c ? c[2] : 0, c ? c[3] : 0);
+      }) };
+    }
+    for (var i = 0; i < mats.length; i++) {
+      (function (m) {
+        if (!m) return;
+        if (m.userData && m.userData.mdShapeU) return;
+        if (!m.userData) m.userData = {};
+        m.userData.mdShapeU = U;
+        /* FaceEyes 材质用另一档更大的眼椭圆（照抄流明的 l3EyePart 口径）。
+         * 材质对象自己的 name 来自文档插槽（「默认材质」），不是组的名字 ——
+         * 组名从 groupMats 的配置里按**同一下标**取。 */
+        var part = { value: /faceeyes/i.test((groups && groups[i] && groups[i].name) || '') ? 1 : 0 };
+        var prev = m.onBeforeCompile;
+        m.onBeforeCompile = function (shader, renderer) {
+          if (typeof prev === 'function') { try { prev.call(this, shader, renderer); } catch (e) {} }
+          Object.keys(U).forEach(function (k) { shader.uniforms[k] = U[k]; });
+          shader.uniforms.l3EyePart = part;
+          shader.vertexShader = glsl.vert + shader.vertexShader;
+          shader.vertexShader = shader.vertexShader
+            .replace('#include <begin_vertex>',
+              '#include <begin_vertex>\n  vec3 l3Rest = position + l3Org;\n  vL3Rest = l3Rest;')
+            .replace('#include <skinning_vertex>',
+              '#include <skinning_vertex>\n  transformed = l3Deform( transformed + l3Org, l3Rest ) - l3Org;');
+          shader.fragmentShader = glsl.frag + shader.fragmentShader
+            .replace('#include <dithering_fragment>',
+              '#include <dithering_fragment>\n' +
+              '  if ( l3SelA > 0.002 && gl_FrontFacing ) {\n' +
+              '    float l3sel = l3SelMask( vL3Rest );\n' +
+              '    float l3core = smoothstep( 0.46, 0.56, l3sel ) * l3SelA;\n' +
+              '    gl_FragColor.rgb = mix( gl_FragColor.rgb, l3SelColor, l3core );\n' +
+              '  }');
+        };
+        m.needsUpdate = true;
+      })(mats[i]);
+    }
+    return U;
+  }
+
+  /* 每帧：params.shape → uniform；悬停 / 拖动的线圈高亮也在这里送。
+   * 每帧全量写（20 个数 + 一个 selA）而不是差量：改参数的路径太多
+   * （面板 / 手柄 / 撤销 / 读盘 / 换代），差量迟早漏一路。 */
+  function syncShapeOf(obj, node) {
+    if (!obj || !node) return;
+    var gz = obj.userData && obj.userData.mdShape;
+    if (!gz || !gz.uni) return;
+    var U = gz.uni;
+    var p = (node.comp && node.comp.params) || {};
+    var packed = null;
+    var def = componentDefById(node.comp.id);
+    if (def && typeof def.shapePack === 'function') {
+      try { packed = def.shapePack(p.shape); } catch (e) { packed = null; }
+    }
+    if (packed) {
+      for (var i = 0; i < 5 && i < U.l3Shape.value.length; i++) {
+        var q = U.l3Shape.value[i], v = packed[i];
+        q.set(v[0], v[1], v[2], v[3]);
+      }
+    }
+    var hi = st.ctrlHi;
+    if (hi && def && typeof def.shapeCoilOf === 'function') {
+      var c = def.shapeCoilOf(hi.key);
+      if (c) {
+        U.l3Hi.value.set(c[0], c[1], c[2], c[3]);
+        U.l3SelKind.value = 0;
+        U.l3SelA.value = hi.strength == null ? 0.78 : hi.strength;
+      }
+    } else {
+      U.l3SelA.value = 0;
+    }
+  }
+
   function applyNodeTransform(pivot) {
     var t = st.node && st.node.transform;
     if (!t) return;
@@ -4109,22 +4582,564 @@
     });
   }
 
-  /* 按节点建 pivot：一个对象一个 Group（几何来自它自己的网格，缓存按 mesh.version 复用） */
+  /* 形态键：three 的渲染开关挂在 Mesh 上（morphTargetInfluences），不在几何上。
+   * 名字表由 SeedModel.Mesh.buildGeometry 按稳定顺序挂在 geo.userData 上，
+   * 这里只负责把「名字 → 下标」和初始权重搬上去。 */
+  function attachMorphs(obj, geo) {
+    var names = geo && geo.userData && geo.userData.mdMorphNames;
+    if (!names || !names.length) return;
+    var w = geo.userData.mdMorphWeights || [];
+    obj.morphTargetInfluences = names.map(function (name, i) { return Number(w[i]) || 0; });
+    var dict = Object.create(null);
+    names.forEach(function (name, i) { if (!(name in dict)) dict[name] = i; });
+    obj.morphTargetDictionary = dict;
+  }
+
+  /* 某个 pivot 里那颗带形态键的 solid。pivot 是「一个对象一个 Group」，
+   * solid 是它的子网格（mdPart 标记）。 */
+  function solidOfPivot(pv) {
+    if (!pv) return null;
+    var found = null;
+    pv.traverse(function (o) {
+      if (!found && o.isMesh && o.userData && o.userData.mdPart === 'solid') found = o;
+    });
+    return found;
+  }
+
+  /* 按节点 id 找那颗 solid；nodeId 省略时用激活对象。
+   * ⚠ 早先只读 st.pivot，等于「只有激活对象能改表情」。多对象同时眨眼必须按 id 取，
+   *   否则后台那个头永远不动 —— 而用户看不见它不动的原因。 */
+  function morphObjectOf(nodeId) {
+    var id = nodeId || (st.node && st.node.id);
+    return solidOfPivot(id ? st.pivots[id] : st.pivot);
+  }
+  function morphObjectFor() { return morphObjectOf(''); }
+
+  /* 节点的网格数据（缓存对象，不是 doc.meshes 里的 JSON 副本）。
+   * 激活对象走 st.mesh，省掉为它再 evaluate 一次修改器栈。 */
+  function meshOfNode(nodeId) {
+    var id = nodeId || (st.node && st.node.id);
+    if (!id) return null;
+    if (st.node && st.node.id === id && st.mesh) return st.mesh;
+    var n = st.doc ? SeedModel.Scene.nodeById(st.doc, id) : null;
+    return n ? SeedModel.Scene.getMesh(st.doc, n) : null;
+  }
+
+  /* 运行时覆盖：组件自报的 live 值（眨眼…）按名字写进 influences。
+   * 叠加口径是 **max 不是相加** —— 流明里「闭眼」= max(表情自己的眼形, 眨眼)，
+   * 相加会让眼睛和嘴同时被拉到两倍（140% 的怪相）。
+   * ⚠ 只写 three 的数组，**绝不回写 mesh.morphs[].weight**：那是存盘数据。 */
+  function applyMorphOverlay(obj, map) {
+    if (!obj || !obj.morphTargetInfluences || !map) return false;
+    var dict = obj.morphTargetDictionary || {};
+    var any = false;
+    Object.keys(map).forEach(function (name) {
+      var i = dict[name];
+      if (i == null) return;
+      var v = Number(map[name]);
+      if (!isFinite(v)) return;
+      if (v < 0) v = 0; else if (v > 1) v = 1;
+      if (v > obj.morphTargetInfluences[i]) { obj.morphTargetInfluences[i] = v; any = true; }
+    });
+    return any;
+  }
+
+  /* 把 live 叠到这一帧的 influences 上。基线永远是 mesh.morphs 的持久权重，
+   * 不在上一帧结果上累加 —— max 是单调的，累加会让「眨完眼」回不到睁开。 */
+  function applyLiveOverlay(nodeId, obj) {
+    var live = st.compLive[nodeId];
+    if (!live || !live.map || !live.map.weight) return false;
+    applyMorphOverlay(obj, live.map.weight);
+    return true;
+  }
+
+  /* 按网格里记的权重刷新 three 的 influences，并请求重画一帧。
+   * 权重不重建几何（几何没变），只改一个数组 —— 所以别走 applyMesh。 */
+  function syncMorphWeightsOf(nodeId) {
+    var id = nodeId || (st.node && st.node.id);
+    var obj = morphObjectOf(id);
+    if (!obj || !obj.morphTargetInfluences) return 0;
+    var mesh = meshOfNode(id);
+    var morphs = (mesh && mesh.morphs) || [];
+    var n = 0;
+    for (var i = 0; i < morphs.length && i < obj.morphTargetInfluences.length; i++) {
+      obj.morphTargetInfluences[i] = clamp01(morphs[i].weight);
+      n++;
+    }
+    applyLiveOverlay(id, obj);
+    if (mesh) {
+      /* 版本号进 frameSig：按需渲染只认签名，权重不进签名就会出现
+       * 「拖了滑杆、画面不动」——那正是形态键最容易被判定成「没生效」的样子。
+       * ⚠ 这一行早先引用了未声明的 `mesh`：文件是 'use strict'，那三个
+       *   setMorph* 接口一调就 ReferenceError，等于从来没通过。现在显式用上面那份。 */
+      mesh._morphVersion = (mesh._morphVersion || 0) + 1;
+    }
+    requestRender(60);
+    /* 面板 / 撤销 / 读盘改的是同一份 params：旋钮必须跟着走，
+     * 否则会出现「右边数字 40%、脸上那根杆还在 0」这种两个真源。 */
+    syncCtrlValues();
+    return n;
+  }
+  function syncMorphWeights() { return syncMorphWeightsOf(''); }
+
+  function clamp01(v) {
+    var n = Number(v);
+    if (!isFinite(n)) return 0;
+    return n < 0 ? 0 : (n > 1 ? 1 : n);
+  }
+
+  /* ---------------- 组件的运行时状态（眨眼 / 呼吸 / 眼神 这类不存盘的东西） ----------------
+   * 契约：组件自报 tickLive(dt, ctx)，返回值有两种写法（都认）：
+   *   ① { eye_close: 0.6 }                       —— 形态键覆盖表（最早那版）
+   *   ② { weight: { eye_close: 0.6 }, shift: { du, dv } }
+   *                                              —— 形态键 + 贴图位移，一起交
+   * 建模 App 不认得「眨眼」「眼神」，只负责按帧调用、按 max 叠到 influences 上、
+   * 按 smoothstep 扭 uv、要一帧渲染。
+   *
+   * ⚠ 为什么单开一层而不直接改 weight：weight 进文档、进历史、进存盘。
+   *   每帧改一次 = 撤销栈爆炸 + 存盘停在半闭眼。这条线对应虚幻的 UPROPERTY Transient。
+   *
+   * ctx 里给组件的东西全是**纯数据**（数组 + 节点对象），不是 three 对象：
+   *   { state, params, node, doc, gaze: { dir:[x,y,z], dist } }
+   *   gaze.dir 是「相机在网格本地坐标系里的方向」，已归一化。
+   *   组件拿它算 yaw/pitch 就行，不需要知道相机在哪、也不需要碰矩阵。
+   */
+  function liveStateOf(nodeId, def) {
+    var live = st.compLive[nodeId];
+    if (!live) live = st.compLive[nodeId] = { id: '', state: null, map: null };
+    /* 节点被改成别的零件 → 旧状态作废，按新组件重建（形态键名字都不一样了） */
+    if (live.id !== def.id) {
+      live.id = def.id;
+      live.state = (typeof def.liveState === 'function') ? (def.liveState() || {}) : {};
+      live.map = null;
+    }
+    return live;
+  }
+
+  /* 把组件返回的两种写法归一成 { weight, shift }，其余一律 null。
+   * 归一在这里做一次，后面所有判断（比较、叠加、重铺）就只有一个形状。 */
+  function normLive(out) {
+    if (!out) return null;
+    if (out.weight || out.look) {
+      return { weight: out.weight || null, look: out.look || null };
+    }
+    return { weight: out, look: null };
+  }
+
+  /* 这一帧的覆盖和上一帧是不是「一样」—— 一样就别重铺、别重画。
+   * 没有这道闸，眼神跟随会让「相机静止时 GPU 归零」直接失效：
+   * 组件每帧返回同一个值，App 每帧都当它变了。 */
+  function liveSame(a, b) {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    var wa = a.weight, wb = b.weight;
+    if (!!wa !== !!wb) return false;
+    if (wa) {
+      var ka = Object.keys(wa), kb = Object.keys(wb);
+      if (ka.length !== kb.length) return false;
+      for (var i = 0; i < ka.length; i++) {
+        if (Math.abs((Number(wa[ka[i]]) || 0) - (Number(wb[ka[i]]) || 0)) > 0.002) return false;
+      }
+    }
+    var la = a.look, lb = b.look;
+    if (!!la !== !!lb) return false;
+    if (la) {
+      /* 角度阈值 0.2°：再细就会每帧都判「变了」，静止时 GPU 归零立刻失效 */
+      if (Math.abs((la.yaw || 0) - (lb.yaw || 0)) > 0.0035) return false;
+      if (Math.abs((la.pitch || 0) - (lb.pitch || 0)) > 0.0035) return false;
+    }
+    return true;
+  }
+
+  /* 「看」的方向：相机在世界里，眼睛在网格本地里。
+   * 为什么让 App 算而不让组件算：组件只拿到纯数据，它没有矩阵也没法把
+   * worldToLocal 做对（对象可能被旋转/缩放/挂在父级下）。这件事只有 App 做得对。
+   *
+   * 锚点由组件自报（gazeAnchor() → 本地坐标的点）；没报就用包围盒中心。
+   * 用中心而不是原点：原点可能在下巴或颈部，那样算出来的 pitch 会整体偏。 */
+  var GAZE = null;
+  function gazeOf(obj, def) {
+    if (!st.camera || !obj || !THREE) return null;
+    if (!GAZE) {
+      GAZE = {
+        cam: new THREE.Vector3(), loc: new THREE.Vector3(), ctr: new THREE.Vector3()
+      };
+    }
+    st.camera.getWorldPosition(GAZE.cam);
+    obj.updateWorldMatrix(true, false);
+    GAZE.loc.copy(GAZE.cam);
+    obj.worldToLocal(GAZE.loc);
+    var a = (typeof def.gazeAnchor === 'function') ? def.gazeAnchor() : null;
+    if (a && a.length >= 3) {
+      GAZE.loc.x -= Number(a[0]) || 0;
+      GAZE.loc.y -= Number(a[1]) || 0;
+      GAZE.loc.z -= Number(a[2]) || 0;
+    } else if (obj.geometry && obj.geometry.boundingBox) {
+      obj.geometry.boundingBox.getCenter(GAZE.ctr);
+      GAZE.loc.sub(GAZE.ctr);
+    }
+    var len = GAZE.loc.length();
+    if (len < 1e-6) return null;
+    return { dir: [GAZE.loc.x / len, GAZE.loc.y / len, GAZE.loc.z / len], dist: len };
+  }
+
+  /* ---------------- 眼球：蒙皮驱动 ---------------- */
+  /* 组件的运行时角度 → 骨骼旋转。组件给的永远是纯数据 { yaw, pitch }（弧度）：
+   * 它不知道自己有没有骨骼、骨骼叫什么，也不该知道。
+   *
+   * 为什么是骨骼而不是贴图位移：第一版拿 uv 平移模拟眼神，被资产本身否掉了 ——
+   * 这颗头的虹膜几乎占满眼眶，uv 偏 0.03 就露出眼睑（眼睛看起来像闭上了）。
+   * 而清单里本来就有 leftEye / rightEye 两个关节和逐顶点权重，转 8° 让 448 个
+   * 顶点（左右眼各 224）位移 6.9mm ≈ 眼宽的 27% —— 眼睛是真的在三维里转。
+   *
+   * ⚠ 每帧必须**先从 rest 复位再乘**：在上一帧结果上叠加会越转越大（和眨眼 max 同源）。
+   * ⚠ 改完骨骼要立刻 updateMatrixWorld：骨骼矩阵在渲染时读，不更新会落后一帧。 */
+  var LOOK_Q = null, LOOK_E = null;
+  function applyLook(obj, look) {
+    var sk = obj && obj.userData && obj.userData.mdSkin;
+    if (!sk || !sk.left || !sk.right) return false;
+    var yaw = look ? (Number(look.yaw) || 0) : 0;
+    var pitch = look ? (Number(look.pitch) || 0) : 0;
+    if (Math.abs(sk.yaw - yaw) < 1e-6 && Math.abs(sk.pitch - pitch) < 1e-6) return false;
+    sk.yaw = yaw;
+    sk.pitch = pitch;
+    if (!LOOK_Q) { LOOK_Q = new THREE.Quaternion(); LOOK_E = new THREE.Euler(0, 0, 0, 'YXZ'); }
+    /* ⚠ 符号取反：骨骼树挂在 `root.scale.z = -1` 的父级下（照抄流明），
+     * 局部绕 Y 转 θ 在世界里看起来是绕 Y 转 −θ（镜像把 z 翻了个手性）。
+     * 组件给的是「世界里该朝哪」（+yaw = 朝 +X），所以这里喂 −yaw / −pitch。
+     * 不取反的症状是「看向反方向」——左右镜像那种，rest 看不出来。 */
+    var q = LOOK_Q.setFromEuler(LOOK_E.set(-pitch, -yaw, 0, 'YXZ'));
+    sk.left.quaternion.copy(sk.restL).multiply(q);
+    sk.right.quaternion.copy(sk.restR).multiply(q);
+    if (sk.root) sk.root.updateMatrixWorld(true);
+    /* 视觉的**主力**在这里：把角度写给眼片位移（着色器），见 applyGazeShader 上面那段。
+     *
+     * ⚠ 上面那两个骨骼旋转在画面上是**看不见的**（眼球几何被皮肤整片挡住，染色实测），
+     *   保留它有两个理由：① 与流明 createCameraGaze 的驱动结构保持一致，探针读的是
+     *   同一组 lookYaw / lookPitch；② 将来若把皮肤换成带眼窝开口的版本，骨骼立刻就能用。
+     *   真正让眼睛动的是下面这四行 —— 别以为「骨骼转了就等于看得见」，
+     *   这正是上一版「眼球完全没动」的坑。
+     *
+     * 符号：yaw>0 = 目标在 +X 侧 → 贴片朝 +X 走；pitch>0 = 相机在下方 → 眼睛往下看 → 贴片往 −Y。
+     * 归一：除以 sin(限幅)，所以「组件给的 sway」正好是画面上能看到的最大位移 ——
+     * 不除会让 yaw 打到限幅也只走 28%（sin 16°），看着还是「没动」。 */
+    var gz = obj.userData && obj.userData.mdGaze;
+    if (gz && gz.sheet && gz.mats) {
+      var lim = gz.sheet.swayAt || [1, 1];
+      var kx = Math.sin(lim[0]) ? Math.sin(yaw) / Math.sin(lim[0]) : yaw;
+      var ky = Math.sin(lim[1]) ? Math.sin(pitch) / Math.sin(lim[1]) : pitch;
+      /* 面板把幅度开到 150% 时 k 会超过 1，给个硬上限免得贴片滑出眼眶 */
+      kx = kx < -1.2 ? -1.2 : (kx > 1.2 ? 1.2 : kx);
+      ky = ky < -1.2 ? -1.2 : (ky > 1.2 ? 1.2 : ky);
+      var sx = gz.sheet.sway[0] * kx;
+      var sy = -gz.sheet.sway[1] * ky;
+      for (var i = 0; i < gz.mats.length; i++) {
+        var m = gz.mats[i];
+        var U = m && m.userData && m.userData.mdGazeU;
+        if (U) U.value.set(sx, sy);
+      }
+    }
+    return true;
+  }
+
+  /* 蒙皮绑定：把「对象的摆放变换」正确地接进蒙皮公式。
+   *
+   * three 的蒙皮是在 **bind 空间**里算的：
+   *     out = bindMatrixInverse · Σw(boneWorld · boneInverse) · bindMatrix · v
+   * 只有 bindMatrix / bindMatrixInverse 是**对象自己世界矩阵的一对互逆**，
+   * 骨矩阵里自带的世界平移才会被抵消掉。
+   *
+   * ⚠ 早先这里传的是单位阵（"骨骼逆矩阵已经自己吸收了 pivot"），
+   *   后果不是「偏一点」：骨矩阵是**世界空间**的，却拿去乘**本地空间**的顶点。
+   *   这批头挂在 x=0.64 / y=−1.23 的位置上，于是 7° 的转动被放大成 40mm 的位移
+   *   —— 眼睛顶穿脸皮、屏幕上是一片穿插和半透明叠影，而 rest 姿态完全正常
+   *   （单位阵时 rest 恰好也是对的），所以死活看不出来是这里错了。
+   *
+   * boneInverse 不用清单里的 inverseBind：那是另一个（带镜像的）坐标系的东西。
+   * 直接把骨骼摆回 rest 实测一遍 —— boneInverse = 该骨骼 rest 世界矩阵的逆，
+   * 这样 rest 严格还原、pivot 怎么摆都自动适配，也不必去猜符号。
+   * pivot 会随用户拖动 / 撤销改变，所以每帧比一次（7 个矩阵，成本可忽略）。 */
+  function syncSkinBind(obj) {
+    var sk = obj && obj.userData && obj.userData.mdSkin;
+    if (!sk || !sk.skeleton) return;
+    obj.updateWorldMatrix(true, false);
+    var W = obj.matrixWorld;
+    if (!sk.bindM) sk.bindM = new THREE.Matrix4();
+    else if (sk.bindM.equals(W)) return;
+    sk.bindM.copy(W);
+    obj.bindMatrix.copy(W);
+    obj.bindMatrixInverse.copy(W).invert();
+
+    var qi = null;
+    /* 眼球先复位，量到的才是 rest 姿态。 */
+    if (sk.left && sk.right && sk.restL && sk.restR) {
+      qi = [sk.left.quaternion.clone(), sk.right.quaternion.clone()];
+      sk.left.quaternion.copy(sk.restL);
+      sk.right.quaternion.copy(sk.restR);
+    }
+    sk.root.updateMatrixWorld(true);
+    var list = sk.skeleton.boneInverses;
+    var br = sk.skeleton.bones;
+    for (var i = 0; i < list.length && i < br.length; i++) {
+      list[i].copy(br[i].matrixWorld).invert();
+    }
+    /* 恢复刚才为了测量临时复位的眼球角度（调用方马上会按当前 look 重设一次） */
+    if (qi) {
+      sk.left.quaternion.copy(qi[0]);
+      sk.right.quaternion.copy(qi[1]);
+    }
+    sk.root.updateMatrixWorld(true);
+    sk.skeleton.update();
+  }
+
+  /* 组件声明了蒙皮（skin()）就给它一副骨架。返回 null = 这个对象没有骨架。
+   *
+   * ⚠ 顶点数必须和 skinIndex 对得上：用户编辑（挤出 / 细分 / 合并）之后顶点会变，
+   *   那时索引全是错位的，强行蒙皮会得到一片乱飞的顶点。对不上就**降级为静态网格**，
+   *   并把原因写在 geometry.userData 上（面板据此提示，而不是悄悄失效）。
+   * ⚠ 骨骼必须挂在 pivot 里，不能挂 scene 根：模型移动 / 旋转时眼球要跟着走。 */
+  function makeSkinFor(node, geo) {
+    if (!node.comp || !node.comp.id) return null;
+    var def = componentDefById(node.comp.id);
+    if (!def || typeof def.skin !== 'function') return null;
+    var s = null;
+    try { s = def.skin(); } catch (e) { s = null; }
+    if (!s || !s.nodes || !s.nodes.length || !s.bones || !s.bones.length) return null;
+    if (!s.index || !s.weight || !s.inverseBind) return null;
+    var vc = (geo.attributes.position && geo.attributes.position.count) || 0;
+    /* ⚠ 组件给的 skinIndex / skinWeight 是按**资产顶点序**排的，而这里的渲染顶点
+     * 已经被 buildGeometry 按 (顶点, UV) 拆过、顺序也换成面遍历序（见 seed-mesh-core
+     * 的 uvVert / origOut）。两者之间的对应表就是 geo.userData.mdOrig —— 形态键位移
+     * 早就靠它重排过了，权重却漏了：结果是一半的眼睛权重落在随便哪个顶点上，
+     * 转视角时整张脸都在抖，而 rest 姿态照样「严格还原」（rest 恒等，任何置换都看不出来）。
+     * tools/probe-md-parity.js 的 ⑨ 就是拿这个当判据抓出来的。 */
+    var orig = geo.userData && geo.userData.mdOrig;
+    var nAsset = s.index.length / 4;
+    if (!vc || s.weight.length !== nAsset * 4 || (orig ? orig.length !== vc : nAsset !== vc)) {
+      geo.userData.mdSkinLost = '顶点数已变（' + vc + '），索引对不上';
+      return null;
+    }
+    var ixA = s.index, wtA = s.weight;
+    if (orig) {
+      ixA = new Float32Array(vc * 4);
+      wtA = new Float32Array(vc * 4);
+      for (var r0 = 0; r0 < vc; r0++) {
+        var o0 = orig[r0] * 4;
+        if (!(o0 >= 0 && o0 + 3 < s.index.length)) {
+          geo.userData.mdSkinLost = '渲染顶点映射越界';
+          return null;
+        }
+        for (var k0 = 0; k0 < 4; k0++) { ixA[r0 * 4 + k0] = s.index[o0 + k0]; wtA[r0 * 4 + k0] = s.weight[o0 + k0]; }
+      }
+    }
+    var bones = s.nodes.map(function (n) {
+      var b = new THREE.Bone();
+      b.name = n.name || '';
+      b.position.fromArray(n.position || [0, 0, 0]);
+      b.quaternion.fromArray(n.rotation || [0, 0, 0, 1]);
+      b.scale.fromArray(n.scale || [1, 1, 1]);
+      return b;
+    });
+    var root = new THREE.Group();
+    root.name = 'mdBones';
+    /* 顶点过桥时被平移到包围盒中心（组件自己做的），骨骼必须跟着平移同样的量，
+     * 否则 rest 姿态就会整体偏出一个头的位置。 */
+    var c = s.center || [0, 0, 0];
+    root.position.set(-c[0], -c[1], -c[2]);
+    /* ⚠ 父级镜像：清单里的骨架是「脸朝 −Z」（LeftEye z=−0.032），而顶点是「脸朝 +Z」
+     *   （眼球质心 z=+0.040）。流明靠 `model.scale.z = -1` 让**骨架和网格一起翻**
+     *   （apps/lumen3d/app.js:739），局部变换一个都不用改 —— 整树镜像时每个节点的
+     *   局部变换是不变的，镜像由父级承担。
+     *
+     *   照抄这一步，而不是去挪单个关节：早先只把眼球关节 placeJoint 到顶点质心，
+     *   看着 rest 也对（rest 由实测逆矩阵保证恒等），但枢轴实测仍在脑后 80mm ——
+     *   转眼球 = 整颗平移，画面上就是「没有看向相机」，还会顶穿脸皮。
+     *   父级镜像后枢轴偏差 8.0mm（眼球半径内），12° 位移 5.09mm（真自转）。 */
+    if (s.flipZ) root.scale.z = -1;
+    s.nodes.forEach(function (n, i) {
+      var p = (n.parent >= 0) ? bones[n.parent] : null;
+      (p || root).add(bones[i]);
+    });
+    /* 清单里的 inverseBind 属于「脸朝 −Z」那套坐标系；root 镜像之后由 syncSkinBind
+     * 把骨骼摆回 rest 实测一遍，得到严格互逆的一对矩阵 —— 这正是流明靠
+     * `model.scale.z=-1` 让清单 inverseBind 自洽的等价泛化（镜像矩阵自逆，
+     * 所以它不用改 inverseBind；我们多了 center 平移，只能实测）。 */
+    var ident = s.bones.map(function () { return new THREE.Matrix4(); });
+    var skeleton = new THREE.Skeleton(s.bones.map(function (i) { return bones[i]; }), ident);
+    geo.setAttribute('skinIndex', new THREE.Float32BufferAttribute(ixA, 4));
+    geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(wtA, 4));
+    var ji = s.joints || {};
+    var li = (ji.leftEye != null) ? bones[ji.leftEye] : null;
+    var ri = (ji.rightEye != null) ? bones[ji.rightEye] : null;
+    if (!li || !ri) return null;
+    return {
+      root: root,
+      skeleton: skeleton,
+      bindM: null,
+      left: li,
+      right: ri,
+      restL: li.quaternion.clone(),
+      restR: ri.quaternion.clone(),
+      yaw: 0,
+      pitch: 0
+    };
+  }
+
+  var liveLast = 0;
+  function applyLive() {
+    var now = global.performance ? global.performance.now() : Date.now();
+    /* dt 上限 0.1s：标签页切回来 / 长时间不渲染时，别让相位一次跳完整个周期 */
+    var dt = liveLast ? Math.min((now - liveLast) / 1000, 0.1) : 0;
+    liveLast = now;
+    var doc = st.doc;
+    if (!doc || !doc.nodes) return;
+    var dirty = false;
+    var alive = null;
+    /* ⚠ 驱动源是**文档里的节点**，不是 st.compLive 自己。
+     *   早先写成 `Object.keys(st.compLive)` 再遍历 —— 表一开始是空的，于是永远进不去，
+     *   永远不初始化第一份 live 状态（眨眼一次都不会发生，而且没有任何报错）。 */
+    for (var i = 0; i < doc.nodes.length; i++) {
+      var node = doc.nodes[i];
+      if (!node.comp || !node.comp.id) continue;
+      var def = componentDefById(node.comp.id);
+      if (!def || typeof def.tickLive !== 'function') continue;
+      if (!alive) alive = Object.create(null);
+      alive[node.id] = 1;
+      var live = liveStateOf(node.id, def);
+      var obj = morphObjectOf(node.id);
+      if (!obj) continue;
+      /* 每帧对一次 pivot 变换（7 个矩阵比较）：用户拖动 / 撤销改了摆放位置时，
+       * 骨骼逆矩阵必须跟着翻新，否则蒙皮会重复叠加位移（整脸被拉扯）。 */
+      syncSkinBind(obj);
+      var out = null;
+      try {
+        out = def.tickLive(dt, {
+          state: live.state, params: node.comp.params || {}, node: node, doc: doc,
+          gaze: gazeOf(obj, def)
+        });
+      } catch (e) { out = null; }
+      if (out === undefined) out = null;
+      var map = normLive(out);
+      /* 从「有覆盖」变成「没有覆盖」也要重铺一次，否则最后一帧的覆盖留在脸上。
+       * 眼球角度同理：归零那一帧必须真写一遍 0，光「不应用」会让眼球停在最后那个角度。 */
+      /* 捏脸 uniform 每帧全量送（见 syncShapeOf 注释）：改参数的路径太多，差量必漏 */
+      syncShapeOf(obj, node);
+      var changed = !liveSame(map, live.map);
+      /* 渲染目标换代（几何重建 / 切对象 / applyMesh）也必须重铺：
+       * 新对象带着**全新的骨骼**（初值 = rest），而相机不动时 map 一模一样，
+       * 只看 map 就会判「没变」→ 眼球回正中，而且再也不动，页面上零报错。 */
+      if (live.geo !== obj.geometry) {
+        live.geo = obj.geometry;
+        changed = true;
+      }
+      /* ⚠ 基线只能在**真的应用了**之后前进。早先这里无条件写 `live.map = map`，
+       *   于是「变化幅度小于阈值」的那些帧被跳过、基线却跟着走掉了 ——
+       *   漂移再也追不回来。症状：指数平滑收尾时每帧只差 0.18°（阈值 0.2°），
+       *   连续几帧都不应用，眼球永远停在最后那 0.9° 上（关掉视线也不回正）。 */
+      if (!changed) continue;
+      live.map = map;
+      /* 基线永远是持久权重，再叠 live —— 与 syncMorphWeightsOf 同一口径 */
+      if (obj.morphTargetInfluences) {
+        var mesh = meshOfNode(node.id);
+        var morphs = (mesh && mesh.morphs) || [];
+        for (var k = 0; k < morphs.length && k < obj.morphTargetInfluences.length; k++) {
+          obj.morphTargetInfluences[k] = clamp01(morphs[k].weight);
+        }
+        applyMorphOverlay(obj, map && map.weight);
+      }
+      applyLook(obj, map && map.look);
+      dirty = true;
+    }
+    /* 节点被删 / 被撤销掉：状态跟着清，否则这张表只增不减 */
+    if (alive) {
+      Object.keys(st.compLive).forEach(function (id) { if (!alive[id]) delete st.compLive[id]; });
+    } else if (Object.keys(st.compLive).length) {
+      st.compLive = Object.create(null);
+    }
+    if (dirty) requestRender(60);
+  }
+
+  /* 组件自带的「表面」：贴图 / 底色 / 透明，由组件源自报，这里只往材质上贴。
+   * 为什么不写进 doc.materials.slotMaps —— 那是**文档级**材质库，按槽索引；
+   * 头模用槽 0，立方体也用槽 0，写进去等于给立方体贴一张脸。
+   * 材质本身是每个对象新建的（makeMaterials），所以后置改 map 不会串到别人身上。
+   * ⚠ mdBaseColor / mdBaseMap 必须一起写：视口的「纹理 / 材质」开关靠它们还原，
+   *   只改 map 的话，用户切一次显示模式再切回来，脸就白了。 */
+  function applyComponentSurface(child, node) {
+    if (!child || !node || !node.comp || !node.comp.id) return;
+    var def = componentDefById(node.comp.id);
+    if (!def || typeof def.surface !== 'function') return;
+    var list = null;
+    try { list = def.surface(node); } catch (e) { list = null; }
+    if (!list || !list.length) return;
+    var mats = Array.isArray(child.material) ? child.material : [child.material];
+    /* 组件只报一份表面（同一张脸皮贴图），而几何可能分成多个材质组
+     * （皮肤 + 眼睛透明层）。只有一份时广播到所有组 —— 否则眼睛那组没有 map，
+     * 会画成一片纯白板，正好盖在脸上。组件若真有多份表面，就按序各管各的。 */
+    var spread = list.length === 1 && mats.length > 1;
+    for (var i = 0; i < mats.length; i++) {
+      var s = spread ? list[0] : list[i];
+      var m = mats[i];
+      if (!s || !m || !m.color) continue;
+      if (s.color) m.color.set(s.color);
+      if (s.map) m.map = sharedTexture(s.map);
+      m.userData.mdBaseColor = s.color || '#ffffff';
+      m.userData.mdBaseMap = m.map || null;
+      m.needsUpdate = true;
+    }
+  }
+
+  /* 按节点建 pivot：一个对象一个 Group（几何来自它自己的网格，缓存按 mesh.version 复用）
+   * 有蒙皮（组件声明了 skin()）就建成 SkinnedMesh —— 眼球是**真的绕关节转**，
+   * 不能靠贴图平移（那颗头的虹膜几乎占满眼眶，偏一点就露眼睑）。 */
   function makePivotFor(node, mesh, cache) {
     var geo = SeedModel.Mesh.buildGeometry(mesh, { cache: cache !== false });
-    var child = new THREE.Mesh(geo, makeMaterials());
+    var skin = makeSkinFor(node, geo);
+    var compGroups = componentGroupMats(node);
+    var mats = fitGroupMaterials(makeMaterials(), compGroups);
+    /* 眼片位移：只有声明了 eyeSheet() 的组件才挂（头模）。
+     * 两组材质都挂 —— 皮肤上那块贴片是主体；被遮住的眼球几何一起挪，
+     * 免得它在偏移后的皮肤下面顶出来（这是「转视角穿模」的一种来源）。 */
+    var sheet = componentEyeSheet(node);
+    applyGazeShader(mats, sheet);
+    /* 捏脸：脸型变形器挂在同一批材质上（链在 gaze 的 onBeforeCompile 之后） */
+    var shapeU = applyShapeShader(node, mats, compGroups);
+    var child = skin ? new THREE.SkinnedMesh(geo, mats) : new THREE.Mesh(geo, mats);
+    if (skin) {
+      /* 真正的一对 bindMatrix / bindMatrixInverse 由 syncSkinBind 按对象的世界矩阵写入
+       * （它在这段之后紧跟一次 pivot.updateMatrixWorld 就跑）。这里只负责挂上骨架。 */
+      child.bind(skin.skeleton, new THREE.Matrix4());
+      /* ⚠ 必须 detached：默认的 'attached' 会在每次 updateMatrixWorld 里把
+       * bindMatrixInverse 覆写成 matrixWorld 的逆，而 bindMatrix 还留着旧值 ——
+       * 一对不再互逆的矩阵会让蒙皮整体偏出去。 */
+      child.bindMode = 'detached';
+      /* 蒙皮对象的包围盒是 rest 姿态的，转个眼球就可能被判成「出视野」而整颗消失 */
+      child.frustumCulled = false;
+      child.userData.mdSkin = skin;
+    }
+    attachMorphs(child, geo);
+    applyComponentSurface(child, node);
     child.name = node.name;
     child.userData.mdPart = 'solid';
+    /* applyLook 要靠这份索引找到「写哪几个 uniform」：材质可能被重建，
+     * 所以每次从当前材质上现取，不在闭包里存旧引用。 */
+    if (sheet) child.userData.mdGaze = { sheet: sheet, mats: mats };
+    if (shapeU) child.userData.mdShape = { mats: mats, uni: shapeU };
     var pivot = new THREE.Group();
     pivot.name = node.name + '_pivot';
     pivot.userData.mdNode = node.id;
     pivot.add(child);
+    /* 骨骼和网格同级（不是挂在网格里）：模型移动 / 旋转时骨骼跟着走，
+     * 但网格顶点位置仍由骨骼矩阵决定 —— 这正是蒙皮的定义。 */
+    if (skin) pivot.add(skin.root);
     pivot.visible = node.visible !== false;
     var t = node.transform;
     pivot.position.fromArray(t.position);
     pivot.quaternion.fromArray(t.rotation);
     pivot.scale.fromArray(t.scale);
     pivot.updateMatrixWorld(true);
+    /* 首次绑定：把 pivot 的摆放变换扣进骨骼逆矩阵（否则第一帧就会整脸错位） */
+    if (skin) syncSkinBind(child);
     return pivot;
   }
 
@@ -5765,8 +6780,10 @@
   }
 
   /* 撤销 / 重做只留转发：栈与网格副本都在 md-history.js 里 */
-  function undo() { return HIST.undo(); }
-  function redo() { return HIST.redo(); }
+  /* ⚠ 撤销/重做前必须丢掉控制器里未提交的事务：
+   * 快照已经换了，再拿旧 before 去比会记出一条根本没发生的「改动」。 */
+  function undo() { st.comp.txn = null; return HIST.undo(); }
+  function redo() { st.comp.txn = null; return HIST.redo(); }
 
   /* ---------------- 变换（对象 / 组件共用一套回调） ---------------- */
   function gizmoOnComponents() {
@@ -5926,6 +6943,15 @@
     }
     if (el.dataset.mdPseg != null) {
       st.prim.seg = Math.max(6, Math.min(64, Math.round(Number(el.value) || 16)));
+      return;
+    }
+    if (el.dataset.mdCp) {
+      setComponentParam(el.dataset.mdCp, el.value, ctlHostOf(el));
+      return;
+    }
+    /* 组件自画面板上的滑杆（流明头模的形态键强度）：拖动时只重画剪影，不重铺面板 */
+    if (el.dataset.mdCev) {
+      componentEvent('input', el, ctlHostOf(el));
       return;
     }
     if (el.dataset.mdGlobal !== 'name') return;
@@ -6168,6 +7194,16 @@
   function onChange(e) {
     var el = e.target;
     if (!el) return;
+    /* 组件自己的下拉（流明头模的形态键 / 表情切换）：change 才处理，
+     * 一次选择只重铺一次面板 */
+    if (el.dataset.mdCev) {
+      var ctlId = ctlHostOf(el);
+      componentEvent('change', el, ctlId);
+      /* 下拉 / 复选框选完 = 一次完整操作，在这里把事务落成一条历史。
+       * 拖动滑杆不会走到这里（input 不提交），松手时浏览器才补一个 change。 */
+      if (ctlId) compTxnCommit();
+      return;
+    }
     /* 修改器栈的参数：checkBox = 启用/停用，select/number = 参数本身。
      * 只在 change 上处理（input 会每敲一个字符重建一次面板，还会丢焦点）。 */
     if (el.dataset.mdModon != null) {
@@ -7053,6 +8089,15 @@
       updateChrome();
       return;
     }
+    /* 组件自画面板上的按钮（表情预设 / 移除某个形态键）：只认 data-md-cev，
+     * 具体含义由组件解释 —— 建模 App 不知道「微笑」是哪几个键。 */
+    if (t.dataset.mdCev) {
+      var ctlBtn = ctlHostOf(t);
+      componentEvent('click', t, ctlBtn);
+      /* 控制器里点一下（表情预设 / 移除某个键）= 一次完整操作，立刻落历史 */
+      if (ctlBtn) compTxnCommit();
+      return;
+    }
     if (t.dataset.mdEditorBtn) {
       setEditor(t.dataset.mdEditorBtn);
       return;
@@ -7165,6 +8210,21 @@
       openPrimitiveDialog(t.dataset.mdPrim);
       return;
     }
+    if (t.dataset.mdComp) {
+      /* 切组件类别：参数要跟着换成那个组件自己的默认值 */
+      var defC = global.MDComponents && global.MDComponents.get ? global.MDComponents.get(t.dataset.mdComp) : null;
+      if (defC) {
+        st.comp.kind = defC.id;
+        st.comp.preset = (defC.presets && defC.presets[0]) ? defC.presets[0].id : '';
+        st.comp.params = defC.paramsOf(st.comp.preset);
+        overlayShow(componentDialogHtml(), 'comp');
+      }
+      return;
+    }
+    if (t.dataset.mdCpreset) {
+      setComponentPreset(t.dataset.mdCpreset);
+      return;
+    }
     if (t.dataset.mdNode != null) {
       /* B2b：点行 = 换激活对象；Ctrl/Cmd 切换多选、Shift 追加（与视口一致） */
       selectNodeById(String(t.dataset.mdNode),
@@ -7251,6 +8311,10 @@
       case 'projbake': openProjBake(); break;
       case 'tex': openTextureEditor(); break;
       case 'prim-create': createPrimitive(); break;
+      case 'comp-open': openComponentDialog(); break;
+      case 'comp-add': addComponent(); break;
+      /* 属性面板里「调整这个组件的参数」：带着当前节点进面板，改的是它本人 */
+      case 'comp-edit': openComponentDialog(st.node && st.node.id); break;
       case 'close-overlay': closeOverlay(); break;
       /* 修改器栈（属性编辑器）：添加 / 排序 / 删除 / 应用 */
       case 'mod-add': modAdd(t.dataset.mdMod); break;
@@ -7819,6 +8883,721 @@
     ].join('');
   }
 
+  /* ---------------- 添加组件：把成品零件并进场景 ----------------
+   * 和「新建基础体」是同一种写入（往 doc 加一个节点），区别只在几何从哪来：
+   * 基础体来自 Modeler 的图元表，组件来自 window.MDComponents 里各自的来源。
+   * 这里**不认识任何具体形状** —— 名称 / 备注 / 预设 / 字段 / 剪影 / 说明都由组件源自报，
+   * 所以将来接「身体 / 手 / 头发」只需要多一份组件源文件，这块一行都不用改。
+   *
+   * ⚠ 组件是「桥」，不是「再造一份」：现在的头模直接读流明 3D 的 model/ 数据包
+   *   （js/md-lumen-bridge.js），顶点与 112 个形态键都是同一份，名字对得上才能原路回去。
+   *   桥的接缝只有一条「文件路径」，本文件不 require 任何 app id ——
+   *   删掉桥文件，这里只会说「没有可用的组件源」，不会把流明拖下水。 */
+  function componentDefs() {
+    var reg = global.MDComponents;
+    return (reg && reg.list && reg.list.length) ? reg.list : [];
+  }
+  function componentDef() {
+    var list = componentDefs();
+    for (var i = 0; i < list.length; i++) if (list[i].id === st.comp.kind) return list[i];
+    return list[0] || null;
+  }
+  function componentDefById(id) {
+    var list = componentDefs();
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+
+  /* ---------------- 参数合并 / 编辑事务 / 控制器宿主 ----------------
+   * 这一组是「对话框」和「属性面板控制器」共用的地基：
+   *   · 对话框编辑 st.comp.params（草稿），点「应用到对象」才写节点；
+   *   · 控制器直接编辑 node.comp.params（真身），靠事务攒成一条历史。
+   * 渲染是同一份 def.panel()，区别只在 params 是谁、重绘到哪。
+   */
+
+  /* 旧文档 / 组件升级后的参数合并：以组件当前默认值打底，只覆盖用户存过的键。
+   * 默认值里没有的键一律丢弃 —— 组件删掉的参数留在节点上，面板画不出来，
+   * 导出时还会跟着跑出去。 */
+  function mergeSavedParams(def, saved) {
+    var base = (def && typeof def.paramsOf === 'function') ? def.paramsOf(st.comp.preset) : {};
+    if (!base || typeof base !== 'object') base = {};
+    saved = (saved && typeof saved === 'object') ? saved : {};
+    Object.keys(base).forEach(function (k) { if (saved[k] != null) base[k] = saved[k]; });
+    return base;
+  }
+
+  /* 节点自己的参数对象：缺键就补齐并写回**同一个引用**。
+   * ⚠ 引用必须稳定：def.panel(ctx) 直接把 ctx.params 当可变对象用，
+   *   每次重铺都换新对象的话，外面持有的引用立刻过期（拖的是影子，改不进文档）。 */
+  function ensureNodeCompParams(node) {
+    if (!node || !node.comp || !node.comp.id) return null;
+    var def = componentDefById(node.comp.id);
+    if (!def) return null;
+    var cur = node.comp.params;
+    var base = (typeof def.paramsOf === 'function') ? def.paramsOf(st.comp.preset) : {};
+    var keys = Object.keys(base || {});
+    var missing = !cur || keys.some(function (k) { return !(k in cur); });
+    if (missing) node.comp.params = mergeSavedParams(def, cur);
+    return node.comp.params;
+  }
+
+  /* 控制器的一次编辑事务：拖动期间只改内存，松手（change / 切节点 / 关面板）才记一条历史。
+   * ⚠ 为什么不用 docEdit：它每条都 snap + rebuildModel(true)，拖一次滑杆会变成
+   *   60 条历史 + 60 次网格重建 —— 卡死，而且撤销一次退不回「拖之前」。
+   * 这里只做两件事：begin 存一份 before；commit 比一次 params、写回网格、记一条。 */
+  function compTxnBegin(nodeId) {
+    if (!st.doc || !nodeId) return null;
+    var node = SeedModel.Scene.nodeById(st.doc, nodeId);
+    if (!node || !node.comp) return null;
+    var t = st.comp.txn;
+    if (t && t.nodeId === nodeId) return t;
+    compTxnCommit();   /* 上一个节点还没落地的改动先提交，不能丢 */
+    var def = componentDefById(node.comp.id);
+    st.comp.txn = {
+      nodeId: nodeId,
+      label: '调整' + (def ? def.name : '组件') + '参数',
+      before: snap(),
+      beforeJson: JSON.stringify(node.comp.params || null)
+    };
+    return st.comp.txn;
+  }
+
+  function compTxnCommit() {
+    var t = st.comp.txn;
+    st.comp.txn = null;
+    if (!t || !st.doc) return false;
+    var node = SeedModel.Scene.nodeById(st.doc, t.nodeId);
+    if (!node || !node.comp) return false;
+    var json = JSON.stringify(node.comp.params || null);
+    if (json === t.beforeJson) return false;   /* 点一下又点回来，不记空历史 */
+    /* 权重在拖动期间只改了缓存对象，这里补一次写回，快照才抓得到 */
+    var mesh = meshOfNode(node.id);
+    if (mesh) SeedModel.Scene.setMesh(st.doc, mesh, node);
+    pushHistory(t.before, snap(), t.label || '调整组件参数');
+    syncMorphWeightsOf(node.id);
+    updateHud();
+    return true;
+  }
+
+  /* 控制器改了参数之后**立刻**反映到视口：applyTo 只动权重 / 材质，不重建几何。
+   * 大纲不重铺 —— 面数不随表情变，拖滑杆时重建整张列表只会闪。 */
+  function refreshNodeComp(nodeId) {
+    var node = nodeId ? SeedModel.Scene.nodeById(st.doc, nodeId) : null;
+    if (!node || !node.comp) return false;
+    var def = componentDefById(node.comp.id);
+    if (!def) return false;
+    if (typeof def.applyTo === 'function') {
+      var mesh = meshOfNode(node.id);
+      if (mesh) {
+        try { def.applyTo(mesh, node.comp.params || {}); } catch (e) { return false; }
+      }
+    }
+    syncMorphWeightsOf(node.id);
+    return true;
+  }
+
+  /* 属性面板里的控制器 HTML：整块交给组件自报的 panel()。
+   * 没有 panel 的组件（只有标量 fields）不在这里出现 —— 那种零件的字段
+   * 已经由通用滑杆画好，再来一份就是双份控件。 */
+  function controllerHtml(node) {
+    if (!node || !node.comp) return '';
+    /* 对话框开着时控制器退成一行提示，**不渲染可操作控件**。
+     * 理由不是省事：两套同构控件同时在 DOM 里，Tab 键能穿过遮罩摸到后台那套，
+     * 回车一下改的就是「看不见的地方」；脚本按类名全局查也会串到另一套。
+     * 同一时刻只允许一个编辑宿主 —— 这就是 st.comp.host 存在的意义。 */
+    if (st.comp.host === 'overlay') {
+      return '<div class="md-note">正在「组件」大面板里编辑这个零件，关掉它之后回到这里调。</div>';
+    }
+    var def = componentDefById(node.comp.id);
+    if (!def) {
+      /* 组件源没了不能画成空白（空白和「本来就没有控制器」长得一样） */
+      return '<div class="md-note md-ctl-miss">组件源「' + esc(node.comp.id) +
+        '」未加载：参数仍保存在节点上，但暂时没有可用的控制器。</div>';
+    }
+    if (typeof def.panel !== 'function') return '';
+    var params = ensureNodeCompParams(node);
+    try {
+      return def.panel({ def: def, params: params, esc: esc, fmt: fmtNum, doc: st.doc, node: node }) || '';
+    } catch (e) {
+      return '<div class="md-note">控制器渲染失败：' + esc((e && e.message) || e) + '</div>';
+    }
+  }
+  /* 面板现在是不是在「调一个已经存在的对象」。判据是 st.comp.target 指向的节点
+   * 还带着 comp 身份；节点被删了 / 换了文档就自动当新增处理，不会去调空气。
+   * ⚠ 不要用 try/catch 兜住查找：API 写错时异常会被吞成 null，
+   *   表现是「点了调整却变成新增一个」，而页面上一条错误都没有。 */
+  function componentEditNode() {
+    if (!st.comp.target || !st.doc) return null;
+    var n = SeedModel.Scene.nodeById(st.doc, st.comp.target);
+    return (n && n.comp && n.comp.id) ? n : null;
+  }
+  /* 参数只在「首次打开面板」时从预设展开；之后用户改过的值一直留着，
+   * 这样来回切预设 / 切组件再切回来不会把手工调的数字冲掉。 */
+  function componentParams(def) {
+    /* 组件换了就重取：上一个组件残留的键（比如 morph 名字）在新组件里没有意义。
+     * 用 paramsFor 记归属，不往 params 里塞 __for —— params 是要存进文档的纯数据，
+     * 混进一个内部标记，将来序列化到 GLB 侧边栏时会跟着跑出去。 */
+    if (!st.comp.params || st.comp.paramsFor !== def.id) {
+      st.comp.params = def.paramsOf(st.comp.preset);
+      st.comp.paramsFor = def.id;
+    }
+    return st.comp.params;
+  }
+  /* 交给组件面板的回调环境：params 是同一个对象引用，组件改了就是改了。
+   * 组件只认识数据和自己那几行 HTML，不认识 st / 文档 / 历史。 */
+  function componentCtx(def) {
+    return { def: def, params: componentParams(def), esc: esc, fmt: fmtNum, doc: st.doc };
+  }
+  /* 字段表可能是数组，也可能是函数 —— 异步组件源（流明头模）要等资产载入后
+   * 才知道形态键有哪些，字段表只能到那时现算。面板不关心差别，一律走这里取。 */
+  function componentFields(def) {
+    var f = def && def.fields;
+    if (typeof f === 'function') {
+      try { f = f(); } catch (e) { f = null; }
+    }
+    return f || [];
+  }
+  function fmtNum(v, dec) {
+    var d = dec == null ? 2 : dec;
+    var n = Number(v);
+    return (isFinite(n) ? n : 0).toFixed(d);
+  }
+
+  function componentPreviewHtml(def, p) {
+    /* 异步组件源还没载入时没有剪影可画（silhouette 返回 null）。
+     * 这里必须给一段占位文字而不是空 div —— 空 div 和「载入失败」在屏幕上长得一样。 */
+    var s = def.silhouette ? def.silhouette(p, 132) : null;
+    if (!s) return '<div class="md-comp-wait">正在读取流明资产…</div>';
+    return '<svg viewBox="0 0 ' + s.w + ' ' + s.h + '" width="' + s.w + '" height="' + s.h + '" aria-hidden="true">' +
+      '<path class="md-comp-front" d="' + s.front + '"/>' +
+      '<path class="md-comp-side" d="' + s.side + '"/>' +
+      /* 标签放顶部（剪影自己留了 13px）：放底部时基线压在画布边上，7px 的字看不见 */
+      '<text class="md-comp-tag" x="' + s.frontCx.toFixed(1) + '" y="9" text-anchor="middle">正视图</text>' +
+      '<text class="md-comp-tag" x="' + s.sideCx.toFixed(1) + '" y="9" text-anchor="middle">侧视图</text>' +
+      '</svg>';
+  }
+
+  /* 一个字段 → 一行控件。两种类型就用两种控件，不为「统一」把下拉塞进滑杆：
+   * range 给连续量（强度），select 给枚举（112 个形态键，按部位分组）。 */
+  function componentFieldHtml(def, f, p) {
+    var val = p[f.key];
+    if (f.type === 'select') {
+      var opts = f.options || [];
+      var cur = val == null ? '' : String(val);
+      var body = '<option value="">（基础 / rest）</option>';
+      if (f.groups && opts.length) {
+        var buckets = Object.create(null), order = [];
+        opts.forEach(function (o) {
+          var g = o.group || 'other';
+          if (!buckets[g]) { buckets[g] = []; order.push(g); }
+          buckets[g].push(o);
+        });
+        order.forEach(function (g) {
+          body += '<optgroup label="' + esc(f.groups[g] || g) + '">';
+          buckets[g].forEach(function (o) {
+            body += '<option value="' + esc(o.value) + '"' + (o.value === cur ? ' selected' : '') + '>' +
+              esc(o.label) + '</option>';
+          });
+          body += '</optgroup>';
+        });
+      } else {
+        opts.forEach(function (o) {
+          body += '<option value="' + esc(o.value) + '"' + (o.value === cur ? ' selected' : '') + '>' +
+            esc(o.label) + '</option>';
+        });
+      }
+      return '<label class="md-comp-field' + (f.wide ? ' wide' : '') + '"><span>' + esc(f.label) + '</span>' +
+        '<select data-md-cp="' + esc(f.key) + '">' + body + '</select></label>';
+    }
+    var n = Number(val);
+    return '<label class="md-comp-field"><span>' + esc(f.label) + '</span>' +
+      '<input type="range" data-md-cp="' + esc(f.key) + '" min="' + f.min + '" max="' + f.max +
+      '" step="' + f.step + '" value="' + (isFinite(n) ? n : 0) + '">' +
+      '<b data-md-cpv="' + esc(f.key) + '">' + fmtNum(val, f.dec) + '</b></label>';
+  }
+
+  function componentDialogHtml() {
+    var def = componentDef();
+    var editing = componentEditNode();
+    var head = '<div class="md-ov-head"><b>' + (editing ? '调整组件' : '添加组件') + '</b>' +
+      '<span class="md-ov-sub">' + (editing
+        ? '改的是场景里那个对象 · 不新增副本'
+        : '成品零件 · 加进场景后仍是组件，能继续调') + '</span>' +
+      '<button type="button" class="md-ov-x" data-md-act="close-overlay">×</button></div>';
+    if (!def) {
+      return head + '<div class="md-ov-body"><div class="md-note">' +
+        '没有可用的组件源（js/md-lumen-bridge.js 未加载）。</div></div>';
+    }
+    var p = componentParams(def);
+    var ready = !(def.async && !def.ready());
+    var cards = componentDefs().map(function (c) {
+      return '<button type="button" class="md-comp-card' + (c.id === def.id ? ' on' : '') +
+        '" data-md-comp="' + esc(c.id) + '"' + (editing ? ' disabled' : '') + '><b>' + esc(c.name) + '</b>' +
+        '<em>' + esc(c.note || '') + '</em></button>';
+    }).join('');
+    var presets = (def.presets || []).map(function (ps) {
+      return '<button type="button" class="md-prim-tab' + (ps.id === st.comp.preset ? ' on' : '') +
+        '" data-md-cpreset="' + esc(ps.id) + '" title="' + esc(ps.note || '') + '">' +
+        esc(ps.name) + '</button>';
+    }).join('');
+    /* 两种参数区：
+     *   · 组件自报 panel（流明头模）→ 整块交给它，建模 App 不认得里面任何控件；
+     *   · 否则按 fields 画通用滑杆 / 下拉（给将来那些「只有一组静态参数」的零件）。 */
+    var special = (ready && typeof def.panel === 'function')
+      ? '<div class="md-comp-special">' + def.panel(componentCtx(def)) + '</div>' : '';
+    var fields = special ? '' : componentFields(def).map(function (f) {
+      return componentFieldHtml(def, f, p);
+    }).join('');
+    var blurb = typeof def.blurb === 'function' ? def.blurb() : (def.blurb || '');
+    return [
+      head,
+      '<div class="md-ov-body"><div class="md-comp">',
+      '  <div class="md-comp-side">', cards,
+      '    <div class="md-comp-soon">身体 / 手 / 头发<br>后续接入</div>',
+      '  </div>',
+      '  <div class="md-comp-main">',
+      '    <div class="md-comp-preview" id="mdCompPreview">' + componentPreviewHtml(def, p) + '</div>',
+      (presets ? '    <div class="md-prim-tabs md-comp-presets">' + presets + '</div>' : ''),
+      special,
+      (fields ? '    <div class="md-comp-fields">' + fields + '</div>' : ''),
+      '    <button type="button" class="md-wide md-prim-go" data-md-act="comp-add"' +
+      (ready ? '' : ' disabled') + '>' +
+      (ready ? (editing ? '应用到对象' : '添加到场景') : '读取中…') + '</button>',
+      (blurb ? '    <div class="md-note">' + blurb + '</div>' : ''),
+      '  </div>',
+      '</div></div>'
+    ].join('');
+  }
+
+  /* nodeId 有值 = 调这个已有对象（参数先从那对象身上恢复），否则 = 新增。
+   * 两件事走同一个面板，因为用户的心智是「改这个头的表情」，不是「再生成一个头」。 */
+  function openComponentDialog(nodeId) {
+    if (!st.doc) return;
+    if (!componentDefs().length) { setStatus('没有可用的组件源', true); return; }
+    /* 属性面板控制器里还没提交的改动先落地：一间屋子里不能两处同时编同一个节点，
+     * 后写的一方会把前一方的手工值盖掉（而且没有任何提示）。 */
+    compTxnCommit();
+    st.comp.host = 'overlay';
+    var node = null;
+    if (nodeId) node = SeedModel.Scene.nodeById(st.doc, nodeId);
+    st.comp.target = (node && node.comp && node.comp.id) ? node.id : '';
+    if (node && node.comp) {
+      /* 从对象身上恢复参数：只认纯数据，缺字段就按默认补，
+       * 这样旧文档（参数结构变过）打开也不会崩在面板里。 */
+      var d0 = componentDefById(node.comp.id);
+      if (d0) {
+        st.comp.kind = d0.id;
+        /* 合并逻辑只有一份（mergeSavedParams）：属性面板控制器走的也是它。
+         * 两处各写一遍的话，「旧文档缺字段怎么补」迟早长成两种口径。 */
+        st.comp.params = mergeSavedParams(d0, node.comp.params);
+        st.comp.paramsFor = d0.id;
+      }
+    }
+    var def = componentDef();
+    componentParams(def);
+    overlayShow(componentDialogHtml(), 'comp');
+    /* 属性面板里的控制器要让位（见 controllerHtml）：重画一次，把可操作控件换成提示。 */
+    paintParams();
+    /* 异步组件源：先把空面板摆出来（用户立刻看到「正在读取」），读完再整块重铺一次。
+     * 代次号用来作废旧请求：面板关了又开、或者期间换了组件，回来的结果直接丢掉。 */
+    if (def.async && !def.ready()) {
+      var seq = (st.comp.loadSeq = (st.comp.loadSeq || 0) + 1);
+      var pending = def.load ? def.load() : Promise.reject(new Error('组件源没有 load()'));
+      pending.then(function () {
+        if (st.comp.loadSeq !== seq) return;
+        if (!st.overlay || st.overlay.className.indexOf('comp') < 0) return;
+        overlayShow(componentDialogHtml(), 'comp');
+      }).catch(function (e) {
+        if (st.comp.loadSeq !== seq) return;
+        var host = st.overlay && st.overlay.querySelector('.md-comp-main');
+        if (host) {
+          host.innerHTML = '<div class="md-note">读取失败：' + esc((e && e.message) || e) +
+            '<br>数据包在 apps/lumen3d/model/ 下（face-meta.js + face-geometry.js）。</div>';
+        }
+        setStatus('读取流明资产失败：' + ((e && e.message) || e), true);
+      });
+    }
+  }
+
+  /* 改参数只重画缩略图 + 数字，**不重铺整个面板**：
+   * 重铺会让滑杆丢焦点，拖到一半就断，看起来像「拖着拖着不动了」。 */
+  function paintComponentPreview() {
+    var def = componentDef();
+    if (!def || !st.overlay) return;
+    var host = st.overlay.querySelector('#mdCompPreview');
+    if (host) host.innerHTML = componentPreviewHtml(def, componentParams(def));
+  }
+
+  /* 参数区重画的两种粒度，由组件 onEvent 的返回值决定：
+   *   'full'    → 整块重铺（换主键 / 点表情：滑杆值、chips、剪影全要跟着变）
+   *   'preview' → 只重画剪影（拖强度：重铺会让滑杆丢焦点，拖着拖着就断）
+   * nodeId 有值 = 属性面板里的控制器。
+   * ⚠ 控制器里没有剪影可画，所以 'preview' **什么都不重铺**，数字由 paintCompNumber 更新。
+   *   如果这里连 'preview' 也重铺，拖滑杆时滑杆元素被换掉，焦点丢失 ——
+   *   表现是「拖一下就断」，和当初对话框踩的是同一个坑。 */
+  /* 重铺参数区时把焦点留在原处。
+   * 为什么必须有：组件的面板里可能有输入框（流明头模的形态键搜索），重铺一次
+   * innerHTML 就等于把用户正在敲的字连光标一起删掉 —— 表现是「打一个字就跳走」。
+   * 这里只认 data-md-cev（控件自报的 id），不认具体组件，所以对谁都成立。 */
+  function focusKeeper(root) {
+    var af = document && document.activeElement;
+    if (!af || !af.dataset || !af.dataset.mdCev || !root || !root.contains(af)) return null;
+    /* data-md-cval 要一起记：同一个 act 可能有多个控件（每个叠加键各有一个数值框），
+     * 只按 act 找回来永远命中第一个 —— 表现是「改第二个键的数值，改完焦点跳到第一个」。 */
+    return {
+      act: af.dataset.mdCev, arg: af.dataset.mdCval || '',
+      pos: af.selectionStart, val: af.value, tag: af.tagName
+    };
+  }
+  function focusRestore(root, keep) {
+    if (!keep || !root) return;
+    var sel = '[data-md-cev="' + keep.act + '"]';
+    if (keep.arg) sel += '[data-md-cval="' + String(keep.arg).replace(/"/g, '\\"') + '"]';
+    var el = root.querySelector(sel);
+    if (!el) return;
+    if (keep.val != null && 'value' in el && el.value !== keep.val) el.value = keep.val;
+    el.focus();
+    if (keep.pos != null && el.setSelectionRange) {
+      try { el.setSelectionRange(keep.pos, keep.pos); } catch (e) { /* number/range 不支持，忽略 */ }
+    }
+  }
+
+  /* 参数区重画的两种粒度，由组件 onEvent 的返回值决定：
+   *   'full'    → 整块重铺（换主键 / 点表情：滑杆值、chips、剪影全要跟着变）
+   *   'preview' → 只重画剪影（拖强度：重铺会让滑杆丢焦点，拖着拖着就断）
+   * nodeId 有值 = 属性面板里的控制器：没有剪影，两种粒度都只重铺控制器那一块。 */
+  function repaintComponent(how, nodeId) {
+    if (!how) return;
+    if (nodeId) {
+      if (how !== 'full') return;
+      var box = document.querySelector('[data-md-ctl="' + nodeId + '"]');
+      if (!box) return;
+      var kp = focusKeeper(box);
+      box.innerHTML = controllerHtml(SeedModel.Scene.nodeById(st.doc, nodeId));
+      focusRestore(box, kp);
+      return;
+    }
+    if (how === 'full') {
+      if (st.overlay && st.overlay.className.indexOf('comp') >= 0) {
+        var ko = focusKeeper(st.overlay);
+        overlayShow(componentDialogHtml(), 'comp');
+        focusRestore(st.overlay, ko);
+      }
+      return;
+    }
+    paintComponentPreview();
+  }
+
+  /* 拖强度时数字要跟着走，但面板不能重铺（重铺 = 滑杆丢焦点，拖着拖着就断）。
+   * 两个宿主共用这一份：对话框在 st.overlay 里找标签，控制器在属性面板里找。
+   * 早先这里写死了 act === 'w'（流明头模的强度键名），换个组件就失效。 */
+  function paintCompNumber(hostEl, act, el) {
+    if (!hostEl || !act) return;
+    var lab = hostEl.querySelector('[data-md-cpv="' + act + '"]');
+    if (!lab) return;
+    var v = String(Math.round(Number(el.value) || 0));
+    /* 数字宿主有两种：`<b>` 文本（通用字段）和 number 输入框（流明头模的精确强度）。
+     * 判 tagName 而不是「有没有 value 属性」—— 给 <b> 赋 value 会静默成功、显示不变，
+     * 症状是「拖滑杆时数值框不动」，而且一行报错都没有。 */
+    if (lab.tagName === 'INPUT') lab.value = v; else lab.textContent = v;
+  }
+
+  /* 这个事件是不是发生在属性面板的控制器里？是就返回节点 id，否则 ''。
+   * 控制器和对话框共用同一套 data-md-cev，靠 DOM 祖先区分 —— 不靠全局开关：
+   * 对话框开着的时候属性面板也在下面，用全局标记会把两边搞混。 */
+  function ctlHostOf(el) {
+    var box = el && el.closest ? el.closest('[data-md-ctl]') : null;
+    return box ? (box.dataset.mdCtl || '') : '';
+  }
+
+  /* 组件自画面板上的交互，统一从 DOM 上的 data-md-cev / data-md-cval 取。
+   * 建模 App 不认识「表情」「形态键」这些概念，只负责把事件原样递过去。
+   * nodeId 有值 = 属性面板控制器：改的是 node.comp.params 真身，并开一次编辑事务。 */
+  function componentEvent(type, el, nodeId) {
+    if (!el) return false;
+    var ev = {
+      type: type,
+      act: el.dataset.mdCev || '',
+      /* checkbox 要给布尔：默认的 el.value 是 'on'，组件拿到 'on' 当真假会一律为真，
+       * 关不掉（而且这种 bug 在界面上表现为「点了没反应」）。
+       * ⚠ data-md-cval 只在**按钮**上顶替 value：输入框上的 cval 是「附带参数」
+       *   （比如叠加键数值框的键名），它的真值在 el.value 里，抢过来就成 NaN 了。 */
+      value: (el.type === 'checkbox') ? !!el.checked
+        : (el.dataset.mdCval != null && (el.tagName === 'BUTTON' || el.value == null)) ? el.dataset.mdCval
+          : el.value,
+      /* 一个控件同时要「键名 + 数值」时（叠加键上的数值框），键名走 data-md-cval、
+       * 数值走 el.value —— 上面那个 value 只能给一个。单独开一个字段比改 value
+       * 的语义安全：已有的按钮全靠 value 拿 data-md-cval，动它会把它们全弄坏。 */
+      arg: el.dataset.mdCval,
+      /* 数字跟着滑杆走的那条路需要一个 DOM 宿主；3D 控制器没有控件，传 null */
+      el: el
+    };
+    return dispatchComponent(ev, nodeId);
+  }
+
+  /* 把一个**已经拼好的事件**交给组件。
+   * 抽出来的理由只有一个：视口里的 3D 控制器没有 DOM 控件，但它必须和面板写同一份参数、
+   * 走同一个 onEvent、开同一个事务。两条派发路径各写一遍的话，
+   * 「拖动要不要镜像」「松手要不要重铺」迟早长成两种口径。 */
+  function dispatchComponent(ev, nodeId) {
+    if (!ev) return false;
+    var node = nodeId ? SeedModel.Scene.nodeById(st.doc, nodeId) : null;
+    var def = node ? componentDefById(node.comp && node.comp.id) : componentDef();
+    if (!def || typeof def.onEvent !== 'function') return false;
+    var params = node ? ensureNodeCompParams(node) : componentParams(def);
+    if (!params) return false;
+    var ctx = node
+      ? { def: def, params: params, esc: esc, fmt: fmtNum, doc: st.doc, node: node }
+      : componentCtx(def);
+    /* 控制器的第一次改动开事务：拖动中只改内存，松手（change / 切节点 / 关面板）才落历史 */
+    if (node) compTxnBegin(node.id);
+    var how = def.onEvent(ev, ctx);
+    if (node) {
+      refreshNodeComp(node.id);
+      if (ev.type === 'input' && ev.el) paintCompNumber($('mdParams'), ev.act, ev.el);
+    } else if (ev.type === 'input' && ev.el) {
+      paintCompNumber(st.overlay, ev.act, ev.el);
+    }
+    /* 面板 / 手柄 / 撤销任何一路改了参数，脸上的操控点都要跟上（值不重建 DOM） */
+    syncCtrlValues();
+    repaintComponent(how, node ? node.id : '');
+    return !!how;
+  }
+
+  /* 通用字段（没有 panel 的组件）改参数。nodeId 有值 = 属性面板控制器。 */
+  function setComponentParam(key, value, nodeId) {
+    var node = nodeId ? SeedModel.Scene.nodeById(st.doc, nodeId) : null;
+    var def = node ? componentDefById(node.comp && node.comp.id) : componentDef();
+    if (!def) return;
+    var params = node ? ensureNodeCompParams(node) : componentParams(def);
+    if (!params) return;
+    if (node) compTxnBegin(node.id);
+    /* 组件自己能处理参数（流明头模的参数是「若干形态键各自的权重」，
+     * 不是一个 key 对应一个值，通用那套 Number() 会把它洗坏）。 */
+    if (typeof def.onEvent === 'function') {
+      var ctx = node
+        ? { def: def, params: params, esc: esc, fmt: fmtNum, doc: st.doc, node: node }
+        : componentCtx(def);
+      var how = def.onEvent({ type: 'param', key: key, value: value }, ctx);
+      if (node) refreshNodeComp(node.id);
+      repaintComponent(how, node ? node.id : '');
+      return;
+    }
+    var step = null;
+    componentFields(def).forEach(function (f) { if (f.key === key) step = f; });
+    /* 下拉选的是字符串（形态键名字），不能被下面那套 Number() 洗成 0 */
+    if (step && step.type === 'select') {
+      params[key] = value == null ? '' : String(value);
+      if (node) { refreshNodeComp(node.id); repaintComponent('preview', node.id); return; }
+      paintComponentPreview();
+      return;
+    }
+    var v = Number(value);
+    if (!isFinite(v)) return;
+    if (step && step.int) v = Math.round(v);
+    params[key] = v;
+    if (node) { refreshNodeComp(node.id); repaintComponent('preview', node.id); return; }
+    if (step && st.overlay) {
+      var lab = st.overlay.querySelector('[data-md-cpv="' + key + '"]');
+      if (lab) lab.textContent = fmtNum(v, step.dec);
+    }
+    paintComponentPreview();
+  }
+
+  function setComponentPreset(presetId) {
+    var def = componentDef();
+    if (!def) return;
+    st.comp.preset = presetId;
+    st.comp.params = def.paramsOf(presetId);
+    /* 预设换掉 = 所有字段都变，这时必须整块重铺（滑杆值要跟着走） */
+    if (st.overlay && st.overlay.className.indexOf('comp') >= 0) {
+      overlayShow(componentDialogHtml(), 'comp');
+    }
+  }
+
+  /* 只把相机对准这一小块：组件可能被摆在离原点几米外（按已有对象排开），
+   * 沿用 frameCamera() 会框住整个场景，新加的头会小成一个点。 */
+  function focusOnPoint(cx, cy, cz, radius) {
+    if (!st.controls || !st.camera) return;
+    var r = Math.max(Number(radius) || 0.12, 0.05);
+    var d = r * 4.2;
+    st.camera.near = Math.max(r / 100, 0.001);
+    st.camera.far = Math.max(r * 60, 100);
+    st.camera.updateProjectionMatrix();
+    st.controls.target.set(cx, cy, cz);
+    st.camera.position.set(cx + d * 0.30, cy + d * 0.18, cz + d * 0.94);
+    st.viewName = '透视';
+    st.controls.update();
+    if (st.quad) updateQuadCameras(true);
+  }
+
+  /* 新零件往哪放：沿 +X 找已有对象的右边界再让开一点。
+   * ⚠ 不能用「节点数 × 间距」：默认文档里是一个 1m 的立方体，头只有 0.23m，
+   *   按数量排开时头正好落在立方体**内部**，加完屏幕上什么都没有（实测染色整屏红，
+   *   挡在人眼前的是立方体）。按包围盒避让才不管旧对象多大。 */
+  function freeSpotX(halfWidth) {
+    var pad = Math.max(Number(halfWidth) || 0.1, 0.08) + 0.06;
+    if (!THREE || !st.pivots) return 0;
+    var maxX = null;
+    Object.keys(st.pivots).forEach(function (id) {
+      var pv = st.pivots[id];
+      if (!pv) return;
+      var b = new THREE.Box3().setFromObject(pv);
+      if (b.isEmpty()) return;
+      maxX = maxX == null ? b.max.x : Math.max(maxX, b.max.x);
+    });
+    return maxX == null ? 0 : maxX + pad;
+  }
+
+  function addComponent() {
+    if (!st.doc) return false;
+    var def = componentDef();
+    if (!def) { setStatus('没有可用的组件源', true); return false; }
+    if (!global.SeedModel || !SeedModel.Mesh || !SeedModel.Scene) {
+      setStatus('SeedModel 未加载，无法生成组件', true);
+      return false;
+    }
+    var btn = st.overlay ? st.overlay.querySelector('[data-md-act="comp-add"]') : null;
+    /* 面板是从「属性 → 调整组件」进来的，就走**改现有对象**这条路：
+     * 不新增副本、不重建网格，只把参数应用到那个节点上。 */
+    var editing = componentEditNode();
+    function restore() {
+      if (btn) { btn.disabled = false; btn.textContent = editing ? '应用到对象' : '添加到场景'; }
+    }
+    /* 异步组件源（流明头模）：先把资产读进来再走下面同一段提交逻辑。
+     * 只在这一处等，commit() / applyToNode() 里不再区分同步 / 异步。 */
+    if (def.async && !def.ready()) {
+      if (btn) { btn.disabled = true; btn.textContent = '读取中…'; }
+      setStatus('正在读取' + def.name + '…');
+      var p0 = def.load ? def.load() : Promise.reject(new Error('组件源没有 load()'));
+      p0.then(function () { return editing ? applyToNode() : commit(); }).catch(function (e) {
+        restore();
+        setStatus(def.name + '读取失败：' + ((e && e.message) || e), true);
+      });
+      return true;
+    }
+    return editing ? applyToNode() : commit();
+
+    /* 改已有对象：组件的 applyTo 只动它自己那部分（头模 = 形态键权重），
+     * 拓扑、UV、用户改过的顶点一概不碰 —— 这才叫「属性」，不是「重新生成」。 */
+    function applyToNode() {
+      var node = componentEditNode();
+      if (!node) return commit();
+      var d2 = componentDef();
+      if (typeof d2.applyTo !== 'function') {
+        restore();
+        setStatus(d2.name + ' 的参数只能在添加时设定', true);
+        return false;
+      }
+      var p = componentParams(d2);
+      var snapshot = JSON.parse(JSON.stringify(p));
+      if (btn) { btn.disabled = true; btn.textContent = '应用中…'; }
+      var ok = docEdit('调整' + d2.name, function () {
+        var mesh = SeedModel.Scene.getMesh(st.doc, node);
+        if (!mesh) return false;
+        if (d2.applyTo(mesh, p) === false) return false;
+        /* 形态键权重住在 mesh.morphs 里，必须写回 doc.meshes 才存得住
+         * （只改内存对象的话，存盘重开表情就没了）。 */
+        SeedModel.Scene.setMesh(st.doc, mesh, node);
+        node.comp = { id: d2.id, params: snapshot };
+        return true;
+      });
+      if (!ok) { restore(); setStatus('应用失败', true); return false; }
+      closeOverlay();
+      setTbKind('props');
+      setStatus('已更新' + d2.name + '的参数 · Ctrl+Z 可撤销');
+      paintAll();
+      return true;
+    }
+
+    function commit() {
+      var p = componentParams(def);
+      if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
+
+      var geo = null, mesh = null;
+      try {
+        geo = def.buildGeometry(p);
+        /* weld:false —— 组件自带 UV 缝与形态键，一焊就只剩一份 UV / 一份位移，
+         * 那一列面会横跨整张贴图拉出色带。和「带形态键的模型」同一个口径。 */
+        var opts = { slot: 0, weld: false };
+        /* 形态键原样过桥：名字与位移都由组件源给（流明的 112 个），
+         * 建模 App 只是把它们搬进自己的 mesh.morphs —— 这就是「桥」而不是「重做」。 */
+        if (geo.userData && geo.userData.morphNames && geo.userData.morphNames.length) {
+          opts.morphNames = geo.userData.morphNames;
+          opts.morphWeights = geo.userData.morphWeights;
+        }
+        mesh = SeedModel.Mesh.fromBufferGeometry(geo, opts);
+      } catch (e) {
+        restore();
+        setStatus(def.name + '生成失败：' + ((e && e.message) || e), true);
+        return false;
+      }
+      if (!mesh) { if (geo && geo.dispose) geo.dispose(); restore(); setStatus('网格构建失败', true); return false; }
+
+      /* 新网格要先登记进历史模块的副本表，否则撤销回不到几何（与新建基础体同一处坑） */
+      ensureMeshCopy(mesh);
+      var px = freeSpotX(halfWidthOf(mesh));
+      var ok = docEdit('添加' + def.name, function () {
+        var node = SeedModel.Scene.addMeshNode(st.doc, {
+          name: def.name,
+          mesh: mesh,
+          transform: { position: [px, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] }
+        });
+        if (!node) return false;
+        SeedModel.Scene.setActiveNode(st.doc, node.id);
+        /* 记下「这是哪个组件、参数是什么」（纯数据）。
+         * 没有这一笔，这个头加进场景就只是一块普通网格：
+         * 存盘重开之后再想改表情，连它来自哪里都无从查起。 */
+        node.comp = { id: def.id, params: JSON.parse(JSON.stringify(p)) };
+        /* 沿 X 排开时如果当前文档还是「立方体 / 未命名模型」这类系统名，
+         * 就跟着改成新零件名 —— 否则存出来的文档名和内容是两回事 */
+        if (AUTO_NAMES[st.doc.name]) SeedModel.Scene.setName(st.doc, def.name);
+        return true;
+      });
+      if (geo && geo.dispose) geo.dispose();
+      if (!ok) { restore(); setStatus('添加失败', true); return false; }
+
+      closeOverlay();
+      /* 加完就把右栏切到属性：这个零件有自己的一套参数（表情 / 形态键），
+       * 停在工具箱上等于把「它还能继续调」这件事藏起来了。 */
+      setTbKind('props');
+      var box = meshBox(mesh);
+      var st2 = SeedModel.Mesh.stats(mesh);
+      /* 视点对准网格自己的中心（各组件原点位置不统一：头模是居中在原点，
+       * 别的零件未必），半径取包围盒对角的一半，别让新零件在屏幕外。 */
+      focusOnPoint(px + box.cx, box.cy, box.cz, Math.max(box.r, 0.05));
+      var extra = mesh.morphs && mesh.morphs.length ? ' · ' + mesh.morphs.length + ' 个形态键' : '';
+      setStatus('已添加' + def.name + '（' + st2.faces + ' 面 · ' + st2.vertices + ' 顶点' + extra + ' · 共 ' +
+        SeedModel.Scene.nodesOf(st.doc).length + ' 个对象，Ctrl+Z 可撤销）');
+      paintAll();
+      return true;
+    }
+  }
+
+  /* 组件摆放用的两个量都从**真实网格**算，不问组件要：
+   * 组件的「尺寸参数」是它自己的事，可能根本没有（流明头模就没有 width 参数）。 */
+  function meshBox(mesh) {
+    var p = (mesh && mesh.positions) || [];
+    var n = p.length / 3;
+    if (!n) return { cx: 0, cy: 0, cz: 0, r: 0.1, hw: 0.1 };
+    var min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    for (var i = 0; i < n; i++) {
+      for (var k = 0; k < 3; k++) {
+        var v = p[i * 3 + k];
+        if (v < min[k]) min[k] = v;
+        if (v > max[k]) max[k] = v;
+      }
+    }
+    var cx = (min[0] + max[0]) / 2, cy = (min[1] + max[1]) / 2, cz = (min[2] + max[2]) / 2;
+    var dx = max[0] - min[0], dy = max[1] - min[1], dz = max[2] - min[2];
+    return {
+      cx: cx, cy: cy, cz: cz,
+      hw: dx / 2,
+      r: Math.sqrt(dx * dx + dy * dy + dz * dz) / 2
+    };
+  }
+  function halfWidthOf(mesh) { return meshBox(mesh).hw; }
+
   function openPrimitiveDialog(shape) {
     if (!st.doc) return;
     if (shape && PRIM[shape] && st.prim.shape !== shape) {
@@ -7923,18 +9702,61 @@
     return index ? Math.floor(index.count / 3) : (pos ? Math.floor(pos.count / 3) : 0);
   }
 
+  /* 形态键的名字与默认权重：three 把它们挂在 Mesh 上（morphTargetDictionary /
+   * morphTargetInfluences），几何里没有。字典是「名字 → 下标」，这里翻回有序数组。 */
+  function morphNamesOf(obj) {
+    var dict = obj && obj.morphTargetDictionary;
+    var inf = obj && obj.morphTargetInfluences;
+    if (!dict || !inf || !inf.length) return null;
+    var names = new Array(inf.length);
+    Object.keys(dict).forEach(function (key) {
+      var i = dict[key];
+      if (i >= 0 && i < names.length) names[i] = key;
+    });
+    for (var i = 0; i < names.length; i++) if (!names[i]) names[i] = 'morph ' + (i + 1);
+    return { names: names, weights: Array.prototype.slice.call(inf) };
+  }
+
   /* clone 后烘矩阵：Model3D 的缓存里几何是共享的，直接 applyMatrix4 会污染缓存 */
   function bakeImportGeometry(o) {
     var geo = o.geometry.clone();
     geo.applyMatrix4(o.matrixWorld);
+    /* three 的 applyMatrix4 只搬 position / normal，**不碰 morphAttributes**。
+     * 形态键存的是位移向量，必须跟着同一个线性的部分（旋转 + 缩放）转一遍，
+     * 否则「父级转过 90° 的模型」表情会往错方向动 —— 而且看起来像模型本身有 bug。 */
+    bakeMorphMatrix(geo, o.matrixWorld);
     return geo;
   }
 
-  /* 碎片拼成一份非索引几何：只留 position / uv，法线由 SeedMesh 重算（导入本来就不认原法线）。 */
+  /* 把 3×3 线性部分应用到每个形态键的 delta 上（glTF 的 morph 一律是相对值） */
+  function bakeMorphMatrix(geo, matrix) {
+    var list = geo.morphAttributes && geo.morphAttributes.position;
+    if (!list || !list.length || !matrix) return;
+    var m = matrix.elements;
+    var e0 = m[0], e1 = m[1], e2 = m[2], e4 = m[4], e5 = m[5], e6 = m[6], e8 = m[8], e9 = m[9], e10 = m[10];
+    /* 纯平移 / 单位矩阵：不动，省掉 112 × 顶点数 × 9 次乘法 */
+    if (e0 === 1 && e1 === 0 && e2 === 0 && e4 === 0 && e5 === 1 && e6 === 0 && e8 === 0 && e9 === 0 && e10 === 1) return;
+    list.forEach(function (attr) {
+      for (var i = 0; i < attr.count; i++) {
+        var x = attr.getX(i), y = attr.getY(i), z = attr.getZ(i);
+        attr.setXYZ(i,
+          x * e0 + y * e4 + z * e8,
+          x * e1 + y * e5 + z * e9,
+          x * e2 + y * e6 + z * e10);
+      }
+      attr.needsUpdate = true;
+    });
+  }
+
+  /* 碎片拼成一份非索引几何：position / uv / 形态键，法线由 SeedMesh 重算（导入本来就不认原法线）。
+   * 形态键只在「各碎片的形态键数量一致」时保留 —— 对不上说明是不同资产被并到了一起，
+   * 硬拼会让权重错位，宁可整组丢掉（并且让面板看不到它，而不是给它一堆假滑杆）。 */
   function concatImportGeometries(geos) {
     var flat = [], temp = [];
     geos.forEach(function (g) {
       if (g.index && typeof g.toNonIndexed === 'function') {
+        /* ⚠ toNonIndexed 会把 morphAttributes 按新顶点序展开（three 自己处理），
+         * 所以展开后再取，别在原始的索引几何上取。 */
         var ng = g.toNonIndexed();
         flat.push(ng);
         temp.push(ng);
@@ -7947,8 +9769,17 @@
       total += g.getAttribute('position').count;
       if (g.getAttribute('uv')) hasUv = true;
     });
+    var first = flat[0] && flat[0].morphAttributes && flat[0].morphAttributes.position;
+    var morphCount = first ? first.length : 0;
+    var morphOk = morphCount > 0 && flat.every(function (g) {
+      var list = g.morphAttributes && g.morphAttributes.position;
+      return !!(list && list.length === morphCount && list.every(function (a) {
+        return a.count === g.getAttribute('position').count;
+      }));
+    });
     var pos = new Float32Array(total * 3);
     var uv = hasUv ? new Float32Array(total * 2) : null;
+    var morphOut = morphOk ? first.map(function () { return new Float32Array(total * 3); }) : null;
     var off = 0;
     flat.forEach(function (g) {
       var p = g.getAttribute('position');
@@ -7965,12 +9796,26 @@
           uv[(off + k) * 2 + 1] = t.getY(k);
         }
       }
+      if (morphOut) {
+        var ml = g.morphAttributes.position;
+        for (var mi = 0; mi < ml.length; mi++) {
+          var a = ml[mi], dst = morphOut[mi];
+          for (var vi = 0; vi < a.count; vi++) {
+            var o3 = (off + vi) * 3;
+            dst[o3] = a.getX(vi); dst[o3 + 1] = a.getY(vi); dst[o3 + 2] = a.getZ(vi);
+          }
+        }
+      }
       off += p.count;
     });
     temp.forEach(function (g) { g.dispose(); });
     var out = new THREE.BufferGeometry();
     out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     if (uv) out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    if (morphOut) {
+      out.morphTargetsRelative = true;
+      out.morphAttributes.position = morphOut.map(function (arr) { return new THREE.Float32BufferAttribute(arr, 3); });
+    }
     return out;
   }
 
@@ -8087,7 +9932,15 @@
       var geo = geos.length === 1 ? geos[0] : concatImportGeometries(geos);
       if (geos.length > 1) geos.forEach(function (x) { x.dispose(); });
       var mesh;
-      try { mesh = SeedModel.Mesh.fromBufferGeometry(geo, { slot: g.slot, quadOpts: { tolDeg: 40, shapeTol: 80 } }); }
+      var morphMeta = morphNamesOf(g.parts[0]);
+      try {
+        mesh = SeedModel.Mesh.fromBufferGeometry(geo, {
+          slot: g.slot, quadOpts: { tolDeg: 40, shapeTol: 80 },
+          /* 形态键的名字和默认权重只在 three 的 Mesh 上有，几何里没有 —— 必须在这里交班 */
+          morphNames: morphMeta ? morphMeta.names : null,
+          morphWeights: morphMeta ? morphMeta.weights : null
+        });
+      }
       catch (e) { throw new Error((g.name || '网格') + '：' + ((e && e.message) || e)); }
       geo.dispose();
       /* 合并后的节点用去掉后缀的原名；单独一块就保留它自己的名字 */
@@ -9336,6 +11189,10 @@
     st.overlay.innerHTML = '<div class="md-ov">' + html + '</div>';
   }
   function closeOverlay() {
+    /* 关面板 = 宿主退场，属性面板里的控制器重新成为唯一编辑入口。
+     * 重画一次右栏，把「正在大面板里编辑」那句换回真正的控件。 */
+    var hadHost = !!st.comp.host;
+    st.comp.host = '';
     if (st.texOpen) {
       try { Model3D.closePreview(); } catch (e) {}
       st.texOpen = false;
@@ -9344,6 +11201,7 @@
       st.overlay.className = 'md-overlay';
       st.overlay.innerHTML = '';
     }
+    if (hadHost) paintParams();
   }
 
   async function openTextureEditor() {
@@ -9505,6 +11363,46 @@
     /* M5：基础体面板（菜单 / Shelf / 测试都从这里进） */
     openPrimitive: openPrimitiveDialog,
     createPrimitive: createPrimitive,
+    /* 视图预设（iso / front / side / top …）：探针要「正面一张、侧面一张」才比得了几何。
+     * 页面自己走 ViewCube 和视口下拉，不需要这个口子。 */
+    viewPreset: viewFromPreset,
+    /* 添加组件：面板入口 + 直接添加 + 目录 / 当前参数。
+     * 组件源在 window.MDComponents（js/md-lumen-bridge.js 注册 = 流明头模的桥），
+     * 这里只转发，不认识具体零件，也不认识流明。 */
+    openComponent: openComponentDialog,
+    addComponent: addComponent,
+    componentCatalog: function () {
+      return componentDefs().map(function (c) {
+        return {
+          id: c.id,
+          name: c.name,
+          presets: (c.presets || []).map(function (x) { return x.id; }),
+          fields: componentFields(c).map(function (x) {
+            return { key: x.key, type: x.type || 'range', options: x.options ? x.options.length : 0 };
+          }),
+          async: !!c.async,
+          ready: c.ready ? !!c.ready() : true,
+          /* panel / applyTo / props 说明它是不是「特殊组件」：
+           * 有自己的面板、能改已有对象、有自己那套属性 */
+          panel: typeof c.panel === 'function',
+          applyTo: typeof c.applyTo === 'function',
+          props: typeof c.props === 'function',
+          surface: typeof c.surface === 'function',
+          info: c.info ? c.info() : null
+        };
+      });
+    },
+    componentState: function () {
+      return {
+        kind: st.comp.kind,
+        preset: st.comp.preset,
+        target: st.comp.target || '',
+        editing: !!componentEditNode(),
+        params: st.comp.params ? JSON.parse(JSON.stringify(st.comp.params)) : null
+      };
+    },
+    setComponentPreset: setComponentPreset,
+    setComponentParam: setComponentParam,
     /* B2b：大纲点行 = 换激活对象（与视口跨对象点选同一条路） */
     selectNodeById: selectNodeById,
     /* 批量对象选择（how: replace / add / toggle / remove）与三支选择命令 */
@@ -9514,6 +11412,57 @@
     clearSelection: clearSelection,
     closeOverlay: closeOverlay,
     getDocument: function () { return st.doc; },
+    /* 只读：节点对应的 three 对象（那颗 solid 子网格）。
+     * 有它才能验证「运行时到底改了渲染副本的哪个属性」—— 形态键看 influences、
+     * 眼神偏移看 uv。没有这个口的话，探针只能靠截图猜，而截图没法断言数值。 */
+    nodeObject: function (nodeId) { return morphObjectOf(nodeId); },
+    /* 形态键（只读资产）：列出名字 / 权重 / 顶点数，供面板与探针用。
+     * 只从激活节点的网格读 —— 形态键不跨对象。 */
+    morphs: function (nodeId) {
+      /* nodeId 可选：不传就是激活对象（页面自己的用法），传了就能读任意节点。
+       * 多对象各自眨眼必须能分别读 —— 只测激活对象会漏掉「后台那个头根本不动」。 */
+      var id = nodeId || (st.node && st.node.id);
+      var mesh = meshOfNode(id);
+      if (!mesh || !mesh.morphs || !mesh.morphs.length) return null;
+      var obj = morphObjectOf(id);
+      return {
+        count: mesh.morphs.length,
+        vertexCount: mesh.positions.length / 3,
+        /* three 真的挂上了才算「能渲染」：几何里有 delta、对象上没有 influences，
+         * 屏幕上什么都不会变（这正是这一版最容易出现的假成功） */
+        live: !!(obj && obj.morphTargetInfluences && obj.morphTargetInfluences.length === mesh.morphs.length),
+        items: mesh.morphs.map(function (m, i) {
+          return {
+            index: i,
+            name: m.name,
+            weight: Number(m.weight) || 0,
+            influence: obj && obj.morphTargetInfluences ? Number(obj.morphTargetInfluences[i]) || 0 : null
+          };
+        })
+      };
+    },
+    /* 写权重：只改数组，不重建几何。返回真正写进 three 的个数。 */
+    setMorphWeight: function (index, weight) {
+      var mesh = st.mesh;
+      if (!mesh || !mesh.morphs || !mesh.morphs[index]) return 0;
+      mesh.morphs[index].weight = clamp01(weight);
+      return syncMorphWeights();
+    },
+    setMorphWeights: function (list) {
+      var mesh = st.mesh;
+      if (!mesh || !mesh.morphs || !mesh.morphs.length) return 0;
+      var data = Array.isArray(list) ? list : [];
+      for (var i = 0; i < mesh.morphs.length; i++) {
+        if (data[i] != null) mesh.morphs[i].weight = clamp01(data[i]);
+      }
+      return syncMorphWeights();
+    },
+    clearMorphs: function () {
+      var mesh = st.mesh;
+      if (!mesh || !mesh.morphs) return 0;
+      for (var i = 0; i < mesh.morphs.length; i++) mesh.morphs[i].weight = 0;
+      return syncMorphWeights();
+    },
     getState: function () {
       /* 统计一律从「当前激活节点」取：docEdit 换激活对象后 st.mesh 可能还指着旧网格
        * （表现为新建球体后面数还是 6、组件手柄挂错对象） */
@@ -9753,6 +11702,9 @@
         extrudeGizmo: EXGZ.gizmo,
         uv: st.uv,
         mesh: st.mesh, doc: st.doc,
+        /* 视口捏脸控制器：探针要按真实射线命中 / 读锚点屏幕坐标，
+         * 而不是靠截图里「好像有个杆」判断 */
+        ctrlLayer: st.ctrlLayer,
         /* 状态分区：view / edit / panel。st.doc 与 stateGroups.view.doc 是同一字段，
          * 探针用它守住「分区只是换归属、不复制值」这条约定。 */
         stateGroups: { view: st.view, edit: st.edit, panel: st.panel },

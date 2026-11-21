@@ -1,0 +1,804 @@
+/* 特征提取台（apps/featlab）
+ * 选择器统一以 .featlab-* / .os-win.featlab 前缀开头，避免注入后波及别的 App。
+ * 不写窗口尺寸，尺寸交给 .dapp-host .os-win。 */
+
+.os-win.featlab {
+  --fl-line: #e3e7ee;
+  --fl-ink: #222836;
+  --fl-dim: #727d91;
+  --fl-soft: #f4f7fb;
+  --fl-accent: #4a7dd3;
+  --fl-accent-soft: #edf3fd;
+  --fl-danger: #d15454;
+}
+
+.featlab-shell {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--fl-line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  color: var(--fl-ink);
+  font-size: 12px;
+  /* 右键菜单的定位基准。不能用 position:fixed —— 桌面壳里有 transform 的祖先，
+     fixed 会以那个祖先为包含块，菜单就会偏移到指针以外的位置。 */
+  position: relative;
+}
+
+/* ---------- 顶栏 ---------- */
+
+.featlab-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  background: linear-gradient(180deg, #fbfcff 0%, #f5f8fd 100%);
+  border-bottom: 1px solid var(--fl-line);
+}
+
+.featlab-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.featlab-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--fl-accent-soft);
+  color: var(--fl-accent);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.featlab-mark svg { width: 21px; height: 21px; }
+
+.featlab-brand-t { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.featlab-brand-t b { font-size: 13.5px; letter-spacing: .2px; }
+.featlab-brand-t i { font-style: normal; font-size: 10.5px; color: var(--fl-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.featlab-tools {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.featlab-toolgrp {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: #e9eef6;
+}
+
+.featlab-tool {
+  border: 0;
+  background: transparent;
+  color: #49556a;
+  height: 25px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.featlab-tool:hover { background: rgba(255, 255, 255, .6); }
+.featlab-tool.on {
+  background: #fff;
+  color: var(--fl-accent);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(28, 43, 72, .14);
+}
+
+.featlab-btn {
+  border: 1px solid var(--fl-line);
+  background: #fff;
+  color: #3c475c;
+  height: 27px;
+  padding: 0 11px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s, border-color .12s;
+}
+.featlab-btn:hover { background: #f3f6fb; border-color: #ccd5e3; }
+.featlab-btn:active { transform: translateY(1px); }
+.featlab-btn.primary {
+  background: var(--fl-accent);
+  border-color: var(--fl-accent);
+  color: #fff;
+  font-weight: 600;
+}
+.featlab-btn.primary:hover { background: #3f6fc1; border-color: #3f6fc1; }
+.featlab-btn.ghost { background: transparent; border-color: transparent; color: var(--fl-dim); }
+.featlab-btn.ghost:hover { background: #eef2f8; color: #3c475c; }
+.featlab-btn.sm { height: 24px; padding: 0 9px; font-size: 11px; }
+.featlab-btn.sq { width: 27px; padding: 0; font-size: 14px; line-height: 1; }
+.featlab-btn:disabled { opacity: .5; cursor: default; }
+
+.featlab-sep { width: 1px; height: 18px; background: var(--fl-line); margin: 0 2px; }
+.featlab-zoom { min-width: 38px; text-align: center; font-size: 11px; color: var(--fl-dim); font-variant-numeric: tabular-nums; }
+
+/* ---------- 主体三栏 ---------- */
+
+.featlab-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.featlab-rail {
+  width: 232px;
+  flex: none;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #f7f9fc;
+  border-right: 1px solid var(--fl-line);
+}
+
+.featlab-block { display: flex; flex-direction: column; min-height: 0; border-bottom: 1px solid var(--fl-line); }
+.featlab-block.grow { flex: 1; border-bottom: 0; }
+
+.featlab-block-h {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px 6px;
+}
+.featlab-block-h b { font-size: 11.5px; letter-spacing: .3px; }
+.featlab-block-h span { font-size: 10px; color: var(--fl-dim); }
+
+.featlab-srcs { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 5px; }
+
+.featlab-src {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+.featlab-src:hover { border-color: #d5deea; }
+.featlab-src.on { border-color: var(--fl-accent); box-shadow: 0 0 0 2px rgba(74, 125, 211, .12); }
+
+.featlab-src-thumb {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #e8edf5;
+  display: grid;
+  place-items: center;
+  color: #93a0b5;
+  font-size: 12px;
+}
+.featlab-src-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.featlab-src-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.featlab-src-meta b { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.featlab-src-meta i { font-style: normal; font-size: 9.5px; color: var(--fl-dim); font-variant-numeric: tabular-nums; }
+
+.featlab-x {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 17px;
+  height: 17px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(30, 38, 52, .55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s;
+}
+.featlab-src:hover .featlab-x { opacity: 1; }
+.featlab-x:hover { background: var(--fl-danger); }
+
+.featlab-src-add {
+  height: 30px;
+  border: 1px dashed #c6d1e2;
+  border-radius: 8px;
+  background: transparent;
+  color: #6b7a92;
+  font-size: 11px;
+  cursor: pointer;
+}
+.featlab-src-add:hover { border-color: var(--fl-accent); color: var(--fl-accent); background: #fff; }
+
+.featlab-list { flex: 1; min-height: 0; overflow: auto; padding: 2px 8px 8px; display: flex; flex-direction: column; gap: 4px; }
+
+.featlab-none { padding: 18px 10px; text-align: center; font-size: 11px; line-height: 1.7; color: var(--fl-dim); }
+
+.featlab-row {
+  display: grid;
+  grid-template-columns: 21px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.featlab-row:hover { background: #eef2f9; }
+.featlab-row.sel { background: #fff; border-color: #cfdcf1; box-shadow: 0 1px 3px rgba(37, 59, 96, .08); }
+
+.featlab-num {
+  width: 21px;
+  height: 21px;
+  border-radius: 6px;
+  background: var(--c, #5b8fd9);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.featlab-row-main { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.featlab-row-main i { font-style: normal; font-size: 9.5px; color: var(--fl-dim); font-variant-numeric: tabular-nums; }
+
+.featlab-row-name {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--fl-ink);
+  padding: 1px 2px;
+  border-radius: 4px;
+  outline: none;
+  min-width: 0;
+}
+.featlab-row-name:focus { background: #f2f6fd; box-shadow: inset 0 0 0 1px #c8d7ef; }
+
+/* 每一格自己的那句标注：直接写在区域行下面 */
+.featlab-row-note {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-bottom: 1px dashed #e2e8f1;
+  background: transparent;
+  color: #4d5a70;
+  font-size: 10.5px;
+  line-height: 1.5;
+  padding: 1px 2px;
+  border-radius: 3px;
+  outline: none;
+}
+.featlab-row-note::placeholder { color: #b3bccd; }
+.featlab-row-note:hover { border-bottom-color: #c8d5e6; }
+.featlab-row-note:focus {
+  background: #f7faff;
+  border-bottom-color: var(--fl-accent);
+  box-shadow: 0 0 0 2px rgba(74, 125, 211, .12);
+}
+
+.featlab-row-acts { display: flex; gap: 1px; opacity: .4; transition: opacity .12s; }
+.featlab-row:hover .featlab-row-acts, .featlab-row.sel .featlab-row-acts { opacity: 1; }
+.featlab-row-acts button {
+  width: 19px;
+  height: 19px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #5d6b82;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.featlab-row-acts button:hover { background: #e2e9f4; color: var(--fl-ink); }
+
+.featlab-listfoot {
+  flex: none;
+  display: flex;
+  gap: 5px;
+  padding: 7px 8px;
+  border-top: 1px solid var(--fl-line);
+  background: #f7f9fc;
+}
+
+/* ---------- 中央画布 ---------- */
+
+.featlab-center {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 10px 10px;
+  background: #edf1f7;
+}
+
+.featlab-viewwrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border-radius: 9px;
+  overflow: hidden;
+  background: #12161d;
+  box-shadow: inset 0 0 0 1px rgba(14, 20, 30, .6);
+}
+
+.featlab-viewwrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+.featlab-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 50% 42%, #202838 0%, #12161d 70%);
+  pointer-events: none;
+}
+.featlab-empty.hide { display: none; }
+
+.featlab-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 26px 34px;
+  border: 1px dashed rgba(255, 255, 255, .18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .03);
+  text-align: center;
+  pointer-events: auto;
+}
+.featlab-empty-card b { color: #e9eef7; font-size: 14px; font-weight: 600; }
+.featlab-empty-card span { color: #8d99ad; font-size: 11px; }
+.featlab-empty-card .featlab-btn { margin-top: 4px; }
+
+.featlab-hud {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 10px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: rgba(6, 9, 14, .55);
+  color: rgba(255, 255, 255, .68);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.featlab-busy {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: rgba(13, 17, 24, .58);
+  backdrop-filter: blur(2px);
+}
+.featlab-busy[hidden] { display: none; }
+
+.featlab-busy-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 18px 26px;
+  border-radius: 12px;
+  background: #1c2330;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .45);
+  color: #eaf0fa;
+  min-width: 190px;
+}
+.featlab-busy-card b { font-size: 12.5px; }
+.featlab-busy-card span { font-size: 10.5px; color: #93a0b4; }
+
+.featlab-spin {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .18);
+  border-top-color: #7fa8e8;
+  animation: featlab-spin .8s linear infinite;
+}
+@keyframes featlab-spin { to { transform: rotate(360deg); } }
+
+/* ---------- 选中区域检查器 ---------- */
+
+.featlab-inspect {
+  flex: none;
+  min-height: 66px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: #fff;
+  border: 1px solid var(--fl-line);
+  overflow: auto;
+}
+
+.featlab-insp-empty { display: flex; align-items: center; gap: 8px; min-height: 48px; color: var(--fl-dim); }
+.featlab-insp-empty b {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #5c6a80;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: #eef2f8;
+}
+.featlab-insp-empty span { font-size: 11px; line-height: 1.5; }
+
+.featlab-insp-head { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+.featlab-insp-head b { font-size: 12px; }
+.featlab-insp-head i { font-style: normal; font-size: 10px; color: var(--fl-dim); }
+
+.featlab-insp-fields { display: flex; align-items: flex-end; gap: 7px; flex-wrap: wrap; }
+.featlab-insp-fields label { display: flex; flex-direction: column; gap: 2px; }
+.featlab-insp-fields label span { font-size: 9px; color: var(--fl-dim); letter-spacing: .2px; }
+.featlab-insp-fields label.wide input { width: 124px; }
+.featlab-insp-fields input {
+  width: 56px;
+  height: 25px;
+  border: 1px solid var(--fl-line);
+  border-radius: 6px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--fl-ink);
+  background: #fff;
+  outline: none;
+}
+.featlab-insp-fields input:focus { border-color: var(--fl-accent); box-shadow: 0 0 0 2px rgba(74, 125, 211, .12); }
+
+/* ---------- 右侧面板 ---------- */
+
+.featlab-panel {
+  width: 330px;
+  flex: none;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fbfcfe;
+  border-left: 1px solid var(--fl-line);
+  /* 滚动的只有 tabwrap：分页条与日志要一直看得见，不能跟着表单滚走 */
+  overflow: hidden;
+}
+
+.featlab-sec { flex: none; padding: 11px 13px 12px; border-bottom: 1px solid var(--fl-line); }
+.featlab-sec.grow { flex: 1; border-bottom: 0; min-height: 0; }
+
+.featlab-sec-h { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+.featlab-sec-h b { font-size: 11.5px; letter-spacing: .3px; }
+.featlab-sec-h span { font-size: 9.5px; color: var(--fl-dim); }
+
+.featlab-field { display: flex; flex-direction: column; gap: 3px; margin-bottom: 7px; min-width: 0; }
+.featlab-field > span { font-size: 10px; color: var(--fl-dim); }
+.featlab-field input, .featlab-field select, .featlab-field textarea {
+  width: 100%;
+  border: 1px solid var(--fl-line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--fl-ink);
+  font-size: 11.5px;
+  padding: 0 7px;
+  height: 27px;
+  outline: none;
+  font-family: inherit;
+}
+.featlab-field textarea { height: auto; padding: 6px 7px; line-height: 1.55; resize: vertical; min-height: 56px; }
+.featlab-field input:focus, .featlab-field select:focus, .featlab-field textarea:focus {
+  border-color: var(--fl-accent);
+  box-shadow: 0 0 0 2px rgba(74, 125, 211, .12);
+}
+
+.featlab-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.featlab-row2 .featlab-field { margin-bottom: 4px; }
+.featlab-grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
+.featlab-grid3 .featlab-field { margin-bottom: 4px; }
+.featlab-grid3 input { padding: 0 5px; }
+
+.featlab-check { display: flex; align-items: center; gap: 6px; margin: 5px 0 2px; font-size: 10.5px; color: #4a566b; cursor: pointer; }
+.featlab-check input { accent-color: var(--fl-accent); width: 13px; height: 13px; }
+
+.featlab-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+
+.featlab-preview {
+  position: relative;
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #10141b;
+  display: flex;
+  justify-content: center;
+  min-height: 96px;
+}
+.featlab-preview canvas { display: block; max-width: 100%; height: auto; border-radius: 4px; }
+.featlab-preview span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: rgba(255, 255, 255, .42);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.featlab-ann {
+  width: 100%;
+  border: 1px solid var(--fl-line);
+  border-radius: 7px;
+  padding: 7px 8px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--fl-ink);
+  background: #fff;
+  resize: vertical;
+  min-height: 74px;
+  font-family: inherit;
+  outline: none;
+}
+.featlab-ann:focus { border-color: var(--fl-accent); box-shadow: 0 0 0 2px rgba(74, 125, 211, .12); }
+
+.featlab-log { display: flex; flex-direction: column; gap: 3px; max-height: 124px; overflow: auto; }
+.featlab-log-row { display: flex; gap: 6px; font-size: 10.5px; line-height: 1.45; color: #566178; }
+.featlab-log-row i { flex: none; font-style: normal; color: #9aa5b7; font-variant-numeric: tabular-nums; }
+.featlab-log-row span { word-break: break-word; }
+.featlab-log-row.ok span { color: #2f7d55; }
+.featlab-log-row.warn span { color: #a5761c; }
+.featlab-log-row.err span { color: var(--fl-danger); }
+
+/* ---------- 底栏 ---------- */
+
+.featlab-foot {
+  flex: none;
+  height: 27px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  border-top: 1px solid var(--fl-line);
+  background: #fafbfd;
+  font-size: 10.5px;
+  color: var(--fl-dim);
+}
+.featlab-status { color: #39445a; font-weight: 500; }
+.featlab-tip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- 右栏分页 ---------- */
+
+.featlab-tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--fl-line);
+  background: #f4f7fb;
+}
+
+.featlab-tab {
+  flex: 1;
+  border: 0;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: #5c6a80;
+  height: 27px;
+  font-size: 11.5px;
+  cursor: pointer;
+  position: relative;
+  top: 1px;
+}
+.featlab-tab:hover { background: rgba(255, 255, 255, .7); color: #3c475c; }
+.featlab-tab.on {
+  background: #fbfcfe;
+  color: var(--fl-accent);
+  font-weight: 600;
+  box-shadow: inset 0 -1px 0 #fbfcfe, 0 -1px 0 var(--fl-line), 1px 0 0 var(--fl-line), -1px 0 0 var(--fl-line);
+}
+
+.featlab-tabwrap { flex: 1; min-height: 0; overflow: auto; }
+.featlab-tabpage { display: none; }
+.featlab-tabpage.on { display: block; }
+
+.featlab-note {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: #5f6c82;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: var(--fl-accent-soft);
+  border: 1px solid #dce8fa;
+}
+
+/* ---------- 边界微调 ---------- */
+
+.featlab-edge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px dashed #e4e9f1;
+}
+
+.featlab-edge-lbl { font-size: 9px; color: var(--fl-dim); letter-spacing: .3px; }
+
+.featlab-stepgrp {
+  display: inline-flex;
+  border: 1px solid var(--fl-line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+}
+.featlab-stepgrp button {
+  border: 0;
+  background: transparent;
+  color: #5d6b82;
+  height: 21px;
+  padding: 0 6px;
+  font-size: 10px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.featlab-stepgrp button + button { border-left: 1px solid #eef1f6; }
+.featlab-stepgrp button:hover { background: #f2f6fd; }
+.featlab-stepgrp button.on { background: var(--fl-accent); color: #fff; font-weight: 600; }
+
+.featlab-edgepad { display: inline-flex; gap: 5px; margin-left: auto; }
+
+.featlab-edgegrp { display: inline-flex; align-items: center; gap: 1px; }
+.featlab-edgegrp b { font-size: 9px; font-weight: 500; color: var(--fl-dim); margin-right: 1px; }
+.featlab-edgegrp button {
+  width: 17px;
+  height: 19px;
+  border: 1px solid var(--fl-line);
+  border-radius: 4px;
+  background: #fff;
+  color: #4a566b;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+.featlab-edgegrp button:hover { background: #eef2f9; border-color: #c6d2e4; color: var(--fl-accent); }
+.featlab-edgegrp button:active { transform: translateY(1px); }
+
+/* ---------- 提示词表单 ---------- */
+
+.featlab-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 7px;
+}
+.featlab-chips-lbl { font-size: 10px; color: var(--fl-dim); margin-right: 2px; }
+
+.featlab-chip {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--fl-line);
+  border-radius: 11px;
+  background: #fff;
+  color: #4a566b;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.featlab-chip:hover { border-color: #c6d2e4; background: #f4f7fb; }
+.featlab-chip.on {
+  background: var(--fl-accent-soft);
+  border-color: #b9cfee;
+  color: var(--fl-accent);
+  font-weight: 600;
+}
+
+.featlab-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: #e9eef6;
+  margin-bottom: 7px;
+}
+.featlab-seg-btn {
+  border: 0;
+  background: transparent;
+  color: #49556a;
+  height: 21px;
+  padding: 0 9px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.featlab-seg-btn:hover { background: rgba(255, 255, 255, .6); }
+.featlab-seg-btn.on {
+  background: #fff;
+  color: var(--fl-accent);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(28, 43, 72, .14);
+}
+
+.featlab-logsec { flex: none; border-top: 1px solid var(--fl-line); border-bottom: 0; background: #fbfcfe; }
+
+/* ---------- 右键菜单 ---------- */
+
+.featlab-ctx {
+  position: absolute;
+  z-index: 60;
+  left: 0;
+  top: 0;
+  min-width: 178px;
+  max-width: 268px;
+  padding: 4px;
+  border-radius: 9px;
+  background: #fff;
+  border: 1px solid #dbe2ec;
+  box-shadow: 0 12px 32px rgba(20, 32, 54, .2), 0 2px 6px rgba(20, 32, 54, .08);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.featlab-ctx[hidden] { display: none; }
+
+.featlab-ctx-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 6px 8px;
+  font-size: 11.5px;
+  color: #2c3648;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.featlab-ctx-item span { overflow: hidden; text-overflow: ellipsis; }
+.featlab-ctx-item i { font-style: normal; font-size: 9.5px; color: #8d99ad; flex: none; }
+.featlab-ctx-item:hover { background: var(--fl-accent-soft); color: #2a5aa8; }
+.featlab-ctx-item.off { opacity: .42; cursor: default; }
+.featlab-ctx-item.off:hover { background: transparent; color: #2c3648; }
+
+.featlab-ctx-sep { height: 1px; margin: 3px 5px; background: #eef1f6; }
+
+/* ---------- 响应式（带前缀，放在末尾） ---------- */
+
+@media (max-width: 1240px) {
+  .os-win.featlab .featlab-rail { width: 204px; }
+  .os-win.featlab .featlab-panel { width: 304px; }
+  .os-win.featlab .featlab-brand-t i { display: none; }
+}
+
+@media (max-width: 1040px) {
+  .os-win.featlab .featlab-rail { display: none; }
+  .os-win.featlab .featlab-panel { width: 286px; }
+}
+
+@media (max-height: 700px) {
+  .os-win.featlab .featlab-inspect { min-height: 56px; }
+  .os-win.featlab .featlab-preview { min-height: 72px; }
+  .os-win.featlab .featlab-sec { padding-top: 8px; padding-bottom: 9px; }
+}

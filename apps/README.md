@@ -174,12 +174,14 @@ window.MV_BODY = `<div class="mv-wrap"> … </div>`;
 | `gallery` | `apps/gallery/` | 同时注册 `modelLib`，两者共用 `#libWin` |
 | `imglab` | `apps/imglab/` | 壳在 App 目录，编辑器在 `js/ps-*.js`；位图 / 矢量 / 3D 绘制三工作区（F2 / F3 / F4）。3D 仍是 PS 界面：工具箱、选项栏、图层面板与文档标签都保留，只把中间画布换成 three.js 视口；`js/ps-3d.js` 支持「生成遮罩」（UV 空间单图）与「添加遮罩」（按当前视角正交投影，每个可见 UV 岛生成一个带蒙版的图层，收进图层组，可到位图模式逐层绘制）。「文件 → AI 绘制 SVG…」由语言模型直接产出矢量 SVG 并保存（对外 `psLab.aiDraw / saveSvg / aiSvg`）。右侧「历史记录 / 色板 / 助手」标签里的「助手」是图像处理助手：对话调用 `draw_svg`（生成 SVG）、`save_svg`（保存）、`paint_svg`（分图层 / 分组 / 分步骤画进画布，每步单独入历史，Ctrl+Z 逐步撤回）、`place_svg`（单图层放入画布）四个工具，模型回复走「一轮一个 JSON」协议；图层名优先取 SVG 元素的 `data-name / aria-label / <title> / id / class` 并翻成中文（eye-left → 左眼、tentacle-1 → 触手 1），`path1 / layer2` 这类机器 id 退回形状兜底；助手面板底部显示 token 消耗（提示 / 输出、对话 / 绘制次数，接口未返回 usage 时标注估算）；模型不可用（断网 / CORS / 未配置）时整轮降级到本地模板绘制（鱼 / 企鹅 / 猫 / 风景 / 树 / 花 / 房子 / 星空 / 抽象）并自动分步绘制到画布，只提示一次原因、不再连环报错；编排调用 `max_tokens` 600，`paint_svg` 成功后不再多问一轮，用户说「画到画布 / 分图层 / 分步骤」时 draw 完直接绘制；对外 `psLab.assistant.ask / open / localDraw / paint / script / usage / state` |
 | `modeldesk` | `apps/modeldesk/` | |
+| `tripostudio` | `apps/tripostudio/` | Tripo 工坊：复用工作流 `tripoImg` / `tripoModel` 节点（`wfTripoWebImage` / `wfTripoWebModel`），专业三栏编辑器 —— 生图、单图 / 多视图生模型、生成并应用纹理、URL 拉回 / 本地导入结果；DOM 在 `body.js`，2D / 3D 视口在 `viewport.js`（按需注入）；桌面版支持**内嵌 Tripo 网页**（`partition=persist:tripo-embed` 的 `<webview>`，登录与生成都由 `plugins/tripo` 经 `embed-cdp.js` 驱动，外部 Edge 保留为兜底），浏览器环境自动退回外部登录；探针 `tools/probe-tripostudio.js` 顶替节点函数与 `/status`，用 data URL 资源跑通全链路 |
 | `player` | `apps/player/` | |
 | `studio` | `apps/studio/` | 时间线剪辑；菜单栏 / 选择·剃刀工具 / 循环与逐帧 / 动态轨道 / 关键帧 / 四种精细剪辑 / 标记 / 片段右键菜单（含分离音频、文字转语音）/ `.hfstudio` 导入导出；素材可读视频库与图库（图库经 `window.assetBridge`，项目只存 `assetId`）；图库删除前会检查剪辑台项目引用 |
 | `models` | `apps/models/` | `open()` 里先 `deskMountApp` 再渲染控制台，顺序不能反 |
 | `multiview` | `apps/multiview/` | DOM 在 `body.js`，独立页共用 |
 | `code` | `apps/code/` | |
 | `card` | `apps/card/` | |
+| `featlab` | `apps/featlab/` | 特征提取台：框选 + 边界精确微调（四边 ±1/5/10px、外扩 / 内缩、1:1、锁比例、方向键与 Alt+方向键）、AI 定位 / 复核 / 命名、3×3 图集、**逐格标注**（区域行下直接写那一句，整段标注由这些句子自动拼出）、右键把区域小图 / 整张源图 / 图集复制进剪贴板（`ClipboardItem` 写 `image/png`，失败降级下载并如实提示）、填表式提示词（中文自然语言 / 英文关键词 / 双语，含负面词）。右栏是 提取 / 图集 / 提示词 / 标注 四页，DOM 在 `body.js`，探针 `tools/probe-featlab.js` |
 | `hello` | `apps/hello/` | 模板，留着当参照 |
 
 `js/desk-shell.js` 里的 `DESK_APPS` / `DESK_APP_META` 现在是**空数组 / 空对象**，

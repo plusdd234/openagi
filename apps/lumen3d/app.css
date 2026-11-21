@@ -1,0 +1,1192 @@
+/* 流明 3D 数字人的样式。作用域收在 .os-win.lumen3d / .l3-* 内。
+ *
+ * 舞台是柔光渐变 + 透明 WebGL canvas；右侧是聊天与表情控制面板。
+ * 窄窗按容器宽度改成上下排布，规则都带 .l3- 前缀并放在末尾。 */
+
+.os-win.lumen3d .os-win-body {
+  padding: 0;
+  display: flex;
+  overflow: hidden;
+  background: #fff;
+}
+
+.l3-app {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  background: #fff;
+  color: #1f2328;
+  font-size: 13px;
+  container-type: inline-size;
+  --l3-accent: #5b8fd9;
+  --l3-accent-deep: #4a7cc4;
+  --l3-line: #e5e8eb;
+  --l3-soft: #f5f8fc;
+  --l3-dim: #8b94a3;
+}
+
+.l3-app *,
+.l3-app *::before,
+.l3-app *::after { box-sizing: border-box; }
+
+/* 容器查询只能命中选择器内部的后代，所以真正的排版层是 .l3-shell */
+.l3-shell {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.l3-app button,
+.l3-app input,
+.l3-app textarea,
+.l3-app select { font-family: inherit; font-size: inherit; color: inherit; }
+
+/* ================= 舞台 ================= */
+.l3-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(680px 420px at 50% 0%, #f2f7ff 0%, rgba(242, 247, 255, 0) 62%),
+    radial-gradient(520px 380px at 88% 88%, #fdf1f6 0%, rgba(253, 241, 246, 0) 64%),
+    linear-gradient(168deg, #f9fbfe 0%, #eef3fa 52%, #e9eff8 100%);
+}
+
+.l3-canvas { position: absolute; inset: 0; }
+
+.l3-canvas canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.l3-canvas canvas:active { cursor: grabbing; }
+
+.l3-hud {
+  position: absolute;
+  bottom: 26px;
+  left: 12px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  pointer-events: none;
+}
+
+.l3-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .86);
+  border: 1px solid rgba(229, 232, 235, .9);
+  box-shadow: 0 2px 8px rgba(31, 35, 40, .05);
+  color: #4a5563;
+  font-size: 12px;
+  line-height: 1;
+  backdrop-filter: blur(6px);
+}
+
+.l3-chip::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c3cbd6;
+}
+
+.l3-chip.is-ok::before { background: #42b883; }
+.l3-chip.is-error::before { background: #e05a5a; }
+.l3-chip-soft { color: #6f7a89; }
+.l3-chip-soft::before { display: none; }
+
+/* 舞台顶栏：左侧模式切换，右侧视角；两枚胶囊共用一套视觉 */
+.l3-stagebar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.l3-modebar,
+.l3-views {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .86);
+  border: 1px solid rgba(229, 232, 235, .9);
+  box-shadow: 0 2px 8px rgba(31, 35, 40, .05);
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+}
+
+.l3-modebar button,
+.l3-views button {
+  border: 0;
+  background: transparent;
+  padding: 5px 11px;
+  border-radius: 7px;
+  color: #64707f;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.l3-modebar button:hover,
+.l3-views button:hover { background: #f0f4fa; color: #33404f; }
+
+.l3-modebar button.on,
+.l3-views button.on { background: #eaf1fc; color: var(--l3-accent-deep); font-weight: 600; }
+
+.l3-hint {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  color: #9aa4b2;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.l3-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: rgba(248, 251, 254, .82);
+  color: #6b7787;
+  font-size: 12px;
+  transition: opacity .3s ease;
+}
+
+.l3-loading.is-done { opacity: 0; pointer-events: none; }
+.l3-loading.is-error { color: #c04545; }
+
+.l3-spin {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid #dbe6f5;
+  border-top-color: var(--l3-accent);
+  animation: l3-spin 0.9s linear infinite;
+}
+
+@keyframes l3-spin { to { transform: rotate(360deg); } }
+
+/* ================= 右侧检查器 ================= */
+.l3-inspector {
+  flex: 0 0 336px;
+  width: 336px;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--l3-line);
+  background: #fff;
+  transition: flex-basis .18s ease, width .18s ease;
+}
+
+/* 编辑页需要更宽的操作区，切换页签时右列变宽，画布由 flex 自动让出 */
+.l3-inspector[data-tab="shape"] { flex-basis: 396px; width: 396px; }
+.l3-inspector[data-tab="texture"] { flex-basis: 440px; width: 440px; }
+
+.l3-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--l3-line);
+}
+
+.l3-title-wrap { flex: 1 1 auto; min-width: 0; }
+.l3-title { font-size: 14px; font-weight: 600; letter-spacing: .2px; }
+.l3-sub { margin-top: 2px; font-size: 11px; color: var(--l3-dim); }
+
+.l3-toggle {
+  flex: 0 0 auto;
+  border: 1px solid var(--l3-line);
+  background: #fff;
+  color: #64707f;
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.l3-toggle[aria-pressed="true"] {
+  border-color: #cfe0f8;
+  background: #eaf2fd;
+  color: var(--l3-accent-deep);
+}
+
+.l3-msgs {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #fbfcfe;
+  scroll-behavior: smooth;
+}
+
+.l3-msg {
+  max-width: 88%;
+  padding: 8px 11px;
+  border-radius: 12px;
+  line-height: 1.55;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.l3-msg.u {
+  align-self: flex-end;
+  background: #eaf2fd;
+  color: #27466e;
+  border-bottom-right-radius: 5px;
+}
+
+.l3-msg.a {
+  align-self: flex-start;
+  background: #fff;
+  border: 1px solid var(--l3-line);
+  color: #2b323c;
+  border-bottom-left-radius: 5px;
+}
+
+.l3-msg.s {
+  align-self: center;
+  background: #fdf1f1;
+  color: #b45454;
+  border: 1px solid #f5dede;
+  font-size: 12px;
+}
+
+.l3-msg.typing { color: #9aa4b2; }
+
+.l3-quick {
+  display: flex;
+  gap: 6px;
+  padding: 8px 14px 0;
+  flex-wrap: wrap;
+}
+
+.l3-quick button {
+  border: 1px solid var(--l3-line);
+  background: #fff;
+  color: #5c6877;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.l3-quick button:hover { border-color: #cfe0f8; background: #f4f8fe; color: var(--l3-accent-deep); }
+
+.l3-form {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px 14px 8px;
+}
+
+.l3-form textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 38px;
+  max-height: 108px;
+  resize: none;
+  border: 1px solid var(--l3-line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  line-height: 1.5;
+  outline: none;
+  background: #fff;
+}
+
+.l3-form textarea:focus { border-color: #b9d2f2; box-shadow: 0 0 0 3px rgba(91, 143, 217, .12); }
+
+.l3-send {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 14px;
+  background: var(--l3-accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.l3-send:hover { background: var(--l3-accent-deep); }
+.l3-send:disabled { background: #b9c9dd; cursor: default; }
+
+.l3-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--l3-line);
+  flex-wrap: wrap;
+}
+
+.l3-tools-voice { padding-bottom: 12px; }
+
+.l3-field { display: flex; align-items: center; gap: 6px; color: var(--l3-dim); font-size: 12px; }
+.l3-field-wide { flex: 1 1 160px; min-width: 0; }
+
+.l3-field select {
+  min-width: 0;
+  max-width: 160px;
+  border: 1px solid var(--l3-line);
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: #fff;
+  color: #3b4654;
+  font-size: 12px;
+}
+
+.l3-field-wide select { flex: 1 1 auto; max-width: none; width: 100%; }
+
+.l3-btn {
+  border: 1px solid var(--l3-line);
+  background: #fff;
+  color: #5c6877;
+  border-radius: 8px;
+  padding: 5px 11px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.l3-btn:hover { border-color: #cfe0f8; background: #f4f8fe; color: var(--l3-accent-deep); }
+
+.l3-engine {
+  margin-left: auto;
+  color: #9aa4b2;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ================= 窄窗 ================= */
+@container (max-width: 760px) {
+  .l3-shell { flex-direction: column; }
+  .l3-stage { flex: 1 1 54%; min-height: 240px; }
+  .l3-inspector,
+  .l3-inspector[data-tab="chat"],
+  .l3-inspector[data-tab="shape"],
+  .l3-inspector[data-tab="texture"] {
+    flex: 1 1 46%;
+    width: auto;
+    min-height: 0;
+    border-left: 0;
+    border-top: 1px solid var(--l3-line);
+  }
+  .l3-msgs { padding: 10px 12px; }
+  .l3-quick, .l3-form, .l3-tools { padding-left: 12px; padding-right: 12px; }
+  .l3-hint { display: none; }
+}
+
+/* ================= 检查器页签 ================= */
+.l3-insp-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--l3-line);
+  background: #fff;
+}
+
+.l3-insp-tabs button {
+  flex: 1 1 0;
+  border: 0;
+  background: transparent;
+  color: #64707f;
+  font-size: 12px;
+  padding: 6px 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.l3-insp-tabs button:hover { background: #f4f8fe; color: #33404f; }
+
+.l3-insp-tabs button.on {
+  background: #eef5ff;
+  color: var(--l3-accent-deep);
+  font-weight: 600;
+}
+
+.l3-drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.l3-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.l3-pane[hidden] { display: none; }
+
+/* 对话页自己滚气泡，整页不滚 */
+.l3-pane-chat { padding: 0; gap: 0; overflow: hidden; }
+
+.l3-pane-tip {
+  margin: 0;
+  color: #8b94a3;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 预设与快捷操作 */
+.l3-preset-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.l3-preset-label {
+  flex: 0 0 auto;
+  padding-top: 4px;
+  color: #8b94a3;
+  font-size: 12px;
+}
+
+.l3-preset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.l3-preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--l3-line);
+  background: #fff;
+  color: #5c6877;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.l3-preset:hover { border-color: #cfe0f8; color: var(--l3-accent-deep); }
+
+.l3-preset.on {
+  border-color: var(--l3-accent);
+  background: #f1f7ff;
+  color: var(--l3-accent-deep);
+}
+
+.l3-preset-custom { border-style: dashed; }
+
+.l3-preset-del {
+  color: #a7b0bd;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 1px;
+}
+
+.l3-preset-del:hover { color: #d05555; }
+
+.l3-shape-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.l3-shape-save {
+  display: flex;
+  gap: 6px;
+}
+
+.l3-shape-save[hidden] { display: none; }
+
+.l3-shape-save input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--l3-line);
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 12px;
+  color: #3b4654;
+  background: #fff;
+}
+
+.l3-shape-save input[type="text"]:focus {
+  outline: none;
+  border-color: var(--l3-accent);
+}
+
+/* 参数分组：右列宽度按单列排布，滑杆更好拖 */
+.l3-shape-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px 14px;
+}
+
+.l3-shape-group {
+  grid-column: 1 / -1;
+  padding-bottom: 3px;
+  border-bottom: 1px dashed var(--l3-line);
+  color: #33404f;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.l3-shape-group:not(:first-child) { margin-top: 4px; }
+
+.l3-shape-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: #4a5563;
+}
+
+.l3-shape-name {
+  flex: 0 0 auto;
+  width: 60px;
+  color: #5c6877;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+
+.l3-shape-row input[type="range"] { flex: 1 1 auto; min-width: 0; accent-color: var(--l3-accent); }
+
+.l3-shape-val {
+  flex: 0 0 42px;
+  width: 42px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 2px 4px;
+  background: transparent;
+  color: #5c6877;
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+
+.l3-shape-val::-webkit-inner-spin-button,
+.l3-shape-val::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+.l3-shape-val:hover,
+.l3-shape-val:focus {
+  outline: none;
+  border-color: var(--l3-line);
+  background: #fff;
+}
+
+.l3-pane-foot { margin-top: auto; padding-top: 8px; }
+
+/* ================= 三维直接操控 ================= */
+.l3-sculpt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--l3-line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f4f8fd 100%);
+}
+
+.l3-sculpt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.l3-sculpt-title { color: #33404f; font-size: 12px; font-weight: 600; }
+
+.l3-sculpt-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #5c6877;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.l3-sculpt-switch input { accent-color: var(--l3-accent); margin: 0; }
+
+.l3-sculpt-groups {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 9px;
+  background: #eaf0f8;
+}
+
+.l3-sculpt-groups button {
+  flex: 1 1 0;
+  border: 0;
+  background: transparent;
+  color: #64707f;
+  font-size: 12px;
+  padding: 5px 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.l3-sculpt-groups button.on {
+  background: #fff;
+  color: var(--l3-accent-deep);
+  box-shadow: 0 1px 4px rgba(31, 35, 40, .1);
+}
+
+.l3-sculpt-hint {
+  margin: 0;
+  color: #8b94a3;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.l3-curve {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 4px;
+  border: 1px solid var(--l3-line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.l3-curve-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: #33404f;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.l3-curve-tip { color: #9aa4b2; font-size: 11px; font-weight: 400; }
+
+.l3-curve svg {
+  display: block;
+  width: 100%;
+  height: 118px;
+  touch-action: none;
+}
+
+.l3-curve-face {
+  fill: rgba(91, 143, 217, .10);
+  stroke: var(--l3-accent);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+}
+
+.l3-curve-axis {
+  stroke: #e5e8eb;
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+
+.l3-curve-pt {
+  fill: #fff;
+  stroke: var(--l3-accent-deep);
+  stroke-width: 2;
+  cursor: ew-resize;
+  transition: fill .15s ease;
+}
+
+.l3-curve-pt:hover { fill: #eaf2fd; }
+
+.l3-curve-ghost { fill: #c9d7ea; pointer-events: none; }
+
+.l3-shape-subtitle {
+  margin-top: 2px;
+  padding-bottom: 3px;
+  border-bottom: 1px dashed var(--l3-line);
+  color: #33404f;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.l3-shape-note {
+  margin: 0 0 2px;
+  color: #8b94a3;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+/* 脸上的操控点 */
+.l3-gizmos {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.l3-gizmos.is-off { display: none; }
+
+.l3-gizmo {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.l3-gizmo:active { cursor: grabbing; }
+
+.l3-gizmo-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--l3-accent-deep);
+  background: rgba(255, 255, 255, .82);
+  box-shadow: 0 1px 6px rgba(31, 35, 40, .2);
+  transition: background .15s ease, transform .15s ease;
+}
+
+.l3-gizmo:hover .l3-gizmo-dot,
+.l3-gizmo.on .l3-gizmo-dot {
+  background: var(--l3-accent);
+  transform: scale(1.12);
+}
+
+.l3-gizmo.is-dragging .l3-gizmo-dot {
+  background: var(--l3-accent-deep);
+  box-shadow: 0 0 0 6px rgba(91, 143, 217, .18);
+}
+
+.l3-gizmo-tag {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .92);
+  border: 1px solid rgba(229, 232, 235, .95);
+  color: #4a5563;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(31, 35, 40, .08);
+}
+
+.l3-gizmo.on .l3-gizmo-tag {
+  border-color: #cfe0f8;
+  color: var(--l3-accent-deep);
+}
+
+/* 曲面范围线圈：贴在脸上的可编辑椭圆 */
+.l3-coil-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.l3-btn-mini { padding: 3px 8px; font-size: 11px; border-radius: 7px; }
+
+/* 选区手柄层：选区本身已经在三维里点亮成面片，这里只剩可拖的小圆点 */
+.l3-coil,
+.l3-region {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.l3-coil.is-off,
+.l3-region.is-off { display: none; }
+
+/* 拖拽引线：从静止锚点连到手柄，明确「往哪拉」 */
+.l3-pull {
+  position: absolute;
+  display: block;
+  height: 0;
+  border-top: 1.5px dashed rgba(47, 111, 208, .9);
+  transform-origin: 0 0;
+  pointer-events: none;
+  /* 白描边让引线在浅色皮肤上也看得清 */
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, .95));
+}
+
+/* 眼睛 / 嘴巴：移动 / 缩放 / 旋转手柄 */
+.l3-region-handle {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid #fff;
+  background: var(--l3-accent);
+  box-shadow: 0 1px 6px rgba(31, 35, 40, .3);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+}
+
+.l3-region-handle.is-center span { display: none; }
+
+.l3-region-handle.is-center {
+  width: 17px;
+  height: 17px;
+  background: rgba(255, 255, 255, .92);
+  border-color: var(--l3-accent-deep);
+  cursor: grab;
+}
+
+.l3-region-handle.is-center::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--l3-accent-deep);
+}
+
+.l3-region-handle.is-scale {
+  width: 11px;
+  height: 11px;
+  background: #fff;
+  border-color: var(--l3-accent-deep);
+  cursor: nwse-resize;
+}
+
+.l3-region-handle.is-rotate {
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-color: var(--l3-accent-deep);
+  cursor: crosshair;
+}
+
+.l3-region-handle.is-rotate::after {
+  content: "↻";
+  color: var(--l3-accent-deep);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.l3-region-handle.is-dragging {
+  background: var(--l3-accent-deep);
+  color: #fff;
+  box-shadow: 0 0 0 7px rgba(91, 143, 217, .2);
+}
+
+.l3-region-handle.is-dragging::after { color: #fff; }
+
+.l3-coil-handle {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid #fff;
+  background: var(--l3-accent);
+  box-shadow: 0 1px 5px rgba(31, 35, 40, .28);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+}
+
+.l3-coil-handle:active { cursor: grabbing; }
+
+.l3-coil-handle span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.l3-coil-handle.is-edge {
+  width: 11px;
+  height: 11px;
+  background: #fff;
+  border-color: var(--l3-accent-deep);
+  cursor: crosshair;
+}
+
+.l3-coil-handle.is-edge span { display: none; }
+
+/* 手柄只在能动的那个轴上生效：光标形状直接说明「往哪拖」。
+ * 以前四边一律 crosshair、中心一律 grab，用户往死方向拖就会以为控制坏了。 */
+.l3-coil-handle.is-edge[data-axis="h"] { cursor: ew-resize; }
+.l3-coil-handle.is-center[data-axis="both"] { cursor: move; }
+.l3-coil-handle.is-edge[data-axis="v"],
+.l3-coil-handle.is-center[data-axis="v"] { cursor: ns-resize; }
+
+/* 这些圆点没有文字标签（不像参数抓手有名字），靠悬停提示说清它是「影响范围」 */
+.l3-coil-handle::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%) translateY(2px);
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(28, 32, 40, .9);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease, transform .12s ease;
+}
+
+.l3-coil-handle:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.l3-coil-handle.is-dragging {
+  box-shadow: 0 0 0 6px rgba(91, 143, 217, .2);
+}
+
+.l3-coil-handle.is-dragging::after { opacity: 0; }
+
+/* 面部轮廓线：手柄贴在真实脸缘上（u = ±1 的顶点），拖它就是在改这一层的脸宽。
+ * 外观复用 .l3-coil-handle.is-edge，只补两件事：改过的点变实心、拖动时显示当前倍率。 */
+.l3-outline {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.l3-outline.is-off { display: none; }
+
+/* 轮廓节点用菱形：画布上已经有两种圆点（参数锚点 / 影响范围），
+ * 再来一种圆点就分不清谁是谁了。旋转 45° 只做在按钮上，读数标签反向转回来。 */
+.l3-out-handle {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  opacity: .7;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.l3-out-handle:hover { opacity: 1; }
+
+/* 改过的节点变实心：一眼看得出「这条我动过」，下次也好找 */
+.l3-out-handle.is-changed {
+  opacity: 1;
+  background: var(--l3-accent);
+  border-color: #fff;
+  box-shadow: 0 1px 6px rgba(31, 35, 40, .34);
+}
+
+.l3-out-handle.is-dragging {
+  opacity: 1;
+  background: var(--l3-accent-deep);
+  border-color: #fff;
+  box-shadow: 0 0 0 6px rgba(91, 143, 217, .2);
+}
+
+/* 倍率读数放在手柄下方：上方留给 .l3-coil-handle::after 的悬停提示，两个不打架。
+ * 按钮整体转了 45°，文字要转回来才是正的。 */
+.l3-out-tag {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) rotate(-45deg);
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(28, 32, 40, .9);
+  color: #fff;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.5;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease;
+}
+
+.l3-out-handle:hover .l3-out-tag,
+.l3-out-handle.is-dragging .l3-out-tag { opacity: 1; }
+
+.l3-pane-tex { gap: 8px; overflow: hidden; }
+.l3-texbar, .l3-adjrow, .l3-texrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.l3-toolgroup {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: #f2f5f9;
+}
+
+.l3-toolgroup button {
+  border: 0;
+  background: transparent;
+  color: #64707f;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.l3-toolgroup button.on {
+  background: #fff;
+  color: var(--l3-accent-deep);
+  box-shadow: 0 1px 4px rgba(31, 35, 40, .1);
+}
+
+.l3-mini {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #8b94a3;
+  font-size: 12px;
+}
+
+.l3-mini input[type="range"] { width: 76px; accent-color: var(--l3-accent); }
+.l3-mini input[type="color"] {
+  width: 30px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--l3-line);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.l3-texview {
+  flex: 1 1 auto;
+  min-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--l3-line);
+  border-radius: 10px;
+  background: #eef1f5;
+}
+
+.l3-texpad {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 100%;
+  min-height: 100%;
+  padding: 10px;
+}
+
+.l3-texpad canvas {
+  display: block;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 2px 12px rgba(31, 35, 40, .12);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* 主画布 + 选区遮罩叠层 */
+.l3-texstack {
+  position: relative;
+  display: inline-flex;
+  line-height: 0;
+}
+
+.l3-texstack #l3TexVeil {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  box-shadow: none;
+  background: transparent;
+  cursor: default;
+  pointer-events: none;
+}
+
+.l3-regionbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.l3-regionlabel {
+  color: #8b94a3;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.l3-regionlist {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.l3-regionchip {
+  border: 1px solid var(--l3-line);
+  background: #fff;
+  color: #5c6877;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+
+.l3-regionchip:hover {
+  border-color: #c7dbf7;
+  color: var(--l3-accent-deep);
+}
+
+.l3-regionchip.on {
+  border-color: var(--l3-accent);
+  background: #eef5ff;
+  color: var(--l3-accent-deep);
+  font-weight: 600;
+}
+
+.l3-regionhint {
+  margin: 0;
+  color: #9aa4b2;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.l3-texfoot { display: flex; flex-direction: column; gap: 6px; }
+.l3-btn-primary { border-color: var(--l3-accent); background: var(--l3-accent); color: #fff; }
+.l3-btn-primary:hover { background: var(--l3-accent-deep); color: #fff; }
+.l3-btn:disabled { opacity: .45; cursor: default; }
+
+@container (max-width: 520px) {
+  .l3-shape-list { grid-template-columns: 1fr; }
+}
+
+/* 窄窗下舞台和检查器上下堆叠：右列变成底部抽屉，画布保持满宽 */
+@container (max-width: 760px) {
+  .l3-stagebar { left: 10px; right: 10px; top: 10px; }
+  .l3-modebar button, .l3-views button { padding: 5px 8px; }
+}
+

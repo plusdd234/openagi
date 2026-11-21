@@ -30,6 +30,29 @@ const { probeHardwareMain } = require('./hardware-info');
 const REPO_ROOT = path.join(__dirname, '..');
 let bootLogFile = null;   // 打包后没有 stdout，统一写 userData/boot.log
 
+/* ---------- Tripo 内嵌模式 ----------
+ *
+ * 「Tripo 工坊」把 studio.tripo3d.com 放在自己的 <webview> 里，登录和生成都在里面完成。
+ * 驱动这个 guest 的是 plugins/tripo 的插件进程，它需要一层 CDP：Playwright 的
+ * connectOverCDP 只认宿主页，看不到 type=webview 的 guest。
+ *
+ * 所以主进程在回环地址上开一个调试端口，插件通过 /json/list 找到 guest 后直连它的
+ * webSocketDebuggerUrl。三个约束：
+ *   ① 只绑 127.0.0.1，绝不对外；不想要时用 OPENAGI_TRIPO_CDP_PORT=0 关掉。
+ *   ② 必须在 ready 之前 appendSwitch，之后再加不生效。
+ *   ③ 端口打开等于把整个应用的调试入口暴露给本机进程，这是功能换来的代价；
+ *      浏览器 App 仍然走 GUEST_PARTITION，不共享 Tripo 登录态。 */
+const TRIPO_EMBED_PARTITION = 'persist:tripo-embed';
+const TRIPO_CDP_PORT = (() => {
+  const raw = process.env.OPENAGI_TRIPO_CDP_PORT;
+  const n = Number(raw === undefined || raw === '' ? 9223 : raw);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+})();
+if(TRIPO_CDP_PORT){
+  app.commandLine.appendSwitch('remote-debugging-port', String(TRIPO_CDP_PORT));
+  app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
+}
+
 // GUI 双击启动时 stdout/stderr 可能指向已断开的管道：写入会异步触发 EPIPE，
 // 一旦变成 uncaughtException 就会打断窗口初始化。isTTY 判断在 Windows 分离进程下
 // 不可靠，因此日志不用 console.log（console 缓存了进程创建时的旧流引用），
@@ -563,6 +586,11 @@ function startServices(){
     for(const [k, v] of Object.entries(cfg.userDataEnv || {})){
       env[k] = path.join(userData, v);
     }
+    /* Tripo 插件要驱动 App 内嵌的 webview guest：告诉它 CDP 入口在哪。
+       端口被关掉（OPENAGI_TRIPO_CDP_PORT=0）时不给变量，插件自动退回外部 Edge。 */
+    if(id === 'tripo' && TRIPO_CDP_PORT){
+      env.TRIPO_EMBED_CDP = 'http://127.0.0.1:' + TRIPO_CDP_PORT;
+    }
     try {
       serviceProcs[id] = startService(id, path.join(dir, id, cfg.entry), env, dir, cfg.args || []);
     } catch(e){
@@ -775,6 +803,46 @@ function hostBlocked(host){
   return AD_HOSTS.some(b => h === b || h.endsWith('.' + b));
 }
 
+/* Tripo 内嵌 guest 的下载落点：与插件 TRIPO_OUT_DIR 一致（userData/tripo_out）。
+ * 先写 .incoming 再重命名——插件在轮询 OUT_DIR，看到半截文件会当成结果拉走。 */
+function tripoOutDir(){ return path.join(app.getPath('userData'), 'tripo_out'); }
+function saveTripoDownload(item){
+  const out = tripoOutDir();
+  const tmpDir = path.join(out, '.incoming');
+  try { fs.mkdirSync(tmpDir, { recursive: true }); } catch(e){}
+  const raw = String(item.getFilename() || ('tripo-' + Date.now()));
+  const safe = raw.replace(/[\\/:*?"<>|]+/g, '_').slice(-120) || ('tripo-' + Date.now());
+  const tmp = path.join(tmpDir, Date.now() + '-' + Math.random().toString(36).slice(2, 7) + '-' + safe);
+  try { item.setSavePath(tmp); } catch(e){ return; }
+  item.once('done', (_e, state) => {
+    if(state !== 'completed'){
+      try { fs.unlinkSync(tmp); } catch(e){}
+      if(state !== 'cancelled') logLine('[tripo] 下载失败：' + state);
+      return;
+    }
+    const ext = path.extname(safe);
+    const base = ext ? safe.slice(0, -ext.length) : safe;
+    let dest = path.join(out, safe);
+    if(fs.existsSync(dest)) dest = path.join(out, base + '-' + Date.now() + ext);
+    try { fs.renameSync(tmp, dest); }
+    catch(e){
+      try { fs.copyFileSync(tmp, dest); fs.unlinkSync(tmp); } catch(err){ return; }
+    }
+    logLine('[tripo] 模型已下载：' + dest);
+  });
+}
+
+/* Tripo / Cloudflare 对 Electron UA 更敏感；内嵌 guest 换成干净的 Edge UA。 */
+function guestUserAgent(){
+  const chrome = process.versions.chrome || '130.0.0.0';
+  const major = String(chrome).split('.')[0];
+  const plat = process.platform === 'win32' ? 'Windows NT 10.0; Win64; x64'
+    : process.platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10_15_7'
+      : 'X11; Linux x86_64';
+  return 'Mozilla/5.0 (' + plat + ') AppleWebKit/537.36 (KHTML, like Gecko) Chrome/'
+    + chrome + ' Safari/537.36 Edg/' + major + '.0.0.0';
+}
+
 function hardenGuestSession(){
   const guard = session.fromPartition(GUEST_PARTITION);
   /* 权限一律拒绝：外站不需要摄像头 / 麦克风 / 定位 / 通知 / 剪贴板读取 */
@@ -791,9 +859,44 @@ function hardenGuestSession(){
       cb({});
     } catch(e){ cb({}); }
   });
-  /* 弹窗与协议跳转：guest 用独立 webContents 创建，主窗口那套 handler 管不到 */
+
+  /* 内嵌 Tripo 用独立分区：登录态与「浏览器」App 隔离，下载必须放行。 */
+  const tripo = session.fromPartition(TRIPO_EMBED_PARTITION);
+  try { tripo.setUserAgent(guestUserAgent()); } catch(e){}
+  tripo.setPermissionRequestHandler((wc, permission, cb) => {
+    const url = (wc && wc.getURL && wc.getURL()) || '';
+    const ok = /^https:\/\/([^/]*\.)?tripo3d\.(com|ai)\//i.test(url)
+      && /^(clipboard-read|clipboard-sanitized-write|fullscreen)$/.test(String(permission));
+    cb(ok);
+  });
+  tripo.setPermissionCheckHandler((_wc, permission) => /^(clipboard-read|clipboard-sanitized-write|fullscreen)$/.test(String(permission)));
+  tripo.on('will-download', (e, item) => { saveTripoDownload(item); });
+  tripo.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, cb) => {
+    try {
+      const u = new URL(details.url);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return cb({ cancel: true });
+      cb({});
+    } catch(e){ cb({}); }
+  });
+
+  /* 弹窗与协议跳转：guest 用独立 webContents 创建，主窗口那套 handler 管不到。
+     Tripo 的第三方登录（Google 等）会开新窗口，内嵌分区放行 https 弹窗；其余照旧拒绝。 */
   app.on('web-contents-created', (_e, contents) => {
-    if (contents.getType() !== 'webview') return;
+    if(contents.getType() !== 'webview') return;
+    let isTripo = false;
+    try { isTripo = contents.session === tripo; } catch(e){}
+    if(isTripo){
+      contents.setWindowOpenHandler(({ url }) => /^https:\/\//i.test(url) ? { action: 'allow' } : { action: 'deny' });
+      const onlyHttp = (e, url) => { if (!/^https?:\/\//i.test(url)) e.preventDefault(); };
+      contents.on('will-navigate', onlyHttp);
+      contents.on('will-redirect', onlyHttp);
+      /* 去掉 navigator.webdriver 等自动化痕迹；失败了也不影响页面 */
+      contents.on('dom-ready', () => {
+        contents.executeJavaScript('(() => { try { Object.defineProperty(navigator, "webdriver", { get: () => undefined, configurable: true }); } catch (e) {} })()', true)
+          .catch(() => {});
+      });
+      return;
+    }
     contents.setWindowOpenHandler(() => ({ action: 'deny' }));
     const onlyHttp = (e, url) => { if (!/^https?:\/\//i.test(url)) e.preventDefault(); };
     contents.on('will-navigate', onlyHttp);
@@ -826,13 +929,17 @@ async function createWindow(){
 
   /* 外站是任意第三方代码：guest 绝不能继承主窗口的 preload，也不能拿到 Node。
      这几行是 webviewTag 打开后必须配套的护栏。 */
-  win.webContents.on('will-attach-webview', (_e, webPreferences) => {
+  win.webContents.on('will-attach-webview', (_e, webPreferences, params) => {
     delete webPreferences.preload;
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
-    /* 所有 guest 强制进防护分区；sandbox 让渲染进程也失去直接系统能力 */
-    webPreferences.partition = GUEST_PARTITION;
     webPreferences.sandbox = true;
+    /* Tripo 工坊的内嵌视图必须留在自己的分区：登录态与「浏览器」App 隔离，
+       下载放行也按分区判定（见 hardenGuestSession）。其余 guest 照旧进防护分区。
+       partition 优先读 params：webview 标签上的属性解析在 params 里，webPreferences
+       里可能还是空值，只看后者会把内嵌 guest 误推进防护分区。 */
+    const wanted = String((params && params.partition) || webPreferences.partition || '');
+    webPreferences.partition = wanted === TRIPO_EMBED_PARTITION ? TRIPO_EMBED_PARTITION : GUEST_PARTITION;
   });
 
   const qs = new URLSearchParams({

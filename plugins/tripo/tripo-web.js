@@ -34,6 +34,11 @@ const PROFILE_DIR = process.env.TRIPO_PROFILE_DIR || path.join(__dirname, '.trip
 const OUT_DIR = process.env.TRIPO_OUT_DIR || path.join(__dirname, 'tripo_out');
 const TMP_DIR = process.env.TRIPO_TMP_DIR || path.join(__dirname, 'tripo_tmp');
 
+/* 内嵌模式：Electron 主进程把 App 内 <webview> 的 CDP 入口传进来。
+ * 有它就先驱动内嵌页面（登录与生成都在工作台里完成）；找不到 guest 或没这个变量时，
+ * 下面那套「普通 Edge + CDP」逻辑原样保留，作为浏览器环境 / 内嵌被关掉的兜底。 */
+const EMBED_CDP = String(process.env.TRIPO_EMBED_CDP || '').trim();
+
 // ---------- 参数 ----------
 const argv = process.argv.slice(2);
 function argValue(name, fallback) {
@@ -1616,17 +1621,58 @@ let srvPage = null;
 let srvBusy = false;
 let readyCache = { at: 0, ready: false, url: '', title: '' };
 
+let embedModule = null;
+let embedMissAt = 0;
+
+async function launchEmbedded(timeoutMs) {
+  if (!EMBED_CDP) return null;
+  if (!embedModule) embedModule = require('./embed-cdp');
+  return embedModule.connect({ cdpBase: EMBED_CDP, outDir: OUT_DIR, timeoutMs });
+}
+
+/* 接管一个内嵌 guest：切换执行页面、重置就绪缓存、登记关闭回调与网络日志。 */
+function adoptEmbedded(emb) {
+  srvCtx = emb.context;
+  srvPage = emb.page;
+  readyCache = { at: 0, ready: false, url: '', title: '' };
+  emb.context.on('close', () => {
+    if (srvCtx === emb.context) { srvCtx = null; srvPage = null; }
+  });
+  recordPage(emb.page);
+  return emb;
+}
+
 async function ensureBrowser() {
+  /* 内嵌优先：guest 由 App 的 <webview> 创建，可能比插件晚起来，所以每次都要探一次。
+     探测失败后 5 秒内不重复等，避免连续生成时每次都白等 6 秒。 */
+  if (EMBED_CDP && !(srvCtx && srvCtx.__embedded) && Date.now() - embedMissAt > 5000) {
+    let emb = null;
+    try {
+      emb = await launchEmbedded(6000);
+    } catch (e) {
+      log('内嵌 Tripo 页面连接失败：' + ((e && e.message) || e));
+    }
+    if (emb) {
+      adoptEmbedded(emb);
+      log('已连接内嵌 Tripo 页面（登录与生成都在工作台内完成）');
+      return emb;
+    }
+    embedMissAt = Date.now();
+  }
+
   if (srvCtx) {
     const pages = srvCtx.pages().filter(p => !p.isClosed());
     if (pages.length) {
       if (!srvPage || srvPage.isClosed() || !pages.includes(srvPage)) srvPage = pages[0];
       return { context: srvCtx, page: srvPage };
     }
+    srvCtx = null;
+    srvPage = null;
   }
   const { context, page } = await launch();
   srvCtx = context;
   srvPage = page;
+  readyCache = { at: 0, ready: false, url: '', title: '' };
   context.on('close', () => {
     if (srvCtx === context) { srvCtx = null; srvPage = null; }
   });
@@ -1716,15 +1762,24 @@ async function startServer() {
       if (u.pathname === '/ping') { sendJson(res, 200, { ok: true, service: 'tripo-bridge' }); return; }
 
       if (u.pathname === '/status') {
-        if (!srvCtx) { sendJson(res, 200, { ok: true, running: false, ready: false }); return; }
+        /* 内嵌视图刚打开时顺手接上，让状态栏能直接显示「内嵌 · 请登录」。
+           这里只等 350ms，不让一次状态轮询变成 6 秒的探测。 */
+        if (EMBED_CDP && !srvCtx) {
+          try {
+            const emb = await launchEmbedded(350);
+            if (emb) adoptEmbedded(emb);
+          } catch (e) { /* guest 还没起来，下一次轮询再说 */ }
+        }
+        const embed = { embedded: !!EMBED_CDP, embeddedAttached: !!(srvCtx && srvCtx.__embedded), mode: srvCtx ? (srvCtx.__embedded ? 'embedded' : 'external') : 'none' };
+        if (!srvCtx) { sendJson(res, 200, Object.assign({ ok: true, running: false, ready: false }, embed)); return; }
         const page = srvPage && !srvPage.isClosed() ? srvPage : srvCtx.pages()[0];
-        if (!page) { sendJson(res, 200, { ok: true, running: false, ready: false }); return; }
+        if (!page) { sendJson(res, 200, Object.assign({ ok: true, running: false, ready: false }, embed)); return; }
         const r = await computeReady(page);
         const m = await computeModelReady(page).catch(() => ({ ready: false }));
-        sendJson(res, 200, {
+        sendJson(res, 200, Object.assign({
           ok: true, running: true, ready: r.ready, modelReady: !!m.ready,
           url: r.url, title: r.title,
-        });
+        }, embed));
         return;
       }
 
@@ -1748,6 +1803,34 @@ async function startServer() {
           sendJson(res, 400, { ok: false, message: '只允许打开 studio.tripo3d.com 或 studio.tripo3d.ai' });
           return;
         }
+        /* 内嵌模式：不拉起 Edge，只挂到 App 的 <webview> 上。
+           guest 还不存在时返回 needOpen，由 App 显示内嵌视图后重试。 */
+        if (EMBED_CDP) {
+          let emb = null;
+          if (srvCtx && srvCtx.__embedded) {
+            const pages = srvCtx.pages().filter(p => !p.isClosed());
+            if (pages.length) emb = { context: srvCtx, page: pages[0] };
+          }
+          if (!emb) {
+            try { emb = await launchEmbedded(10000); }
+            catch (e) { log('内嵌 Tripo 页面连接失败：' + ((e && e.message) || e)); }
+          }
+          if (!emb) {
+            sendJson(res, 200, {
+              ok: true, embedded: true, needOpen: true,
+              message: '请先在内嵌视图里打开 Tripo 工作台，再点一次登录',
+            });
+            return;
+          }
+          adoptEmbedded(emb);
+          const page = emb.page;
+          if (target && page.url() !== target) {
+            await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60000 })
+              .catch(e => log('打开登录页提示：' + e.message));
+          }
+          sendJson(res, 200, { ok: true, embedded: true, message: '已切换到内嵌 Tripo 页面，请在其中登录' });
+          return;
+        }
         const { page } = await ensureBrowser();
         if (target && page.url() !== target) {
           await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60000 })
@@ -1769,7 +1852,8 @@ async function startServer() {
         const timeoutSec = Math.max(10, Math.min(900, Number(body.timeoutSec) || TIMEOUT_SEC));
         if (!prompt) { sendJson(res, 400, { ok: false, message: '缺少提示词' }); return; }
         if (srvBusy) { sendJson(res, 429, { ok: false, message: '上一张仍在生成，请稍候' }); return; }
-        if (!srvCtx) {
+        // 内嵌模式下 guest 可能还没被 App 创建，先交给 ensureBrowser 探测一轮再判失败
+        if (!srvCtx && !EMBED_CDP) {
           sendJson(res, 409, { ok: false, message: '请先在设置里点「打开登录页」，登录并进入生图页面' });
           return;
         }
@@ -1816,9 +1900,12 @@ async function startServer() {
           format: String(body.format || ''),
           timeoutSec: Math.max(30, Math.min(1800, Number(body.timeoutSec) || 420)),
         };
-        if (!image) { sendJson(res, 400, { ok: false, message: '缺少参考图' }); return; }
+        const hasRef = opts.multi
+          ? !!(opts.views && (opts.views.front || opts.views.left || opts.views.right || opts.views.back))
+          : !!opts.image;
+        if (!hasRef) { sendJson(res, 400, { ok: false, message: '缺少参考图' }); return; }
         if (srvBusy) { sendJson(res, 429, { ok: false, message: '上一次生成仍在进行，请稍候' }); return; }
-        if (!srvCtx) { sendJson(res, 409, { ok: false, message: '请先在设置里点「打开登录页」，登录并进入生成页' }); return; }
+        if (!srvCtx && !EMBED_CDP) { sendJson(res, 409, { ok: false, message: '请先在设置里点「打开登录页」，登录并进入生成页' }); return; }
         const { context, page } = await ensureBrowser();
         srvBusy = true;
         try {

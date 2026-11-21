@@ -1,6 +1,6 @@
 /* ============================================================
  * 自动生成，别手改 —— node tools/app-scan.js
- * App 清单：aisearch , arm101 , browser , card , chara , chat , code , comfy , gallery , hello , imglab , live2d , maildesk , modeldesk , models , multiview , player , store , studio , tunnel , visionlab , wardrobe
+ * App 清单：aisearch , arm101 , browser , card , chara , chat , code , comfy , featlab , gallery , hello , imglab , live2d , lumen3d , maildesk , modeldesk , models , multiview , player , store , studio , tripostudio , tunnel , visionlab , wardrobe
  *
  * 加一个 App = 建 apps/<id>/app.js（参考 apps/hello）+ 跑一次 app-scan。
  * index.html 与 desk-shell.js 都不用碰，所以多路 AI 并行时不会互相踩。
@@ -6741,6 +6741,3087 @@ window.ARM101_BODY = `
   });
 })();
 
+/* ---- apps/featlab/body.js ---- */
+/* 特征提取台（apps/featlab）的窗口 DOM。
+ * 只导出字符串；app-scan 会把它排在 app.js 之前内联进 manifest。
+ *
+ * 右栏是四个 tab（提取 / 图集 / 提示词 / 标注）：三栏宽度只有 330px，
+ * 全摊开会纵向滚到看不见按钮。tab 只切 display，input 始终在 DOM 里，
+ * 取值口径不变（唯一真源仍是 S.opt / S.pmt）。 */
+window.FEATLAB_BODY = `
+<div class="featlab-shell">
+  <header class="featlab-top">
+    <div class="featlab-brand">
+      <span class="featlab-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3.4" y="3.4" width="17.2" height="17.2" rx="3"/>
+          <path d="M9.1 3.4v17.2M14.9 3.4v17.2M3.4 9.1h17.2M3.4 14.9h17.2"/>
+          <rect x="9.9" y="9.9" width="9.4" height="9.4" rx="1.6" fill="currentColor" fill-opacity=".18" stroke="none"/>
+        </svg>
+      </span>
+      <div class="featlab-brand-t"><b>特征提取台</b><i>人工框选 · AI 定位复核 · 九宫格图集标注</i></div>
+    </div>
+    <div class="featlab-tools">
+      <div class="featlab-toolgrp" role="group" aria-label="画布工具">
+        <button type="button" class="featlab-tool on" data-tool="select" title="选择 / 移动 / 缩放（V）">选择</button>
+        <button type="button" class="featlab-tool" data-tool="add" title="拖拽框选新特征（R）">框选</button>
+        <button type="button" class="featlab-tool" data-tool="pan" title="平移画布（H，或按住空格）">平移</button>
+      </div>
+      <span class="featlab-sep"></span>
+      <button type="button" class="featlab-btn" data-act="undo" title="撤销（Ctrl+Z）">撤销</button>
+      <button type="button" class="featlab-btn" data-act="redo" title="重做（Ctrl+Y）">重做</button>
+      <span class="featlab-sep"></span>
+      <button type="button" class="featlab-btn sq" data-act="zoom-out" title="缩小">−</button>
+      <span class="featlab-zoom" id="featlabZoom">100%</span>
+      <button type="button" class="featlab-btn sq" data-act="zoom-in" title="放大">＋</button>
+      <button type="button" class="featlab-btn" data-act="fit" title="适应窗口（F）">适应</button>
+      <span class="featlab-sep"></span>
+      <button type="button" class="featlab-btn primary" data-act="import">导入图片</button>
+      <input type="file" id="featlabFile" accept="image/*" multiple hidden>
+    </div>
+  </header>
+
+  <div class="featlab-main">
+    <aside class="featlab-rail">
+      <div class="featlab-block">
+        <div class="featlab-block-h"><b>源图</b><span id="featlabSrcHint">最多 3 张</span></div>
+        <div class="featlab-srcs" id="featlabSrcs"></div>
+      </div>
+      <div class="featlab-block grow">
+        <div class="featlab-block-h"><b>特征区域</b><span id="featlabCount">0 / 9</span></div>
+        <div class="featlab-list" id="featlabList"></div>
+        <div class="featlab-listfoot">
+          <button type="button" class="featlab-btn sm" data-act="add-region">＋ 新增区域</button>
+          <button type="button" class="featlab-btn sm ghost" data-act="clear-regions">清空</button>
+        </div>
+      </div>
+    </aside>
+
+    <section class="featlab-center">
+      <div class="featlab-viewwrap" id="featlabViewport">
+        <canvas id="featlabCanvas"></canvas>
+        <div class="featlab-empty" id="featlabEmpty">
+          <div class="featlab-empty-card">
+            <b>把图片拖进来</b>
+            <span>支持 PNG / JPEG / WebP，最多 3 张；也可以 Ctrl+V 直接粘贴</span>
+            <button type="button" class="featlab-btn primary" data-act="import">选择图片</button>
+          </div>
+        </div>
+        <div class="featlab-hud">
+          <span id="featlabHudPos">—</span>
+          <span id="featlabHudInfo"></span>
+        </div>
+        <div class="featlab-busy" id="featlabBusy" hidden>
+          <div class="featlab-busy-card">
+            <span class="featlab-spin"></span>
+            <b id="featlabBusyText">处理中…</b>
+            <span id="featlabBusySub"></span>
+            <button type="button" class="featlab-btn sm" data-act="cancel-ai">停止</button>
+          </div>
+        </div>
+      </div>
+      <div class="featlab-inspect" id="featlabInspect"></div>
+    </section>
+
+    <aside class="featlab-panel">
+      <div class="featlab-tabs" role="tablist" aria-label="右侧面板">
+        <button type="button" class="featlab-tab on" data-ftab="ext" role="tab">提取</button>
+        <button type="button" class="featlab-tab" data-ftab="atlas" role="tab">图集</button>
+        <button type="button" class="featlab-tab" data-ftab="prompt" role="tab">提示词</button>
+        <button type="button" class="featlab-tab" data-ftab="ann" role="tab">标注</button>
+      </div>
+
+      <div class="featlab-tabwrap">
+        <div class="featlab-tabpage on" data-tab="ext">
+          <section class="featlab-sec">
+            <div class="featlab-sec-h"><b>AI 提取</b><span>开放工作要求</span></div>
+            <label class="featlab-field"><span>工作要求</span>
+              <textarea id="featlabReq" rows="3" spellcheck="false" placeholder="例：定位人物的头部位（发髻 / 眼睛 / 眉毛 / 耳朵）与身体部位（衣领 / 胸部 / 手部 / 腰带 / 鞋部），每个部位一个区域。留空则由 AI 挑最值得关注的 9 个细节区域"></textarea>
+            </label>
+            <div class="featlab-row2">
+              <label class="featlab-field"><span>主体</span><input id="featlabSubject" type="text" value="人物" spellcheck="false"></label>
+              <label class="featlab-field"><span>范围</span>
+                <select id="featlabScope"><option value="all">全部源图</option><option value="active">当前源图</option></select>
+              </label>
+            </div>
+            <div class="featlab-actions">
+              <button type="button" class="featlab-btn primary" data-act="ai-extract">AI 提取特征</button>
+              <button type="button" class="featlab-btn" data-act="ai-name" title="给手工框选或未命名区域自动命名">AI 命名</button>
+              <button type="button" class="featlab-btn" data-act="ai-verify" title="让模型逐格判断是否确实是对应部位">AI 复核</button>
+            </div>
+            <label class="featlab-check"><input type="checkbox" id="featlabVerify" checked> 提取后自动逐格复核（多一次调用）</label>
+          </section>
+          <section class="featlab-sec">
+            <div class="featlab-sec-h"><b>右键即复制</b><span>画布 / 缩略图 / 预览</span></div>
+            <p class="featlab-note">在画布上右键，可复制该区域小图、整张源图或九宫格图集；在源图缩略图与图集预览上右键同样可复制。图片直接进系统剪切板，粘贴到任何地方都不用先存盘。</p>
+          </section>
+        </div>
+
+        <div class="featlab-tabpage" data-tab="atlas">
+          <section class="featlab-sec">
+            <div class="featlab-sec-h"><b>图集</b><span id="featlabAtlasInfo">3×3</span></div>
+            <div class="featlab-grid3">
+              <label class="featlab-field"><span>单元尺寸</span>
+                <select id="featlabCell"><option value="256">256</option><option value="384">384</option><option value="512" selected>512</option></select>
+              </label>
+              <label class="featlab-field"><span>外扩边距</span><input id="featlabMargin" type="number" min="0" max="100" step="5" value="30"></label>
+              <label class="featlab-field"><span>格间距</span>
+                <select id="featlabGap"><option value="0">0</option><option value="6">6</option><option value="12">12</option></select>
+              </label>
+            </div>
+            <div class="featlab-row2">
+              <label class="featlab-field"><span>底色</span><input id="featlabBg" type="color" value="#15181d"></label>
+              <label class="featlab-check"><input type="checkbox" id="featlabBadge" checked> 格内序号</label>
+            </div>
+            <label class="featlab-check"><input type="checkbox" id="featlabLabels"> 格内名称</label>
+            <div class="featlab-preview" id="featlabPreviewWrap"><canvas id="featlabPreview"></canvas><span id="featlabPreviewHint">还没有可拼的区域</span></div>
+            <div class="featlab-actions">
+              <button type="button" class="featlab-btn primary" data-act="build">拼图集</button>
+              <button type="button" class="featlab-btn" data-act="copy-atlas">复制图集</button>
+              <button type="button" class="featlab-btn" data-act="export-png">导出 PNG</button>
+              <button type="button" class="featlab-btn" data-act="export-json">导出 JSON</button>
+            </div>
+          </section>
+        </div>
+
+        <div class="featlab-tabpage" data-tab="prompt">
+          <section class="featlab-sec">
+            <div class="featlab-sec-h"><b>提示词表单</b><span>填空即出词</span></div>
+            <div class="featlab-row2">
+              <label class="featlab-field"><span>主体</span>
+                <input id="featlabPmSubject" type="text" list="featlabPmSubjectList" spellcheck="false" placeholder="人物 / 少女 / 手办">
+                <datalist id="featlabPmSubjectList">
+                  <option value="人物"></option><option value="少女"></option><option value="男性"></option>
+                  <option value="产品"></option><option value="手办"></option><option value="机械"></option>
+                  <option value="建筑"></option><option value="动物"></option><option value="场景"></option>
+                </datalist>
+              </label>
+              <label class="featlab-field"><span>用途</span>
+                <select id="featlabPmUse">
+                  <option value="图生图参考">图生图参考</option>
+                  <option value="局部重绘">局部重绘</option>
+                  <option value="三视图">三视图</option>
+                  <option value="纹理参考">纹理参考</option>
+                  <option value="通用生图">通用生图</option>
+                </select>
+              </label>
+            </div>
+            <div class="featlab-row2">
+              <label class="featlab-field"><span>风格</span>
+                <select id="featlabPmStyle">
+                  <option value="">（不限定）</option>
+                  <option>写实摄影</option><option>电影感</option><option>二次元插画</option>
+                  <option>3D 渲染</option><option>国风水墨</option><option>厚涂</option>
+                  <option>线稿</option><option>像素</option><option>手办模型</option><option>赛博朋克</option>
+                </select>
+              </label>
+              <label class="featlab-field"><span>视角 / 构图</span>
+                <input id="featlabPmAngle" type="text" list="featlabPmAngleList" spellcheck="false" placeholder="四分之三侧">
+                <datalist id="featlabPmAngleList">
+                  <option value="正面"></option><option value="四分之三侧"></option><option value="侧面"></option>
+                  <option value="俯视"></option><option value="仰视"></option><option value="特写"></option><option value="全身"></option>
+                </datalist>
+              </label>
+            </div>
+            <div class="featlab-row2">
+              <label class="featlab-field"><span>材质 / 媒介</span>
+                <input id="featlabPmMaterial" type="text" list="featlabPmMaterialList" spellcheck="false" placeholder="树脂 / 布料">
+                <datalist id="featlabPmMaterialList">
+                  <option value="树脂"></option><option value="黏土"></option><option value="金属"></option>
+                  <option value="布料"></option><option value="陶瓷"></option><option value="次表面散射皮肤"></option><option value="塑料"></option>
+                </datalist>
+              </label>
+              <label class="featlab-field"><span>色彩</span>
+                <input id="featlabPmPalette" type="text" list="featlabPmPaletteList" spellcheck="false" placeholder="低饱和">
+                <datalist id="featlabPmPaletteList">
+                  <option value="低饱和"></option><option value="高对比"></option><option value="莫兰迪"></option>
+                  <option value="冷暖对比"></option><option value="单色"></option><option value="金属灰"></option>
+                </datalist>
+              </label>
+            </div>
+            <div class="featlab-row2">
+              <label class="featlab-field"><span>光照</span>
+                <input id="featlabPmLight" type="text" list="featlabPmLightList" spellcheck="false" placeholder="柔和侧光">
+                <datalist id="featlabPmLightList">
+                  <option value="柔和侧光"></option><option value="顶光"></option><option value="伦勃朗光"></option>
+                  <option value="边缘光"></option><option value="环境光"></option><option value="棚拍柔光"></option>
+                </datalist>
+              </label>
+              <label class="featlab-field"><span>背景</span>
+                <input id="featlabPmBg" type="text" list="featlabPmBgList" spellcheck="false" placeholder="纯白背景">
+                <datalist id="featlabPmBgList">
+                  <option value="纯白背景"></option><option value="浅灰渐变"></option><option value="透明背景"></option>
+                  <option value="影棚背景"></option><option value="虚化景深"></option><option value="纯黑背景"></option>
+                </datalist>
+              </label>
+            </div>
+            <label class="featlab-field"><span>细节（特征）</span>
+              <textarea id="featlabPmDetails" rows="2" spellcheck="false" placeholder="发髻、衣领、腰带…（点「填入特征」自动取当前区域名）"></textarea>
+            </label>
+            <label class="featlab-field"><span>备注 / 补充</span>
+              <input id="featlabPmExtra" type="text" spellcheck="false" placeholder="例：站姿，双手交叠放在身前">
+            </label>
+            <div class="featlab-chips" id="featlabPmQuality">
+              <span class="featlab-chips-lbl">质量词</span>
+              <button type="button" class="featlab-chip" data-q="超清细节">超清细节</button>
+              <button type="button" class="featlab-chip" data-q="高精度纹理">高精度纹理</button>
+              <button type="button" class="featlab-chip" data-q="锐利边缘">锐利边缘</button>
+              <button type="button" class="featlab-chip" data-q="电影级调色">电影级调色</button>
+              <button type="button" class="featlab-chip" data-q="8K">8K</button>
+            </div>
+            <label class="featlab-field"><span>负面提示词</span>
+              <textarea id="featlabPmNeg" rows="2" spellcheck="false" placeholder="模糊，低清，畸变，水印，文字"></textarea>
+            </label>
+          </section>
+
+          <section class="featlab-sec">
+            <div class="featlab-sec-h"><b>生成结果</b><span id="featlabPmState">中文</span></div>
+            <div class="featlab-seg" role="group" aria-label="输出语言">
+              <button type="button" class="featlab-seg-btn on" data-pmlang="zh">中文</button>
+              <button type="button" class="featlab-seg-btn" data-pmlang="en">英文</button>
+              <button type="button" class="featlab-seg-btn" data-pmlang="both">双语</button>
+            </div>
+            <textarea id="featlabPmOut" class="featlab-ann" rows="7" spellcheck="false" placeholder="填完表单自动生成，也可以直接改；改过就不再被覆盖。"></textarea>
+            <div class="featlab-actions">
+              <button type="button" class="featlab-btn primary" data-act="copy-prompt">复制提示词</button>
+              <button type="button" class="featlab-btn" data-act="copy-negative">复制负面词</button>
+              <button type="button" class="featlab-btn" data-act="pm-regions">填入特征</button>
+              <button type="button" class="featlab-btn ghost" data-act="pm-reset">恢复自动</button>
+            </div>
+          </section>
+        </div>
+
+        <div class="featlab-tabpage" data-tab="ann">
+          <section class="featlab-sec">
+            <div class="featlab-sec-h"><b>图集标注</b><span id="featlabAnnState">自动</span></div>
+            <p class="featlab-note">在左边「特征区域」每一格下面写那一句标注，这里会自动拼成整段；也可以直接改这一段，改完变「手动」。</p>
+            <textarea id="featlabAnn" class="featlab-ann" rows="7" spellcheck="false" placeholder="逐格写完自动生成；也可以直接改，改完不再自动覆盖。"></textarea>
+            <div class="featlab-actions">
+              <button type="button" class="featlab-btn primary" data-act="copy-ann">复制标注</button>
+              <button type="button" class="featlab-btn ghost" data-act="auto-ann">恢复自动</button>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <section class="featlab-sec featlab-logsec">
+        <div class="featlab-sec-h"><b>运行日志</b><span>最近 6 条</span></div>
+        <div class="featlab-log" id="featlabLog"></div>
+      </section>
+    </aside>
+  </div>
+
+  <footer class="featlab-foot">
+    <span class="featlab-status" id="featlabStatus">就绪</span>
+    <span class="featlab-tip">V 选择 · R 框选 · 方向键微调 · Alt+方向键调边 · 右键复制 · Ctrl+Z 撤销</span>
+  </footer>
+
+  <div class="featlab-ctx" id="featlabCtx" hidden role="menu"></div>
+</div>`;
+
+/* ---- apps/featlab/app.js ---- */
+/* 特征提取台（featlab）
+ *
+ * 把工作流里的「特征提取」节点拆成一个可人工干预的编辑器：
+ *   · 人工：在图上拖框、改名、排序、微调边界（四边 ±像素 / 外扩 / 内缩 / 1:1 / 锁比例）；
+ *   · AI：按「工作要求」自行定位并命名特征，可逐格复核、补齐、给手工框命名；
+ *   · 产物：3×3 图集（每格一个特征区域）+「左上为图1人物的发髻…」式标注，
+ *     可导出 PNG / JSON，标注、填表式提示词、区域小图 / 整张源图 / 图集都能一键复制。
+ *
+ * 复制图片只走 navigator.clipboard + ClipboardItem（app:// 与 file:// 都是安全上下文）；
+ * 写不进剪贴板时降级成下载，并如实说明，不假装成功。
+ *
+ * 模型调用只走 llmConn() + llmStreamRequest()；图片草稿走 blob-store 外置。
+ * 不读 localStorage 的 llmKey，不碰 window.openagiDesktop。
+ */
+(function () {
+  'use strict';
+
+  var STORE_KEY = 'hf_featlab.v1';
+  var MAX_SRC = 3;
+  var MAX_REG = 9;
+  var MAX_SIDE = 2048;              // 导入时压到这个边长，兼顾清晰度与草稿体积
+  var MIN_BOX_PX = 8;               // 区域最小边长（像素），防止拖成一条线
+  var POS = ['左上', '中上', '右上', '左中', '正中', '右中', '左下', '中下', '右下'];
+  var COLORS = ['#e35d5d', '#e0953a', '#c9b037', '#5aa469', '#4a9ec9', '#5b8fd9', '#8a6fd1', '#d16fae', '#7a8797'];
+  var TAB_LIST = ['ext', 'atlas', 'prompt', 'ann'];
+
+  /* 中文选项 → 英文关键词。CLIP 只懂英文，所以「英文」模式必须真给英文，
+   * 没收录的自定义中文词直接丢掉（并在状态栏说清丢了几个），不能原样塞进去当 <unk>。 */
+  var PM_EN = {
+    subject: {
+      '人物': 'character', '少女': 'young girl', '男性': 'man', '产品': 'product',
+      '手办': 'figurine', '机械': 'mech', '建筑': 'architecture', '动物': 'animal', '场景': 'scene'
+    },
+    style: {
+      '写实摄影': 'photorealistic photography', '电影感': 'cinematic lighting',
+      '二次元插画': 'anime illustration', '3D 渲染': '3d render',
+      '国风水墨': 'chinese ink painting', '厚涂': 'thick painterly strokes',
+      '线稿': 'line art', '像素': 'pixel art', '手办模型': 'toy figure',
+      '赛博朋克': 'cyberpunk'
+    },
+    use: {
+      '图生图参考': 'reference sheet', '局部重绘': 'inpainting region',
+      '三视图': 'three-view turnaround', '纹理参考': 'texture reference',
+      '通用生图': 'concept art'
+    },
+    material: {
+      '树脂': 'resin', '黏土': 'clay', '金属': 'metal', '布料': 'fabric',
+      '陶瓷': 'ceramic', '次表面散射皮肤': 'subsurface scattering skin', '塑料': 'plastic'
+    },
+    palette: {
+      '低饱和': 'muted colors', '高对比': 'high contrast', '莫兰迪': 'morandi palette',
+      '冷暖对比': 'warm-cool contrast', '单色': 'monochrome', '金属灰': 'metallic grey'
+    },
+    light: {
+      '柔和侧光': 'soft side light', '顶光': 'top light', '伦勃朗光': 'rembrandt lighting',
+      '边缘光': 'rim light', '环境光': 'ambient light', '棚拍柔光': 'studio softbox'
+    },
+    angle: {
+      '正面': 'front view', '四分之三侧': 'three-quarter view', '侧面': 'side view',
+      '俯视': 'top-down view', '仰视': 'low angle', '特写': 'close-up', '全身': 'full body'
+    },
+    bg: {
+      '纯白背景': 'pure white background', '浅灰渐变': 'light grey gradient',
+      '透明背景': 'transparent background', '影棚背景': 'studio backdrop',
+      '虚化景深': 'blurred depth of field', '纯黑背景': 'pure black background'
+    },
+    q: {
+      '超清细节': 'ultra detailed', '高精度纹理': 'high texture fidelity',
+      '锐利边缘': 'sharp edges', '电影级调色': 'cinematic color grading', '8K': '8k'
+    }
+  };
+
+  var S = {
+    sources: [],                    // [{id, name, w, h, _img, _packed}]
+    regions: [],                    // [{id, name, srcId, box:[x,y,w,h]}] — 数组顺序 = 图集顺序
+    activeId: '',
+    selId: '',
+    opt: {
+      req: '', subject: '人物', scope: 'all', verify: true,
+      cell: 512, margin: 30, gap: 0, bg: '#15181d', badge: true, labels: false
+    },
+    pmt: {                          // 填表式提示词（唯一真源；主体复用 S.opt.subject，不另存一份）
+      use: '图生图参考', style: '', angle: '', material: '',
+      palette: '', light: '', bg: '', details: '', quality: [], extra: '',
+      neg: '模糊，低清，畸变，多余肢体，水印，文字，logo，噪点', lang: 'zh'
+    },
+    pmEdited: false,                // 用户手改过生成结果就不再自动覆盖
+    pmOut: '',
+    tab: 'ext',
+    edgeStep: 1,                    // 边界微调步进（像素）
+    lockRatio: false,               // 拖角点时是否锁定宽高比
+    ann: '',
+    annEdited: false,
+    busy: false,
+    abort: null,
+    tool: 'select'
+  };
+
+  var IMG = Object.create(null);    // srcId -> dataURL（内存里的真图）
+  var VIEW = { s: 1, ox: 0, oy: 0, touched: false };
+  var UNDO = [];
+  var REDO = [];
+  var E = {};
+  var ctx = null;
+  var root = null;
+  var DPR = 1;
+  var drag = null;
+  var spaceDown = false;
+  var saveTimer = null;
+  var previewTimer = null;
+  var seq = 0;
+
+  /* ---------------- 小工具 ---------------- */
+
+  function $(sel, r) { return (r || root).querySelector(sel); }
+  function uid(p) { seq++; return (p || 'r') + Date.now().toString(36) + seq.toString(36); }
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function num(v, d) { var n = Number(v); return isFinite(n) ? n : d; }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function round(v, p) { var k = Math.pow(10, p || 0); return Math.round(v * k) / k; }
+  function stripExt(n) { return String(n || '').replace(/\.[^.]+$/, ''); }
+  function friendly(e) {
+    var m = String((e && e.message) || e || '未知错误');
+    if (/未配置|not configured/i.test(m)) return '语言模型未配置，请先在设置里填写模型';
+    if (/Failed to fetch|NetworkError/i.test(m)) return '网络请求失败（检查模型地址与网络）';
+    if (/401|403/.test(m)) return '鉴权失败（检查 API Key）';
+    if (/429/.test(m)) return '请求过于频繁或额度不足';
+    return m.length > 160 ? m.slice(0, 160) + '…' : m;
+  }
+  function isTyping(el) {
+    if (!el) return false;
+    var t = el.tagName;
+    return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || el.isContentEditable;
+  }
+
+  /* ---------------- 状态存取 ---------------- */
+
+  function activeSource() {
+    for (var i = 0; i < S.sources.length; i++) if (S.sources[i].id === S.activeId) return S.sources[i];
+    return S.sources[0] || null;
+  }
+  function sourceById(id) {
+    for (var i = 0; i < S.sources.length; i++) if (S.sources[i].id === id) return S.sources[i];
+    return null;
+  }
+  function sourceIndex(id) {
+    for (var i = 0; i < S.sources.length; i++) if (S.sources[i].id === id) return i;
+    return -1;
+  }
+  function regionById(id) {
+    for (var i = 0; i < S.regions.length; i++) if (S.regions[i].id === id) return S.regions[i];
+    return null;
+  }
+  function activeRegions() {
+    return S.regions.filter(function (r) { return r.srcId === S.activeId; });
+  }
+  function regionColor(i) { return COLORS[i % COLORS.length]; }
+
+  function saveNow() {
+    try {
+      var sources = S.sources.map(function (s) {
+        var live = IMG[s.id] || '';
+        return {
+          id: s.id, name: s.name, w: s.w, h: s.h,
+          /* 图还没从 IDB 还原时，必须写回原来的存根，不能写成空串 */
+          img: live ? ((typeof blobPack === 'function') ? blobPack(live) : live) : (s._packed || '')
+        };
+      });
+      localStorage.setItem(STORE_KEY, JSON.stringify({
+        v: 1,
+        sources: sources,
+        regions: S.regions,
+        activeId: S.activeId,
+        opt: S.opt,
+        pmt: S.pmt,
+        pmEdited: S.pmEdited,
+        pmOut: S.pmEdited ? S.pmOut : '',
+        tab: S.tab,
+        edgeStep: S.edgeStep,
+        lockRatio: S.lockRatio,
+        ann: S.ann,
+        annEdited: S.annEdited,
+        updatedAt: Date.now()
+      }));
+    } catch (e) {
+      status('草稿保存失败（本地存储空间可能已满）');
+    }
+  }
+  function saveSoon() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveNow, 350);
+  }
+
+  function loadState() {
+    var raw = null;
+    try { raw = localStorage.getItem(STORE_KEY); } catch (e) { raw = null; }
+    if (!raw) return false;
+    var d = null;
+    try { d = JSON.parse(raw); } catch (e) { d = null; }
+    if (!d || d.v !== 1) return false;
+    S.sources = (Array.isArray(d.sources) ? d.sources : []).filter(function (s) {
+      return s && typeof s.id === 'string';
+    }).slice(0, MAX_SRC).map(function (s) {
+      return {
+        id: s.id,
+        name: String(s.name || '图片'),
+        w: Math.max(1, num(s.w, 1)),
+        h: Math.max(1, num(s.h, 1)),
+        _packed: String(s.img || '')
+      };
+    });
+    S.regions = (Array.isArray(d.regions) ? d.regions : []).filter(function (r) {
+      return r && typeof r.id === 'string' && Array.isArray(r.box) && r.box.length === 4 && sourceById(String(r.srcId || ''));
+    }).slice(0, MAX_REG).map(function (r) {
+      return {
+        id: r.id,
+        name: String(r.name || '特征'),
+        note: String(r.note || ''),
+        srcId: String(r.srcId || ''),
+        box: r.box.map(function (v) { return clamp(num(v, 0), 0, 1); })
+      };
+    });
+    S.activeId = sourceById(d.activeId) ? d.activeId : (S.sources[0] ? S.sources[0].id : '');
+    S.selId = '';
+    if (d.opt && typeof d.opt === 'object') {
+      ['req', 'subject', 'scope', 'cell', 'margin', 'gap', 'bg'].forEach(function (k) {
+        if (d.opt[k] != null) S.opt[k] = d.opt[k];
+      });
+      S.opt.verify = d.opt.verify !== false;
+      S.opt.badge = d.opt.badge !== false;
+      S.opt.labels = !!d.opt.labels;
+      S.opt.cell = clamp(num(S.opt.cell, 512), 128, 1024);
+      if ([256, 384, 512].indexOf(S.opt.cell) < 0) S.opt.cell = 512;
+      S.opt.margin = clamp(num(S.opt.margin, 30), 0, 100);
+      S.opt.gap = clamp(num(S.opt.gap, 0), 0, 64);
+      if ([0, 6, 12].indexOf(S.opt.gap) < 0) S.opt.gap = 0;
+    }
+    S.ann = typeof d.ann === 'string' ? d.ann : '';
+    S.annEdited = !!d.annEdited;
+    if (d.pmt && typeof d.pmt === 'object') {
+      var pk = ['use', 'style', 'angle', 'material', 'palette', 'light', 'bg', 'details', 'extra', 'neg', 'lang'];
+      pk.forEach(function (k) {
+        if (typeof d.pmt[k] === 'string') S.pmt[k] = d.pmt[k];
+      });
+      if (Array.isArray(d.pmt.quality)) {
+        S.pmt.quality = d.pmt.quality.filter(function (q) { return typeof q === 'string'; }).slice(0, 8);
+      }
+    }
+    if (['zh', 'en', 'both'].indexOf(S.pmt.lang) < 0) S.pmt.lang = 'zh';
+    S.pmEdited = !!d.pmEdited;
+    S.pmOut = typeof d.pmOut === 'string' ? d.pmOut : '';
+    S.tab = TAB_LIST.indexOf(d.tab) >= 0 ? d.tab : 'ext';
+    S.edgeStep = [1, 5, 10].indexOf(Number(d.edgeStep)) >= 0 ? Number(d.edgeStep) : 1;
+    S.lockRatio = !!d.lockRatio;
+    hydrateImages();
+    return true;
+  }
+
+  /* 草稿里的图是 blob-store 存根；blobEnsure 读完 IDB 之前解析会原样返回 */
+  function hydrateImages() {
+    S.sources.forEach(function (s) {
+      if (!s._packed) return;
+      var v = s._packed;
+      if (typeof blobResolve === 'function') {
+        try { v = blobResolve(v); } catch (e) { v = s._packed; }
+      }
+      if (typeof v === 'string' && v.indexOf('data:') === 0) {
+        IMG[s.id] = v;
+        loadSourceImage(s);
+      }
+    });
+  }
+
+  function loadSourceImage(s) {
+    if (!s || !IMG[s.id] || s._img || s._loading) return;
+    s._loading = true;
+    var im = new Image();
+    im.onload = function () {
+      s._loading = false;
+      s._img = im;
+      s.w = im.naturalWidth || im.width || s.w;
+      s.h = im.naturalHeight || im.height || s.h;
+      if (S.activeId === s.id) { syncUI(); draw(); }
+      else renderSources();
+      schedulePreview();
+    };
+    im.onerror = function () {
+      s._loading = false;
+      log('图像解码失败：' + s.name, 'err');
+    };
+    im.src = IMG[s.id];
+  }
+
+  /* ---------------- 源图 ---------------- */
+
+  function readFileDataURL(file) {
+    return new Promise(function (res, rej) {
+      var fr = new FileReader();
+      fr.onload = function () { res(String(fr.result || '')); };
+      fr.onerror = function () { rej(new Error('读取文件失败')); };
+      fr.readAsDataURL(file);
+    });
+  }
+
+  function shrinkDataURL(dataURL, maxSide) {
+    return new Promise(function (res) {
+      var im = new Image();
+      im.onload = function () {
+        var w = im.naturalWidth, h = im.naturalHeight;
+        var k = Math.min(1, (maxSide || MAX_SIDE) / Math.max(w, h));
+        if (k >= 1) { res({ url: dataURL, w: w, h: h }); return; }
+        var c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(w * k));
+        c.height = Math.max(1, Math.round(h * k));
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        var out = dataURL;
+        try { out = c.toDataURL('image/webp', 0.9); } catch (e) { out = dataURL; }
+        res({ url: out, w: c.width, h: c.height });
+      };
+      im.onerror = function () { res({ url: dataURL, w: 0, h: 0 }); };
+      im.src = dataURL;
+    });
+  }
+
+  async function importFiles(files) {
+    var list = Array.prototype.slice.call(files || []).filter(function (f) {
+      return f && (/^image\//.test(f.type || '') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(f.name || ''));
+    });
+    if (!list.length) { status('没有可导入的图片'); return; }
+    var room = MAX_SRC - S.sources.length;
+    if (room <= 0) { status('最多 3 张源图，先删掉一张再导入'); return; }
+    if (list.length > room) {
+      log('最多 3 张源图，只导入前 ' + room + ' 张', 'warn');
+      list = list.slice(0, room);
+    }
+    for (var i = 0; i < list.length; i++) {
+      var f = list[i];
+      setBusyText(true, '导入图片', f.name);
+      try {
+        var raw = await readFileDataURL(f);
+        var shrunk = await shrinkDataURL(raw, MAX_SIDE);
+        if (!shrunk.w || !shrunk.h) throw new Error('图片解码失败');
+        var src = {
+          id: uid('s'),
+          name: stripExt(f.name) || ('图' + (S.sources.length + 1)),
+          w: shrunk.w, h: shrunk.h
+        };
+        IMG[src.id] = shrunk.url;
+        S.sources.push(src);
+        loadSourceImage(src);
+        S.activeId = src.id;
+        log('导入「' + src.name + '」· ' + src.w + '×' + src.h, 'ok');
+      } catch (e) {
+        log('导入失败：' + friendly(e), 'err');
+      }
+    }
+    setBusyText(false);
+    VIEW.touched = false;
+    fitView();
+    syncUI();
+    saveNow();
+  }
+
+  function removeSource(id) {
+    var src = sourceById(id);
+    if (!src) return;
+    var n = S.regions.filter(function (r) { return r.srcId === id; }).length;
+    if (n && !window.confirm('「' + src.name + '」上还有 ' + n + ' 个特征区域，一并删除？')) return;
+    pushUndo();
+    S.sources = S.sources.filter(function (s) { return s.id !== id; });
+    S.regions = S.regions.filter(function (r) { return r.srcId !== id; });
+    if (S.activeId === id) S.activeId = S.sources[0] ? S.sources[0].id : '';
+    if (S.selId && !regionById(S.selId)) S.selId = '';
+    /* 不删 IMG：删图也能用 Ctrl+Z 找回来 */
+    fitView();
+    syncUI();
+    saveNow();
+  }
+
+  function setActive(id) {
+    if (!sourceById(id) || S.activeId === id) return;
+    S.activeId = id;
+    VIEW.touched = false;
+    fitView();
+    syncUI();
+    saveSoon();
+  }
+
+  /* ---------------- 撤销 / 重做 ---------------- */
+
+  function snapshot() {
+    return JSON.stringify({
+      sources: S.sources.map(function (s) { return { id: s.id, name: s.name, w: s.w, h: s.h }; }),
+      regions: S.regions,
+      activeId: S.activeId,
+      selId: S.selId
+    });
+  }
+  function pushUndo() {
+    UNDO.push(snapshot());
+    if (UNDO.length > 50) UNDO.shift();
+    REDO.length = 0;
+  }
+  function applySnapshot(str) {
+    var d = null;
+    try { d = JSON.parse(str); } catch (e) { d = null; }
+    if (!d) return;
+    S.sources = (d.sources || []).filter(function (s) { return IMG[s.id] || sourceById(s.id); });
+    S.regions = d.regions || [];
+    S.activeId = sourceById(d.activeId) ? d.activeId : (S.sources[0] ? S.sources[0].id : '');
+    S.selId = regionById(d.selId) ? d.selId : '';
+    fitView();
+    syncUI();
+    saveNow();
+  }
+  function undo() {
+    if (!UNDO.length) { status('没有可撤销的操作'); return; }
+    REDO.push(snapshot());
+    applySnapshot(UNDO.pop());
+    status('已撤销');
+  }
+  function redo() {
+    if (!REDO.length) { status('没有可重做的操作'); return; }
+    UNDO.push(snapshot());
+    applySnapshot(REDO.pop());
+    status('已重做');
+  }
+
+  /* ---------------- 区域 ---------------- */
+
+  function addRegion(data) {
+    if (S.regions.length >= MAX_REG) return null;
+    var r = {
+      id: uid('r'),
+      name: String((data && data.name) || ('特征 ' + (S.regions.length + 1))),
+      note: String((data && data.note) || ''),
+      srcId: String((data && data.srcId) || S.activeId),
+      box: (data && data.box ? data.box : [0.35, 0.35, 0.3, 0.3]).map(function (v) { return clamp(num(v, 0), 0, 1); })
+    };
+    S.regions.push(r);
+    return r;
+  }
+  function removeRegion(id, noUndo) {
+    var r = regionById(id);
+    if (!r) return;
+    if (!noUndo) pushUndo();
+    S.regions = S.regions.filter(function (x) { return x.id !== id; });
+    if (S.selId === id) S.selId = '';
+    syncUI();
+    saveSoon();
+  }
+  function moveRegion(id, dir) {
+    var i = S.regions.findIndex(function (r) { return r.id === id; });
+    var j = i + dir;
+    if (i < 0 || j < 0 || j >= S.regions.length) return;
+    pushUndo();
+    var t = S.regions[i];
+    S.regions[i] = S.regions[j];
+    S.regions[j] = t;
+    syncUI();
+    saveSoon();
+  }
+  function selectRegion(id) {
+    S.selId = id || '';
+    var rows = root.querySelectorAll('[data-region]');
+    Array.prototype.forEach.call(rows, function (el) {
+      el.classList.toggle('sel', el.getAttribute('data-region') === S.selId);
+    });
+    renderInspector();
+    draw();
+  }
+
+  /* ---------------- 界面渲染 ---------------- */
+
+  function renderSources() {
+    if (!E.srcs) return;
+    var html = '';
+    S.sources.forEach(function (s, i) {
+      var url = IMG[s.id] || '';
+      html += '<div class="featlab-src' + (s.id === S.activeId ? ' on' : '') + '" data-src="' + s.id + '">' +
+        '<span class="featlab-src-thumb">' + (url ? '<img src="' + url + '" alt="">' : '<i>…</i>') + '</span>' +
+        '<span class="featlab-src-meta"><b>图' + (i + 1) + ' · ' + esc(s.name) + '</b><i>' + s.w + '×' + s.h + '</i></span>' +
+        '<button type="button" class="featlab-x" data-ract="del-src" data-src="' + s.id + '" title="移除这张图">×</button>' +
+        '</div>';
+    });
+    if (S.sources.length < MAX_SRC) {
+      html += '<button type="button" class="featlab-src-add" data-act="import">＋ 添加源图</button>';
+    }
+    E.srcs.innerHTML = html;
+    E.srcHint.textContent = S.sources.length + ' / ' + MAX_SRC + ' 张';
+  }
+
+  function renderList() {
+    if (!E.list) return;
+    if (!S.regions.length) {
+      E.list.innerHTML = '<div class="featlab-none">还没有特征区域。<br>用「框选」工具在图上拖一个框，或点「AI 提取特征」。</div>';
+    } else {
+      var html = '';
+      S.regions.forEach(function (r, i) {
+        var si = sourceIndex(r.srcId);
+        var b = r.box;
+        html += '<div class="featlab-row' + (r.id === S.selId ? ' sel' : '') + '" data-region="' + r.id + '">' +
+          '<span class="featlab-num" style="--c:' + regionColor(i) + '">' + (i + 1) + '</span>' +
+          '<span class="featlab-row-main">' +
+            '<input class="featlab-row-name" data-rename="' + r.id + '" value="' + esc(r.name) + '" spellcheck="false">' +
+            /* 每一格自己那一句标注就写在这里，整段标注由这些句子拼出来 */
+            '<input class="featlab-row-note" data-note="' + r.id + '" value="' + esc(r.note || '') +
+              '" spellcheck="false" placeholder="写这一格的标注（留空用名称）" title="这一格在整段标注里怎么写">' +
+            '<i>图' + (si + 1) + ' · ' + Math.round(b[0] * 100) + ',' + Math.round(b[1] * 100) + ' · ' +
+              Math.round(b[2] * 100) + '×' + Math.round(b[3] * 100) + '%</i>' +
+          '</span>' +
+          '<span class="featlab-row-acts">' +
+            '<button type="button" data-ract="up" title="上移">↑</button>' +
+            '<button type="button" data-ract="down" title="下移">↓</button>' +
+            '<button type="button" data-ract="del" title="删除">×</button>' +
+          '</span>' +
+        '</div>';
+      });
+      E.list.innerHTML = html;
+    }
+    E.count.textContent = S.regions.length + ' / ' + MAX_REG;
+  }
+
+  function edgeGroup(side, label) {
+    return '<span class="featlab-edgegrp"><b>' + label + '</b>' +
+      '<button type="button" data-edge="' + side + '" data-dir="-1" title="' + label + '边向内收 ' + S.edgeStep + 'px">−</button>' +
+      '<button type="button" data-edge="' + side + '" data-dir="1" title="' + label + '边向外扩 ' + S.edgeStep + 'px">＋</button>' +
+      '</span>';
+  }
+
+  function renderInspector() {
+    if (!E.inspect) return;
+    var r = regionById(S.selId);
+    if (!r) {
+      E.inspect.innerHTML = '<div class="featlab-insp-empty">' +
+        '<b>画布</b><span>V 选择 / R 框选 / H 平移 · 滚轮缩放 · 空格拖动画布 · 选中区域后可拖动边角或按像素微调边界（方向键移动，Alt+方向键调边）</span></div>';
+      return;
+    }
+    var i = S.regions.indexOf(r);
+    var si = sourceIndex(r.srcId);
+    var src = sourceById(r.srcId);
+    var b = r.box;
+    var pw = src ? Math.round(b[2] * src.w) : 0;
+    var ph = src ? Math.round(b[3] * src.h) : 0;
+    E.inspect.innerHTML =
+      '<div class="featlab-insp-head"><span class="featlab-num" style="--c:' + regionColor(i) + '">' + (i + 1) + '</span>' +
+        '<b>区域 ' + (i + 1) + '</b><i id="featlabInspMeta">图' + (si + 1) + ' · ' + pw + '×' + ph + ' px · 拖动边框或角点调整</i></div>' +
+      '<div class="featlab-insp-fields">' +
+        '<label class="wide"><span>名称</span><input id="featlabSelName" value="' + esc(r.name) + '" spellcheck="false"></label>' +
+        '<label><span>X%</span><input type="number" data-box="0" value="' + round(b[0] * 100, 1) + '" step="0.5" min="0" max="100"></label>' +
+        '<label><span>Y%</span><input type="number" data-box="1" value="' + round(b[1] * 100, 1) + '" step="0.5" min="0" max="100"></label>' +
+        '<label><span>W%</span><input type="number" data-box="2" value="' + round(b[2] * 100, 1) + '" step="0.5" min="0.5" max="100"></label>' +
+        '<label><span>H%</span><input type="number" data-box="3" value="' + round(b[3] * 100, 1) + '" step="0.5" min="0.5" max="100"></label>' +
+        '<button type="button" class="featlab-btn sm" data-act="focus-region">定位</button>' +
+        '<button type="button" class="featlab-btn sm ghost" data-act="del-region">删除</button>' +
+      '</div>' +
+      '<div class="featlab-edge">' +
+        '<span class="featlab-edge-lbl">边界</span>' +
+        '<span class="featlab-stepgrp">' +
+          [1, 5, 10].map(function (n) {
+            return '<button type="button" data-step="' + n + '"' + (S.edgeStep === n ? ' class="on"' : '') + '>' + n + 'px</button>';
+          }).join('') +
+        '</span>' +
+        '<button type="button" class="featlab-btn sm" data-act="edge-expand" title="四边同时向外扩 ' + S.edgeStep + 'px">外扩</button>' +
+        '<button type="button" class="featlab-btn sm" data-act="edge-shrink" title="四边同时向内收 ' + S.edgeStep + 'px">内缩</button>' +
+        '<button type="button" class="featlab-btn sm" data-act="edge-square" title="按中心调成 1:1（图集格子是正方形，后面裁切不会跑偏）">1:1</button>' +
+        '<label class="featlab-check"><input type="checkbox" id="featlabLock"' + (S.lockRatio ? ' checked' : '') + '> 锁比例</label>' +
+        '<span class="featlab-edgepad">' +
+          edgeGroup('l', '左') + edgeGroup('t', '上') + edgeGroup('r', '右') + edgeGroup('b', '下') +
+        '</span>' +
+      '</div>';
+  }
+
+  function updateMeta() {
+    if (E.empty) E.empty.classList.toggle('hide', S.sources.length > 0);
+    var total = S.opt.cell * 3 + S.opt.gap * 2;
+    if (E.atlasInfo) E.atlasInfo.textContent = '3×3 · ' + total + 'px';
+    var src = activeSource();
+    if (E.hudInfo) {
+      E.hudInfo.textContent = src ? ('图' + (sourceIndex(src.id) + 1) + ' · ' + src.w + '×' + src.h + ' · ' + S.regions.length + '/9 格') : '';
+    }
+  }
+
+  /* 一格在标注里怎么写：优先用这一格自己写的描述，没写就退回名称。
+   * 这样「逐格编写 → 整段自动生成」不需要维护两份文本。 */
+  function regText(reg) {
+    if (!reg) return '特征';
+    var note = trimStr(reg.note);
+    return note || trimStr(reg.name) || '特征';
+  }
+
+  /* 单格标注短语：「左上为图1人物的发髻」。标注全文与行右键复制共用这一份口径。 */
+  function regPhrase(i, reg) {
+    if (!reg) return '';
+    var subject = String(S.opt.subject || '').trim() || '人物';
+    return (POS[i] || ('第' + (i + 1) + '格')) + '为图' + (sourceIndex(reg.srcId) + 1) + subject + '的' + regText(reg);
+  }
+
+  function makeAnnotation() {
+    if (!S.regions.length) return '3行3列 · 还没有特征区域（先框选或 AI 提取）。';
+    var rows = [];
+    for (var r = 0; r < 3; r++) {
+      var row = [];
+      for (var c = 0; c < 3; c++) {
+        var k = r * 3 + c;
+        var reg = S.regions[k];
+        if (!reg) continue;
+        row.push(regPhrase(k, reg));
+      }
+      if (row.length) rows.push(row.join('，'));
+    }
+    return '3行3列，' + rows.join('；') + '。';
+  }
+
+  function updateAnnotation() {
+    if (!S.annEdited) {
+      S.ann = makeAnnotation();
+      if (E.ann && E.ann.value !== S.ann) E.ann.value = S.ann;
+      if (E.annState) E.annState.textContent = '自动';
+    } else if (E.annState) {
+      E.annState.textContent = '手动';
+    }
+  }
+
+  /* ---------------- 提示词（填表 → 文本） ----------------
+   * 填表是唯一入口：字段改一下立刻出词，没有隐藏的模板状态。
+   * 中文按自然语言串句，英文按关键词逗号串（给 ComfyUI / CLIP 用）。
+   * 中文自定义词进英文会变成 <unk>，所以英文模式只映射已知词，其余计数上报。 */
+
+  var PM_LANG_LABEL = { zh: '中文', en: '英文', both: '双语' };
+
+  function hasCJK(s) { return /[\u3400-\u9fff\uf900-\ufaff]/.test(String(s || '')); }
+  function trimStr(s) { return String(s == null ? '' : s).replace(/^\s+|\s+$/g, ''); }
+
+  function enWord(group, v) {
+    var s = trimStr(v);
+    if (!s) return '';
+    var map = PM_EN[group] || {};
+    if (map[s]) return map[s];
+    if (hasCJK(s)) return '';
+    return s;
+  }
+
+  /* 细节可能是一串中文名词，英文模式下无法翻译：只留纯 ASCII 片段，其余计数上报。 */
+  function enDetails(str) {
+    var segs = String(str || '').split(/[，,、;；\n]+/);
+    var keep = [], drop = 0;
+    segs.forEach(function (t) {
+      t = trimStr(t);
+      if (!t) return;
+      if (!hasCJK(t) && /^[a-z0-9][a-z0-9 \-_'()/.]*$/i.test(t)) keep.push(t);
+      else drop++;
+    });
+    return { text: keep.join(', '), dropped: drop };
+  }
+
+  function buildPromptZh() {
+    var p = S.pmt, parts = [];
+    if (p.style) parts.push(p.style + '风格');
+    if (trimStr(S.opt.subject)) parts.push(trimStr(S.opt.subject));
+    if (p.use) parts.push(p.use);
+    if (p.angle) parts.push(p.angle + '构图');
+    if (trimStr(p.details)) parts.push(trimStr(p.details));
+    if (p.material) parts.push(p.material + '材质');
+    if (p.palette) parts.push(p.palette);
+    if (p.light) parts.push(p.light);
+    if (p.bg) parts.push(p.bg);
+    if (p.quality && p.quality.length) parts.push(p.quality.join('、'));
+    if (trimStr(p.extra)) parts.push(trimStr(p.extra));
+    return parts.length ? parts.join('，') + '。' : '';
+  }
+
+  function buildPromptEn() {
+    var p = S.pmt, parts = [], drop = 0;
+    function add(group, val, suffix) {
+      var s = trimStr(val);
+      if (!s) return;
+      var w = enWord(group, s);
+      if (!w) { drop++; return; }
+      parts.push(suffix ? w + suffix : w);
+    }
+    add('style', p.style);
+    add('subject', S.opt.subject);
+    add('use', p.use);
+    add('angle', p.angle);
+    var d = enDetails(p.details);
+    drop += d.dropped;
+    if (d.text) parts.push(d.text);
+    add('material', p.material);
+    add('palette', p.palette);
+    add('light', p.light);
+    add('bg', p.bg);
+    (p.quality || []).forEach(function (q) {
+      var w = enWord('q', q);
+      if (w) parts.push(w); else if (trimStr(q)) drop++;
+    });
+    var ex = enDetails(p.extra);
+    drop += ex.dropped;
+    if (ex.text) parts.push(ex.text);
+    return { text: parts.join(', '), dropped: drop };
+  }
+
+  function buildPromptOut() {
+    var zh = buildPromptZh();
+    var en = buildPromptEn();
+    var lang = S.pmt.lang || 'zh';
+    if (lang === 'en') {
+      return { text: en.text, note: en.dropped ? '跳过 ' + en.dropped + ' 个中文词' : '' };
+    }
+    if (lang === 'both') {
+      var seg = [];
+      if (zh) seg.push('中文：' + zh);
+      if (en.text) seg.push('English: ' + en.text);
+      return { text: seg.join('\n\n'), note: en.dropped ? '英文侧跳过 ' + en.dropped + ' 个中文词' : '' };
+    }
+    return { text: zh, note: '' };
+  }
+
+  function updatePrompt() {
+    if (S.pmEdited) {
+      if (E.pmState) E.pmState.textContent = '手动';
+      return;
+    }
+    var r = buildPromptOut();
+    S.pmOut = r.text;
+    if (E.pmOut && E.pmOut.value !== r.text) E.pmOut.value = r.text;
+    if (E.pmState) E.pmState.textContent = (PM_LANG_LABEL[S.pmt.lang] || '中文') + (r.note ? ' · ' + r.note : '');
+  }
+
+  function renderChips() {
+    if (!E.pmQuality) return;
+    var arr = S.pmt.quality || [];
+    Array.prototype.forEach.call(E.pmQuality.querySelectorAll('[data-q]'), function (b) {
+      b.classList.toggle('on', arr.indexOf(b.getAttribute('data-q')) >= 0);
+    });
+  }
+
+  function renderLangSeg() {
+    if (!E.pmSeg) return;
+    var lang = S.pmt.lang || 'zh';
+    Array.prototype.forEach.call(E.pmSeg.querySelectorAll('[data-pmlang]'), function (b) {
+      b.classList.toggle('on', b.getAttribute('data-pmlang') === lang);
+    });
+  }
+
+  function setPmLang(lang) {
+    S.pmt.lang = ['zh', 'en', 'both'].indexOf(lang) >= 0 ? lang : 'zh';
+    S.pmEdited = false;
+    renderLangSeg();
+    updatePrompt();
+    saveSoon();
+  }
+
+  function applyPmtToFields() {
+    var p = S.pmt;
+    if (!E.pmSubject) return;
+    E.pmSubject.value = S.opt.subject || '';
+    if (E.pmUse) E.pmUse.value = p.use || '图生图参考';
+    if (E.pmStyle) E.pmStyle.value = p.style || '';
+    E.pmAngle.value = p.angle || '';
+    E.pmMaterial.value = p.material || '';
+    E.pmPalette.value = p.palette || '';
+    E.pmLight.value = p.light || '';
+    E.pmBg.value = p.bg || '';
+    E.pmDetails.value = p.details || '';
+    E.pmExtra.value = p.extra || '';
+    E.pmNeg.value = p.neg || '';
+    if (S.pmEdited && S.pmOut && E.pmOut) E.pmOut.value = S.pmOut;
+    renderChips();
+    renderLangSeg();
+  }
+
+  function readPmtField(el) {
+    if (!el || !el.id) return false;
+    var p = S.pmt;
+    switch (el.id) {
+      case 'featlabPmSubject':
+        /* 与「AI 提取」的主体是同一个值：改一处，标注与提取要求一起变 */
+        S.opt.subject = el.value;
+        if (E.subject && E.subject.value !== el.value) E.subject.value = el.value;
+        updateAnnotation();
+        break;
+      case 'featlabPmUse': p.use = el.value; break;
+      case 'featlabPmStyle': p.style = el.value; break;
+      case 'featlabPmAngle': p.angle = el.value; break;
+      case 'featlabPmMaterial': p.material = el.value; break;
+      case 'featlabPmPalette': p.palette = el.value; break;
+      case 'featlabPmLight': p.light = el.value; break;
+      case 'featlabPmBg': p.bg = el.value; break;
+      case 'featlabPmDetails': p.details = el.value; break;
+      case 'featlabPmExtra': p.extra = el.value; break;
+      case 'featlabPmNeg': p.neg = el.value; return true;   /* 负面词不进正向正文 */
+      case 'featlabPmOut':
+        S.pmOut = el.value;
+        S.pmEdited = true;
+        if (E.pmState) E.pmState.textContent = '手动';
+        saveSoon();
+        return true;
+      default: return false;
+    }
+    /* 表单项只更新表单，不动正文：手改稿是用户自己写的，被表单悄悄覆盖＝丢数据。
+     * 想按新表单重算，点「恢复自动」（或切输出语言）。 */
+    updatePrompt();
+    saveSoon();
+    return true;
+  }
+
+  function toggleQuality(q) {
+    var arr = S.pmt.quality || (S.pmt.quality = []);
+    var i = arr.indexOf(q);
+    if (i >= 0) arr.splice(i, 1); else arr.push(q);
+    renderChips();
+    updatePrompt();
+    saveSoon();
+  }
+
+  function fillDetailsFromRegions() {
+    var names = S.regions.map(function (r) { return trimStr(r.name); }).filter(Boolean);
+    if (!names.length) { status('还没有特征区域，先框选或 AI 提取'); return; }
+    S.pmt.details = names.join('、');
+    if (E.pmDetails) E.pmDetails.value = S.pmt.details;
+    S.pmEdited = false;
+    updatePrompt();
+    saveSoon();
+    status('已把 ' + names.length + ' 个特征名填进细节');
+  }
+
+  /* ---------------- 右栏分页 ---------------- */
+
+  function applyTab(tab) {
+    var t = TAB_LIST.indexOf(tab) >= 0 ? tab : 'ext';
+    S.tab = t;
+    if (E.tabs) {
+      Array.prototype.forEach.call(E.tabs.querySelectorAll('[data-ftab]'), function (b) {
+        var on = b.getAttribute('data-ftab') === t;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+    }
+    if (E.tabWrap) {
+      Array.prototype.forEach.call(E.tabWrap.querySelectorAll('[data-tab]'), function (p) {
+        p.classList.toggle('on', p.getAttribute('data-tab') === t);
+      });
+      /* 换页从头看起：上一页滚到一半的位置带过来，会让人以为表单缺了一截 */
+      E.tabWrap.scrollTop = 0;
+    }
+    saveSoon();
+  }
+
+  function syncUI() {
+    renderSources();
+    renderList();
+    renderInspector();
+    updateMeta();
+    updateAnnotation();
+    updatePrompt();
+    updateZoomUI();
+    draw();
+    schedulePreview();
+    saveSoon();
+  }
+
+  /* ---------------- 状态栏 / 日志 / 忙碌 ---------------- */
+
+  function status(msg) {
+    if (E.status) E.status.textContent = msg || '就绪';
+  }
+  function log(msg, tone) {
+    if (!E.log) return;
+    var d = new Date();
+    var p = function (n) { return ('0' + n).slice(-2); };
+    var row = document.createElement('div');
+    row.className = 'featlab-log-row' + (tone ? ' ' + tone : '');
+    row.innerHTML = '<i>' + p(d.getHours()) + ':' + p(d.getMinutes()) + '</i><span>' + esc(msg) + '</span>';
+    E.log.insertBefore(row, E.log.firstChild);
+    while (E.log.children.length > 6) E.log.removeChild(E.log.lastChild);
+  }
+  function setBusyText(on, text, sub) {
+    if (!E.busy) return;
+    if (!on) { E.busy.hidden = true; return; }
+    E.busy.hidden = false;
+    if (E.busyText) E.busyText.textContent = text || '处理中…';
+    if (E.busySub) E.busySub.textContent = sub || '';
+  }
+
+  async function runBusy(title, fn) {
+    if (S.busy) return;
+    S.busy = true;
+    S.abort = new AbortController();
+    setBusyText(true, title, '准备中…');
+    status(title + '…');
+    try {
+      await fn();
+    } catch (e) {
+      if (e && (e._stopped || e.name === 'AbortError')) {
+        log('已手动停止', 'warn');
+        status('已停止');
+      } else {
+        log(friendly(e), 'err');
+        status('失败：' + friendly(e));
+      }
+    } finally {
+      S.busy = false;
+      S.abort = null;
+      setBusyText(false);
+    }
+  }
+
+  /* ---------------- 表单 ---------------- */
+
+  function applyOptToFields() {
+    if (!E.req) return;
+    E.req.value = S.opt.req;
+    E.subject.value = S.opt.subject;
+    E.scope.value = S.opt.scope === 'active' ? 'active' : 'all';
+    E.verify.checked = !!S.opt.verify;
+    E.cell.value = String(S.opt.cell);
+    E.margin.value = String(S.opt.margin);
+    E.gap.value = String(S.opt.gap);
+    E.bg.value = S.opt.bg;
+    E.badge.checked = !!S.opt.badge;
+    E.labels.checked = !!S.opt.labels;
+    if (E.ann) E.ann.value = S.ann || '';
+  }
+
+  function readOptField(el) {
+    if (!el || !el.id) return;
+    switch (el.id) {
+      case 'featlabReq': S.opt.req = el.value; break;
+      case 'featlabSubject':
+        S.opt.subject = el.value;
+        if (E.pmSubject && E.pmSubject.value !== el.value) E.pmSubject.value = el.value;
+        updateAnnotation();
+        break;
+      case 'featlabScope': S.opt.scope = el.value; break;
+      case 'featlabVerify': S.opt.verify = !!el.checked; break;
+      case 'featlabCell': S.opt.cell = clamp(num(el.value, 512), 128, 1024); updateMeta(); break;
+      case 'featlabMargin': S.opt.margin = clamp(num(el.value, 30), 0, 100); break;
+      case 'featlabGap': S.opt.gap = clamp(num(el.value, 0), 0, 64); updateMeta(); break;
+      case 'featlabBg': S.opt.bg = el.value || '#15181d'; break;
+      case 'featlabBadge': S.opt.badge = !!el.checked; break;
+      case 'featlabLabels': S.opt.labels = !!el.checked; break;
+      case 'featlabAnn': S.ann = el.value; S.annEdited = true; if (E.annState) E.annState.textContent = '手动'; break;
+      default: return;
+    }
+    updatePrompt();
+    saveSoon();
+    schedulePreview();
+  }
+
+  /* ---------------- 画布 ---------------- */
+
+  function viewRect() {
+    return E.viewport ? E.viewport.getBoundingClientRect() : { width: 0, height: 0, left: 0, top: 0 };
+  }
+
+  function resizeCanvas() {
+    if (!E.canvas || !E.viewport) return;
+    var r = viewRect();
+    DPR = window.devicePixelRatio || 1;
+    var w = Math.max(1, Math.round(r.width));
+    var h = Math.max(1, Math.round(r.height));
+    var cw = Math.round(w * DPR);
+    var ch = Math.round(h * DPR);
+    if (E.canvas.width !== cw || E.canvas.height !== ch) {
+      E.canvas.width = cw;
+      E.canvas.height = ch;
+    }
+    if (!ctx) ctx = E.canvas.getContext('2d');
+    draw();
+  }
+
+  function updateZoomUI() {
+    if (E.zoom) E.zoom.textContent = Math.round(VIEW.s * 100) + '%';
+  }
+
+  function fitView() {
+    var src = activeSource();
+    var r = viewRect();
+    if (!src || !src.w || !src.h || !r.width || !r.height) {
+      updateZoomUI();
+      draw();
+      return;
+    }
+    var k = Math.min((r.width - 64) / src.w, (r.height - 64) / src.h);
+    VIEW.s = clamp(k, 0.01, 8);
+    VIEW.ox = (r.width - src.w * VIEW.s) / 2;
+    VIEW.oy = (r.height - src.h * VIEW.s) / 2;
+    VIEW.touched = false;
+    updateZoomUI();
+    draw();
+  }
+
+  function zoomAt(mx, my, factor) {
+    var old = VIEW.s;
+    var ns = clamp(old * factor, 0.02, 16);
+    if (ns === old) return;
+    VIEW.ox = mx - (mx - VIEW.ox) * (ns / old);
+    VIEW.oy = my - (my - VIEW.oy) * (ns / old);
+    VIEW.s = ns;
+    VIEW.touched = true;
+    updateZoomUI();
+    draw();
+  }
+
+  function screenToImg(cx, cy) {
+    var r = viewRect();
+    return { x: (cx - r.left - VIEW.ox) / VIEW.s, y: (cy - r.top - VIEW.oy) / VIEW.s };
+  }
+  function clampToImg(p) {
+    var src = activeSource();
+    if (!src) return p;
+    return { x: clamp(p.x, 0, src.w), y: clamp(p.y, 0, src.h) };
+  }
+  function regionScreenRect(r) {
+    var src = sourceById(r.srcId);
+    if (!src) return { x: 0, y: 0, w: 0, h: 0 };
+    return {
+      x: r.box[0] * src.w * VIEW.s + VIEW.ox,
+      y: r.box[1] * src.h * VIEW.s + VIEW.oy,
+      w: r.box[2] * src.w * VIEW.s,
+      h: r.box[3] * src.h * VIEW.s
+    };
+  }
+  function rgba(hex, a) {
+    var m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+    if (!m) return 'rgba(91,143,217,' + a + ')';
+    var n = parseInt(m[1], 16);
+    return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+  }
+  function roundRect(g, x, y, w, h, r) {
+    var rr = Math.min(r, w / 2, h / 2);
+    g.beginPath();
+    g.moveTo(x + rr, y);
+    g.arcTo(x + w, y, x + w, y + h, rr);
+    g.arcTo(x + w, y + h, x, y + h, rr);
+    g.arcTo(x, y + h, x, y, rr);
+    g.arcTo(x, y, x + w, y, rr);
+    g.closePath();
+  }
+
+  function drawGrid(g, w, h) {
+    g.save();
+    g.strokeStyle = 'rgba(255,255,255,.035)';
+    g.lineWidth = 1;
+    var step = 36;
+    for (var x = (VIEW.ox % step); x < w; x += step) {
+      g.beginPath(); g.moveTo(Math.round(x) + .5, 0); g.lineTo(Math.round(x) + .5, h); g.stroke();
+    }
+    for (var y = (VIEW.oy % step); y < h; y += step) {
+      g.beginPath(); g.moveTo(0, Math.round(y) + .5); g.lineTo(w, Math.round(y) + .5); g.stroke();
+    }
+    g.restore();
+  }
+
+  function drawBox(g, reg, idx, selected) {
+    var rect = regionScreenRect(reg);
+    var color = regionColor(idx);
+    g.save();
+    g.fillStyle = rgba(color, selected ? 0.16 : 0.09);
+    g.fillRect(rect.x, rect.y, rect.w, rect.h);
+    g.strokeStyle = color;
+    g.lineWidth = selected ? 2 : 1.3;
+    g.setLineDash(selected ? [] : [7, 4]);
+    g.strokeRect(rect.x + .5, rect.y + .5, Math.max(0, rect.w - 1), Math.max(0, rect.h - 1));
+    g.setLineDash([]);
+    /* 左上序号 */
+    var rad = selected ? 10 : 8.5;
+    g.beginPath();
+    g.arc(rect.x + rad + 2, rect.y + rad + 2, rad, 0, Math.PI * 2);
+    g.fillStyle = color;
+    g.fill();
+    g.fillStyle = '#fff';
+    g.font = '600 ' + (selected ? 11 : 10) + 'px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(String(idx + 1), rect.x + rad + 2, rect.y + rad + 3);
+    /* 名称条 */
+    var label = String(reg.name || '未命名');
+    g.font = '500 11px system-ui, sans-serif';
+    var tw = g.measureText(label).width;
+    var chipW = Math.min(rect.w - 4, tw + 14);
+    if (chipW > 18) {
+      var chipY = rect.y - 21;
+      if (chipY < 2) chipY = rect.y + 3;
+      var chipX = clamp(rect.x, 2, Math.max(2, viewRect().width - chipW - 4));
+      g.fillStyle = rgba(color, 0.92);
+      roundRect(g, chipX, chipY, chipW, 18, 5);
+      g.fill();
+      g.fillStyle = '#fff';
+      g.textAlign = 'left';
+      g.textBaseline = 'middle';
+      g.save();
+      g.beginPath();
+      g.rect(chipX + 6, chipY, chipW - 10, 18);
+      g.clip();
+      g.fillText(label, chipX + 7, chipY + 9.5);
+      g.restore();
+    }
+    if (selected) {
+      var hs = 4;
+      var pts = [
+        [rect.x, rect.y], [rect.x + rect.w / 2, rect.y], [rect.x + rect.w, rect.y],
+        [rect.x + rect.w, rect.y + rect.h / 2], [rect.x + rect.w, rect.y + rect.h],
+        [rect.x + rect.w / 2, rect.y + rect.h], [rect.x, rect.y + rect.h],
+        [rect.x, rect.y + rect.h / 2]
+      ];
+      pts.forEach(function (p) {
+        g.fillStyle = '#fff';
+        g.strokeStyle = color;
+        g.lineWidth = 1.5;
+        g.fillRect(p[0] - hs, p[1] - hs, hs * 2, hs * 2);
+        g.strokeRect(p[0] - hs, p[1] - hs, hs * 2, hs * 2);
+      });
+    }
+    g.restore();
+  }
+
+  function draw() {
+    if (!E.canvas || !E.viewport) return;
+    if (!ctx) ctx = E.canvas.getContext('2d');
+    var r = viewRect();
+    var w = r.width, h = r.height;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#12161d';
+    ctx.fillRect(0, 0, w, h);
+    drawGrid(ctx, w, h);
+    var src = activeSource();
+    if (src && src._img) {
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,.5)';
+      ctx.shadowBlur = 24;
+      ctx.drawImage(src._img, VIEW.ox, VIEW.oy, src.w * VIEW.s, src.h * VIEW.s);
+      ctx.restore();
+      /* 画布外的部分压暗，避免误以为图变小了 */
+      ctx.save();
+      ctx.fillStyle = 'rgba(10,13,18,.55)';
+      var ix = VIEW.ox, iy = VIEW.oy, iw = src.w * VIEW.s, ih = src.h * VIEW.s;
+      if (ix > 0) ctx.fillRect(0, 0, ix, h);
+      if (iy > 0) ctx.fillRect(0, 0, w, iy);
+      if (ix + iw < w) ctx.fillRect(ix + iw, 0, w - ix - iw, h);
+      if (iy + ih < h) ctx.fillRect(0, iy + ih, w, h - iy - ih);
+      ctx.restore();
+
+      activeRegions().forEach(function (reg) {
+        var idx = S.regions.indexOf(reg);
+        drawBox(ctx, reg, idx, reg.id === S.selId);
+      });
+      if (drag && drag.mode === 'create') {
+        var a = drag.start, b = drag.cur;
+        var x = Math.min(a.x, b.x) * VIEW.s + VIEW.ox;
+        var y = Math.min(a.y, b.y) * VIEW.s + VIEW.oy;
+        var bw = Math.abs(b.x - a.x) * VIEW.s;
+        var bh = Math.abs(b.y - a.y) * VIEW.s;
+        ctx.save();
+        ctx.fillStyle = 'rgba(245,196,81,.14)';
+        ctx.strokeStyle = '#f5c451';
+        ctx.lineWidth = 1.6;
+        ctx.setLineDash([6, 4]);
+        ctx.fillRect(x, y, bw, bh);
+        ctx.strokeRect(x + .5, y + .5, bw, bh);
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(245,196,81,.95)';
+        ctx.font = '600 11px system-ui, sans-serif';
+        ctx.fillText(Math.round(bw / VIEW.s) + ' × ' + Math.round(bh / VIEW.s) + ' px', x + 4, Math.max(12, y - 6));
+        ctx.restore();
+      }
+    } else if (src) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(255,255,255,.5)';
+      ctx.font = '12px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('图像加载中…', w / 2, h / 2);
+      ctx.restore();
+    }
+  }
+
+  /* ---------------- 命中 / 光标 ---------------- */
+
+  function zoneIn(rect, x, y) {
+    if (rect.w <= 0 || rect.h <= 0) return null;
+    var h = 7;
+    var inX = x >= rect.x - h && x <= rect.x + rect.w + h;
+    var inY = y >= rect.y - h && y <= rect.y + rect.h + h;
+    if (!inX || !inY) return null;
+    var nearL = Math.abs(x - rect.x) <= h;
+    var nearR = Math.abs(x - (rect.x + rect.w)) <= h;
+    var nearT = Math.abs(y - rect.y) <= h;
+    var nearB = Math.abs(y - (rect.y + rect.h)) <= h;
+    if (nearL && nearT) return 'nw';
+    if (nearR && nearT) return 'ne';
+    if (nearL && nearB) return 'sw';
+    if (nearR && nearB) return 'se';
+    if (nearT) return 'n';
+    if (nearB) return 's';
+    if (nearL) return 'w';
+    if (nearR) return 'e';
+    if (x > rect.x && x < rect.x + rect.w && y > rect.y && y < rect.y + rect.h) return 'move';
+    return null;
+  }
+
+  function hitTest(cx, cy) {
+    var r = viewRect();
+    var x = cx - r.left, y = cy - r.top;
+    var regs = activeRegions();
+    for (var i = regs.length - 1; i >= 0; i--) {
+      var rect = regionScreenRect(regs[i]);
+      var zone = zoneIn(rect, x, y);
+      if (zone) return { id: regs[i].id, zone: zone };
+    }
+    return null;
+  }
+
+  function cursorForHit(hit) {
+    if (S.tool === 'pan') return 'grab';
+    if (S.tool === 'add') return 'crosshair';
+    if (!hit) return 'default';
+    if (hit.zone === 'move') return 'move';
+    if (hit.zone === 'nw' || hit.zone === 'se') return 'nwse-resize';
+    if (hit.zone === 'ne' || hit.zone === 'sw') return 'nesw-resize';
+    if (hit.zone === 'n' || hit.zone === 's') return 'ns-resize';
+    return 'ew-resize';
+  }
+
+  function updateCanvasCursor(e) {
+    if (!E.canvas) return;
+    if (drag) return;
+    if (spaceDown) { E.canvas.style.cursor = 'grab'; return; }
+    if (!e) { E.canvas.style.cursor = S.tool === 'pan' ? 'grab' : (S.tool === 'add' ? 'crosshair' : 'default'); return; }
+    E.canvas.style.cursor = cursorForHit(hitTest(e.clientX, e.clientY));
+  }
+
+  function setTool(t) {
+    S.tool = t === 'add' || t === 'pan' ? t : 'select';
+    root.querySelectorAll('[data-tool]').forEach(function (b) {
+      b.classList.toggle('on', b.getAttribute('data-tool') === S.tool);
+    });
+    if (!drag) updateCanvasCursor();
+    status(S.tool === 'add' ? '框选：在图上拖出特征区域' : (S.tool === 'pan' ? '平移：拖动画布' : '选择：拖动区域或角点'));
+  }
+
+  /* ---------------- 指针交互 ---------------- */
+
+  function clampBox(b) {
+    var x = clamp(b[0], 0, 1), y = clamp(b[1], 0, 1);
+    var w = clamp(b[2], 0.002, 1 - x), h = clamp(b[3], 0.002, 1 - y);
+    return [x, y, w, h];
+  }
+
+  /* ---- 边界精确调整：一律以「图像像素」为单位，再换算回归一化 ---- */
+
+  function boxPx(reg) {
+    var src = sourceById(reg.srcId);
+    if (!src) return { w: 0, h: 0, x: 0, y: 0 };
+    return {
+      x: Math.round(reg.box[0] * src.w),
+      y: Math.round(reg.box[1] * src.h),
+      w: Math.round(reg.box[2] * src.w),
+      h: Math.round(reg.box[3] * src.h)
+    };
+  }
+
+  function refreshInspMeta() {
+    var r = regionById(S.selId);
+    var el = $('#featlabInspMeta');
+    if (!r || !el) return;
+    var p = boxPx(r);
+    el.textContent = '图' + (sourceIndex(r.srcId) + 1) + ' · ' + p.w + '×' + p.h + ' px · ' +
+      '拖动边框或角点调整';
+  }
+
+  /* 只动一条边：对边固定，最小边长 MIN_BOX_PX，越界夹回图内。 */
+  function nudgeEdge(reg, side, px) {
+    var src = sourceById(reg.srcId);
+    if (!src || !px) return false;
+    var b = reg.box.slice();
+    var minW = MIN_BOX_PX / src.w, minH = MIN_BOX_PX / src.h;
+    var dw = px / src.w, dh = px / src.h;
+    if (side === 'l') {
+      var nx = clamp(b[0] + dw, 0, b[0] + b[2] - minW);
+      b[2] = b[2] + (b[0] - nx);
+      b[0] = nx;
+    } else if (side === 'r') {
+      b[2] = clamp(b[2] + dw, minW, 1 - b[0]);
+    } else if (side === 't') {
+      var ny = clamp(b[1] + dh, 0, b[1] + b[3] - minH);
+      b[3] = b[3] + (b[1] - ny);
+      b[1] = ny;
+    } else if (side === 'b') {
+      b[3] = clamp(b[3] + dh, minH, 1 - b[1]);
+    } else {
+      return false;
+    }
+    var nb = clampBox(b);
+    if (nb.join() === reg.box.join()) return false;
+    reg.box = nb;
+    return true;
+  }
+
+  function expandShrink(reg, dir) {
+    var src = sourceById(reg.srcId);
+    if (!src) return false;
+    var step = S.edgeStep * dir;
+    var before = reg.box.join();
+    ['l', 't', 'r', 'b'].forEach(function (s) { nudgeEdge(reg, s, s === 'l' || s === 't' ? -step : step); });
+    return reg.box.join() !== before;
+  }
+
+  /* 以中心为准调成 1:1（单位：像素）。图集每格是正方形，先切成正方形后面裁切不跑偏。 */
+  function squareBox(reg) {
+    var src = sourceById(reg.srcId);
+    if (!src) return false;
+    var p = boxPx(reg);
+    var side = Math.max(p.w, p.h, MIN_BOX_PX);
+    var cx = reg.box[0] * src.w + reg.box[2] * src.w / 2;
+    var cy = reg.box[1] * src.h + reg.box[3] * src.h / 2;
+    var w = Math.min(side, src.w) / src.w;
+    var h = Math.min(side, src.h) / src.h;
+    var x = clamp(cx / src.w - w / 2, 0, 1 - w);
+    var y = clamp(cy / src.h - h / 2, 0, 1 - h);
+    var nb = clampBox([x, y, w, h]);
+    if (nb.join() === reg.box.join()) return false;
+    reg.box = nb;
+    return true;
+  }
+
+  /* 微调统一入口：一次操作一个撤销点，避免连点十次要靠十次 Ctrl+Z 退回去 */
+  function setEdgeStep(n) {
+    var v = Number(n);
+    S.edgeStep = [1, 5, 10].indexOf(v) >= 0 ? v : 1;
+    if (E.inspect) {
+      Array.prototype.forEach.call(E.inspect.querySelectorAll('[data-step]'), function (b) {
+        b.classList.toggle('on', Number(b.getAttribute('data-step')) === S.edgeStep);
+      });
+    }
+    /* 按钮 title 里写着步进值，重画一遍才能同步（不重画会显示旧数字） */
+    if (regionById(S.selId)) renderInspector();
+    saveSoon();
+    status('边界步进 ' + S.edgeStep + 'px');
+  }
+
+  function tuneBox(fn, label) {
+    var reg = regionById(S.selId);
+    if (!reg) { status('先选中一个区域'); return; }
+    pushUndo();
+    var ok = fn(reg);
+    if (!ok) { UNDO.pop(); status('已经到边界了'); return; }
+    syncInspectorBoxValues();
+    refreshInspMeta();
+    draw();
+    schedulePreview();
+    saveSoon();
+    status((label || '已调整边界') + ' · ' + boxPx(reg).w + '×' + boxPx(reg).h + ' px');
+  }
+
+  function syncInspectorBoxValues() {
+    var r = regionById(S.selId);
+    if (!r || !E.inspect) return;
+    var inputs = E.inspect.querySelectorAll('[data-box]');
+    Array.prototype.forEach.call(inputs, function (el) {
+      if (document.activeElement === el) return;
+      var k = Number(el.getAttribute('data-box'));
+      el.value = round(r.box[k] * 100, 1);
+    });
+  }
+
+  function onPointerDown(e) {
+    if (e.button === 1 || (e.button === 0 && (S.tool === 'pan' || spaceDown))) {
+      e.preventDefault();
+      try { E.canvas.setPointerCapture(e.pointerId); } catch (_) {}
+      drag = { mode: 'pan', sx: e.clientX, sy: e.clientY, ox: VIEW.ox, oy: VIEW.oy };
+      E.canvas.style.cursor = 'grabbing';
+      return;
+    }
+    if (e.button !== 0) return;
+    var src = activeSource();
+    if (!src || !src._img) return;
+    if (S.tool === 'add') {
+      var p = clampToImg(screenToImg(e.clientX, e.clientY));
+      drag = { mode: 'create', start: p, cur: p };
+      try { E.canvas.setPointerCapture(e.pointerId); } catch (_) {}
+      draw();
+      return;
+    }
+    var hit = hitTest(e.clientX, e.clientY);
+    if (!hit) {
+      selectRegion('');
+      return;
+    }
+    if (S.selId !== hit.id) selectRegion(hit.id);
+    pushUndo();
+    var reg = regionById(hit.id);
+    drag = {
+      mode: hit.zone === 'move' ? 'move' : 'resize',
+      id: hit.id,
+      zone: hit.zone,
+      startBox: reg.box.slice(),
+      startImg: clampToImg(screenToImg(e.clientX, e.clientY))
+    };
+    try { E.canvas.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+
+  function onPointerMove(e) {
+    if (!drag) {
+      updateCanvasCursor(e);
+      var src0 = activeSource();
+      if (src0 && src0._img && E.hudPos) {
+        var p0 = screenToImg(e.clientX, e.clientY);
+        if (p0.x >= 0 && p0.y >= 0 && p0.x <= src0.w && p0.y <= src0.h) {
+          E.hudPos.textContent = Math.round(p0.x) + ', ' + Math.round(p0.y) + ' px · ' +
+            Math.round(p0.x / src0.w * 100) + '%, ' + Math.round(p0.y / src0.h * 100) + '%';
+        } else {
+          E.hudPos.textContent = '—';
+        }
+      }
+      return;
+    }
+    if (drag.mode === 'pan') {
+      VIEW.ox = drag.ox + (e.clientX - drag.sx);
+      VIEW.oy = drag.oy + (e.clientY - drag.sy);
+      VIEW.touched = true;
+      draw();
+      return;
+    }
+    var src = activeSource();
+    if (!src) return;
+    var p = clampToImg(screenToImg(e.clientX, e.clientY));
+    if (drag.mode === 'create') {
+      drag.cur = p;
+      draw();
+      return;
+    }
+    var reg = regionById(drag.id);
+    if (!reg) return;
+    var dx = (p.x - drag.startImg.x) / src.w;
+    var dy = (p.y - drag.startImg.y) / src.h;
+    var b = drag.startBox.slice();
+    if (drag.mode === 'move') {
+      b[0] = clamp(b[0] + dx, 0, 1 - b[2]);
+      b[1] = clamp(b[1] + dy, 0, 1 - b[3]);
+    } else if (S.lockRatio && drag.zone.length === 2) {
+      /* 锁比例：以「对边对角」为锚点，宽高比按起始框的像素比例；
+       * 取宽高里较大的那个方向，保证指针始终落在框内。 */
+      var z0 = drag.zone;
+      var ratio = (drag.startBox[2] * src.w) / Math.max(1e-6, drag.startBox[3] * src.h);
+      var sx = drag.startBox[0] * src.w, sy = drag.startBox[1] * src.h;
+      var sw = drag.startBox[2] * src.w, sh = drag.startBox[3] * src.h;
+      var rawW = z0.indexOf('w') >= 0 ? (sx + sw) - p.x : p.x - sx;
+      var rawH = z0.indexOf('n') >= 0 ? (sy + sh) - p.y : p.y - sy;
+      var w = Math.max(MIN_BOX_PX, Math.max(rawW, rawH * ratio));
+      var h = w / ratio;
+      var nx2 = z0.indexOf('w') >= 0 ? (sx + sw) - w : sx;
+      var ny2 = z0.indexOf('n') >= 0 ? (sy + sh) - h : sy;
+      b = clampBox([nx2 / src.w, ny2 / src.h, w / src.w, h / src.h]);
+    } else {
+      var z = drag.zone;
+      var minW = 6 / src.w, minH = 6 / src.h;
+      if (z.indexOf('w') >= 0) { var nw = b[2] - dx; if (nw >= minW) { b[0] += dx; b[2] = nw; } }
+      if (z.indexOf('e') >= 0) { b[2] = Math.max(minW, b[2] + dx); }
+      if (z.indexOf('n') >= 0) { var nh = b[3] - dy; if (nh >= minH) { b[1] += dy; b[3] = nh; } }
+      if (z.indexOf('s') >= 0) { b[3] = Math.max(minH, b[3] + dy); }
+      b = clampBox(b);
+    }
+    reg.box = b;
+    syncInspectorBoxValues();
+    draw();
+  }
+
+  function onPointerUp(e) {
+    if (!drag) return;
+    var mode = drag.mode;
+    var d = drag;
+    drag = null;
+    try { E.canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (mode === 'create') {
+      var src = activeSource();
+      if (src) {
+        var w = Math.abs(d.cur.x - d.start.x);
+        var h = Math.abs(d.cur.y - d.start.y);
+        if (w >= 4 && h >= 4) {
+          pushUndo();
+          var box = [
+            Math.min(d.start.x, d.cur.x) / src.w,
+            Math.min(d.start.y, d.cur.y) / src.h,
+            w / src.w,
+            h / src.h
+          ];
+          var reg = addRegion({ srcId: src.id, box: clampBox(box) });
+          if (reg) {
+            S.selId = reg.id;
+            log('新增区域「' + reg.name + '」', 'ok');
+            status('已新增区域，可在下方改名或微调边框');
+          }
+          syncUI();
+          saveSoon();
+        } else {
+          draw();
+        }
+      }
+    } else if (mode === 'move' || mode === 'resize') {
+      syncUI();
+      saveNow();
+    } else {
+      updateCanvasCursor(e);
+    }
+  }
+
+  function onWheel(e) {
+    if (!activeSource() || !activeSource()._img) return;
+    e.preventDefault();
+    var r = viewRect();
+    zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0015));
+  }
+
+  /* ---------------- 键盘 / 粘贴 ---------------- */
+
+  function appVisible() {
+    var win = root && root.closest('.os-win');
+    return !!win && !win.classList.contains('hidden');
+  }
+
+  function onKeyDown(e) {
+    if (!appVisible()) return;
+    if (isTyping(e.target)) {
+      if (e.key === 'Escape') e.target.blur();
+      return;
+    }
+    var k = String(e.key || '').toLowerCase();
+    var mod = e.ctrlKey || e.metaKey;
+    if (mod && k === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+    if (mod && k === 'y') { e.preventDefault(); redo(); return; }
+    if (k === 'delete' || k === 'backspace') {
+      if (S.selId) { e.preventDefault(); removeRegion(S.selId); }
+      return;
+    }
+    /* 方向键：微调选中区域。Alt 按住时改为拉那条边（默认外扩，Shift 反向内收）；
+     * 不加 Alt 时按住 Shift 是 ×10 步进。步进值就是检查器上的 1/5/10px。 */
+    var arrow = { arrowleft: 'left', arrowright: 'right', arrowup: 'up', arrowdown: 'down' }[k];
+    if (arrow) {
+      if (!S.selId) return;
+      e.preventDefault();
+      var step = S.edgeStep * (e.shiftKey && !e.altKey ? 10 : 1);
+      if (e.altKey) {
+        var sideOf = { left: 'l', right: 'r', up: 't', down: 'b' }[arrow];
+        var outward = sideOf === 'l' || sideOf === 't' ? -1 : 1;
+        var delta = (e.shiftKey ? -outward : outward) * S.edgeStep;
+        tuneBox(function (reg) { return nudgeEdge(reg, sideOf, delta); }, '已调整' + ({ l: '左', r: '右', t: '上', b: '下' }[sideOf]) + '边');
+      } else {
+        tuneBox(function (reg) {
+          var src = sourceById(reg.srcId);
+          if (!src) return false;
+          var ddx = arrow === 'left' ? -step / src.w : (arrow === 'right' ? step / src.w : 0);
+          var ddy = arrow === 'up' ? -step / src.h : (arrow === 'down' ? step / src.h : 0);
+          var nb = clampBox([reg.box[0] + ddx, reg.box[1] + ddy, reg.box[2], reg.box[3]]);
+          if (nb.join() === reg.box.join()) return false;
+          reg.box = nb;
+          return true;
+        }, '已移动');
+      }
+      return;
+    }
+    if (e.key === '[' ) { e.preventDefault(); setEdgeStep(S.edgeStep === 10 ? 5 : (S.edgeStep === 5 ? 1 : 1)); return; }
+    if (e.key === ']' ) { e.preventDefault(); setEdgeStep(S.edgeStep === 1 ? 5 : (S.edgeStep === 5 ? 10 : 10)); return; }
+    if (k === 'escape') { drag = null; ctxHide(); selectRegion(''); draw(); updateCanvasCursor(); return; }
+    if (k === 'v') { setTool('select'); return; }
+    if (k === 'r') { setTool('add'); return; }
+    if (k === 'h') { setTool('pan'); return; }
+    if (k === 'f') { fitView(); return; }
+    if (e.key === ' ') {
+      spaceDown = true;
+      e.preventDefault();
+      updateCanvasCursor();
+    }
+  }
+
+  function onKeyUp(e) {
+    if (e.key === ' ') {
+      spaceDown = false;
+      updateCanvasCursor();
+    }
+  }
+
+  function onPaste(e) {
+    if (!appVisible() || !e.clipboardData) return;
+    var files = [];
+    var items = e.clipboardData.items || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].kind === 'file') {
+        var f = items[i].getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length) {
+      e.preventDefault();
+      importFiles(files);
+    }
+  }
+
+  /* ---------------- 事件绑定 ---------------- */
+
+  function doAction(act) {
+    switch (act) {
+      case 'import': E.file && E.file.click(); break;
+      case 'undo': undo(); break;
+      case 'redo': redo(); break;
+      case 'zoom-in': zoomAt(viewRect().width / 2, viewRect().height / 2, 1.2); break;
+      case 'zoom-out': zoomAt(viewRect().width / 2, viewRect().height / 2, 1 / 1.2); break;
+      case 'fit': fitView(); break;
+      case 'add-region':
+        if (!activeSource()) { status('先导入一张源图'); break; }
+        pushUndo();
+        var nr = addRegion({});
+        if (nr) { S.selId = nr.id; }
+        syncUI();
+        saveSoon();
+        status('已新增区域，拖动边框或改名');
+        break;
+      case 'clear-regions':
+        if (!S.regions.length) break;
+        if (!window.confirm('清空全部 ' + S.regions.length + ' 个特征区域？可以用 Ctrl+Z 撤销。')) break;
+        pushUndo();
+        S.regions = [];
+        S.selId = '';
+        syncUI();
+        saveSoon();
+        break;
+      case 'focus-region': focusRegion(); break;
+      case 'del-region':
+        if (S.selId) removeRegion(S.selId);
+        break;
+      case 'ai-extract': aiExtract(); break;
+      case 'ai-name': aiName(); break;
+      case 'ai-verify': aiVerify(); break;
+      case 'build': buildAction(); break;
+      case 'copy-atlas': copyAtlasImage(); break;
+      case 'export-png': exportPNG(); break;
+      case 'export-json': exportJSON(); break;
+      case 'copy-ann': copyAnnotation(); break;
+      case 'copy-prompt': copyPrompt(); break;
+      case 'copy-negative': copyNegative(); break;
+      case 'pm-regions': fillDetailsFromRegions(); break;
+      case 'pm-reset':
+        S.pmEdited = false;
+        updatePrompt();
+        saveSoon();
+        status('提示词已恢复自动生成');
+        break;
+      case 'edge-expand': tuneBox(function (reg) { return expandShrink(reg, 1); }, '四边外扩'); break;
+      case 'edge-shrink': tuneBox(function (reg) { return expandShrink(reg, -1); }, '四边内缩'); break;
+      case 'edge-square': tuneBox(function (reg) { return squareBox(reg); }, '已调成 1:1'); break;
+      case 'auto-ann':
+        S.annEdited = false;
+        updateAnnotation();
+        saveSoon();
+        status('标注已恢复自动生成');
+        break;
+      case 'cancel-ai':
+        if (S.abort) { try { S.abort.abort(); } catch (_) {} status('正在停止…'); }
+        break;
+      default: break;
+    }
+  }
+
+  function focusRegion() {
+    var r = regionById(S.selId);
+    if (!r) return;
+    if (r.srcId !== S.activeId) setActive(r.srcId);
+    var src = activeSource();
+    var vw = viewRect().width, vh = viewRect().height;
+    VIEW.s = clamp(Math.min(vw * 0.5 / Math.max(1, r.box[2] * src.w), vh * 0.5 / Math.max(1, r.box[3] * src.h)), 0.05, 12);
+    VIEW.ox = vw / 2 - (r.box[0] + r.box[2] / 2) * src.w * VIEW.s;
+    VIEW.oy = vh / 2 - (r.box[1] + r.box[3] / 2) * src.h * VIEW.s;
+    VIEW.touched = true;
+    updateZoomUI();
+    draw();
+  }
+
+  function bindEvents() {
+    E.srcs = $('#featlabSrcs');
+    E.list = $('#featlabList');
+    E.inspect = $('#featlabInspect');
+    E.viewport = $('#featlabViewport');
+    E.canvas = $('#featlabCanvas');
+    E.empty = $('#featlabEmpty');
+    E.busy = $('#featlabBusy');
+    E.busyText = $('#featlabBusyText');
+    E.busySub = $('#featlabBusySub');
+    E.hudPos = $('#featlabHudPos');
+    E.hudInfo = $('#featlabHudInfo');
+    E.zoom = $('#featlabZoom');
+    E.file = $('#featlabFile');
+    E.count = $('#featlabCount');
+    E.srcHint = $('#featlabSrcHint');
+    E.atlasInfo = $('#featlabAtlasInfo');
+    E.preview = $('#featlabPreview');
+    E.previewHint = $('#featlabPreviewHint');
+    E.ann = $('#featlabAnn');
+    E.annState = $('#featlabAnnState');
+    E.log = $('#featlabLog');
+    E.status = $('#featlabStatus');
+    E.req = $('#featlabReq');
+    E.subject = $('#featlabSubject');
+    E.scope = $('#featlabScope');
+    E.verify = $('#featlabVerify');
+    E.cell = $('#featlabCell');
+    E.margin = $('#featlabMargin');
+    E.gap = $('#featlabGap');
+    E.bg = $('#featlabBg');
+    E.badge = $('#featlabBadge');
+    E.labels = $('#featlabLabels');
+    E.previewWrap = $('#featlabPreviewWrap');
+    E.tabs = root.querySelector('.featlab-tabs');
+    E.tabWrap = root.querySelector('.featlab-tabwrap');
+    E.ctx = $('#featlabCtx');
+    E.panel = root.querySelector('.featlab-panel');
+    E.pmSubject = $('#featlabPmSubject');
+    E.pmUse = $('#featlabPmUse');
+    E.pmStyle = $('#featlabPmStyle');
+    E.pmAngle = $('#featlabPmAngle');
+    E.pmMaterial = $('#featlabPmMaterial');
+    E.pmPalette = $('#featlabPmPalette');
+    E.pmLight = $('#featlabPmLight');
+    E.pmBg = $('#featlabPmBg');
+    E.pmDetails = $('#featlabPmDetails');
+    E.pmExtra = $('#featlabPmExtra');
+    E.pmNeg = $('#featlabPmNeg');
+    E.pmOut = $('#featlabPmOut');
+    E.pmState = $('#featlabPmState');
+    E.pmSeg = root.querySelector('.featlab-seg');
+    E.pmQuality = $('#featlabPmQuality');
+
+    root.addEventListener('click', function (e) {
+      ctxHide();
+      var ftab = e.target.closest('[data-ftab]');
+      if (ftab) { applyTab(ftab.getAttribute('data-ftab')); return; }
+      var stepBtn = e.target.closest('[data-step]');
+      if (stepBtn) { setEdgeStep(stepBtn.getAttribute('data-step')); return; }
+      var edgeBtn = e.target.closest('[data-edge]');
+      if (edgeBtn) {
+        var side = edgeBtn.getAttribute('data-edge');
+        var dir = Number(edgeBtn.getAttribute('data-dir')) || 1;
+        tuneBox(function (reg) { return nudgeEdge(reg, side, dir * S.edgeStep); }, '已调整边界');
+        return;
+      }
+      var qBtn = e.target.closest('[data-q]');
+      if (qBtn) { toggleQuality(qBtn.getAttribute('data-q')); return; }
+      var langBtn = e.target.closest('[data-pmlang]');
+      if (langBtn) { setPmLang(langBtn.getAttribute('data-pmlang')); return; }
+      var toolBtn = e.target.closest('[data-tool]');
+      if (toolBtn) { setTool(toolBtn.getAttribute('data-tool')); return; }
+      var actBtn = e.target.closest('[data-act]');
+      if (actBtn) { e.preventDefault(); doAction(actBtn.getAttribute('data-act')); return; }
+      var ract = e.target.closest('[data-ract]');
+      if (ract) {
+        var kind = ract.getAttribute('data-ract');
+        if (kind === 'del-src') { removeSource(ract.getAttribute('data-src')); return; }
+        var row = ract.closest('[data-region]');
+        if (row) {
+          var rid = row.getAttribute('data-region');
+          if (kind === 'del') removeRegion(rid);
+          else if (kind === 'up') moveRegion(rid, -1);
+          else if (kind === 'down') moveRegion(rid, 1);
+          return;
+        }
+        return;
+      }
+      var srcEl = e.target.closest('[data-src]');
+      if (srcEl && !e.target.closest('[data-act]')) { setActive(srcEl.getAttribute('data-src')); return; }
+      var rowEl = e.target.closest('[data-region]');
+      if (rowEl) {
+        var id = rowEl.getAttribute('data-region');
+        if (e.target.closest('input')) { selectRegion(id); return; }
+        selectRegion(id);
+      }
+    });
+
+    root.addEventListener('input', function (e) {
+      var t = e.target;
+      if (t.id === 'featlabLock') {
+        S.lockRatio = !!t.checked;
+        saveSoon();
+        status(S.lockRatio ? '拖角点将锁定宽高比' : '已取消锁比例');
+        return;
+      }
+      if (t.id === 'featlabSelName') {
+        var r = regionById(S.selId);
+        if (r) {
+          r.name = t.value;
+          var listName = root.querySelector('[data-rename="' + r.id + '"]');
+          if (listName && listName !== t) listName.value = t.value;
+          updateAnnotation();
+          updatePrompt();
+          schedulePreview();
+          saveSoon();
+        }
+        return;
+      }
+      var b = t.getAttribute && t.getAttribute('data-box');
+      if (b != null && S.selId) {
+        var reg = regionById(S.selId);
+        if (reg) {
+          var k = Number(b);
+          var v = clamp(num(t.value, 0) / 100, 0, 1);
+          reg.box[k] = v;
+          reg.box = clampBox(reg.box);
+          refreshInspMeta();
+          draw();
+          schedulePreview();
+          saveSoon();
+        }
+        return;
+      }
+      if (t.getAttribute && t.getAttribute('data-note')) {
+        /* 逐格写标注 → 整段标注立刻重算（用户手改过整段就不覆盖，状态栏那个「手动」说了算） */
+        var rn = regionById(t.getAttribute('data-note'));
+        if (rn) {
+          rn.note = t.value;
+          updateAnnotation();
+          if (S.annEdited) status('整段标注是手动稿，点「恢复自动」才会按逐格描述重算');
+          saveSoon();
+        }
+        return;
+      }
+      if (t.getAttribute && t.getAttribute('data-rename')) {
+        var rr = regionById(t.getAttribute('data-rename'));
+        if (rr) {
+          rr.name = t.value;
+          if (S.selId === rr.id) {
+            var ins = $('#featlabSelName');
+            if (ins && ins !== t) ins.value = t.value;
+          }
+          updateAnnotation();
+          updatePrompt();
+          schedulePreview();
+          saveSoon();
+        }
+        return;
+      }
+      if (readPmtField(t)) return;
+      readOptField(t);
+    });
+
+    root.addEventListener('change', function (e) {
+      if (readPmtField(e.target)) return;
+      readOptField(e.target);
+    });
+
+    /* 单行框打完字会停在中段（光标在末尾），失焦后拉回开头才看得见这句话从哪起 */
+    root.addEventListener('focusout', function (e) {
+      var t = e.target;
+      if (t && t.classList && t.classList.contains('featlab-row-note')) t.scrollLeft = 0;
+    });
+
+    E.file.addEventListener('change', function () {
+      var files = E.file.files;
+      if (files && files.length) importFiles(files);
+      E.file.value = '';
+    });
+
+    root.addEventListener('dragover', function (e) { e.preventDefault(); });
+    root.addEventListener('drop', function (e) {
+      e.preventDefault();
+      var dt = e.dataTransfer;
+      if (dt && dt.files && dt.files.length) importFiles(dt.files);
+    });
+
+    E.canvas.addEventListener('pointerdown', onPointerDown);
+    E.canvas.addEventListener('pointermove', onPointerMove);
+    E.canvas.addEventListener('pointerup', onPointerUp);
+    E.canvas.addEventListener('pointercancel', onPointerUp);
+    E.canvas.addEventListener('dblclick', function (e) {
+      var hit = hitTest(e.clientX, e.clientY);
+      if (hit) {
+        selectRegion(hit.id);
+        var input = $('#featlabSelName');
+        if (input) { input.focus(); input.select(); }
+      }
+    });
+    E.viewport.addEventListener('wheel', onWheel, { passive: false });
+
+    /* ---- 右键菜单：画布 / 源图 / 区域行 / 图集预览 ---- */
+    if (E.ctx) {
+      E.ctx.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var btn = e.target.closest('[data-ci]');
+        if (!btn) return;
+        var it = ctxItems[Number(btn.getAttribute('data-ci'))];
+        ctxHide();
+        if (it && !it.off && typeof it.run === 'function') it.run();
+      });
+    }
+    if (E.canvas) {
+      E.canvas.addEventListener('contextmenu', function (e) {
+        if (!appVisible()) return;
+        e.preventDefault();
+        var hit = hitTest(e.clientX, e.clientY);
+        if (hit) selectRegion(hit.id);
+        ctxShow(e.clientX, e.clientY, canvasMenu(hit));
+      });
+    }
+    if (E.srcs) {
+      E.srcs.addEventListener('contextmenu', function (e) {
+        var el = e.target.closest('[data-src]');
+        if (!el) return;
+        var src = sourceById(el.getAttribute('data-src'));
+        if (!src) return;
+        e.preventDefault();
+        ctxShow(e.clientX, e.clientY, sourceMenu(src));
+      });
+    }
+    if (E.list) {
+      E.list.addEventListener('contextmenu', function (e) {
+        var row = e.target.closest('[data-region]');
+        if (!row) return;
+        var reg = regionById(row.getAttribute('data-region'));
+        if (!reg) return;
+        e.preventDefault();
+        selectRegion(reg.id);
+        ctxShow(e.clientX, e.clientY, regionMenu(reg));
+      });
+    }
+    if (E.previewWrap) {
+      E.previewWrap.addEventListener('contextmenu', function (e) {
+        if (!S.regions.length) return;
+        e.preventDefault();
+        ctxShow(e.clientX, e.clientY, previewMenu());
+      });
+    }
+
+    /* 点别处 / 滚动 / 改窗口大小，菜单就该消失（不然会浮在别的内容上） */
+    document.addEventListener('pointerdown', function (e) {
+      if (!E.ctx || E.ctx.hidden) return;
+      if (E.ctx.contains(e.target)) return;
+      ctxHide();
+    }, true);
+    if (E.panel) E.panel.addEventListener('scroll', ctxHide, true);
+    window.addEventListener('resize', ctxHide);
+    window.addEventListener('blur', ctxHide);
+
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+    document.addEventListener('paste', onPaste);
+
+    if (typeof ResizeObserver === 'function' && E.viewport) {
+      var ro = new ResizeObserver(function () {
+        resizeCanvas();
+        if (!VIEW.touched) fitView();
+        else draw();
+      });
+      ro.observe(E.viewport);
+    }
+    window.addEventListener('resize', function () {
+      resizeCanvas();
+      if (!VIEW.touched) fitView();
+    });
+  }
+
+  /* ---------------- 图集 ---------------- */
+
+  function renderCell(src, box, cell, margin, bg) {
+    if (!src || !src._img) return null;
+    var c = document.createElement('canvas');
+    c.width = cell;
+    c.height = cell;
+    var g = c.getContext('2d');
+    g.fillStyle = bg || S.opt.bg;
+    g.fillRect(0, 0, cell, cell);
+    /* 与工作流「特征提取」节点同一套裁切：归一化 box → 原图像素（外扩 margin/2）
+       → 夹到图内 → 取居中方形 → cover 铺满格子。 */
+    var w = src.w;
+    var h = src.h;
+    var bw = Math.max(0, box[2]);
+    var bh = Math.max(0, box[3]);
+    if (bw <= 0 || bh <= 0) return c;
+    var m = clamp(num(margin, 30), 0, 100) / 100;
+    var mx = bw * m / 2;
+    var my = bh * m / 2;
+    var sx = (box[0] - mx) * w;
+    var sy = (box[1] - my) * h;
+    var sw = (bw + mx * 2) * w;
+    var sh = (bh + my * 2) * h;
+    sx = Math.max(0, Math.min(w - 4, sx));
+    sy = Math.max(0, Math.min(h - 4, sy));
+    sw = Math.max(4, Math.min(w - sx, sw));
+    sh = Math.max(4, Math.min(h - sy, sh));
+    var sr = sw / sh;
+    var cw = sw;
+    var ch = sh;
+    if (sr > 1) cw = sh;
+    else ch = sw;
+    var cx = sx + (sw - cw) / 2;
+    var cy = sy + (sh - ch) / 2;
+    try {
+      g.imageSmoothingEnabled = true;
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(src._img, cx, cy, cw, ch, 0, 0, cell, cell);
+    } catch (e) {
+      return c;
+    }
+    return c;
+  }
+
+  function drawIndexBadge(g, x, y, cell, n) {
+    var pad = Math.round(cell * 0.028);
+    var size = Math.round(cell * 0.088);
+    var r = Math.round(size * 0.28);
+    g.save();
+    g.fillStyle = 'rgba(0,0,0,.55)';
+    roundRect(g, x + pad, y + pad, size, size, r);
+    g.fill();
+    g.strokeStyle = 'rgba(255,255,255,.55)';
+    g.lineWidth = Math.max(1, cell * 0.003);
+    roundRect(g, x + pad, y + pad, size, size, r);
+    g.stroke();
+    g.fillStyle = '#fff';
+    g.font = '600 ' + Math.round(size * 0.54) + 'px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(String(n), x + pad + size / 2, y + pad + size / 2 + 1);
+    g.restore();
+  }
+
+  function fitText(g, text, maxW) {
+    var t = String(text || '');
+    if (g.measureText(t).width <= maxW) return t;
+    while (t.length > 1 && g.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+    return t + '…';
+  }
+
+  function drawNameStrip(g, x, y, cell, name) {
+    var h = Math.round(cell * 0.18);
+    var grad = g.createLinearGradient(0, y + cell - h, 0, y + cell);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.45, 'rgba(0,0,0,.45)');
+    grad.addColorStop(1, 'rgba(0,0,0,.78)');
+    g.save();
+    g.fillStyle = grad;
+    g.fillRect(x, y + cell - h, cell, h);
+    var fs = Math.max(10, Math.round(cell * 0.058));
+    g.font = '600 ' + fs + 'px system-ui, sans-serif';
+    g.fillStyle = '#fff';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    var label = fitText(g, name, cell * 0.86);
+    g.shadowColor = 'rgba(0,0,0,.6)';
+    g.shadowBlur = 4;
+    g.fillText(label, x + cell / 2, y + cell - h / 2);
+    g.restore();
+  }
+
+  function buildAtlasCanvas(cell, margin, gap, bg, badge, labels) {
+    var total = cell * 3 + gap * 2;
+    var c = document.createElement('canvas');
+    c.width = total;
+    c.height = total;
+    var g = c.getContext('2d');
+    g.fillStyle = bg || '#15181d';
+    g.fillRect(0, 0, total, total);
+    var n = Math.min(S.regions.length, MAX_REG);
+    for (var k = 0; k < n; k++) {
+      var reg = S.regions[k];
+      var src = sourceById(reg.srcId);
+      var x = (k % 3) * (cell + gap);
+      var y = Math.floor(k / 3) * (cell + gap);
+      var one = renderCell(src, reg.box, cell, margin, bg);
+      if (one) g.drawImage(one, x, y);
+      else {
+        g.save();
+        g.strokeStyle = 'rgba(255,255,255,.18)';
+        g.strokeRect(x + .5, y + .5, cell - 1, cell - 1);
+        g.fillStyle = 'rgba(255,255,255,.35)';
+        g.font = Math.round(cell * 0.05) + 'px system-ui, sans-serif';
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.fillText('源图未加载', x + cell / 2, y + cell / 2);
+        g.restore();
+      }
+      if (badge) drawIndexBadge(g, x, y, cell, k + 1);
+      if (labels) drawNameStrip(g, x, y, cell, reg.name);
+    }
+    return c;
+  }
+
+  function schedulePreview() {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(previewAtlas, 140);
+  }
+
+  function previewAtlas() {
+    if (!E.preview) return;
+    var host = E.preview.parentElement ? E.preview.parentElement.clientWidth - 24 : 260;
+    var cell = Math.max(120, Math.round(Math.min(360, host || 260) / 3) * 2);
+    var gap = Math.round(S.opt.gap * cell / Math.max(1, S.opt.cell));
+    var c = buildAtlasCanvas(cell, S.opt.margin, gap, S.opt.bg, S.regions.length > 0 && S.opt.badge, S.opt.labels);
+    E.preview.width = c.width;
+    E.preview.height = c.height;
+    var g = E.preview.getContext('2d');
+    g.clearRect(0, 0, c.width, c.height);
+    g.drawImage(c, 0, 0);
+    if (E.previewHint) {
+      E.previewHint.hidden = S.regions.length > 0;
+      E.previewHint.textContent = S.regions.length ? '' : '还没有可拼的区域';
+    }
+  }
+
+  function buildAction() {
+    if (!S.regions.length) {
+      status('先框选或 AI 提取特征，再拼图集');
+      log('没有可拼的区域', 'warn');
+      return;
+    }
+    var c = buildAtlasCanvas(S.opt.cell, S.opt.margin, S.opt.gap, S.opt.bg, S.opt.badge, S.opt.labels);
+    previewAtlas();
+    var empty = MAX_REG - Math.min(S.regions.length, MAX_REG);
+    status('已拼图集 ' + c.width + '×' + c.height + ' · ' + S.regions.length + '/9 格' + (empty ? ' · 空 ' + empty + ' 格' : ''));
+    log('拼图集 ' + c.width + '×' + c.height + '（' + S.regions.length + ' 格）', 'ok');
+  }
+
+  /* ---------------- 导出 ---------------- */
+
+  function stamp() {
+    var d = new Date();
+    var p = function (n) { return ('0' + n).slice(-2); };
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  }
+  function downloadURL(url, filename) {
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  function downloadBlob(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    downloadURL(url, filename);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+
+  function exportPNG() {
+    if (!S.regions.length) { status('没有可导出的区域'); return; }
+    var c = buildAtlasCanvas(S.opt.cell, S.opt.margin, S.opt.gap, S.opt.bg, S.opt.badge, S.opt.labels);
+    var url = c.toDataURL('image/png');
+    downloadURL(url, 'featlab-atlas-' + stamp() + '.png');
+    log('导出图集 PNG · ' + c.width + '×' + c.height, 'ok');
+    status('已导出 PNG');
+  }
+
+  function exportJSON() {
+    if (!S.regions.length) { status('没有可导出的区域'); return; }
+    var c = buildAtlasCanvas(S.opt.cell, S.opt.margin, S.opt.gap, S.opt.bg, S.opt.badge, S.opt.labels);
+    var annotation = S.ann || makeAnnotation();
+    var sources = S.sources.map(function (s, i) {
+      return { index: i + 1, name: s.name, width: s.w, height: s.h };
+    });
+    var regions = S.regions.map(function (r, i) {
+      var si = sourceIndex(r.srcId);
+      var src = sourceById(r.srcId);
+      return {
+        index: i + 1,
+        position: POS[i] || '',
+        name: r.name,
+        note: r.note || '',
+        line: regPhrase(i, r),
+        source: si + 1,
+        sourceName: src ? src.name : '',
+        box: { x: round(r.box[0], 4), y: round(r.box[1], 4), w: round(r.box[2], 4), h: round(r.box[3], 4) },
+        boxPixels: src ? {
+          x: Math.round(r.box[0] * src.w), y: Math.round(r.box[1] * src.h),
+          w: Math.round(r.box[2] * src.w), h: Math.round(r.box[3] * src.h)
+        } : null
+      };
+    });
+    var data = {
+      generator: 'featlab',
+      version: 1,
+      createdAt: new Date().toISOString(),
+      subject: S.opt.subject,
+      annotation: annotation,
+      atlas: {
+        columns: 3, rows: 3,
+        cell: S.opt.cell, margin: S.opt.margin, gap: S.opt.gap,
+        width: c.width, height: c.height, background: S.opt.bg
+      },
+      sources: sources,
+      regions: regions
+    };
+    downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), 'featlab-atlas-' + stamp() + '.json');
+    log('导出图集 JSON + 标注', 'ok');
+    status('已导出 JSON');
+  }
+
+  /* ---------------- 文本复制 ---------------- */
+
+  function copyText(text, okMsg) {
+    var s = String(text == null ? '' : text);
+    if (!s) { status('没有可复制的文本'); return; }
+    var done = function () { status(okMsg || '已复制'); log(okMsg || '已复制文本', 'ok'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(s).then(done).catch(function () { fallbackCopy(s, done); });
+    } else {
+      fallbackCopy(s, done);
+    }
+  }
+  function fallbackCopy(text, done) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) { status('复制失败，请手动选择文本'); }
+    ta.remove();
+  }
+
+  function copyAnnotation() {
+    var text = E.ann ? E.ann.value : (S.ann || makeAnnotation());
+    if (!text) { status('还没有标注文本'); return; }
+    copyText(text, '标注已复制');
+  }
+
+  function copyPrompt() {
+    var text = E.pmOut ? E.pmOut.value : (S.pmOut || buildPromptOut().text);
+    if (!text) { status('提示词还是空的：先在上面填几项'); return; }
+    copyText(text, '提示词已复制');
+  }
+
+  function copyNegative() {
+    var text = E.pmNeg ? E.pmNeg.value : S.pmt.neg;
+    if (!text) { status('没有负面提示词'); return; }
+    copyText(text, '负面提示词已复制');
+  }
+
+  /* ---------------- 剪贴板（右键复制图片） ----------------
+   * 图片进系统剪贴板只有一条可靠路径：navigator.clipboard.write + ClipboardItem。
+   * 两个细节必须照做：
+   *   ① 直接传 Promise 给 ClipboardItem —— 转码是异步的，先把 Promise 交出去，
+   *      用户点击手势才不会在中途失效（等 await 完再 write 会被判「没有用户激活」）；
+   *   ② 失败必须降级成下载并如实说明，不能只弹一句「已复制」骗人。 */
+
+  function canvasPNG(canvas) {
+    return new Promise(function (res, rej) {
+      try {
+        canvas.toBlob(function (b) {
+          if (b) res(b); else rej(new Error('图片转码失败'));
+        }, 'image/png');
+      } catch (e) { rej(e); }
+    });
+  }
+
+  async function copyCanvas(canvas) {
+    if (!canvas) throw new Error('没有可复制的图片');
+    var p = canvasPNG(canvas);
+    p.catch(function () {});
+    if (navigator.clipboard && navigator.clipboard.write && window.ClipboardItem) {
+      try {
+        await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': p })]);
+        return 'clipboard';
+      } catch (e) {
+        try {
+          var blob = await p;
+          await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })]);
+          return 'clipboard';
+        } catch (e2) { /* 落到下载 */ }
+      }
+    }
+    downloadBlob(await p, 'featlab-' + stamp() + '.png');
+    return 'download';
+  }
+
+  function sourceCanvas(src) {
+    if (!src || !src._img) return null;
+    var c = document.createElement('canvas');
+    c.width = Math.max(1, src.w);
+    c.height = Math.max(1, src.h);
+    c.getContext('2d').drawImage(src._img, 0, 0);
+    return c;
+  }
+
+  /* 三种复制入口共用；okName 写进状态栏，让人知道剪贴板里是哪一张 */
+  async function copyImageCanvas(canvas, okName) {
+    try {
+      var how = await copyCanvas(canvas);
+      if (how === 'clipboard') {
+        status('已复制' + okName + ' · ' + canvas.width + '×' + canvas.height);
+        log('复制' + okName + '到剪贴板', 'ok');
+      } else {
+        status('剪贴板写入被系统拒绝，已改为下载 PNG');
+        log('剪贴板不可用，已改为下载', 'warn');
+      }
+      return how;
+    } catch (e) {
+      status('复制失败：' + friendly(e));
+      log('复制图片失败：' + friendly(e), 'err');
+      return 'fail';
+    }
+  }
+
+  function copyRegionImage(reg, size) {
+    if (!reg) return;
+    var src = sourceById(reg.srcId);
+    var c = renderCell(src, reg.box, size || S.opt.cell, S.opt.margin, S.opt.bg);
+    if (!c) { status('源图还没加载完成，稍等再试'); return; }
+    copyImageCanvas(c, '「' + (reg.name || '未命名') + '」小图');
+  }
+
+  function copySourceImage(src) {
+    var s = src || activeSource();
+    if (!s) { status('还没有源图'); return; }
+    var c = sourceCanvas(s);
+    if (!c) { status('源图还没加载完成，稍等再试'); return; }
+    copyImageCanvas(c, '整张源图（' + s.name + '）');
+  }
+
+  function copyAtlasImage() {
+    if (!S.regions.length) { status('还没有可拼的区域'); return; }
+    var c = buildAtlasCanvas(S.opt.cell, S.opt.margin, S.opt.gap, S.opt.bg, S.opt.badge, S.opt.labels);
+    copyImageCanvas(c, '九宫格图集');
+  }
+
+  /* ---------------- 右键菜单 ---------------- */
+
+  var ctxItems = [];
+
+  function ctxHide() {
+    if (E.ctx) { E.ctx.hidden = true; E.ctx.innerHTML = ''; }
+    ctxItems = [];
+  }
+
+  function ctxShow(x, y, items) {
+    if (!E.ctx) return;
+    ctxItems = items;
+    var html = '';
+    items.forEach(function (it, i) {
+      if (it === '-') { html += '<span class="featlab-ctx-sep"></span>'; return; }
+      html += '<button type="button" role="menuitem" class="featlab-ctx-item' + (it.off ? ' off' : '') +
+        '" data-ci="' + i + '"><span>' + esc(it.label) + '</span>' +
+        (it.hint ? '<i>' + esc(it.hint) + '</i>' : '') + '</button>';
+    });
+    E.ctx.innerHTML = html;
+    E.ctx.hidden = false;
+    /* 先量再定位：绝对定位的基准是 .featlab-shell（clientX/Y 换成它内部的坐标），
+       贴边时往回收，别让菜单跑出 App 之外。 */
+    E.ctx.style.left = '0px';
+    E.ctx.style.top = '0px';
+    var host = E.ctx.offsetParent || root;   /* = .featlab-shell（比 root 更准，root 带 body padding） */
+    var cr = host.getBoundingClientRect();
+    var mr = E.ctx.getBoundingClientRect();
+    var maxL = Math.max(6, cr.width - mr.width - 6);
+    var maxT = Math.max(6, cr.height - mr.height - 6);
+    E.ctx.style.left = clamp(x - cr.left, 6, maxL) + 'px';
+    E.ctx.style.top = clamp(y - cr.top, 6, maxT) + 'px';
+  }
+
+  function focusNameInput() {
+    var input = $('#featlabSelName');
+    if (input) { input.focus(); input.select(); }
+  }
+
+  function canvasMenu(hit) {
+    var src = activeSource();
+    var items = [];
+    if (hit) {
+      var reg = regionById(hit.id);
+      items.push({
+        label: '复制「' + ((reg && reg.name) || '未命名') + '」小图',
+        hint: '进剪贴板',
+        run: function () { copyRegionImage(reg); }
+      });
+    }
+    items.push({
+      label: '复制整张源图',
+      hint: src ? src.w + '×' + src.h : '',
+      off: !src,
+      run: function () { copySourceImage(src); }
+    });
+    items.push({
+      label: '复制九宫格图集',
+      hint: S.regions.length ? S.regions.length + '/9 格' : '还没有区域',
+      off: !S.regions.length,
+      run: copyAtlasImage
+    });
+    if (hit) {
+      items.push('-');
+      items.push({ label: '重命名该区域', run: function () { selectRegion(hit.id); focusNameInput(); } });
+      items.push({ label: '定位到该区域', run: function () { selectRegion(hit.id); focusRegion(); } });
+      items.push({ label: '删除该区域', run: function () { removeRegion(hit.id); } });
+    } else if (src) {
+      items.push('-');
+      items.push({ label: '适应窗口', hint: 'F', run: fitView });
+    }
+    return items;
+  }
+
+  function sourceMenu(src) {
+    var mine = S.regions.filter(function (r) { return r.srcId === src.id; });
+    return [
+      { label: '复制这张图', hint: src.w + '×' + src.h, run: function () { copySourceImage(src); } },
+      { label: '复制这张图上的 ' + mine.length + ' 个小图', off: !mine.length, run: function () { copyRegionsGrid(mine, '「' + src.name + '」的 ' + mine.length + ' 个小图'); } },
+      '-',
+      { label: '设为当前源图', off: src.id === S.activeId, run: function () { setActive(src.id); } },
+      { label: '移除这张图', run: function () { removeSource(src.id); } }
+    ];
+  }
+
+  function regionMenu(reg) {
+    var i = S.regions.indexOf(reg);
+    return [
+      { label: '复制小图', hint: '与图集同款裁切', run: function () { copyRegionImage(reg); } },
+      { label: '复制这一行标注', run: function () { copyText(regPhrase(i, reg), '已复制「' + reg.name + '」的标注短语'); } },
+      '-',
+      { label: '定位到该区域', run: function () { selectRegion(reg.id); focusRegion(); } },
+      { label: '上移一格', off: i <= 0, run: function () { moveRegion(reg.id, -1); } },
+      { label: '下移一格', off: i >= S.regions.length - 1, run: function () { moveRegion(reg.id, 1); } },
+      '-',
+      { label: '删除', run: function () { removeRegion(reg.id); } }
+    ];
+  }
+
+  function previewMenu() {
+    return [
+      { label: '复制九宫格图集', hint: S.regions.length + '/9 格', off: !S.regions.length, run: copyAtlasImage },
+      { label: '导出 PNG', run: exportPNG },
+      '-',
+      { label: '复制图集标注', run: copyAnnotation }
+    ];
+  }
+
+  /* 把若干区域拼成一张等宽多行的小图合集（不做九宫格留白，只排实际有的格子） */
+  function copyRegionsGrid(list, okName) {
+    if (!list || !list.length) { status('没有可复制的区域'); return; }
+    var cell = Math.min(S.opt.cell, 512);
+    var c = document.createElement('canvas');
+    c.width = cell * Math.min(3, list.length);
+    c.height = cell * Math.ceil(list.length / 3);
+    var g = c.getContext('2d');
+    g.fillStyle = S.opt.bg;
+    g.fillRect(0, 0, c.width, c.height);
+    list.forEach(function (reg, k) {
+      var one = renderCell(sourceById(reg.srcId), reg.box, cell, S.opt.margin, S.opt.bg);
+      if (one) g.drawImage(one, (k % 3) * cell, Math.floor(k / 3) * cell);
+    });
+    copyImageCanvas(c, okName || ('区域小图合集（' + list.length + ' 格）'));
+  }
+
+  /* ---------------- AI ---------------- */
+
+  function ensureConn() {
+    if (typeof llmStreamRequest !== 'function' || typeof llmConn !== 'function') {
+      throw new Error('模型通道未就绪，请刷新桌面后再试');
+    }
+    var conn = null;
+    try { conn = llmConn(); } catch (e) { conn = null; }
+    if (!conn || !conn.model) throw new Error('语言模型未配置，请先在设置里填写模型');
+    return conn;
+  }
+
+  function aiCompress(src, maxSide) {
+    return new Promise(function (res, rej) {
+      if (!src || !src._img) { rej(new Error('“' + ((src && src.name) || '源图') + '”还没加载完成')); return; }
+      var w = src.w, h = src.h;
+      var k = Math.min(1, (maxSide || 768) / Math.max(w, h));
+      var c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * k));
+      c.height = Math.max(1, Math.round(h * k));
+      var g = c.getContext('2d');
+      g.fillStyle = S.opt.bg;
+      g.fillRect(0, 0, c.width, c.height);
+      try {
+        g.drawImage(src._img, 0, 0, c.width, c.height);
+        res(c.toDataURL('image/jpeg', 0.72));
+      } catch (e) {
+        rej(new Error('图片编码失败'));
+      }
+    });
+  }
+
+  function cropDataURL(src, box, size) {
+    if (!src || !src._img) throw new Error('源图还没加载完成');
+    var c = renderCell(src, box, size || 224, S.opt.margin, S.opt.bg);
+    return c.toDataURL('image/jpeg', 0.72);
+  }
+
+  function parseJSONLoose(raw) {
+    if (raw && typeof raw === 'object') return raw;
+    var s = String(raw == null ? '' : raw).trim();
+    s = s.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+    var a = s.indexOf('{'), b = s.lastIndexOf('}');
+    if (a >= 0 && b > a) {
+      try { return JSON.parse(s.slice(a, b + 1)); } catch (e) { /* 继续尝试整段 */ }
+    }
+    try { return JSON.parse(s); } catch (e) {
+      throw new Error('模型没有返回可解析的 JSON');
+    }
+  }
+
+  function normalizeRegion(raw) {
+    if (!raw || !Array.isArray(raw.box) || raw.box.length !== 4) return null;
+    var b = raw.box.map(Number);
+    if (b.some(function (v) { return !isFinite(v); })) return null;
+    var x = clamp(b[0], 0, 0.995);
+    var y = clamp(b[1], 0, 0.995);
+    var w = clamp(b[2], 0.004, 1 - x);
+    var h = clamp(b[3], 0.004, 1 - y);
+    if (w < 0.01 || h < 0.01) return null;
+    var name = String(raw.name || '').trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').slice(0, 12);
+    /* note 是这一格在标注里的那句描述；模型没给就留空，标注退回用名称 */
+    var note = String(raw.note || raw.desc || '').trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').slice(0, 40);
+    return { name: name || '特征', note: note, box: [x, y, w, h] };
+  }
+
+  async function aiRequest(sys, text, images) {
+    var conn = ensureConn();
+    var content = [{ type: 'text', text: text }];
+    (images || []).forEach(function (u) {
+      if (u) content.push({ type: 'image_url', image_url: { url: u } });
+    });
+    var raw = await llmStreamRequest(sys, [{ role: 'user', content: content }], null, {
+      conn: conn,
+      app: 'featlab',
+      timeoutMs: 180000,
+      signal: S.abort ? S.abort.signal : undefined
+    });
+    return parseJSONLoose(raw);
+  }
+
+  async function aiLocate(imgDataURL, avoid, need) {
+    var subject = String(S.opt.subject || '').trim() || '人物';
+    var requirement = String(S.opt.req || '').trim();
+    var text = '主体：' + subject + '\n' +
+      (requirement ? '工作要求：' + requirement : '工作要求：挑出图中最值得关注的细节区域（部位、配件、纹理等），最多 9 个。') + '\n' +
+      (avoid && avoid.length ? '以下特征已经找过（含未通过复核的），这次必须避开，另找不同的：' + avoid.slice(0, 20).join('、') + '\n' : '') +
+      '以图片左上角为原点，坐标归一化到 0~1（保留 3 位小数）。\n' +
+      '只返回这个 JSON：\n{"regions":[{"name":"眼睛","box":[0.41,0.32,0.18,0.09],"note":"细长的丹凤眼，眼尾上挑"}]}\n' +
+      'box 是该区域的最小外接矩形 [左, 上, 宽, 高]；name 用 2~6 字的部位 / 物件名；' +
+      'note 用一句话写清这一格里看到的样子（不超过 20 字，会直接进图集标注）；按重要程度排序；这次最多 ' + need + ' 个。';
+    var data = await aiRequest(
+      '你是图像特征定位器。只返回 JSON，不要解释。name 用简短中文部位 / 物件名，note 用一句话描述该区域外观，' +
+      'box 用归一化 [左, 上, 宽, 高]，必须落在图片范围内。',
+      text,
+      [imgDataURL]
+    );
+    var arr = (data && data.regions) || [];
+    if (!Array.isArray(arr)) return [];
+    return arr.map(normalizeRegion).filter(Boolean).slice(0, need);
+  }
+
+  async function aiVerifyCrops(targets, crops) {
+    var list = targets.map(function (r, i) { return (i + 1) + '. ' + (r.name || '未命名'); }).join('\n');
+    var text = '这是一张拼图上的候选特征区域（按顺序编号）：\n' + list + '\n\n' +
+      '请逐个判断：小图里是否真的能清楚看到对应的部位 / 物件，且它是该部位的主体而不是大片背景或无关内容。\n' +
+      '只返回 JSON：\n{"checks":{"1":{"ok":true,"reason":""},"2":{"ok":false,"reason":"只拍到背景"}}}';
+    var data = await aiRequest('你是图像标注复核员。只返回 JSON，不要解释。', text, crops);
+    return (data && data.checks) || data || {};
+  }
+
+  async function aiNameCrops(targets, crops) {
+    var list = targets.map(function (r, i) { return (i + 1) + '. ' + (r.name || '（未命名）'); }).join('\n');
+    var subject = String(S.opt.subject || '').trim() || '人物';
+    var text = '给下面这些小图命名。它们是从同一张原图上按区域裁下来的，按顺序编号：\n' + list + '\n\n' +
+      '主体：' + subject + '\n每个名字 2~6 个字，说清画面里是哪个部位 / 物件 / 纹理，不要带编号。\n' +
+      '只返回 JSON：\n{"names":{"1":"发髻","2":"眼睛"}}';
+    var data = await aiRequest('你是图像部位命名器。只返回 JSON，不要解释。', text, crops);
+    return (data && data.names) || data || {};
+  }
+
+  function verifyCropObj(c) {
+    var src = sourceById(c.srcId);
+    return cropDataURL(src, c.box, 224);
+  }
+
+  async function locateRound(targets, want, used) {
+    var cands = [];
+    var lastErr = null;
+    for (var i = 0; i < targets.length && cands.length < want; i++) {
+      var src = targets[i];
+      if (!src || !src._img) continue;
+      var si = sourceIndex(src.id) + 1;
+      setBusyText(true, 'AI 定位特征', '分析 图' + si + ' · ' + (i + 1) + '/' + targets.length);
+      log('AI 定位 图' + si + '（' + src.name + '）');
+      var small = null;
+      var arr = [];
+      try {
+        small = await aiCompress(src, 768);
+        arr = await aiLocate(small, Array.from(used), Math.max(1, want - cands.length));
+      } catch (e) {
+        if (e && e._stopped) throw e;
+        lastErr = e;
+        log('图' + si + ' 定位失败：' + friendly(e), 'err');
+        continue;
+      }
+      if (!arr.length) log('图' + si + ' 没有定位到新区域', 'warn');
+      for (var j = 0; j < arr.length && cands.length < want; j++) {
+        var key = arr[j].name.toLowerCase();
+        if (used.has(key)) continue;
+        used.add(key);
+        cands.push({ srcId: src.id, name: arr[j].name, note: arr[j].note || '', box: arr[j].box });
+      }
+    }
+    if (!cands.length) {
+      if (lastErr) throw lastErr;
+      log('没有定位到新的特征区域', 'warn');
+      return { added: 0, dropped: 0 };
+    }
+    var dropped = 0;
+    if (S.opt.verify) {
+      setBusyText(true, 'AI 逐格复核', cands.length + ' 个候选');
+      var checks = null;
+      try {
+        checks = await aiVerifyCrops(cands, cands.map(verifyCropObj));
+      } catch (e) {
+        if (e && e._stopped) throw e;
+        log('复核失败，已跳过：' + friendly(e), 'warn');
+      }
+      if (checks) {
+        cands.forEach(function (c, k) {
+          var chk = checks[k + 1];
+          if (chk && !chk.ok) {
+            c.drop = true;
+            dropped++;
+            log('复核剔除「' + c.name + '」：' + (chk.reason || '不像'), 'warn');
+          }
+        });
+      }
+    }
+    var added = 0;
+    var keep = cands.filter(function (c) { return !c.drop; }).length;
+    if (keep) pushUndo();
+    cands.forEach(function (c) {
+      if (!c.drop && S.regions.length < MAX_REG) {
+        addRegion(c);
+        added++;
+      }
+    });
+    syncUI();
+    return { added: added, dropped: dropped };
+  }
+
+  async function aiExtract() {
+    if (S.busy) return;
+    if (!S.sources.length) { status('先导入源图'); return; }
+    var targets = S.opt.scope === 'active' ? [activeSource()] : S.sources.slice();
+    targets = targets.filter(function (s) { return s && s._img; });
+    if (!targets.length) { status('源图还没加载完成，稍等再试'); return; }
+    await runBusy('AI 提取特征', async function () {
+      var need = MAX_REG - S.regions.length;
+      if (need <= 0) {
+        log('已经 9 格，先删掉一些再提取', 'warn');
+        status('已满 9 格');
+        return;
+      }
+      var used = new Set();
+      S.regions.forEach(function (r) { used.add(String(r.name).toLowerCase()); });
+      var before = S.regions.length;
+      var r1 = await locateRound(targets, need, used);
+      var dropped = r1.dropped;
+      var rounds = 0;
+      while (dropped > 0 && rounds < 2 && S.regions.length < MAX_REG) {
+        rounds++;
+        log('复核剔除 ' + dropped + ' 格，尝试补齐（第 ' + rounds + ' 轮）', 'warn');
+        var r2 = await locateRound(targets, dropped, used);
+        dropped = r2.dropped;
+        if (!r2.added) break;
+      }
+      var added = S.regions.length - before;
+      if (!added) {
+        log('这次没有新增区域，可以改工作要求再试', 'warn');
+        status('AI 未新增区域');
+        return;
+      }
+      log('AI 提取完成：新增 ' + added + ' 格 · 共 ' + S.regions.length + '/9', 'ok');
+      status('AI 提取完成 · 新增 ' + added + ' 格');
+    });
+  }
+
+  async function aiVerify() {
+    if (S.busy) return;
+    var targets = S.selId ? [regionById(S.selId)].filter(Boolean) : S.regions.slice();
+    if (!targets.length) { status('没有可复核的区域'); return; }
+    await runBusy('AI 复核', async function () {
+      setBusyText(true, 'AI 复核', targets.length + ' 个区域');
+      var crops = targets.map(function (r) {
+        return cropDataURL(sourceById(r.srcId), r.box, 224);
+      });
+      var checks = await aiVerifyCrops(targets, crops);
+      var bad = [];
+      targets.forEach(function (r, i) {
+        var c = checks[i + 1];
+        if (c && !c.ok) {
+          bad.push(r.id);
+          log('复核剔除「' + r.name + '」：' + (c.reason || '不像'), 'warn');
+        }
+      });
+      if (!bad.length) {
+        log('复核通过 ' + targets.length + ' 个区域', 'ok');
+        status('AI 复核通过');
+        return;
+      }
+      pushUndo();
+      var badSet = new Set(bad);
+      S.regions = S.regions.filter(function (r) { return !badSet.has(r.id); });
+      if (badSet.has(S.selId)) S.selId = '';
+      syncUI();
+      saveNow();
+      log('复核完成：保留 ' + (targets.length - bad.length) + ' / ' + targets.length, 'ok');
+      status('AI 复核完成 · 保留 ' + (targets.length - bad.length) + ' 格');
+    });
+  }
+
+  async function aiName() {
+    if (S.busy) return;
+    var targets;
+    if (S.selId) {
+      var one = regionById(S.selId);
+      targets = one ? [one] : [];
+    } else {
+      targets = S.regions.filter(function (r) { return !r.name || /^特征\s*\d*$/.test(r.name); });
+    }
+    if (!targets.length) {
+      status('没有待命名的区域；选中一个区域可强制重命名');
+      log('没有待命名区域', 'warn');
+      return;
+    }
+    await runBusy('AI 命名', async function () {
+      setBusyText(true, 'AI 命名', targets.length + ' 个区域');
+      var crops = targets.map(function (r) { return cropDataURL(sourceById(r.srcId), r.box, 224); });
+      var names = await aiNameCrops(targets, crops);
+      pushUndo();
+      var n = 0;
+      targets.forEach(function (r, i) {
+        var nm = names[i + 1];
+        if (nm) {
+          r.name = String(nm).replace(/^\s+|\s+$/g, '').slice(0, 12);
+          n++;
+        }
+      });
+      syncUI();
+      saveNow();
+      log('AI 命名完成：' + n + ' / ' + targets.length, 'ok');
+      status('AI 命名完成 · ' + n + ' 个区域');
+    });
+  }
+
+  /* ---------------- 挂载 ---------------- */
+
+  function mount(body, win) {
+    root = body;
+    if (!root) return;
+    if (root.dataset.ready === '1') {
+      if (!E.srcs) bindEvents();
+      resizeCanvas();
+      if (!VIEW.touched) fitView();
+      else draw();
+      applyTab(S.tab);
+      syncUI();
+      return;
+    }
+    if (!root.querySelector('.featlab-shell') && window.FEATLAB_BODY) {
+      root.innerHTML = window.FEATLAB_BODY;
+    }
+    bindEvents();
+    var restored = loadState();
+    if (typeof blobEnsure === 'function') {
+      try {
+        Promise.resolve(blobEnsure()).then(function () {
+          hydrateImages();
+          syncUI();
+        });
+      } catch (e) { /* 没有 IDB 时直接用内联数据 */ }
+    }
+    applyOptToFields();
+    applyPmtToFields();
+    applyTab(S.tab);
+    syncUI();
+    resizeCanvas();
+    fitView();
+    root.dataset.ready = '1';
+    log(restored
+      ? '已恢复上次草稿 · ' + S.sources.length + ' 张图 / ' + S.regions.length + ' 个区域'
+      : '就绪 · 导入图片开始提取特征', restored ? 'ok' : '');
+  }
+
+  registerApp({
+    id: 'featlab',
+    name: '特征提取台',
+    title: '特征提取台',
+    sub: '人工框选 · AI 提取 · 九宫格图集标注',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="3.4" width="17.2" height="17.2" rx="3"/><path d="M9.1 3.4v17.2M14.9 3.4v17.2M3.4 9.1h17.2M3.4 14.9h17.2"/><rect x="9.9" y="9.9" width="9.4" height="9.4" rx="1.6" fill="currentColor" fill-opacity=".2" stroke="none"/></svg>',
+    order: 19,
+    cls: 'featlab',
+    win: 'featlabWin',
+    css: ['apps/featlab/app.css'],
+    body: (typeof window.FEATLAB_BODY === 'string' ? window.FEATLAB_BODY : ''),
+    mount: mount
+  });
+})();
+
 /* ---- apps/gallery/app.js ---- */
 /* 图库 / 模型库 —— 两个入口共用一个窗口 #libWin。
  *
@@ -9131,6 +12212,5527 @@ window.L2D_BODY = `
         syncVoice();
         syncTabs();
         checkConn();
+        return;
+      }
+      boot(body);
+    }
+  });
+})();
+
+/* ---- apps/lumen3d/body.js ---- */
+/* 流明 3D 数字人的窗口 DOM（app-scan 会把它排在 app.js 之前内联）。
+ *
+ * 参考脸来自 LumenAct 的公开演示资源，几何、形态键与表演曲线都打包在 model/ 下，
+ * file:// 断网也能渲染；canvas 由 app.js 用仓库自带的 three.js 建出来。
+ *
+ * 版式：左侧展示区常驻三维预览，右侧检查器常驻（对话 / 捏脸 / 纹理），
+ * 编辑面板不再以浮层盖住脸，画布宽度由 flex 自动让出。 */
+window.LUMEN3D_BODY = `
+<div class="l3-app" id="l3App">
+  <div class="l3-shell">
+  <section class="l3-stage" id="l3Stage">
+    <div class="l3-canvas" id="l3Canvas"></div>
+
+    <div class="l3-stagebar">
+      <div class="l3-modebar" id="l3Modes" role="group" aria-label="编辑模式">
+        <button type="button" id="l3LookBtn" data-mode="shape">捏脸</button>
+        <button type="button" data-mode="texture">纹理</button>
+        <button type="button" data-mode="chat" class="on">对话</button>
+      </div>
+      <div class="l3-views" id="l3Views">
+        <button type="button" data-view="front" class="on">正面</button>
+        <button type="button" data-view="left">左侧</button>
+        <button type="button" data-view="right">右侧</button>
+        <button type="button" data-view="top">俯视</button>
+      </div>
+    </div>
+
+    <div class="l3-hud">
+      <span class="l3-chip" id="l3State">正在加载脸模…</span>
+      <span class="l3-chip l3-chip-soft" id="l3Expr">自然放松</span>
+    </div>
+
+    <div class="l3-hint">拖动旋转 · 滚轮缩放</div>
+
+    <div class="l3-loading" id="l3Loading">
+      <div class="l3-spin"></div>
+      <div class="l3-loading-text">正在解析脸模与表演曲线…</div>
+    </div>
+  </section>
+
+  <aside class="l3-inspector" id="l3Drawer" data-tab="chat" aria-label="检查器">
+    <header class="l3-head">
+      <div class="l3-title-wrap">
+        <div class="l3-title">流明 · 3D 数字人</div>
+        <div class="l3-sub">参考脸演示 · 非商用</div>
+      </div>
+      <button type="button" class="l3-toggle" id="l3VoiceBtn" aria-pressed="true">朗读 开</button>
+    </header>
+
+    <div class="l3-insp-tabs" role="tablist" aria-label="检查器页签">
+      <button type="button" data-tab="chat" class="on">对话</button>
+      <button type="button" data-tab="shape">捏脸</button>
+      <button type="button" data-tab="texture">纹理</button>
+    </div>
+
+    <div class="l3-drawer-body">
+      <div class="l3-pane l3-pane-chat" data-pane="chat">
+        <div class="l3-msgs" id="l3Msgs" aria-live="polite"></div>
+
+        <div class="l3-quick" id="l3Quick"></div>
+
+        <form class="l3-form" id="l3Form">
+          <textarea id="l3Input" rows="1" spellcheck="false" placeholder="和流明说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+          <button type="submit" class="l3-send" id="l3Send">发送</button>
+        </form>
+
+        <div class="l3-tools">
+          <label class="l3-field">
+            <span>表情</span>
+            <select id="l3Style"></select>
+          </label>
+          <button type="button" class="l3-btn" id="l3Play">播放</button>
+          <button type="button" class="l3-btn" id="l3Neutral">自然</button>
+        </div>
+
+        <div class="l3-tools l3-tools-voice">
+          <label class="l3-field l3-field-wide">
+            <span>音色</span>
+            <select id="l3Voice"></select>
+          </label>
+          <button type="button" class="l3-btn" id="l3Test">试听</button>
+          <span class="l3-engine" id="l3Engine">系统语音</span>
+        </div>
+      </div>
+
+      <div class="l3-pane l3-pane-shape" data-pane="shape" hidden>
+        <div class="l3-preset-bar">
+          <span class="l3-preset-label">预设</span>
+          <div class="l3-preset-list" id="l3ShapePresets"></div>
+        </div>
+        <div class="l3-shape-actions">
+          <button type="button" class="l3-btn" id="l3ShapeRandom">随机捏脸</button>
+          <button type="button" class="l3-btn" id="l3ShapeUndo">撤销</button>
+          <button type="button" class="l3-btn" id="l3ShapeRedo">重做</button>
+          <button type="button" class="l3-btn" id="l3ShapeSave">存为预设</button>
+          <button type="button" class="l3-btn" id="l3ShapeReset">复原</button>
+        </div>
+        <div class="l3-shape-save" id="l3ShapeSaveRow" hidden>
+          <input type="text" id="l3ShapeSaveName" maxlength="12" placeholder="预设名称（12 字以内）">
+          <button type="button" class="l3-btn l3-btn-primary" id="l3ShapeSaveOk">保存</button>
+          <button type="button" class="l3-btn" id="l3ShapeSaveCancel">取消</button>
+        </div>
+        <div class="l3-sculpt">
+          <div class="l3-sculpt-head">
+            <span class="l3-sculpt-title">三维直接操控</span>
+            <label class="l3-sculpt-switch">
+              <input type="checkbox" id="l3GizmoOn" checked>
+              <span>在脸上拖动</span>
+            </label>
+          </div>
+          <div class="l3-sculpt-groups" id="l3GizmoGroups" role="group" aria-label="操控点分组">
+            <button type="button" data-gizmo-group="轮廓" class="on">轮廓</button>
+            <button type="button" data-gizmo-group="眼睛">眼睛</button>
+            <button type="button" data-gizmo-group="鼻子">鼻子</button>
+            <button type="button" data-gizmo-group="嘴部">嘴部</button>
+          </div>
+          <div class="l3-coil-bar">
+            <label class="l3-sculpt-switch">
+              <input type="checkbox" id="l3CoilOn" checked>
+              <span>面高亮</span>
+            </label>
+            <label class="l3-sculpt-switch">
+              <input type="checkbox" id="l3OutlineOn" checked>
+              <span>轮廓线</span>
+            </label>
+            <button type="button" class="l3-btn l3-btn-mini" id="l3CoilReset">重置选区</button>
+          </div>
+          <p class="l3-sculpt-hint" id="l3SculptHint">按住脸上的圆点往外拉就变大、往里推就收窄；模型表面亮起来的覆层，就是这个参数真正会影响到的范围，拖选区上的小圆点可以改范围。</p>
+          <div class="l3-curve">
+            <div class="l3-curve-head">
+              <span>轮廓曲线</span>
+              <span class="l3-curve-tip">也可直接拖画布上的轮廓点</span>
+            </div>
+            <svg id="l3CurveSvg" viewBox="0 0 240 132" role="img" aria-label="脸型轮廓曲线"></svg>
+          </div>
+        </div>
+        <div class="l3-shape-subtitle">精细参数</div>
+        <div class="l3-shape-list" id="l3ShapeList"></div>
+        <p class="l3-pane-tip">拖动滑杆或直接输入数值；双击名称 / 数值可单项复位，参数会自动保存。</p>
+      </div>
+
+      <div class="l3-pane l3-pane-tex" data-pane="texture" hidden>
+        <div class="l3-texbar">
+          <div class="l3-toolgroup">
+            <button type="button" data-tool="brush" class="on">画笔</button>
+            <button type="button" data-tool="eraser">橡皮</button>
+            <button type="button" data-tool="bucket">填充</button>
+            <button type="button" data-tool="pick">吸管</button>
+          </div>
+          <label class="l3-mini">粗细
+            <input type="range" id="l3TexSize" min="2" max="160" value="36">
+            <span id="l3TexSizeVal">36</span>
+          </label>
+          <label class="l3-mini">颜色 <input type="color" id="l3TexColor" value="#e05a5a"></label>
+          <label class="l3-mini">容差
+            <input type="range" id="l3TexTol" min="0" max="120" value="36">
+            <span id="l3TexTolVal">36</span>
+          </label>
+        </div>
+        <div class="l3-regionbar">
+          <span class="l3-regionlabel">绘制区域</span>
+          <div class="l3-regionlist" id="l3TexRegions" role="group" aria-label="纹理绘制区域"></div>
+        </div>
+        <p class="l3-regionhint" id="l3TexRegionHint">按区域独立绘制：只改选中部位对应的 UV，左侧三维预览实时同步。</p>
+        <div class="l3-texview" id="l3TexView">
+          <div class="l3-texpad">
+            <div class="l3-texstack">
+              <canvas id="l3TexCanvas" width="2048" height="2048"></canvas>
+              <canvas id="l3TexVeil" width="2048" height="2048" aria-hidden="true"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="l3-texfoot">
+          <div class="l3-adjrow">
+            <label class="l3-mini">亮度 <input type="range" id="l3AdjBright" min="-100" max="100" value="0"></label>
+            <label class="l3-mini">对比 <input type="range" id="l3AdjContrast" min="-100" max="100" value="0"></label>
+            <label class="l3-mini">饱和 <input type="range" id="l3AdjSat" min="-100" max="100" value="0"></label>
+            <button type="button" class="l3-btn" id="l3AdjApply">应用调整</button>
+          </div>
+          <div class="l3-adjrow">
+            <label class="l3-mini">源色 <input type="color" id="l3RepFrom" value="#f4c9c9"></label>
+            <label class="l3-mini">目标 <input type="color" id="l3RepTo" value="#d8e8ff"></label>
+            <button type="button" class="l3-btn" id="l3RepRun">相似色替换</button>
+          </div>
+          <div class="l3-texrow">
+            <button type="button" class="l3-btn" id="l3TexUndo">撤销</button>
+            <button type="button" class="l3-btn" id="l3TexRedo">重做</button>
+            <button type="button" class="l3-btn" id="l3TexReset">重置</button>
+            <button type="button" class="l3-btn" id="l3TexExport">导出 PNG</button>
+            <button type="button" class="l3-btn l3-btn-primary" id="l3TexApply">应用到模型</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+  </div>
+</div>
+`;
+
+/* ---- apps/lumen3d/app.js ---- */
+/* 流明 3D 数字人 —— 用 LumenAct 的公开参考脸驱动桌面对话角色。
+ *
+ * 资源：apps/lumen3d/model/ 下三份打包文件（tools/pack-lumen3d.js 生成）
+ *   face-meta.js      头像清单、通道表、97 段曲线目录、贴图
+ *   face-geometry.js  几何缓冲区（base64，file:// 下 XHR 读不到本地文件）
+ *   face-curves.js    表演曲线（0–100 量化成 uint8）
+ *
+ * 运行链路：对话回复里的（标签）→ 选一段表演曲线 → 写形态键；
+ * 朗读复用工作站统一的 ttsBridge / 本地引擎，口型驱动 VRM 的 vrc.v_* 通道，
+ * 眨眼、视线与头部微动是本文件补的程序化动画（LumenAct 公开包不含这些）。
+ *
+ * 授权：参考脸 CC BY-NC 4.0，仅限非商用；曲线 CC BY 4.0 需署名；
+ * 代码 MIT；语义 ONNX 没有随包使用（标签直接查表，避免 146MB 模型）。
+ */
+(function () {
+  'use strict';
+
+  var BODY_HTML = window.LUMEN3D_BODY || '';
+
+  var ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 3.2a5.6 5.6 0 0 1 5.6 5.6v2.4a5.6 5.6 0 0 1-11.2 0V8.8A5.6 5.6 0 0 1 12 3.2Z"/>' +
+    '<path d="M5.2 11.4c0 3.6 3 6.4 6.8 6.4s6.8-2.8 6.8-6.4"/>' +
+    '<path d="M9.3 8.4h.01M14.7 8.4h.01"/>' +
+    '<path d="M9.9 12.1c.7.5 1.4.8 2.1.8s1.4-.3 2.1-.8"/>' +
+    '<path d="M8.4 21c.6-1.9 1.9-3 3.6-3s3 1.1 3.6 3"/></svg>';
+
+  var STORE_KEY = 'hf_lumen3d_state';
+  var STORE_VER = 1;
+  var PACKS = [
+    'apps/lumen3d/model/face-meta.js',
+    'apps/lumen3d/model/face-geometry.js',
+    'apps/lumen3d/model/face-curves.js'
+  ];
+
+  /* 常用口语标签 → 曲线目录里的正式标签 */
+  var ALIAS = {
+    '开心': '开心欢快', '高兴': '开心欢快', '兴奋': '开心欢快', '愉快': '开心欢快',
+    '平静': '自然放松', '中性': '自然放松', '放松': '自然放松',
+    '生气': '生气愤怒', '愤怒': '生气愤怒', '不满': '生气愤怒',
+    '惊讶': '惊讶震惊', '吃惊': '惊讶震惊', '震惊': '惊讶震惊',
+    '难过': '难过流泪', '伤心': '难过流泪', '委屈': '难过流泪',
+    '疑惑': '震惊疑惑质问', '质问': '震惊疑惑质问',
+    '得意': '骄傲自豪', '骄傲': '骄傲自豪',
+    '无聊': '感觉无聊无趣', '厌烦': '厌烦厌恶', '厌恶': '厌烦厌恶',
+    '抱歉': '道歉抱歉', '对不起': '道歉抱歉',
+    '担心': '担忧担心', '担忧': '担忧担心', '焦虑': '担忧担心',
+    '痛苦': '痛苦疼痛', '欣慰': '欣慰宽慰', '坚定': '意志坚定',
+    '困': '睡眼朦胧敷衍', '敷衍': '睡眼朦胧敷衍',
+    '晕': '头晕目眩', '卖萌': '卖萌和蔼安详',
+    '爱心': '爱心眼', '星星': '星星眼', '大眼': '大眼微笑',
+    '闭眼微笑': '微笑_闭眼', '尴尬': '尴尬'
+  };
+
+  var QUICK = ['微笑', '开心欢快', '害羞', '惊讶震惊', '思考专注', '生气愤怒', '难过流泪', '自然放松'];
+  var MOUTH_CHANNELS = ['aa', 'ou', 'ih', 'e', 'th'];
+
+  /* 脸型参数：0–100，50 为原始脸模；shader 里映射到 -1..1。
+   * 每 4 个参数压进一个 vec4，顺序必须与 SHAPE_VERT_HEAD 里的下标一致。 */
+  var SHAPE_KEY = 'hf_lumen3dShape';
+  var SHAPE_PRESET_KEY = 'hf_lumen3dPresets';
+  var COIL_KEY = 'hf_lumen3dCoils';
+  var XFORM_KEY = 'hf_lumen3dXform';
+  var OUTLINE_KEY = 'hf_lumen3dOutline';
+  var SHAPE_GROUPS = ['轮廓', '眼睛', '鼻子', '嘴部'];
+  /* 滑杆里只保留还能线性调的两组；眼睛 / 嘴部改由脸上的 3D 手柄控制 */
+  /* 抽屉里带滑杆的分组。眼睛单独有「区域手柄」（整眼平移 / 旋转 / 缩放），
+   * 但整眼变换改不了睫毛翘度、眼球大小这种局部量，所以两组界面都保留：
+   * 滑杆管单个部位，区域手柄管整体。 */
+  var SLIDER_GROUPS = ['轮廓', '眼睛', '鼻子'];
+  var SHAPE_DEFS = [
+    { key: 'width', label: '脸宽', group: '轮廓' },
+    { key: 'length', label: '脸长', group: '轮廓' },
+    { key: 'chin', label: '下巴长度', group: '轮廓' },
+    { key: 'jaw', label: '下巴收窄', group: '轮廓' },
+    { key: 'cheek', label: '颧骨', group: '轮廓' },
+    { key: 'cheekFull', label: '脸颊圆润', group: '轮廓' },
+    { key: 'forehead', label: '额头宽', group: '轮廓' },
+    { key: 'eyeDist', label: '眼距', group: '眼睛' },
+    { key: 'eyeWidth', label: '眼宽', group: '眼睛' },
+    { key: 'eyeHeight', label: '眼高', group: '眼睛' },
+    { key: 'eyeTilt', label: '眼倾', group: '眼睛' },
+    { key: 'noseLength', label: '鼻长', group: '鼻子' },
+    { key: 'chinWidth', label: '下巴宽', group: '轮廓' },
+    { key: 'mouth', label: '嘴宽', group: '嘴部' },
+    { key: 'lipThick', label: '唇厚', group: '嘴部' },
+    { key: 'mouthPos', label: '嘴位', group: '嘴部' },
+    /* 下面四个是局部量：睫毛长度 / 翘度 / 眼尾 / 睁眼度。
+     * 它们都作用在**皮肤**贴图的眼区上（实测 FaceEyes 几何整块被皮肤挡住，
+     * 眼睛是画在贴图上的），靠超椭圆掩码定位，见 REGION_FRAMES.eye。 */
+    { key: 'lashLength', label: '睫毛长度', group: '眼睛' },
+    { key: 'lashCurl', label: '睫毛翘度', group: '眼睛' },
+    { key: 'eyeTail', label: '眼尾上扬', group: '眼睛' },
+    { key: 'eyeOpen', label: '睁眼度', group: '眼睛' }
+  ];
+
+  /* 三维操控点的落点：t 是线性高度（0 下巴 / 1 头顶），u 是相对该高度的半宽。 */
+  var ANCHOR_SPECS = {
+    width: { t: 0.45, u: 0.95 },
+    length: { t: 0.92, u: 0.30 },
+    chin: { t: 0.03, u: 0.00 },
+    jaw: { t: 0.12, u: 0.72 },
+    cheek: { t: 0.58, u: 0.80 },
+    cheekFull: { t: 0.50, u: 0.58 },
+    forehead: { t: 0.86, u: 0.45 },
+    chinWidth: { t: 0.05, u: 0.42 },
+    eyeDist: { t: 0.32, u: 0.40 },
+    eyeWidth: { t: 0.32, u: 0.58 },
+    eyeHeight: { t: 0.30, u: 0.53 },
+    eyeTilt: { t: 0.33, u: 0.70 },
+    noseLength: { t: 0.22, u: 0.00 },
+    mouth: { t: 0.12, u: 0.45 },
+    lipThick: { t: 0.12, u: 0.00 },
+    mouthPos: { t: 0.15, u: 0.00 }
+  };
+
+  /* 眼睛 / 嘴巴已经改由区域 3D 手柄控制，对应的线性参数固定在中性值，
+   * 不再出现在滑杆里，避免两套逻辑互相打架。 */
+  /* 随机脸型时保持中性的键：五官交给区域手柄 / 专用滑杆单独调，
+   * 随机出来容易怪。⚠ 它只管随机，不参与存档合并与滑杆渲染。 */
+  var NEUTRAL_KEYS = {
+    eyeDist: 1, eyeWidth: 1, eyeHeight: 1, eyeTilt: 1,
+    mouth: 1, lipThick: 1, mouthPos: 1
+  };
+
+  /* 区域椭圆：[uc, ur, vc, vrUp, vrDn, lo, hi]——shader 里的 l3EyeSkinMask /
+   * l3EyePartMask / l3MouthRegionMask 全部由这张表现拼（只有这一处数字），
+   * 界面手柄也读它，改半径不会出现「画的和动的不一致」。
+   * vrUp / vrDn 分开：睫毛只往上长，上下半径必须能不一样。
+   *   eye      皮肤口径（含眼睑）：眼睑跟着眼走，上边界停在眼窝上沿，绝不能碰到眉毛；
+   *   eyePart  眼球 / 睫毛口径：睫毛尖比眼球高出一大截，上半径要 0.165 才圈得住，
+   *            它只作用在 FaceEyes 材质上（整块都在脸前面），扩到额头也没有副作用；
+   *   mouth     嘴部，上下对称。
+   * lo / hi 是 smoothstep 的过渡带：eyePart 收窄一点，睫毛才拿得到满权重。 */
+  var REGION_FRAMES = {
+    eye: { uc: 0.45, ur: 0.355, vc: 0.695, vrUp: 0.092, vrDn: 0.086, lo: 0.50, hi: 1.55, p: 3.4 },
+    eyePart: { uc: 0.44, ur: 0.34, vc: 0.688, vrUp: 0.165, vrDn: 0.078, lo: 0.30, hi: 1.30 },
+    mouth: { uc: 0.00, ur: 0.32, vc: 0.285, vrUp: 0.105, vrDn: 0.105, lo: 0.22, hi: 1.45 }
+  };
+
+  /* 顶点部位标记：0 皮肤 / 1 眼球 / 2 睫毛 / 3 眼角 / 4 口腔。
+   * 眼球、六条睫毛、牙齿全挤在同一个 FaceEyes 材质、同一份 position 里，
+   * 光按材质名分不出来，只能按连通分量 + 形状特征逐顶点打标。
+   * 判据来自实测（别凭感觉改数字）：
+   *   眼角那团 289 顶点挤在 0.006 见方里 → span < 0.012
+   *   口腔（牙齿 / 舌 / 内壁）整块在眼线以下 → 中心 y < eyeY
+   *   眼球是跨眼睛上下的大球（216 顶点）→ 顶点数 ≥ 100
+   *   剩下的细带（每条 20 顶点）就是睫毛
+   * 分错的后果很直接：拉睫毛会把牙齿一起拽走。 */
+  var PART_SKIN = 0, PART_BALL = 1, PART_LASH = 2, PART_CORNER = 3, PART_INNER = 4;
+
+  function tagVertexParts(idx, posData, out, eyeY) {
+    if (!idx || !idx.length) return;
+    var total = posData.length / 3;
+    var parent = new Int32Array(total);
+    for (var i = 0; i < total; i++) parent[i] = i;
+    function find(a) {
+      while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; }
+      return a;
+    }
+    for (var i = 0; i < idx.length; i += 3) {
+      var a = find(idx[i]), b = find(idx[i + 1]), c = find(idx[i + 2]);
+      if (a !== b) parent[b] = a;
+      b = find(b); c = find(c);
+      if (b !== c) parent[c] = b;
+    }
+    var groups = Object.create(null);
+    for (var i = 0; i < idx.length; i++) {
+      var root = find(idx[i]);
+      (groups[root] || (groups[root] = [])).push(idx[i]);
+    }
+    Object.keys(groups).forEach(function (root) {
+      var list = groups[root];
+      var x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+      list.forEach(function (k) {
+        var x = posData[k * 3], y = posData[k * 3 + 1], z = posData[k * 3 + 2];
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (z < z0) z0 = z; if (z > z1) z1 = z;
+      });
+      var span = Math.max(x1 - x0, y1 - y0, z1 - z0);
+      var tag;
+      if (span < 0.012) tag = PART_CORNER;
+      else if ((y0 + y1) / 2 < eyeY) tag = PART_INNER;
+      else if (list.length >= 100) tag = PART_BALL;
+      else tag = PART_LASH;
+      list.forEach(function (k) { out[k] = tag; });
+    });
+  }
+
+  /* 轮廓曲线节点：t 是归一化高度（0 下巴 → 1 头顶），等距 8 个。
+   * 只存「宽度倍率」，高度是固定常量——所以 shader 和界面手柄共用这一张表，
+   * 不会出现「曲线画在 A 处、变形发生在 B 处」。 */
+  var OUTLINE_KNOTS = [0.04, 0.16, 0.28, 0.40, 0.52, 0.64, 0.76, 0.88];
+  var OUTLINE_STEP = OUTLINE_KNOTS[1] - OUTLINE_KNOTS[0];
+  /* 倍率上下限：1.45 已经是「脸宽变了快一半」，再大眼距和耳朵会明显失真；
+   * 0.65 以下脸会细到鼻梁被自己吃进去。shader 端不钳，钳在这里一处
+   * （shader 里的 setOutline 也读这张表，别在两处各写一份数字）。 */
+  var OUTLINE_LIMIT = [0.65, 1.45];
+
+  /* 把 8 个倍率拼成一条类 Catmull-Rom 的平滑曲线（分段三次 Hermite）。
+   * 为什么不写 uniform 数组循环：GLSL ES 1.0 的数组下标必须是常量，
+   * 而这段又必须和界面手柄完全同形——所以直接生成定长代码。 */
+  function outlineGlsl() {
+    var ref = [
+      'l3Out[0].x', 'l3Out[0].y', 'l3Out[0].z',
+      'l3Out[1].x', 'l3Out[1].y', 'l3Out[1].z',
+      'l3Out[2].x', 'l3Out[2].y'
+    ];
+    var lines = [
+      'float l3OutSeg(float t, float a, float h, float p0, float p1, float p2, float p3) {',
+      '  float s = clamp((t - a) / h, 0.0, 1.0);',
+      '  float s2 = s * s, s3 = s2 * s;',
+      '  return 0.5 * (2.0 * p1 + (-p0 + p2) * s +',
+      '    (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * s2 +',
+      '    (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * s3);',
+      '}',
+      'float l3Outline(float t) {',
+      '  float k = ' + ref[0] + ';'
+    ];
+    for (var i = 1; i < OUTLINE_KNOTS.length; i++) {
+      var a = OUTLINE_KNOTS[i - 1].toFixed(3);
+      /* 两端各补一个镜像邻居，免得端点附近塌陷 */
+      var p0 = ref[Math.max(0, i - 2)];
+      var p3 = ref[Math.min(ref.length - 1, i + 1)];
+      lines.push('  k = mix(k, l3OutSeg(t, ' + a + ', ' + OUTLINE_STEP.toFixed(3) + ', ' +
+        p0 + ', ' + ref[i - 1] + ', ' + ref[i] + ', ' + p3 + '), step(' + a + ', t));');
+    }
+    lines.push('  return k;', '}');
+    return lines.join('\n');
+  }
+
+  /* 把一张区域表拼成 GLSL 掩码函数。
+   * frame.p 是超椭圆幂次：2 = 普通椭圆，> 2 会越接近圆角矩形。
+   * 眼睛必须用超椭圆：这颗脸的睫毛 / 眼线是画在皮肤贴图上的，形状是一条又宽又扁的
+   * 带子（量出来 u 0.07–0.79、v 0.70–0.78），普通椭圆在带子两头权重直接掉到 0，
+   * 拉眼睛时睫毛末端留在原地 —— 用户报的就是这个。 */
+  function regionMaskGlsl(name, frame) {
+    function num(value) { return Number(value).toFixed(5); }
+    var p = Number(frame.p) || 2;
+    var body = p === 2
+      ? 'du * du + dv * dv'
+      : 'pow(abs(du), ' + num(p) + ') + pow(abs(dv), ' + num(p) + ')';
+    return [
+      'float ' + name + '(float au, float v) {',
+      '  float du = (au - ' + num(frame.uc) + ') / ' + num(frame.ur) + ';',
+      '  float dv = (v - ' + num(frame.vc) + ') / (v > ' + num(frame.vc) + ' ? ' +
+        num(frame.vrUp) + ' : ' + num(frame.vrDn) + ');',
+      '  return 1.0 - smoothstep(' + num(frame.lo) + ', ' + num(frame.hi) + ', ' + body + ');',
+      '}'
+    ].join('\n');
+  }
+
+  /* 眼睛 / 嘴巴的区域掩码：vertex（变形）与 fragment（覆层）共用这一份，
+   * part = 1 表示当前材质是眼部的几何（眼球 / 睫毛）。
+   * 眼区的几个数同时导出成 GLSL 常量：眼睑 / 睫毛那几档位移要拿它算归一化距离，
+   * 不能另抄一份数字进去（改了椭圆忘了改掩码 = 画的和动的不一致）。 */
+  function frameConsts(prefix, frame) {
+    function n(value) { return Number(value).toFixed(5); }
+    return [
+      'const float ' + prefix + '_UC = ' + n(frame.uc) + ';',
+      'const float ' + prefix + '_UR = ' + n(frame.ur) + ';',
+      'const float ' + prefix + '_VC = ' + n(frame.vc) + ';',
+      'const float ' + prefix + '_VRUP = ' + n(frame.vrUp) + ';',
+      'const float ' + prefix + '_VRDN = ' + n(frame.vrDn) + ';'
+    ].join('\n');
+  }
+  var SHAPE_REGION_MATH = [
+    frameConsts('L3_EYE', REGION_FRAMES.eye),
+    frameConsts('L3_MOUTH', REGION_FRAMES.mouth),
+    regionMaskGlsl('l3EyeSkinMask', REGION_FRAMES.eye),
+    regionMaskGlsl('l3EyePartMask', REGION_FRAMES.eyePart),
+    regionMaskGlsl('l3MouthRegionMask', REGION_FRAMES.mouth),
+    'float l3EyeMask(float au, float v, float z, float part) {',
+    /* 眼球 / 睫毛整块都在脸的前面（z 从 -0.03 到 0.04），不需要按深度收边；
+     * 皮肤那圈必须收，否则后脑的顶点也会被当成眼周一起拽走。 */
+    '  if (part > 0.5) return l3EyePartMask(au, v);',
+    '  return l3EyeSkinMask(au, v) * smoothstep(0.005, 0.020, z);',
+    '}'
+  ].join('\n');
+  var XFORM_DEFAULT = [0, 0, 0, 1];
+  /* 位移必须能被柔边吸收：限制在脸高的几个百分点内，
+   * 否则核心区一动，边界没地方让，皮肤直接撕开（穿模）。 */
+  var XFORM_LIMIT = {
+    eye: { tx: 0.22, ty: 0.065, rot: 0.65, scale: [0.70, 1.60] },
+    mouth: { tx: 0.15, ty: 0.055, rot: 0.55, scale: [0.70, 1.70] }
+  };
+
+  /* 曲面范围线圈：[uc, ur, vc, vr]，顺序与 SHAPE_DEFS 一致。
+   * 它既是脸上的蓝色范围提示，也是 shader 里该参数真正的变形掩码——看到的就是生效的。
+   * u 取 |u| 左右对称，所以侧脸参数（颧骨、眼、嘴角）只画右半边，镜像由界面补一条虚线。 */
+  var DEFAULT_COILS = {
+    width: [0.00, 3.00, 0.42, 0.55],
+    length: [0.50, 1.80, 0.55, 0.95],
+    chin: [0.00, 3.00, 0.10, 0.34],
+    jaw: [0.00, 3.00, 0.08, 0.42],
+    cheek: [0.70, 0.46, 0.58, 0.26],
+    cheekFull: [0.45, 0.80, 0.50, 0.40],
+    forehead: [0.00, 3.00, 0.86, 0.22],
+    /* 四档眼形必须盖住整只「画上去的眼睛」：睫毛尖在 v≈0.775，
+     * 老线圈（vc 0.66 / vr 0.13）在睫毛尖只剩 ~0.35 权重，拉眼睛时睫毛尾拖不动。 */
+    eyeDist: [0.45, 0.40, 0.695, 0.115],
+    eyeWidth: [0.47, 0.38, 0.695, 0.115],
+    eyeHeight: [0.47, 0.37, 0.695, 0.115],
+    eyeTilt: [0.48, 0.38, 0.695, 0.115],
+    noseLength: [0.00, 0.50, 0.55, 0.23],
+    chinWidth: [0.00, 3.00, 0.06, 0.30],
+    mouth: [0.00, 0.72, 0.30, 0.18],
+    lipThick: [0.00, 0.55, 0.30, 0.17],
+    mouthPos: [0.00, 0.80, 0.30, 0.24],
+    /* 以下四个：线圈只用来画锚点，真正的变形由 [2b] 段按皮肤掩码算 */
+    lashLength: [0.52, 0.32, 0.74, 0.16],
+    lashCurl: [0.52, 0.32, 0.74, 0.16],
+    eyeTail: [0.58, 0.22, 0.72, 0.10],
+    eyeOpen: [0.50, 0.34, 0.74, 0.14]
+  };
+  /* 拖动时的安全范围：过大也不会把整张脸拉飞 */
+  var COIL_LIMIT = {
+    uc: [0, 1.25], ur: [0.05, 3.20], vc: [0, 1], vr: [0.04, 0.90]
+  };
+  var COIL_INDEX = {};
+  SHAPE_DEFS.forEach(function (def, index) { COIL_INDEX[def.key] = index; });
+
+  /* 内置预设：缺失的键取 50（原始脸模） */
+  var SHAPE_PRESETS = [
+    { name: '原始', values: {} },
+    {
+      name: 'Q版',
+      values: {
+        width: 78, length: 30, chin: 30, jaw: 70, cheek: 76, cheekFull: 80, forehead: 74,
+        eyeDist: 60, eyeWidth: 78, eyeHeight: 70, eyeTilt: 56, noseLength: 34, chinWidth: 60,
+        mouth: 60, lipThick: 60, mouthPos: 48
+      }
+    },
+    {
+      name: '幼态',
+      values: {
+        width: 66, length: 42, chin: 38, jaw: 62, cheek: 66, cheekFull: 72, forehead: 66,
+        eyeDist: 54, eyeWidth: 68, eyeHeight: 64, eyeTilt: 54, noseLength: 40, chinWidth: 56,
+        mouth: 56, lipThick: 58, mouthPos: 50
+      }
+    },
+    {
+      name: '少女',
+      values: {
+        width: 56, length: 50, chin: 46, jaw: 56, cheek: 54, cheekFull: 56, forehead: 54,
+        eyeDist: 52, eyeWidth: 58, eyeHeight: 56, eyeTilt: 54, noseLength: 48, chinWidth: 52,
+        mouth: 52, lipThick: 54, mouthPos: 50
+      }
+    },
+    {
+      name: '御姐',
+      values: {
+        width: 46, length: 60, chin: 64, jaw: 38, cheek: 44, cheekFull: 40, forehead: 48,
+        eyeDist: 50, eyeWidth: 52, eyeHeight: 54, eyeTilt: 60, noseLength: 58, chinWidth: 46,
+        mouth: 54, lipThick: 52, mouthPos: 52
+      }
+    },
+    {
+      name: '少年',
+      values: {
+        width: 52, length: 54, chin: 58, jaw: 46, cheek: 48, cheekFull: 44, forehead: 52,
+        eyeDist: 48, eyeWidth: 54, eyeHeight: 52, eyeTilt: 50, noseLength: 54, chinWidth: 50,
+        mouth: 52, lipThick: 46, mouthPos: 50
+      }
+    },
+    {
+      name: '冷峻',
+      values: {
+        width: 44, length: 62, chin: 68, jaw: 34, cheek: 40, cheekFull: 34, forehead: 46,
+        eyeDist: 44, eyeWidth: 46, eyeHeight: 48, eyeTilt: 64, noseLength: 62, chinWidth: 44,
+        mouth: 46, lipThick: 40, mouthPos: 52
+      }
+    },
+    {
+      name: '妖异',
+      values: {
+        width: 52, length: 56, chin: 72, jaw: 36, cheek: 50, cheekFull: 42, forehead: 56,
+        eyeDist: 58, eyeWidth: 62, eyeHeight: 58, eyeTilt: 66, noseLength: 56, chinWidth: 44,
+        mouth: 58, lipThick: 56, mouthPos: 54
+      }
+    }
+  ];
+
+  /* 贴图编辑结果：短存根进 localStorage，像素本体交给 blob-store */
+  var TEX_KEY = 'hf_lumen3d_tex';
+
+  /* 顶点变形：在蒙皮之后、对象空间里用「面部坐标系」计算。
+   * 材质是 MeshBasicMaterial，不需要修正法线。
+   *
+   * 坐标系（与脸宽、脸长无关，所以同一组参数能套到不同比例的二次元脸上）：
+   *   t = (y - minY) / H   线性高度，0 下巴、1 头顶
+   *   v = l3V(t)           锚点坐标：下巴 0 / 嘴 0.30 / 鼻尖 0.55 / 眼 0.66 / 额 0.90
+   *   u = x / halfW(t)     横向坐标，±1 正好落在该高度的脸缘
+   * 五官掩码写成 u/v 的线圈（椭圆 + smoothstep），位移幅度按 H、halfW 归一化；
+   * 下半张脸的参数在 v > 0.8 的额头区为 0，不会带动上半张脸。
+   *
+   * l3Shape 下标与 SHAPE_DEFS 顺序一一对应：
+   *   [0] 脸宽 / 脸长 / 下巴长度 / 下巴收窄
+   *   [1] 颧骨 / 脸颊圆润 / 额头宽 / 眼距
+   *   [2] 眼宽 / 眼高 / 眼倾 / 鼻长
+   *   [3] 下巴宽 / 嘴宽 / 唇厚 / 嘴位
+   *
+   * 注意：tools/lumen3d-rig-check.js 里有同一套数学的 JS 镜像，改这里必须同步。 */
+  /* 一套解析换算：t → 锚点 v、t → 该高度正面半宽、u/v 椭圆线圈权重。
+   * vertex（变形）与 fragment（覆层掩码）必须用同一份，抽成字符串共用，
+   * 免得两处数学漂移；tools/lumen3d-rig-check.js 里还有第三份 JS 镜像，改这里要一起改。 */
+  var SHAPE_AXIS_MATH = [
+    'float l3Seg(float t, float a, float b, float va, float vb) {',
+    '  float k = clamp((t - a) / max(b - a, 1e-5), 0.0, 1.0);',
+    '  return mix(va, vb, k);',
+    '}',
+    /* 锚点分段：下巴 0、嘴 0.30、鼻尖 0.55、眼 0.66、眉 0.80、额 0.90、顶 1 */
+    'float l3V(float t) {',
+    '  float v = l3Seg(t, 0.000, 0.120, 0.00, 0.30);',
+    '  v = mix(v, l3Seg(t, 0.120, 0.215, 0.30, 0.55), step(0.120, t));',
+    '  v = mix(v, l3Seg(t, 0.215, 0.290, 0.55, 0.66), step(0.215, t));',
+    '  v = mix(v, l3Seg(t, 0.290, 0.450, 0.66, 0.80), step(0.290, t));',
+    '  v = mix(v, l3Seg(t, 0.450, 0.600, 0.80, 0.90), step(0.450, t));',
+    '  v = mix(v, l3Seg(t, 0.600, 0.800, 0.90, 0.97), step(0.600, t));',
+    '  v = mix(v, l3Seg(t, 0.800, 1.000, 0.97, 1.00), step(0.800, t));',
+    '  return v;',
+    '}',
+    /* 各高度的正面半宽（离线采样，clamp 到 0.020 防止头顶除零） */
+    'float l3HalfW(float t) {',
+    '  float w = l3Seg(t, 0.000, 0.040, 0.015, 0.030);',
+    '  w = mix(w, l3Seg(t, 0.040, 0.080, 0.030, 0.042), step(0.040, t));',
+    '  w = mix(w, l3Seg(t, 0.080, 0.120, 0.042, 0.050), step(0.080, t));',
+    '  w = mix(w, l3Seg(t, 0.120, 0.160, 0.050, 0.056), step(0.120, t));',
+    '  w = mix(w, l3Seg(t, 0.160, 0.200, 0.056, 0.070), step(0.160, t));',
+    '  w = mix(w, l3Seg(t, 0.200, 0.250, 0.070, 0.074), step(0.200, t));',
+    '  w = mix(w, l3Seg(t, 0.250, 0.290, 0.074, 0.080), step(0.250, t));',
+    '  w = mix(w, l3Seg(t, 0.290, 0.350, 0.080, 0.081), step(0.290, t));',
+    '  w = mix(w, l3Seg(t, 0.350, 0.450, 0.081, 0.072), step(0.350, t));',
+    '  w = mix(w, l3Seg(t, 0.450, 0.600, 0.072, 0.077), step(0.450, t));',
+    '  w = mix(w, l3Seg(t, 0.600, 0.750, 0.077, 0.061), step(0.600, t));',
+    '  w = mix(w, l3Seg(t, 0.750, 0.900, 0.061, 0.058), step(0.750, t));',
+    '  w = mix(w, l3Seg(t, 0.900, 1.000, 0.058, 0.050), step(0.900, t));',
+    '  return w;',
+    '}',
+    'float l3Coil(float u, float v, float uc, float ur, float vc, float vr) {',
+    '  float du = (u - uc) / max(ur, 1e-4);',
+    '  float dv = (v - vc) / max(vr, 1e-4);',
+    '  return 1.0 - smoothstep(0.15, 1.10, du * du + dv * dv);',
+    '}'
+  ].join('\n');
+
+  var SHAPE_VERT_HEAD = [
+    'uniform vec4 l3Shape[5];',
+    /* 20 个参数各自的曲面范围线圈，顺序同 SHAPE_DEFS；下标全部写成常量 */
+    'uniform vec4 l3CoilU[20];',
+    'uniform vec3 l3Bounds;',
+    /* 顶点部位标记（0 皮肤 / 1 眼球 / 2 睫毛 / 3 眼角 / 4 口腔）建几何时照样打，
+     * 但变形已经不用它了：FaceEyes 那块几何整块被皮肤挡住（染色实测全隐），
+     * 屏幕上看到的是贴图。它现在只服务 partStats / partBounds 这类自检与量测。
+     * 真要按部位分别动几何，前提是换一颗眼睛是真 3D 的模型。 */
+    /* 当前操控点的线圈（uc, ur, vc, vr）；fragment 的覆层掩码也读它 */
+    'uniform vec4 l3Hi;',
+    /* 眼睛 / 嘴巴的 3D 变换：(平移 u、平移 t、绕 z 旋转、缩放) */
+    'uniform vec4 l3EyeX;',
+    'uniform vec4 l3MouthX;',
+    /* 体积核：把「口腔 / 眼窝」这些二维椭圆盖不到的地方也纳入同一段变换 */
+    'uniform vec3 l3EyeC;',
+    'uniform vec3 l3EyeR;',
+    'uniform vec3 l3MouthC;',
+    'uniform vec3 l3MouthR;',
+    /* 当前材质是不是眼部的几何（眼球 / 睫毛）：1 = 是，0 = 皮肤 */
+    'uniform float l3EyePart;',
+    /* 轮廓曲线（直接拖脸缘）：8 个节点各一个宽度倍率，1 = 原始轮廓。
+     * 节点高度是固定常量（OUTLINE_KNOTS），只传倍率 —— 曲线形状由 JS 那端生成，
+     * 界面手柄和 shader 用的是同一张表，不会出现「画的和动的不一样」。 */
+    'uniform vec3 l3Out[3];',
+    'varying vec3 vL3Rest;',
+    'float l3Core(vec3 rest, vec3 c, vec3 r) {',
+    '  vec3 d = (rest - c) / max(r, vec3(1e-4));',
+    '  return 1.0 - smoothstep(0.52, 1.00, length(d));',
+    '}',
+    SHAPE_AXIS_MATH,
+    /* 眼 / 嘴的固定区域：数字来自 REGION_FRAMES，与界面手柄同源 */
+    SHAPE_REGION_MATH,
+    /* 线圈取用：调用点一律写常量下标，避免 GLSL ES 1.0 的动态下标限制 */
+    'float l3C(vec4 c, float u, float v) {',
+    '  return l3Coil(u, v, c.x, c.y, c.z, c.w);',
+    '}',
+    outlineGlsl(),
+    /* 顶点变形：蒙皮之后的实际位移（覆层掩码在 fragment 里另算） */
+    'vec3 l3Deform(vec3 p, vec3 rest) {',
+    '  float t = clamp((rest.y - l3Bounds.x) * l3Bounds.z, 0.0, 1.0);',
+    '  float H = 1.0 / max(l3Bounds.z, 1e-6);',
+    '  float hScale = H / 0.202114;',
+    '  float v = l3V(t);',
+    '  float w = max(l3HalfW(t), 0.020) * hScale;',
+    '  float u = rest.x / w;',
+    '  float au = abs(u);',
+    '  float eyeY = l3Bounds.x + 0.299 * H;',
+    '  float mouthY = l3Bounds.x + 0.112 * H;',
+    /* ---- 掩码全部来自可编辑线圈 ---- */
+    '  float mWidth = l3C(l3CoilU[0], au, v);',
+    '  float mLength = l3C(l3CoilU[1], au, v);',
+    '  float mChin = l3C(l3CoilU[2], au, v);',
+    '  float mJaw = l3C(l3CoilU[3], au, v);',
+    '  float mCheek = l3C(l3CoilU[4], au, v);',
+    '  float mCheekFull = l3C(l3CoilU[5], au, v);',
+    '  float mForehead = l3C(l3CoilU[6], au, v);',
+    /* 轮廓曲线：直接拖脸缘改宽度。
+     * ⚠ 用「加位移」而不是「乘 x」。这颗头的耳朵和脸是同一块网格，p.x *= k 会把
+     * 耳尖一起乘出去 —— 实测拉到 1.45 时耳朵变成两片尖翅膀（连形变方向都变了）。
+     * 改成每个顶点横向平移 (k-1)×该高度的半宽：脸缘正好落在 k×半宽（和手柄的位置
+     * 口径完全一致），耳朵只是整体跟着平移、形状不变，也不会被拉长。 */
+    '  float outlineDx = (l3Outline(t) - 1.0) * w;',
+    /* ⚠ 眼部参数一律走皮肤线圈 / 皮肤椭圆，不要再用 aPart 去分别处理眼球、睫毛：
+     * 实测（把 FaceEyes 材质染成纯红、皮肤染绿各拍一张）FaceEyes 那块几何
+     * 完全被皮肤挡住，屏幕上看到的眼睛、睫毛、眼线全是**画在皮肤贴图上**的。
+     * 所以能看见的只能是皮肤的位移——早先按 aPart 分开动的写法改了等于没改。 */
+    '  float mEyeDist = l3C(l3CoilU[7], au, v);',
+    '  float mEyeWidth = l3C(l3CoilU[8], au, v);',
+    '  float mEyeHeight = l3C(l3CoilU[9], au, v);',
+    '  float mEyeTilt = l3C(l3CoilU[10], au, v);',
+    '  float mNose = l3C(l3CoilU[11], au, v) * smoothstep(0.045, 0.065, rest.z);',
+    '  float mChinWidth = l3C(l3CoilU[12], au, v);',
+    '  float mMouth = l3C(l3CoilU[13], au, v);',
+    '  float mLip = l3C(l3CoilU[14], au, v);',
+    '  float mMouthPos = l3C(l3CoilU[15], au, v);',
+    /* [0] 轮廓：脸长以眼线为轴拉伸，下巴长度以嘴线为轴拉伸，眼睛本身不动 */
+    '  p.y = eyeY + (p.y - eyeY) * (1.0 + l3Shape[0].y * 0.13 * mLength);',
+    '  p.y = mouthY + (p.y - mouthY) * (1.0 + l3Shape[0].z * 0.35 * mChin);',
+    '  float wx = 1.0 + l3Shape[0].x * 0.24 * mWidth;',
+    '  wx *= 1.0 - l3Shape[0].w * 0.18 * mJaw;',
+    /* [1] 面中：颧骨 / 脸颊圆润 / 额头宽 / 眼距 */
+    '  wx *= 1.0 + l3Shape[1].x * 0.11 * mCheek;',
+    '  wx *= 1.0 + l3Shape[1].y * 0.09 * mCheekFull;',
+    '  wx *= 1.0 + l3Shape[1].z * 0.16 * mForehead;',
+    '  p.x *= wx;',
+    '  p.x += sign(rest.x) * outlineDx;',
+    '  p.x += sign(rest.x) * l3Shape[1].w * 0.05 * w * mEyeDist;',
+    /* [2] 眼鼻：眼宽/眼高绕单个眼心缩放，眼倾按内外眼角错位 */
+    '  float eyeX = 0.50 * w;',
+    '  float side = sign(rest.x);',
+    '  p.x = side * eyeX + (p.x - side * eyeX) * (1.0 + l3Shape[2].x * 0.20 * mEyeWidth);',
+    '  p.y = eyeY + (p.y - eyeY) * (1.0 + l3Shape[2].y * 0.16 * mEyeHeight);',
+    '  p.y += clamp((au - 0.50) * 5.0, -1.0, 1.0) * l3Shape[2].z * 0.0035 * hScale * mEyeTilt;',
+    '  p.y -= l3Shape[2].w * 0.0035 * hScale * mNose;',
+    /* [2b] 眼睑 / 睫毛：眼睛、睫毛、眼线全是画在皮肤贴图上的（见上面那段实测说明），
+     * 所以这四档只能动皮肤。掩码全部由眼区椭圆派生：
+     *   lashBand  椭圆上缘那一带 —— 睫毛根部在眼睑上沿，尖再往外上方挑
+     *   lidBand   椭圆中上段 —— 上眼睑，管「睁眼度」
+     *   tailBand  外眼角那一侧 —— 管「眼尾上扬」
+     * 早先按 aPart 分部位（眼球 / 睫毛几何顶点）的做法完全无效，别再回去。 */
+    '  float duE = (au - L3_EYE_UC) / L3_EYE_UR;',
+    '  float dvE = (v - L3_EYE_VC) / (v > L3_EYE_VC ? L3_EYE_VRUP : L3_EYE_VRDN);',
+    '  float lashBand = l3EyeSkinMask(au, v) * smoothstep(0.02, 0.86, dvE);',
+    '  float lidBand = l3EyeSkinMask(au, v) * smoothstep(-0.40, 0.40, dvE) *',
+    '    (1.0 - smoothstep(0.45, 0.85, dvE));',
+    '  float tailBand = l3EyeSkinMask(au, v) * smoothstep(0.15, 0.85, duE);',
+    /* 睫毛长度：沿「根 → 尖」方向（外上方）推开，根部几乎不动，否则睫毛会脱开眼皮 */
+    '  p.x += side * l3Shape[4].x * 0.010 * hScale * lashBand * smoothstep(0.05, 0.55, dvE);',
+    '  p.y += l3Shape[4].x * 0.0045 * hScale * lashBand;',
+    /* 睫毛翘度：越靠睫毛尖抬得越多，顺带一点点朝镜头（+z）。
+     * ⚠ +z 别给大：额头是往后收的曲面，把眼前这一片推得太靠前，
+     *   正面看会把画在额头上的眉毛整条遮掉（实测 0.008 就能让眉毛消失）。 */
+    '  float lashTip = lashBand * smoothstep(0.25, 0.95, dvE);',
+    '  p.y += l3Shape[4].y * 0.004 * hScale * lashTip;',
+    '  p.x += side * l3Shape[4].y * 0.003 * hScale * lashTip;',
+    '  p.z += l3Shape[4].y * 0.002 * hScale * lashBand;',
+    /* 眼尾上扬：外眼角那一侧抬起来，眼神更「挑」 */
+    '  p.y += l3Shape[4].z * 0.007 * hScale * tailBand;',
+    /* 睁眼度：滑块 100 = 睁得更大，对应上眼睑往上抬（+y）、0 = 眯眼往下压。
+     * ⚠ 方向极容易写反，别再改成 p.y -= 上眼睑那一段。 */
+    '  p.y += l3Shape[4].w * 0.007 * hScale * lidBand;',
+    /* [3] 下巴与嘴 */
+    '  p.x *= 1.0 + l3Shape[3].x * 0.18 * mChinWidth;',
+    '  p.x *= 1.0 + l3Shape[3].y * 0.30 * mMouth;',
+    '  p.y = mouthY + (p.y - mouthY) * (1.0 + l3Shape[3].z * 0.34 * mLip);',
+    '  p.y += l3Shape[3].w * 0.0035 * hScale * mMouthPos;',
+    /* 眼 / 嘴的区域变换：皮肤只作用在正脸（rest.z > 0），背面顶点不会被拽走；
+     * 眼球 / 睫毛整块都在脸前面，掩码内部不再按深度收边。 */
+    /* 口腔（牙齿、舌头、内壁）藏在唇后 z≈0.009–0.037，比唇面深得多；
+     * 门槛必须比眼睛更早打开，否则唇动了口腔不动，一移动就穿模。 */
+    '  float mouthFront = smoothstep(-0.010, 0.006, rest.z);',
+    /* 眼睛：绝对值坐标求核，左右共用一份椭球；l3EyePart 决定用皮肤口径还是睫毛口径 */
+    '  vec3 eyeRest = vec3(abs(rest.x), rest.y, rest.z);',
+    '  float eyeM = max(l3EyeMask(au, v, rest.z, l3EyePart), l3Core(eyeRest, l3EyeC, l3EyeR));',
+    '  vec2 ec = vec2(side * 0.61 * w, eyeY);',
+    '  float ea = l3EyeX.z * side;',
+    '  vec2 ep = (vec2(p.x, p.y) - ec) * l3EyeX.w;',
+    '  float ecs = cos(ea), esn = sin(ea);',
+    '  vec2 et = ec + vec2(ep.x * ecs - ep.y * esn, ep.x * esn + ep.y * ecs) + ',
+    '    vec2(side * l3EyeX.x * w, l3EyeX.y * H);',
+    '  p.x = mix(p.x, et.x, eyeM);',
+    '  p.y = mix(p.y, et.y, eyeM);',
+    /* 椭圆管正脸的柔和过渡，体积核管唇后的口腔；取并集，牙齿舌头跟着嘴一起走 */
+    '  float mouthM = max(l3MouthRegionMask(au, v) * mouthFront, l3Core(rest, l3MouthC, l3MouthR));',
+    '  vec2 mc = vec2(0.0, mouthY);',
+    '  vec2 mp = (vec2(p.x, p.y) - mc) * l3MouthX.w;',
+    '  float mcs = cos(l3MouthX.z), msn = sin(l3MouthX.z);',
+    '  vec2 mt = mc + vec2(mp.x * mcs - mp.y * msn, mp.x * msn + mp.y * mcs) + ',
+    '    vec2(l3MouthX.x * w, l3MouthX.y * H);',
+    '  p.x = mix(p.x, mt.x, mouthM);',
+    '  p.y = mix(p.y, mt.y, mouthM);',
+    '  return p;',
+    '}',
+    ''
+  ].join('\n');
+
+  /* ---- 选区覆层：直接在模型自己的材质里逐片元着色 ----
+   * 早先的叠一张索引网格来点亮三角面，看着是碎的（面片边界 + 阶梯状锯齿）；
+   * 现在把掩码搬到 fragment：拿 rest 坐标现算 (au, v)，按同一套公式取权重，
+   * 再叠一层色。等于在模型自身的贴图上刷一层覆层——连续、无接缝，
+   * 边界是该掩码的等值线，不会跟着网格密度走。 */
+  var SHAPE_SEL_FRAG = [
+    'uniform vec3 l3Bounds;',
+    'uniform vec4 l3Hi;',
+    'uniform vec3 l3SelColor;',
+    'uniform float l3SelA;',
+    'uniform float l3SelKind;',
+    /* 与 vertex 同一份材质标记：眼部的几何（眼球 / 睫毛）用睫毛口径的椭圆 */
+    'uniform float l3EyePart;',
+    'varying vec3 vL3Rest;',
+    SHAPE_AXIS_MATH,
+    SHAPE_REGION_MATH,
+    'float l3SelMask(vec3 rest) {',
+    '  float t = clamp((rest.y - l3Bounds.x) * l3Bounds.z, 0.0, 1.0);',
+    '  float H = 1.0 / max(l3Bounds.z, 1e-6);',
+    '  float w = max(l3HalfW(t), 0.020) * (H / 0.202114);',
+    '  float au = abs(rest.x / w);',
+    '  float v = l3V(t);',
+    /* 0 线圈 / 1 眼睛 / 2 嘴巴 / 3 鼻梁（线圈再乘 z 门槛，只带动鼻凸） */
+    '  if (l3SelKind < 0.5) return l3Coil(au, v, l3Hi.x, l3Hi.y, l3Hi.z, l3Hi.w);',
+    /* 亮度必须与变形同源：掩码怎么算，覆层就怎么亮 */
+    '  if (l3SelKind < 1.5) return l3EyeMask(au, v, rest.z, l3EyePart);',
+    '  if (l3SelKind < 2.5) {',
+    '    return l3MouthRegionMask(au, v) * smoothstep(-0.010, 0.006, rest.z);',
+    '  }',
+    '  return l3Coil(au, v, l3Hi.x, l3Hi.y, l3Hi.z, l3Hi.w) * smoothstep(0.045, 0.065, rest.z);',
+    '}'
+  ].join('\n');
+
+  var S = null;
+
+  /* ---------- 小工具 ---------- */
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function rand(a, b) { return a + Math.random() * (b - a); }
+
+  function b64ToBuffer(b64) {
+    var bin = atob(b64);
+    var len = bin.length;
+    var buf = new Uint8Array(len);
+    for (var i = 0; i < len; i++) buf[i] = bin.charCodeAt(i);
+    return buf.buffer;
+  }
+
+  var scriptCache = window.__LUMEN3D_SCRIPTS || (window.__LUMEN3D_SCRIPTS = {});
+  function injectScript(src) {
+    if (scriptCache[src]) return scriptCache[src];
+    scriptCache[src] = new Promise(function (resolve, reject) {
+      var el = document.createElement('script');
+      el.src = src;
+      el.onload = function () { resolve(); };
+      el.onerror = function () { reject(new Error('脚本加载失败：' + src)); };
+      document.head.appendChild(el);
+    });
+    return scriptCache[src];
+  }
+
+  /* 去掉台词里的（标签），只保留给人看 / 交给 TTS 的内容 */
+  function stripTags(text) {
+    return String(text || '')
+      .replace(/[（(][^（）()\n]{1,24}[）)]/g, '')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function firstTag(text) {
+    var m = /[（(]\s*([^（）()\n]{1,24})\s*[）)]/.exec(String(text || ''));
+    return m ? m[1].replace(/\s+/g, '') : '';
+  }
+
+  /* ---------- 3D 参考脸 ---------- */
+  function createCameraGaze(THREE, eyes, camera) {
+    var states = eyes.map(function (node) { return { node: node, rest: node.quaternion.clone() }; });
+    var frame = states[0] ? states[0].node.parent : null;
+    if (!frame) return function () {};
+    var neutral = states[0].rest.clone();
+    var inverseNeutral = neutral.clone().invert();
+    var filtered = new THREE.Quaternion();
+    var midpoint = new THREE.Vector3(), eyePosition = new THREE.Vector3();
+    var cameraPosition = new THREE.Vector3(), localTarget = new THREE.Vector3();
+    var turn = new THREE.Quaternion(), goal = new THREE.Quaternion();
+    var euler = new THREE.Euler(0, 0, 0, 'YXZ');
+    var yawLimit = THREE.MathUtils.degToRad(8);
+    var pitchLimit = THREE.MathUtils.degToRad(10);
+    return function (dt) {
+      var alpha = 1 - Math.exp(-14 * Math.max(0, Number(dt) || 0));
+      states.forEach(function (st) { st.node.quaternion.copy(st.rest); });
+      frame.updateWorldMatrix(true, true);
+      midpoint.set(0, 0, 0);
+      states.forEach(function (st) {
+        st.node.getWorldPosition(eyePosition);
+        midpoint.add(frame.worldToLocal(eyePosition));
+      });
+      midpoint.multiplyScalar(1 / states.length);
+      camera.getWorldPosition(cameraPosition);
+      frame.worldToLocal(localTarget.copy(cameraPosition));
+      localTarget.sub(midpoint).applyQuaternion(inverseNeutral);
+      var yaw = 0, pitch = 0;
+      if (localTarget.z > 0.0001) {
+        yaw = clamp(Math.atan2(localTarget.x, localTarget.z), -yawLimit, yawLimit);
+        pitch = clamp(-Math.atan2(localTarget.y, Math.hypot(localTarget.x, localTarget.z)), -pitchLimit, pitchLimit);
+        var radius = Math.hypot(yaw / yawLimit, pitch / pitchLimit);
+        if (radius > 1) { yaw /= radius; pitch /= radius; }
+      }
+      goal.setFromEuler(euler.set(pitch, yaw, 0, 'YXZ'));
+      filtered.slerp(goal, alpha).normalize();
+      turn.copy(neutral).multiply(filtered).multiply(inverseNeutral);
+      states.forEach(function (st) { st.node.quaternion.copy(turn).multiply(st.rest); });
+    };
+  }
+
+  function createFaceView(host, initialTexture) {
+    var THREE = window.THREE;
+    if (!THREE) return Promise.reject(new Error('three.js 未加载'));
+    var meta = window.LUMEN3D_META;
+    var geometryData = window.LUMEN3D_GEOMETRY;
+    if (!meta || !geometryData) return Promise.reject(new Error('脸模数据包缺失'));
+    if (meta.avatar.schema !== 'lumen.web.avatar.v1') return Promise.reject(new Error('脸模清单格式不支持'));
+
+    var buffer = b64ToBuffer(geometryData);
+    var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    if ('outputEncoding' in renderer && THREE.sRGBEncoding) renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.setClearColor(0x000000, 0);
+    renderer.domElement.setAttribute('aria-label', '流明三维参考脸');
+    host.appendChild(renderer.domElement);
+
+    var scene = new THREE.Scene();
+    var model = new THREE.Group();
+    model.scale.z = -1;
+    scene.add(model);
+
+    var bones = meta.avatar.nodes.map(function (item) {
+      var bone = new THREE.Bone();
+      bone.name = item.name;
+      bone.position.fromArray(item.position);
+      bone.quaternion.fromArray(item.rotation);
+      bone.scale.fromArray(item.scale);
+      return bone;
+    });
+    meta.avatar.nodes.forEach(function (item, index) {
+      (item.parent >= 0 ? bones[item.parent] : model).add(bones[index]);
+    });
+
+    function values(desc) {
+      var Type = desc.type === 'uint32' ? Uint32Array : Float32Array;
+      if (desc.offset < 0 || desc.count < 0 || desc.offset + desc.count * 4 > buffer.byteLength) {
+        throw new Error('几何属性超出缓冲区');
+      }
+      return new Type(buffer, desc.offset, desc.count);
+    }
+
+    function attribute(desc, integer) {
+      var data = values(desc);
+      return new THREE.BufferAttribute(integer ? Uint16Array.from(data) : data, desc.itemSize);
+    }
+
+    var textures = [];
+    var materials = [];
+    /* 材质名 → l3EyePart（1 = 眼球 / 睫毛，0 = 皮肤），探针读它守住接线 */
+    var materialParts = [];
+    /* 各部位顶点数（0 皮肤 / 1 眼球 / 2 睫毛 / 3 眼角 / 4 口腔），探针读它 */
+    var partCounts = null;
+    /* 各部位包围盒（原始模型单位），给睫毛位移系数定标 */
+    var partBoxes = null;
+    var geometries = [];
+    var driven = [];
+    var morphMap = Object.create(null);
+    var camera = new THREE.PerspectiveCamera(35, 1, 0.005, 50);
+    var initialDistance = 3;
+    var focus = new THREE.Vector3();
+    var yaw = 0, pitch = 0, distance = 3;
+    var pointer = null;
+    var resizeObserver = null;
+    var canvas = renderer.domElement;
+
+    /* 变形器 uniform：20 个参数压进 5 个 vec4，顺序与 SHAPE_DEFS 一致 */
+    var shapeUniforms = {
+      values: {
+        value: [
+          new THREE.Vector4(0, 0, 0, 0),
+          new THREE.Vector4(0, 0, 0, 0),
+          new THREE.Vector4(0, 0, 0, 0),
+          new THREE.Vector4(0, 0, 0, 0),
+          new THREE.Vector4(0, 0, 0, 0)
+        ]
+      },
+      /* 20 组曲面范围线圈，顺序同 SHAPE_DEFS */
+      coils: {
+        value: SHAPE_DEFS.map(function (def) {
+          var c = DEFAULT_COILS[def.key];
+          return new THREE.Vector4(c[0], c[1], c[2], c[3]);
+        })
+      },
+      bounds: { value: new THREE.Vector3(0, 1, 1) },
+      /* 覆层：l3Hi 是当前操控点的线圈，highlightMix 是掩码分类（0 线圈 / 1 眼 / 2 嘴 / 3 鼻） */
+      highlight: { value: new THREE.Vector4(0.5, 0.5, 0.5, 0.2) },
+      highlightMix: { value: 0 },
+      /* 覆层颜色与不透明度（呼吸时只动 selA，不动掩码） */
+      selColor: { value: new THREE.Color(0.62, 0.78, 1.0) },
+      selA: { value: 0 },
+      eyeX: { value: new THREE.Vector4(0, 0, 0, 1) },
+      mouthX: { value: new THREE.Vector4(0, 0, 0, 1) },
+      /* 轮廓曲线：8 个宽度倍率（1 = 原始轮廓），默认全 1 */
+      outline: { value: [new THREE.Vector3(1, 1, 1), new THREE.Vector3(1, 1, 1), new THREE.Vector3(1, 1, 0)] },
+      /* 五官的「体积核」：中心点 + 三轴半径（局部坐标）。
+       * (u,v) 椭圆只是贴着正脸的二维投影，口腔、眼窝这些藏在后面的体积要靠它兜住，
+       * 否则嘴动口腔不动，一拖就穿模。 */
+      eyeC: { value: new THREE.Vector3(0.42, 0, 0) },
+      eyeR: { value: new THREE.Vector3(0.03, 0.02, 0.03) },
+      mouthC: { value: new THREE.Vector3(0, 0, 0) },
+      mouthR: { value: new THREE.Vector3(0.03, 0.02, 0.04) }
+    };
+    var shapeValues = {};
+    SHAPE_DEFS.forEach(function (def) { shapeValues[def.key] = 50; });
+    var restMinY = Infinity, restMaxY = -Infinity;
+    var currentTextureURL = meta.texture;
+    var currentTextureImage = null;
+
+    function shapeNorm(value) {
+      return (clamp(Number(value), 0, 100) - 50) / 50;
+    }
+
+    function applyShapeUniforms() {
+      SHAPE_DEFS.forEach(function (def, index) {
+        var vec = shapeUniforms.values.value[index >> 2];
+        var slot = index & 3;
+        var value = shapeNorm(shapeValues[def.key]);
+        if (slot === 0) vec.x = value;
+        else if (slot === 1) vec.y = value;
+        else if (slot === 2) vec.z = value;
+        else vec.w = value;
+      });
+    }
+
+    function setShapeValue(name, value) {
+      if (!(name in shapeValues)) return null;
+      shapeValues[name] = clamp(Number(value), 0, 100);
+      applyShapeUniforms();
+      return shapeValues[name];
+    }
+
+    function setShapeAll(values) {
+      var data = values || {};
+      SHAPE_DEFS.forEach(function (def) {
+        if (Number.isFinite(Number(data[def.key]))) shapeValues[def.key] = clamp(Number(data[def.key]), 0, 100);
+      });
+      applyShapeUniforms();
+    }
+
+    /* 把一组按键线圈写进 uniform；缺项保持当前值 */
+    function setCoilUniforms(coils) {
+      var data = coils || {};
+      SHAPE_DEFS.forEach(function (def, index) {
+        var list = data[def.key];
+        if (!Array.isArray(list) || list.length < 4) return;
+        shapeUniforms.coils.value[index].set(
+          clamp(Number(list[0]) || 0, COIL_LIMIT.uc[0], COIL_LIMIT.uc[1]),
+          clamp(Number(list[1]) || 0, COIL_LIMIT.ur[0], COIL_LIMIT.ur[1]),
+          clamp(Number(list[2]) || 0, COIL_LIMIT.vc[0], COIL_LIMIT.vc[1]),
+          clamp(Number(list[3]) || 0, COIL_LIMIT.vr[0], COIL_LIMIT.vr[1])
+        );
+      });
+    }
+
+    function useTexture(texture, url) {
+      var olds = [];
+      materials.forEach(function (material) {
+        if (!material.map) return;
+        if (olds.indexOf(material.map) < 0) olds.push(material.map);
+        material.map = texture;
+        material.needsUpdate = true;
+      });
+      olds.forEach(function (old) { if (old !== texture) old.dispose(); });
+      textures = textures.filter(function (item) { return olds.indexOf(item) < 0; });
+      textures.push(texture);
+      currentTextureURL = url || currentTextureURL;
+      currentTextureImage = texture.image;
+    }
+
+    function loadTextureURL(url) {
+      return new THREE.TextureLoader().loadAsync(url).then(function (texture) {
+        if (THREE.sRGBEncoding) texture.encoding = THREE.sRGBEncoding;
+        if (texture.anisotropy !== undefined && renderer.capabilities.getMaxAnisotropy) {
+          texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+        }
+        useTexture(texture, url);
+        return texture;
+      });
+    }
+
+    function applyCanvasTexture(source) {
+      var texture = new THREE.CanvasTexture(source);
+      if (THREE.sRGBEncoding) texture.encoding = THREE.sRGBEncoding;
+      texture.needsUpdate = true;
+      useTexture(texture, currentTextureURL);
+      return texture;
+    }
+
+    function updateCamera() {
+      camera.position.set(
+        focus.x + Math.sin(yaw) * Math.cos(pitch) * distance,
+        focus.y + Math.sin(pitch) * distance,
+        focus.z - Math.cos(yaw) * Math.cos(pitch) * distance
+      );
+      camera.lookAt(focus);
+    }
+
+    function resize() {
+      var width = host.clientWidth, height = host.clientHeight;
+      if (!width || !height) return;
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height, false);
+    }
+
+    function setShapes(shapes) {
+      var data = shapes || {};
+      driven.forEach(function (entry) {
+        entry.morphs.forEach(function (morph, index) {
+          var value = data[morph.name];
+          entry.mesh.morphTargetInfluences[index] = Number.isFinite(value)
+            ? clamp(value / 100, 0, 1)
+            : clamp(Number(morph.weight) || 0, 0, 1);
+        });
+      });
+    }
+
+    return Promise.resolve()
+      .then(function () { return new THREE.TextureLoader().loadAsync(initialTexture || meta.texture); })
+      .then(function (texture) {
+        if (THREE.sRGBEncoding) texture.encoding = THREE.sRGBEncoding;
+        textures.push(texture);
+        currentTextureURL = initialTexture || meta.texture;
+        currentTextureImage = texture.image;
+
+        meta.avatar.materials.forEach(function (item) {
+          var color = item.color || [1, 1, 1, 1];
+          var material = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(color[0], color[1], color[2]),
+            map: textures[item.texture] || null,
+            transparent: !!item.transparent,
+            opacity: color[3] === undefined ? 1 : color[3],
+            alphaTest: Number(item.alphaTest) || 0,
+            depthWrite: !item.transparent,
+            side: THREE.DoubleSide
+          });
+          if (material.map) {
+            material.map.offset.fromArray(item.offset || [0, 0]);
+            material.map.repeat.fromArray(item.repeat || [1, 1]);
+          }
+          /* 眼部几何（眼球 / 睫毛）自成一块材质：它比皮肤高出一截，
+           * 掩码要用另一档更大的椭圆，否则改眼睛时睫毛留在原地。 */
+          var eyePartUniform = { value: /^FaceEyes$/i.test(item.name || '') ? 1 : 0 };
+          materialParts.push({ name: item.name || '', part: eyePartUniform.value });
+          material.onBeforeCompile = function (shader) {
+            shader.uniforms.l3Shape = shapeUniforms.values;
+            shader.uniforms.l3CoilU = shapeUniforms.coils;
+            shader.uniforms.l3Bounds = shapeUniforms.bounds;
+            shader.uniforms.l3Hi = shapeUniforms.highlight;
+            shader.uniforms.l3SelKind = shapeUniforms.highlightMix;
+            shader.uniforms.l3SelColor = shapeUniforms.selColor;
+            shader.uniforms.l3SelA = shapeUniforms.selA;
+            shader.uniforms.l3EyeX = shapeUniforms.eyeX;
+            shader.uniforms.l3MouthX = shapeUniforms.mouthX;
+            shader.uniforms.l3Out = shapeUniforms.outline;
+            shader.uniforms.l3EyeC = shapeUniforms.eyeC;
+            shader.uniforms.l3EyeR = shapeUniforms.eyeR;
+            shader.uniforms.l3MouthC = shapeUniforms.mouthC;
+            shader.uniforms.l3MouthR = shapeUniforms.mouthR;
+            shader.uniforms.l3EyePart = eyePartUniform;
+            shader.vertexShader = SHAPE_VERT_HEAD + shader.vertexShader;
+            shader.vertexShader = shader.vertexShader
+              .replace('#include <begin_vertex>',
+                '#include <begin_vertex>\n  vec3 l3Rest = position;\n  vL3Rest = l3Rest;')
+              .replace('#include <skinning_vertex>',
+                '#include <skinning_vertex>\n  transformed = l3Deform( transformed, l3Rest );');
+            /* 覆层画在模型自己的材质里：逐片元按 rest 坐标算掩码，
+             * 拿到权重后在最终颜色上刷一层（0.46–0.56 的窄过渡让边界干脆但不锯齿）。 */
+            shader.fragmentShader = SHAPE_SEL_FRAG + shader.fragmentShader
+              .replace('#include <dithering_fragment>',
+                '#include <dithering_fragment>\n' +
+                '  if ( l3SelA > 0.002 && gl_FrontFacing ) {\n' +
+                '    float l3sel = l3SelMask( vL3Rest );\n' +
+                '    float l3core = smoothstep( 0.46, 0.56, l3sel ) * l3SelA;\n' +
+                '    gl_FragColor.rgb = mix( gl_FragColor.rgb, l3SelColor, l3core );\n' +
+                '  }');
+          };
+          materials.push(material);
+        });
+
+        model.updateMatrixWorld(true);
+
+        meta.avatar.meshes.forEach(function (item) {
+          if (item.position) {
+            var posData = values(item.position);
+            for (var pi = 1; pi < posData.length; pi += 3) {
+              if (posData[pi] < restMinY) restMinY = posData[pi];
+              if (posData[pi] > restMaxY) restMaxY = posData[pi];
+            }
+          }
+          var geometry = new THREE.BufferGeometry();
+          geometries.push(geometry);
+          ['position', 'normal', 'uv', 'skinWeight'].forEach(function (key) {
+            if (item[key]) geometry.setAttribute(key, attribute(item[key]));
+          });
+          geometry.setAttribute('skinIndex', attribute(item.skinIndex, true));
+
+          /* 逐顶点部位标记（0 皮肤 / 1 眼球 / 2 睫毛 / 3 眼角 / 4 口腔）。
+           * 皮肤那块全是 0，只有 FaceEyes 需要逐分量判定。
+           * 眼线高度用与 shader 完全一致的公式，避免两边基准漂掉。 */
+          var vertexCount = item.position ? item.position.count / 3 : 0;
+          if (vertexCount > 0) {
+            var partData = new Float32Array(vertexCount);
+            var eyeLineY = restMinY + 0.299 * (restMaxY - restMinY);
+            var restPos = values(item.position);
+            item.primitives.forEach(function (part) {
+              var matName = (meta.avatar.materials[part.material] || {}).name || '';
+              if (!/^FaceEyes$/i.test(matName)) return;
+              tagVertexParts(values(part.indices), restPos, partData, eyeLineY);
+            });
+            geometry.setAttribute('aPart', new THREE.BufferAttribute(partData, 1));
+            /* 部位统计：探针靠它守住「眼球 / 睫毛 / 口腔确实被分开打标」这件事。
+             * 分类全为 0 时肉眼看不出差别（睫毛照样不跟着动），必须能被断言抓住。 */
+            var tally = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
+            for (var vi = 0; vi < partData.length; vi++) {
+              var tag = partData[vi] | 0;
+              tally[tag] = (tally[tag] || 0) + 1;
+            }
+            partCounts = tally;
+            /* 部位包围盒：睫毛长度 / 翘度这类「绝对位移量」要按实际尺寸定标，
+             * 系数不能凭截图猜。原样是模型原始单位（shader 里的 p / rest 同一套）。 */
+            var boxes = {};
+            for (var bj = 0; bj < partData.length; bj++) {
+              var bTag = partData[bj] | 0;
+              var bx = restPos[bj * 3], by = restPos[bj * 3 + 1], bz = restPos[bj * 3 + 2];
+              var e = boxes[bTag];
+              if (!e) {
+                boxes[bTag] = { minX: bx, maxX: bx, minY: by, maxY: by, minZ: bz, maxZ: bz };
+              } else {
+                if (bx < e.minX) e.minX = bx;
+                if (bx > e.maxX) e.maxX = bx;
+                if (by < e.minY) e.minY = by;
+                if (by > e.maxY) e.maxY = by;
+                if (bz < e.minZ) e.minZ = bz;
+                if (bz > e.maxZ) e.maxZ = bz;
+              }
+            }
+            partBoxes = boxes;
+          }
+
+          var count = item.primitives.reduce(function (sum, part) { return sum + part.indices.count; }, 0);
+          var indices = new Uint32Array(count);
+          var offset = 0;
+          item.primitives.forEach(function (part) {
+            indices.set(values(part.indices), offset);
+            geometry.addGroup(offset, part.indices.count, part.material);
+            offset += part.indices.count;
+          });
+          geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+
+          geometry.morphTargetsRelative = true;
+          geometry.morphAttributes.position = (item.morphs || []).map(function (morph) {
+            var attr = attribute(morph.position);
+            attr.name = morph.name;
+            return attr;
+          });
+          if (item.morphs && item.morphs.every(function (morph) { return morph.normal; })) {
+            geometry.morphAttributes.normal = item.morphs.map(function (morph) { return attribute(morph.normal); });
+          }
+
+          var inverses = values(item.inverseBind);
+          var skeleton = new THREE.Skeleton(
+            item.bones.map(function (index) { return bones[index]; }),
+            item.bones.map(function (_, index) {
+              return new THREE.Matrix4().fromArray(inverses, index * 16).transpose();
+            })
+          );
+          var mesh = new THREE.SkinnedMesh(geometry, materials);
+          mesh.bind(skeleton, new THREE.Matrix4());
+          mesh.frustumCulled = false;
+          model.add(mesh);
+
+          (item.morphs || []).forEach(function (morph, index) {
+            if (!morph.name || morph.name.charAt(0) === '-') return;
+            morphMap[morph.name] = { mesh: mesh, index: index };
+          });
+          driven.push({ mesh: mesh, morphs: item.morphs || [] });
+        });
+
+        if (Number.isFinite(restMinY) && restMaxY > restMinY) {
+          shapeUniforms.bounds.value.set(restMinY, restMaxY, 1 / (restMaxY - restMinY));
+          syncRegionCores();
+        }
+        applyShapeUniforms();
+
+        /* ---- 选区覆层：在模型自己的材质里叠一层色 ----
+         * 旧做法一路是「屏幕上投一圈贴脸椭圆」，浮在脸前、跟网格没关系；
+         * 中途试过叠一张索引网格点亮三角面，但那样是碎的（每个面一块、边界阶梯状）。
+         * 现在改在材质 fragment 里逐片元算掩码：拿 rest 坐标现算 (au, v)，
+         * 套与变形同一套公式取权重，再按权重刷一层颜色。
+         * 相当于直接在模型自身的贴图上画覆层——连续、无缝、不碎，
+         * 边界是该掩码的等值线，亮到哪就是真的动到哪。 */
+        var SEL_CORE = 0.5;             /* 掩码核心阈值，与 shader 里 0.46–0.56 的窄过渡对齐 */
+        var SEL_ALPHA = 0.62;           /* 满强度时的最大不透明，不盖住脸 */
+        var selState = { mask: null, strength: 0 };
+        var SEL_KINDS = { coil: 0, eye: 1, mouth: 2, nose: 3 };
+
+        function setFaceHighlight(mask, strength) {
+          var value = clamp(Number(strength) || 0, 0, 1);
+          selState.mask = mask && value > 0 ? mask : null;
+          selState.strength = selState.mask ? value : 0;
+          if (!selState.mask) {
+            shapeUniforms.selA.value = 0;
+            return { strength: 0, kind: 0 };
+          }
+          var kind = 0;
+          if (selState.mask.region === 'eye') kind = SEL_KINDS.eye;
+          else if (selState.mask.region === 'mouth') kind = SEL_KINDS.mouth;
+          else if (selState.mask.key === 'noseLength') kind = SEL_KINDS.nose;
+          if (selState.mask.coil) {
+            shapeUniforms.highlight.value.set(
+              selState.mask.coil[0], selState.mask.coil[1],
+              selState.mask.coil[2], selState.mask.coil[3]);
+          }
+          shapeUniforms.highlightMix.value = kind;
+          shapeUniforms.selA.value = selState.strength * SEL_ALPHA;
+          return { strength: selState.strength, kind: kind };
+        }
+
+        /* ---- 纹理分区遮罩 ----
+         * 按 3D 部位把贴图切成互不重叠的 UV 区域，纹理编辑器只允许在选中区域落笔，
+         * 这样改眼睛不会带到眉毛、改嘴不会蹭到下巴。分类阈值来自参考脸实测坐标，
+         * 换脸模需要重新标定；按钮文案与 REGION_DEFS 一一对应。 */
+        var REGION_DEFS = [
+          { id: 1, key: 'face', label: '面部' },
+          { id: 2, key: 'eyes', label: '眼睛' },
+          { id: 3, key: 'brow', label: '眉毛' },
+          { id: 4, key: 'nose', label: '鼻子' },
+          { id: 5, key: 'mouth', label: '嘴巴' }
+        ];
+        var regionData = null;
+
+        function regionIdFor(primName, cx, cy, cz, t) {
+          var ax = Math.abs(cx);
+          if (primName === 'FaceEyes') {
+            if (cy < 1.200 && ax < 0.020 && cz > 0) return 5; /* 口腔 / 牙齿 */
+            if (cy < 1.250) return 2;                         /* 眼球 / 睫毛 / 眼白 */
+            return 1;
+          }
+          if (t < 0.20 && ax < 0.030) return 5;                             /* 唇 */
+          if (t >= 0.18 && t < 0.30 && ax < 0.016 && cz > 0.060) return 4;  /* 鼻尖 */
+          if (t >= 0.24 && t < 0.36 && ax > 0.010 && ax < 0.075 && cz > 0.010) return 2;
+          if (t >= 0.36 && t < 0.50 && ax > 0.015 && ax < 0.085 && cz > 0.045) return 3;
+          return 1;
+        }
+
+        function buildRegionMask() {
+          var image = currentTextureImage;
+          var width = (image && (image.naturalWidth || image.width)) || 2048;
+          var height = (image && (image.naturalHeight || image.height)) || 2048;
+          var ids = new Uint8Array(width * height);
+          var size = restMaxY - restMinY;
+          if (!(size > 0)) return null;
+
+          /* 把 UV 三角形栅格化进 ids；面部是兜底区，只填空位，避免盖住五官 */
+          function fill(id, ua, va, ub, vb, uc, vc) {
+            var ax = ua * width, ay = (1 - va) * height;
+            var bx = ub * width, by = (1 - vb) * height;
+            var cx = uc * width, cy = (1 - vc) * height;
+            var d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+            if (Math.abs(d) < 1e-9) return;
+            var x0 = Math.max(0, Math.floor(Math.min(ax, bx, cx)));
+            var x1 = Math.min(width - 1, Math.ceil(Math.max(ax, bx, cx)));
+            var y0 = Math.max(0, Math.floor(Math.min(ay, by, cy)));
+            var y1 = Math.min(height - 1, Math.ceil(Math.max(ay, by, cy)));
+            for (var y = y0; y <= y1; y++) {
+              for (var x = x0; x <= x1; x++) {
+                var px = x + 0.5, py = y + 0.5;
+                var w0 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / d;
+                var w1 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / d;
+                if (w0 < -0.002 || w1 < -0.002 || (1 - w0 - w1) < -0.002) continue;
+                var index = y * width + x;
+                if (id === 1 && ids[index]) continue;
+                ids[index] = id;
+              }
+            }
+          }
+
+          meta.avatar.meshes.forEach(function (item) {
+            if (!item.position || !item.uv) return;
+            var positions = values(item.position);
+            var uvs = values(item.uv);
+            item.primitives.forEach(function (part) {
+              var material = meta.avatar.materials[part.material] || {};
+              var indices = values(part.indices);
+              for (var i = 0; i < indices.length; i += 3) {
+                var i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+                var cx = (positions[i0 * 3] + positions[i1 * 3] + positions[i2 * 3]) / 3;
+                var cy = (positions[i0 * 3 + 1] + positions[i1 * 3 + 1] + positions[i2 * 3 + 1]) / 3;
+                var cz = (positions[i0 * 3 + 2] + positions[i1 * 3 + 2] + positions[i2 * 3 + 2]) / 3;
+                var id = regionIdFor(material.name, cx, cy, cz, (cy - restMinY) / size);
+                fill(id, uvs[i0 * 2], uvs[i0 * 2 + 1], uvs[i1 * 2], uvs[i1 * 2 + 1], uvs[i2 * 2], uvs[i2 * 2 + 1]);
+              }
+            });
+          });
+
+          var buckets = {};
+          REGION_DEFS.forEach(function (def) {
+            buckets[def.id] = { id: def.id, key: def.key, label: def.label, pixels: 0, u0: 1, v0: 1, u1: 0, v1: 0 };
+          });
+          for (var p = 0; p < ids.length; p++) {
+            var id = ids[p];
+            if (!id || !buckets[id]) continue;
+            var bucket = buckets[id];
+            bucket.pixels++;
+            var u = ((p % width) + 0.5) / width;
+            var v = 1 - (((p / width) | 0) + 0.5) / height;
+            if (u < bucket.u0) bucket.u0 = u;
+            if (u > bucket.u1) bucket.u1 = u;
+            if (v < bucket.v0) bucket.v0 = v;
+            if (v > bucket.v1) bucket.v1 = v;
+          }
+          var list = REGION_DEFS.map(function (def) { return buckets[def.id]; })
+            .filter(function (item) { return item.pixels > 0; });
+          list.forEach(function (item) {
+            item.bbox = [item.u0, item.v0, item.u1, item.v1];
+            delete item.u0; delete item.v0; delete item.u1; delete item.v1;
+          });
+          return { width: width, height: height, ids: ids, list: list };
+        }
+
+        /* 遮罩有 400 万像素，等第一次打开纹理页再算，避免拖慢启动 */
+        function regionMask() {
+          if (!regionData) regionData = buildRegionMask();
+          return regionData;
+        }
+
+        (meta.avatar.preview_pose && meta.avatar.preview_pose.nodes || []).forEach(function (pose) {
+          var node = bones[pose.index];
+          if (!node) return;
+          if (pose.position) node.position.fromArray(pose.position);
+          if (pose.rotation) node.quaternion.fromArray(pose.rotation);
+          if (pose.scale) node.scale.fromArray(pose.scale);
+        });
+        model.updateMatrixWorld(true);
+
+        var bounds = new THREE.Box3().setFromObject(model, true);
+        focus.copy(bounds.getCenter(new THREE.Vector3()));
+        /* 参考脸只有头部：镜头留出额顶与下巴的余量，避免贴边裁切 */
+        focus.y += 0.004;
+        var size = bounds.getSize(new THREE.Vector3());
+        var frameHeight = Math.max((meta.avatar.preview_height || 0.32) * 1.1, size.y * 1.35);
+        initialDistance = frameHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+        distance = initialDistance;
+        camera.near = Math.max(0.005, initialDistance * 0.01);
+        camera.far = initialDistance * 20;
+        camera.updateProjectionMatrix();
+        updateCamera();
+
+        /* ---- 三维操控点 ----
+         * 按 ANCHOR_SPECS 在当前脸模上取「该高度的最前表面点」，
+         * 用射线投射到蒙皮后的真实曲面，拖动时屏幕坐标由相机实时投影。 */
+        var anchorPoints = null;
+        var anchorRest = null;
+        var anchorRaycaster = new THREE.Raycaster();
+        var frontDir = new THREE.Vector3(0, 0, 1).transformDirection(model.matrixWorld);
+        var anchorToPoint = new THREE.Vector3();
+        var anchorDir = new THREE.Vector3();
+        var anchorProject = new THREE.Vector3();
+
+        function buildAnchors() {
+          var out = {};
+          var restOut = {};
+          var height = restMaxY - restMinY;
+          if (!(height > 0)) return out;
+          var front = [];
+          meta.avatar.meshes.forEach(function (item) {
+            if (!item.position) return;
+            var pos = values(item.position);
+            for (var i = 0; i < pos.length; i += 3) {
+              if (pos[i + 2] > 0) front.push(pos[i], pos[i + 1], pos[i + 2]);
+            }
+          });
+          var targets = [];
+          model.traverse(function (object) {
+            if (object.isSkinnedMesh) targets.push(object);
+          });
+          function pick(t, ratio) {
+            var yT = restMinY + t * height;
+            var band = Math.max(height * 0.02, 0.0015);
+            var maxX = 0, i;
+            for (i = 0; i < front.length; i += 3) {
+              if (Math.abs(front[i + 1] - yT) > band) continue;
+              var ax = Math.abs(front[i]);
+              if (ax > maxX) maxX = ax;
+            }
+            if (!(maxX > 0)) return null;
+            var targetX = ratio * maxX;
+            var bestZ = -Infinity;
+            for (i = 0; i < front.length; i += 3) {
+              if (Math.abs(front[i + 1] - yT) > band) continue;
+              if (Math.abs(Math.abs(front[i]) - targetX) > maxX * 0.14) continue;
+              if (front[i + 2] > bestZ) bestZ = front[i + 2];
+            }
+            if (bestZ === -Infinity) bestZ = 0;
+            return new THREE.Vector3(targetX, yT, bestZ + 0.003);
+          }
+          Object.keys(ANCHOR_SPECS).forEach(function (key) {
+            var spec = ANCHOR_SPECS[key];
+            var local = pick(spec.t, spec.u);
+            if (!local) return;
+            restOut[key] = local.clone();
+            var world = local.clone().applyMatrix4(model.matrixWorld);
+            anchorRaycaster.set(world.clone().addScaledVector(frontDir, 0.35), frontDir.clone().negate());
+            anchorRaycaster.far = 0.7;
+            var hits = anchorRaycaster.intersectObjects(targets, false);
+            out[key] = hits.length ? hits[0].point.clone() : world;
+          });
+          anchorRest = restOut;
+          return out;
+        }
+
+        function gizmoAnchor(key) {
+          if (!anchorPoints) anchorPoints = buildAnchors();
+          var point = anchorPoints[key];
+          return point ? point.toArray() : null;
+        }
+
+        function projectAnchor(key) {
+          if (!anchorPoints) anchorPoints = buildAnchors();
+          var point = anchorPoints[key];
+          var width = host.clientWidth, height = host.clientHeight;
+          if (!point || !width || !height) return { x: 0, y: 0, visible: false };
+          anchorToPoint.copy(point).sub(focus);
+          camera.getWorldDirection(anchorDir);
+          /* 点在脸心中线之后就被脸挡住，不再显示手柄 */
+          var facing = anchorToPoint.dot(anchorDir) < 0.015;
+          anchorProject.copy(point).project(camera);
+          return {
+            x: (anchorProject.x * 0.5 + 0.5) * width,
+            y: (-anchorProject.y * 0.5 + 0.5) * height,
+            visible: facing && anchorProject.z < 1
+          };
+        }
+
+        /* 旧签名（只传线圈）保留一层包装，内部一律走面高亮 */
+        function setHighlight(coil, strength) {
+          setFaceHighlight(coil ? { coil: coil } : null, strength);
+        }
+
+        /* ---- 贴脸采样：解析曲面 + 平滑高度网格 ----
+         * 选区不再画成线圈，但这套采样还留着：
+         * 1) 选区手柄（拖动改范围）要落在脸上可点的位置；
+         * 2) projectCoil / projectRegion 仍是界面定位手柄的唯一来源。
+         * x/y 由 (u,v) 解析式给出，z 取自一张 64×64 的正面高度网格
+         * （空单元用邻居均值补齐），手柄因此永远贴着真实脸面。 */
+        var coilRingCache = Object.create(null);
+        var COIL_SEGS = 48;
+        var coilDir = new THREE.Vector3();
+        var coilToPoint = new THREE.Vector3();
+        var coilProject = new THREE.Vector3();
+        var surfGrid = null;
+        var GRID_N = 64;
+
+        function buildSurfGrid() {
+          var n = GRID_N;
+          var z = new Float32Array(n * n);
+          for (var i = 0; i < z.length; i++) z[i] = NaN;
+          var height = restMaxY - restMinY;
+          if (!(height > 0)) return z;
+          var hScale = height / 0.202114;
+          meta.avatar.meshes.forEach(function (item) {
+            if (!item.position) return;
+            var pos = values(item.position);
+            for (var p = 0; p < pos.length; p += 3) {
+              var vz = pos[p + 2];
+              if (!(vz > 0)) continue;
+              var t = clamp((pos[p + 1] - restMinY) / height, 0, 1);
+              var w = Math.max(gizmoHalfW(t), 0.020) * hScale;
+              var u = pos[p] / w;
+              if (u < -1 || u > 1) continue;
+              var ix = clamp(Math.round((u + 1) * 0.5 * (n - 1)), 0, n - 1);
+              var iy = clamp(Math.round(gizmoV(t) * (n - 1)), 0, n - 1);
+              var idx = iy * n + ix;
+              if (!(z[idx] >= vz)) z[idx] = vz;
+            }
+          });
+          for (var pass = 0; pass < 10; pass++) {
+            var holes = 0;
+            for (var y = 0; y < n; y++) {
+              for (var x = 0; x < n; x++) {
+                var cell = y * n + x;
+                if (!isNaN(z[cell])) continue;
+                var sum = 0, cnt = 0;
+                for (var dy = -1; dy <= 1; dy++) {
+                  for (var dx = -1; dx <= 1; dx++) {
+                    var yy = y + dy, xx = x + dx;
+                    if (yy < 0 || yy >= n || xx < 0 || xx >= n) continue;
+                    var nz = z[yy * n + xx];
+                    if (!isNaN(nz)) { sum += nz; cnt++; }
+                  }
+                }
+                if (cnt) z[cell] = sum / cnt; else holes++;
+              }
+            }
+            if (!holes) break;
+          }
+          /* 左右镜像平均：脸模本身不是绝对对称的（牙齿、睫毛会偏一边），
+           * 深度不对称会让选区在屏幕上歪掉，取镜像均值后左右一致。 */
+          for (var ry = 0; ry < n; ry++) {
+            for (var rx = 0; rx < Math.floor(n / 2); rx++) {
+              var li = ry * n + rx;
+              var ri = ry * n + (n - 1 - rx);
+              var lv = z[li], rv = z[ri];
+              if (isNaN(lv) && isNaN(rv)) continue;
+              if (isNaN(lv)) lv = rv;
+              if (isNaN(rv)) rv = lv;
+              var mean = (lv + rv) * 0.5;
+              z[li] = mean;
+              z[ri] = mean;
+            }
+          }
+          return z;
+        }
+
+        function surfaceZ(u, v) {
+          if (!surfGrid) surfGrid = buildSurfGrid();
+          var n = GRID_N;
+          var fx = clamp((u + 1) * 0.5 * (n - 1), 0, n - 1);
+          var fy = clamp(v * (n - 1), 0, n - 1);
+          var x0 = Math.floor(fx), y0 = Math.floor(fy);
+          var x1 = Math.min(n - 1, x0 + 1), y1 = Math.min(n - 1, y0 + 1);
+          var ax = fx - x0, ay = fy - y0;
+          function at(xx, yy) {
+            var val = surfGrid[yy * n + xx];
+            return isNaN(val) ? 0 : val;
+          }
+          var top = at(x0, y0) * (1 - ax) + at(x1, y0) * ax;
+          var bot = at(x0, y1) * (1 - ax) + at(x1, y1) * ax;
+          return top * (1 - ay) + bot * ay;
+        }
+
+        /* v → 线性高度 t（l3V 单调，二分求逆即可） */
+        function vToT(v) {
+          var lo = 0, hi = 1;
+          for (var i = 0; i < 26; i++) {
+            var mid = (lo + hi) * 0.5;
+            if (gizmoV(mid) < v) lo = mid; else hi = mid;
+          }
+          return (lo + hi) * 0.5;
+        }
+
+        function surfaceLocal(u, v) {
+          var height = restMaxY - restMinY;
+          var t = vToT(clamp(v, 0, 1));
+          var hScale = height / 0.202114;
+          var w = Math.max(gizmoHalfW(t), 0.020) * hScale;
+          return new THREE.Vector3(
+            u * w,
+            restMinY + t * height,
+            surfaceZ(clamp(u, -1, 1), clamp(v, 0, 1)) + 0.0035
+          );
+        }
+
+        /* ---- 五官体积核：用脸高比例定标，换脸也不用手改 ----
+         * 中心点取「贴脸曲面上该五官的中心再往里退一段」，半径按 H 的比例给；
+         * 嘴的口腔、眼睛的眼球都在皮肤后面，二维椭圆盖不到，靠这颗椭球兜住。 */
+        var regionBase = null;
+
+        /* 实测该高度的正面深度：扫一遍顶点取前端最大值，避免依赖网格状态 */
+        function frontZ(tCenter, tBand, uCenter, uBand) {
+          var height = restMaxY - restMinY;
+          if (!(height > 0)) return null;
+          var hScale = height / 0.202114;
+          var best = -Infinity;
+          meta.avatar.meshes.forEach(function (item) {
+            if (!item.position) return;
+            var pos = values(item.position);
+            for (var i = 0; i < pos.length; i += 3) {
+              var x = pos[i], y = pos[i + 1], z = pos[i + 2];
+              if (!(z > 0)) continue;
+              var t = (y - restMinY) / height;
+              if (Math.abs(t - tCenter) > tBand) continue;
+              var w = Math.max(gizmoHalfW(t), 0.020) * hScale;
+              if (Math.abs(x / w - uCenter) > uBand) continue;
+              if (z > best) best = z;
+            }
+          });
+          return best === -Infinity ? null : best;
+        }
+
+        function syncRegionCores() {
+          var height = restMaxY - restMinY;
+          if (!(height > 0)) return;
+          var hScale = height / 0.202114;
+          var eyeT = 0.293;
+          /* 嘴的体积核中心取「上下唇 + 口腔」的中间高度，否则唇后的牙床落在核外 */
+          var mouthT = 0.128;
+          var eyeW = Math.max(gizmoHalfW(eyeT), 0.020) * hScale;
+          var mouthW = Math.max(gizmoHalfW(mouthT), 0.020) * hScale;
+          var eyeZ = frontZ(eyeT, 0.02, 0.42, 0.30);
+          var mouthZ = frontZ(mouthT, 0.02, 0, 0.30);
+          if (!(eyeZ > 0)) eyeZ = 0.06 * (height / 0.202114);
+          if (!(mouthZ > 0)) mouthZ = 0.06 * (height / 0.202114);
+          regionBase = {
+            height: height,
+            eyeW: eyeW,
+            mouthW: mouthW,
+            eye: [0.13 * height, 0.075 * height, 0.13 * height],
+            mouth: [0.24 * height, 0.115 * height, 0.28 * height]
+          };
+          shapeUniforms.eyeC.value.set(0.42 * eyeW, restMinY + eyeT * height, eyeZ - 0.09 * height);
+          shapeUniforms.mouthC.value.set(0, restMinY + mouthT * height, mouthZ - 0.10 * height);
+          applyCoreRadii();
+        }
+
+        /* 柔边随位移自动放宽：拖得越远，跟着一起走的组织越多，
+         * 位移始终小于「能吸收它的过渡带」，才不会在边界上撕出洞。 */
+        function applyCoreRadii() {
+          if (!regionBase) return;
+          [['eye', shapeUniforms.eyeX.value, regionBase.eyeW, shapeUniforms.eyeR.value, regionBase.eye],
+            ['mouth', shapeUniforms.mouthX.value, regionBase.mouthW, shapeUniforms.mouthR.value, regionBase.mouth]]
+            .forEach(function (item) {
+              var xf = item[1];
+              var push = Math.max(Math.abs(Number(xf.x) || 0) * item[2],
+                Math.abs(Number(xf.y) || 0) * regionBase.height);
+              var grow = push * 1.7;
+              item[3].set(item[4][0] + grow, item[4][1] + grow * 0.9, item[4][2] + grow * 0.5);
+            });
+        }
+
+        /* 兼容旧调用点：贴脸采样就是解析曲面上的点 */
+        function nearestFront(u, v) {
+          return surfaceLocal(clamp(u, -1, 1), clamp(v, 0.002, 0.998));
+        }
+
+        /* 投影后的椭圆做两轮 3 点平滑：采样点少又贴着起伏的脸，边框会是毛刺状 */
+        function smoothRing(points, passes) {
+          var out = points.slice();
+          var n = out.length;
+          if (n < 4) return out;
+          for (var p = 0; p < (passes || 2); p++) {
+            var next = out.slice();
+            for (var i = 0; i < n; i++) {
+              var a = out[(i - 1 + n) % n];
+              var b = out[i];
+              var c = out[(i + 1) % n];
+              if (!a || !b || !c || !a.visible || !b.visible || !c.visible) continue;
+              next[i] = { x: (a.x + b.x * 2 + c.x) / 4, y: (a.y + b.y * 2 + c.y) / 4, visible: true };
+            }
+            out = next;
+          }
+          return out;
+        }
+
+        function projectPoint(point) {
+          var width = host.clientWidth, height = host.clientHeight;
+          if (!point || !width || !height) return { x: 0, y: 0, visible: false };
+          coilToPoint.copy(point).sub(focus);
+          camera.getWorldDirection(coilDir);
+          var facing = coilToPoint.dot(coilDir) < 0.02;
+          coilProject.copy(point).project(camera);
+          return {
+            x: (coilProject.x * 0.5 + 0.5) * width,
+            y: (-coilProject.y * 0.5 + 0.5) * height,
+            visible: facing && coilProject.z < 1 && coilProject.z > -1
+          };
+        }
+
+        function coilWorld(hit, mirror) {
+          var local = new THREE.Vector3(mirror ? -hit.x : hit.x, hit.y, hit.z);
+          return local.applyMatrix4(model.matrixWorld);
+        }
+
+        function projectCoil(key) {
+          var index = COIL_INDEX[key];
+          if (index === undefined) return null;
+          var data = coilRingCache[key];
+          if (!data) {
+            var vec = shapeUniforms.coils.value[index];
+            var uc = vec.x, ur = vec.y, vc = vec.z, vr = vec.w;
+            var ring = [], mirror = [];
+            for (var i = 0; i < COIL_SEGS; i++) {
+              var a = (i / COIL_SEGS) * Math.PI * 2;
+              var u = clamp(uc + ur * Math.cos(a), -1, 1);
+              var v = clamp(vc + vr * Math.sin(a), 0.005, 0.995);
+              var hit = nearestFront(u, v);
+              if (!hit) continue;
+              ring.push(coilWorld(hit, false));
+              mirror.push(coilWorld(hit, true));
+            }
+            function edge(eu, ev) {
+              var item = nearestFront(clamp(eu, -1, 1), clamp(ev, 0.005, 0.995));
+              return item ? coilWorld(item, false) : null;
+            }
+            data = {
+              ring: ring,
+              mirror: uc > 0.12 ? mirror : null,
+              center: edge(uc, vc),
+              edges: {
+                right: edge(uc + ur, vc),
+                left: edge(uc - ur, vc),
+                top: edge(uc, vc + vr),
+                bottom: edge(uc, vc - vr)
+              }
+            };
+            coilRingCache[key] = data;
+          }
+          return {
+            ring: smoothRing(data.ring.map(projectPoint)),
+            mirror: data.mirror ? smoothRing(data.mirror.map(projectPoint)) : null,
+            center: projectPoint(data.center),
+            edges: {
+              right: projectPoint(data.edges.right),
+              left: projectPoint(data.edges.left),
+              top: projectPoint(data.edges.top),
+              bottom: projectPoint(data.edges.bottom)
+            }
+          };
+        }
+
+        /* 线圈改动后丢掉贴脸采样，拖动时重新取样 */
+        function invalidateCoils() { coilRingCache = Object.create(null); }
+
+        /* ---- 轮廓曲线（直接拖脸缘）----
+         * shader 里的 l3Outline(t) 乘在宽度 wx 上，界面这边必须用同一条曲线算出
+         * 手柄该落在哪：把「中线点 → 脸缘点」的屏幕向量按同一个倍率缩放即可
+         * （宽度缩放是绕中线的纯 x 缩放，屏幕上等价）。 */
+        function outlineValues() {
+          var v = shapeUniforms.outline.value;
+          return [v[0].x, v[0].y, v[0].z, v[1].x, v[1].y, v[1].z, v[2].x, v[2].y];
+        }
+
+        /* 与生成出来的 GLSL 完全同形：逐段覆盖，取最后一个成立的段 */
+        function outlineAt(t) {
+          var f = outlineValues();
+          var k = f[0];
+          for (var i = 1; i < f.length; i++) {
+            if (t < OUTLINE_KNOTS[i - 1]) break;
+            var p0 = f[Math.max(0, i - 2)], p1 = f[i - 1], p2 = f[i], p3 = f[Math.min(f.length - 1, i + 1)];
+            var s = clamp((t - OUTLINE_KNOTS[i - 1]) / OUTLINE_STEP, 0, 1);
+            var s2 = s * s, s3 = s2 * s;
+            k = 0.5 * (2 * p1 + (-p0 + p2) * s + (2 * p0 - 5 * p1 + 4 * p2 - p3) * s2 +
+              (-p0 + 3 * p1 - 3 * p2 + p3) * s3);
+          }
+          return k;
+        }
+
+        function setOutline(list) {
+          var v = shapeUniforms.outline.value;
+          OUTLINE_KNOTS.forEach(function (t, i) {
+            var raw = Array.isArray(list) ? Number(list[i]) : NaN;
+            var k = Number.isFinite(raw) ? clamp(raw, OUTLINE_LIMIT[0], OUTLINE_LIMIT[1]) : 1;
+            v[Math.floor(i / 3)].setComponent(i % 3, k);
+          });
+        }
+
+        function resetOutline() { setOutline(null); }
+
+        /* 脸缘在「现在的」脸型下有多宽 —— 只算 SHAPE_VERT_HEAD 里影响 x 的主项
+         * （wx 链）。手柄必须贴在当前的轮廓上而不是原始网格上：脸宽拉到 100 时
+         * 原始脸缘比屏幕上的脸窄两成，手柄会缩进脸里，看着就是「点不在脸上」。
+         * ⚠ 这是 shader 的 JS 镜像，改 wx 那几行必须同步改这里。 */
+        function coilAtPoint(index, au, v) {
+          var c = shapeUniforms.coils.value[index];
+          var du = (au - c.x) / Math.max(c.y, 1e-4);
+          var dv = (v - c.z) / Math.max(c.w, 1e-4);
+          var s = clamp((du * du + dv * dv - 0.15) / 0.95, 0, 1);
+          return 1 - s * s * (3 - 2 * s);
+        }
+
+        function edgeScaleX(au, v) {
+          var k = 1 + shapeNorm(shapeValues.width) * 0.24 * coilAtPoint(0, au, v);
+          k *= 1 - shapeNorm(shapeValues.jaw) * 0.18 * coilAtPoint(3, au, v);
+          k *= 1 + shapeNorm(shapeValues.cheek) * 0.11 * coilAtPoint(4, au, v);
+          k *= 1 + shapeNorm(shapeValues.cheekFull) * 0.09 * coilAtPoint(5, au, v);
+          k *= 1 + shapeNorm(shapeValues.forehead) * 0.16 * coilAtPoint(6, au, v);
+          return k;
+        }
+
+        /* 每个节点的屏幕位置。三个点：
+         *   center —— 中线（u≈0）；base —— 倍率 1 时的脸缘（含滑杆补偿）；
+         *   edge   —— 当前倍率下的脸缘。
+         * 为什么 edge 不写成 base × k：形变是「加位移」(k-1)×w（见 outlineDx），
+         * 所以当前脸缘是 w×(sx + k - 1)，不是 w×sx×k。界面直接摆 edge，
+         * 拖拽用 |base - center| 当 Δk 的基准长度 —— 两边口径完全一致。
+         * 左右各给一份：左侧直接拿 u=-1 的脸缘点，不镜像右边的（相机一转就错位）。
+         * index 必须带出去：某个节点被背面剔除时返回数组会短一截，界面按数组下标
+         * 找人就会错位（第 6 个点画到第 7 个点的位置）。 */
+        function projectOutline() {
+          var out = [];
+          OUTLINE_KNOTS.forEach(function (t, index) {
+            var v = clamp(gizmoV(t), 0.005, 0.995);
+            var center = nearestFront(0.001, v);
+            var edge = nearestFront(1, v);
+            var edgeL = nearestFront(-1, v);
+            if (!center || !edge || !edgeL) return;
+            var k = outlineAt(t);
+            var sx = edgeScaleX(1, v);
+            var w = edge.x;                 /* surfaceLocal(1,v).x 就是该高度的半宽 */
+            var baseX = w * sx;
+            var nowX = w * (sx + k - 1);
+            var pc = projectPoint(coilWorld(center, false));
+            out.push({
+              index: index,
+              t: t,
+              k: k,
+              center: pc,
+              base: projectPoint(coilWorld(new THREE.Vector3(baseX, edge.y, edge.z), false)),
+              baseL: projectPoint(coilWorld(new THREE.Vector3(-baseX, edgeL.y, edgeL.z), false)),
+              edge: projectPoint(coilWorld(new THREE.Vector3(nowX, edge.y, edge.z), false)),
+              edgeL: projectPoint(coilWorld(new THREE.Vector3(-nowX, edgeL.y, edgeL.z), false))
+            });
+          });
+          return out;
+        }
+
+        /* ---- 眼睛 / 嘴巴的区域变换 ----
+         * 与 shader 同源：u/v 椭圆 → 中心、平移、旋转、缩放。
+         * 眼睛按 ±uc 左右各画一整圈，每个环 3 个手柄（移动 / 缩放 / 旋转）。 */
+        var REGION_SEGS = 44;
+
+        function regionRest(u, v) {
+          return nearestFront(clamp(u, -1, 1), clamp(v, 0.005, 0.995));
+        }
+
+        function readXform(list) {
+          var src = Array.isArray(list) ? list : [];
+          var scale = Number(src[3]);
+          return [
+            Number(src[0]) || 0,
+            Number(src[1]) || 0,
+            Number(src[2]) || 0,
+            Number.isFinite(scale) && scale > 0 ? scale : 1
+          ];
+        }
+
+        function setXform(xform) {
+          if (!xform) return;
+          if (xform.eye) shapeUniforms.eyeX.value.fromArray(readXform(xform.eye));
+          if (xform.mouth) shapeUniforms.mouthX.value.fromArray(readXform(xform.mouth));
+          applyCoreRadii();
+        }
+
+        function currentXform() {
+          return {
+            eye: shapeUniforms.eyeX.value.toArray(),
+            mouth: shapeUniforms.mouthX.value.toArray()
+          };
+        }
+
+        /* 把脸上的静止点按当前 xform 变形（公式必须与 l3Deform 末尾一致） */
+        function regionLocal(hit, kind, xf) {
+          var local = new THREE.Vector3(hit.x, hit.y, hit.z);
+          var height = restMaxY - restMinY;
+          if (!(height > 0)) return local;
+          var hScale = height / 0.202114;
+          var t = clamp((hit.y - restMinY) / height, 0, 1);
+          var w = Math.max(gizmoHalfW(t), 0.020) * hScale;
+          var eyeY = restMinY + 0.299 * height;
+          var mouthY = restMinY + 0.112 * height;
+          var side = hit.x >= 0 ? 1 : -1;
+          var cx = kind === 'eye' ? side * 0.61 * w : 0;
+          var cy = kind === 'eye' ? eyeY : mouthY;
+          var scale = clamp(Number(xf[3]) || 1, 0.1, 4);
+          var ang = (kind === 'eye' ? Number(xf[2]) * side : Number(xf[2])) || 0;
+          var rx = (hit.x - cx) * scale;
+          var ry = (hit.y - cy) * scale;
+          var cs = Math.cos(ang), sn = Math.sin(ang);
+          local.x = cx + rx * cs - ry * sn + (kind === 'eye' ? side : 1) * (Number(xf[0]) || 0) * w;
+          local.y = cy + rx * sn + ry * cs + (Number(xf[1]) || 0) * height;
+          return local;
+        }
+
+        /* 椭圆半径上下分开（睫毛只往上长得更远），取半径按方向挑一支 */
+        function frameVr(frame, dir) { return dir >= 0 ? frame.vrUp : frame.vrDn; }
+
+        function projectRegion(kind) {
+          var frame = REGION_FRAMES[kind];
+          if (!frame) return null;
+          var xf = kind === 'eye' ? shapeUniforms.eyeX.value.toArray() : shapeUniforms.mouthX.value.toArray();
+          var sides = kind === 'eye' ? [1, -1] : [1];
+          var items = sides.map(function (side) {
+            var uc = side * frame.uc;
+            function at(u, v) {
+              var hit = regionRest(u, v);
+              return hit
+                ? projectPoint(regionLocal(hit, kind, xf).applyMatrix4(model.matrixWorld))
+                : { x: 0, y: 0, visible: false };
+            }
+            var ring = [];
+            var segs = REGION_SEGS;
+            /* 环必须画成与 mask 同一个形状（超椭圆），否则「看到的手柄圈」和
+             * 「真正会动的范围」不一致 —— 眼睛那张算子是 p>2 的圆角矩形 */
+            var pw = 2 / (Number(frame.p) || 2);
+            for (var i = 0; i < segs; i++) {
+              var a = (i / segs) * Math.PI * 2;
+              var ca = Math.cos(a), sa = Math.sin(a);
+              var eu = Math.sign(ca) * Math.pow(Math.abs(ca), pw);
+              var ev = Math.sign(sa) * Math.pow(Math.abs(sa), pw);
+              var hit = regionRest(uc + frame.ur * eu,
+                frame.vc + frameVr(frame, ev) * ev);
+              if (!hit) continue;
+              ring.push(projectPoint(regionLocal(hit, kind, xf).applyMatrix4(model.matrixWorld)));
+            }
+            var center = at(uc, frame.vc);
+            /* 平移增益：中心点沿 tx / ty 各 +1 时的屏幕位移，拖动时用来解 2×2 方程 */
+            var gain = { tx: [0, 0], ty: [0, 0] };
+            var base = regionRest(uc, frame.vc);
+            if (base) {
+              var pa = projectPoint(regionLocal(base, kind, xf).applyMatrix4(model.matrixWorld));
+              var upTx = xf.slice(); upTx[0] = (Number(xf[0]) || 0) + 1;
+              var upTy = xf.slice(); upTy[1] = (Number(xf[1]) || 0) + 1;
+              var pb = projectPoint(regionLocal(base, kind, upTx).applyMatrix4(model.matrixWorld));
+              var pc = projectPoint(regionLocal(base, kind, upTy).applyMatrix4(model.matrixWorld));
+              gain.tx = [pb.x - pa.x, pb.y - pa.y];
+              gain.ty = [pc.x - pa.x, pc.y - pa.y];
+            }
+            return {
+              side: side,
+              ring: smoothRing(ring),
+              center: center,
+              scale: at(uc + side * frame.ur * 1.35, frame.vc),
+              rotate: at(uc, frame.vc + frameVr(frame, 1) * 1.85),
+              gain: gain
+            };
+          });
+          return {
+            kind: kind,
+            items: items,
+            rings: items.map(function (item) { return item.ring; })
+          };
+        }
+
+        /* 手势增益：该参数 +1 时锚点在屏幕上移动多少像素。
+         * 拖动时把指针位移投影到这条方向，手柄才会顺着真正的变形方向走。 */
+        function gizmoGain(key) {
+          if (!anchorPoints) anchorPoints = buildAnchors();
+          if (!anchorRest) return [0, 0];
+          var rest = anchorRest[key];
+          var world = anchorPoints && anchorPoints[key];
+          if (!rest || !world) return [0, 0];
+          var height = restMaxY - restMinY;
+          if (!(height > 0)) return [0, 0];
+          var hScale = height / 0.202114;
+          var t = clamp((rest.y - restMinY) / height, 0, 1);
+          var v = gizmoV(t);
+          var w = Math.max(gizmoHalfW(t), 0.020) * hScale;
+          var au = Math.abs(rest.x / w);
+          var eyeY = restMinY + 0.299 * height;
+          var mouthY = restMinY + 0.112 * height;
+          function mask(name) {
+            var c = shapeUniforms.coils.value[COIL_INDEX[name]];
+            var du = (au - c.x) / Math.max(c.y, 1e-4);
+            var dv = (v - c.z) / Math.max(c.w, 1e-4);
+            return 1 - smooth01(0.15, 1.10, du * du + dv * dv);
+          }
+          var dx = 0, dy = 0;
+          if (key === 'width') dx = rest.x * 0.24 * 0.02 * mask('width');
+          else if (key === 'length') dy = (rest.y - eyeY) * 0.13 * 0.02 * mask('length');
+          else if (key === 'chin') dy = (rest.y - mouthY) * 0.35 * 0.02 * mask('chin');
+          else if (key === 'jaw') dx = -rest.x * 0.18 * 0.02 * mask('jaw');
+          else if (key === 'cheek') dx = rest.x * 0.11 * 0.02 * mask('cheek');
+          else if (key === 'cheekFull') dx = rest.x * 0.09 * 0.02 * mask('cheekFull');
+          else if (key === 'forehead') dx = rest.x * 0.16 * 0.02 * mask('forehead');
+          else if (key === 'chinWidth') dx = rest.x * 0.18 * 0.02 * mask('chinWidth');
+          else if (key === 'noseLength') dy = -0.0035 * hScale * 0.02 * mask('noseLength');
+          else return [0, 0];
+          var delta = new THREE.Vector3(dx, dy, 0)
+            .applyMatrix4(new THREE.Matrix4().extractRotation(model.matrixWorld));
+          var pa = projectPoint(world);
+          var pb = projectPoint(world.clone().add(delta));
+          return [pb.x - pa.x, pb.y - pa.y];
+        }
+
+        function down(event) {
+          if (event.button !== 0) return;
+          pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+          try { canvas.setPointerCapture(event.pointerId); } catch (e) { /* 忽略 */ }
+        }
+        function move(event) {
+          if (!pointer || pointer.id !== event.pointerId) return;
+          yaw += (event.clientX - pointer.x) * 0.007;
+          pitch = clamp(pitch + (event.clientY - pointer.y) * 0.007, -1.35, 1.35);
+          pointer.x = event.clientX;
+          pointer.y = event.clientY;
+          updateCamera();
+        }
+        function end(event) {
+          if (pointer && pointer.id === event.pointerId) pointer = null;
+        }
+        function wheel(event) {
+          event.preventDefault();
+          distance = clamp(distance * Math.exp(event.deltaY * 0.001), initialDistance * 0.28, initialDistance * 4.5);
+          updateCamera();
+        }
+
+        canvas.addEventListener('pointerdown', down);
+        canvas.addEventListener('pointermove', move);
+        canvas.addEventListener('pointerup', end);
+        canvas.addEventListener('pointercancel', end);
+        canvas.addEventListener('wheel', wheel, { passive: false });
+        resizeObserver = new ResizeObserver(resize);
+        resizeObserver.observe(host);
+        resize();
+
+        var headNode = bones.filter(function (node) { return /^(head|头)$/i.test(node.name); })[0];
+        var neckNode = bones.filter(function (node) { return /^(neck|颈)$/i.test(node.name); })[0];
+        var headRest = headNode ? headNode.quaternion.clone() : null;
+        var neckRest = neckNode ? neckNode.quaternion.clone() : null;
+        var eyes = ['leftEye', 'rightEye'].map(function (name) {
+          var index = meta.avatar.joints && meta.avatar.joints[name];
+          return index === undefined ? null : bones[index];
+        }).filter(Boolean);
+        var updateGaze = createCameraGaze(THREE, eyes, camera);
+
+        var api = {
+          channels: [],
+          morphNames: Object.keys(morphMap),
+          setShapes: setShapes,
+          setView: function (name) {
+            yaw = ({ front: 0, left: -0.65, right: 0.65, top: 0 })[name] || 0;
+            pitch = name === 'top' ? 0.55 : 0;
+            distance = initialDistance;
+            updateCamera();
+          },
+          tick: function (dt, seconds) {
+            var t = seconds;
+            if (neckNode && neckRest) {
+              neckNode.quaternion.copy(neckRest).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(
+                Math.sin(t * 0.43) * THREE.MathUtils.degToRad(1.5),
+                Math.sin(t * 0.31 + 0.8) * THREE.MathUtils.degToRad(2.4),
+                Math.sin(t * 0.23) * THREE.MathUtils.degToRad(0.45), 'YXZ')));
+            }
+            if (headNode && headRest) {
+              headNode.quaternion.copy(headRest).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(
+                Math.sin(t * 0.61 + 1.1) * THREE.MathUtils.degToRad(0.8),
+                Math.sin(t * 0.37) * THREE.MathUtils.degToRad(1.4),
+                Math.sin(t * 0.29 + 0.4) * THREE.MathUtils.degToRad(0.25), 'YXZ')));
+            }
+            model.updateMatrixWorld(true);
+            updateGaze(dt);
+            /* 覆层轻微呼吸：静止时也能看出这是「当前选中」，而不是脸上的一块色斑 */
+            if (selState.strength > 0) {
+              shapeUniforms.selA.value = selState.strength * SEL_ALPHA * (0.84 + 0.16 * Math.sin(t * 2.2));
+            }
+            renderer.render(scene, camera);
+          },
+          influence: function (name) {
+            var entry = morphMap[name];
+            return entry ? entry.mesh.morphTargetInfluences[entry.index] : null;
+          },
+          peak: function () {
+            var best = { name: '', value: 0 };
+            Object.keys(morphMap).forEach(function (name) {
+              var entry = morphMap[name];
+              var value = entry.mesh.morphTargetInfluences[entry.index] || 0;
+              if (value > best.value) best = { name: name, value: value };
+            });
+            return best;
+          },
+          setShape: setShapeValue,
+          setShapeAll: setShapeAll,
+          shape: function (name) { return shapeValues[name]; },
+          shapeValues: function () {
+            var out = {};
+            SHAPE_DEFS.forEach(function (def) { out[def.key] = shapeValues[def.key]; });
+            return out;
+          },
+          shapeUniforms: function () {
+            return {
+              shape: shapeUniforms.values.value.map(function (vec) { return vec.toArray(); }),
+              coils: shapeUniforms.coils.value.map(function (vec) { return vec.toArray(); }),
+              bounds: shapeUniforms.bounds.value.toArray(),
+              highlight: shapeUniforms.highlight.value.toArray(),
+              /* highlightMix 现在是掩码分类（0 线圈 / 1 眼 / 2 嘴 / 3 鼻） */
+              highlightMix: shapeUniforms.highlightMix.value,
+              selAlpha: shapeUniforms.selA.value
+            };
+          },
+          setCoils: function (coils) {
+            setCoilUniforms(coils);
+            invalidateCoils();
+          },
+          setXform: setXform,
+          currentXform: currentXform,
+          projectCoil: projectCoil,
+          projectRegion: projectRegion,
+          /* 轮廓曲线：直接拖脸缘。projectOutline 返回每个节点在中线 / 脸缘上的屏幕位置，
+           * 界面按 outlineAt(t) 缩放即可画出与变形一致的曲线。 */
+          projectOutline: projectOutline,
+          outlineAt: outlineAt,
+          outlineValues: outlineValues,
+          outlineKnots: function () { return OUTLINE_KNOTS.slice(); },
+          setOutline: setOutline,
+          resetOutline: resetOutline,
+          /* 区域椭圆的唯一真源（shader 由同一张表现拼）：探针用它守住
+           * 「睫毛口径比皮肤高」「上下半径不对称」这两件事不被改回去 */
+          regionFrames: function () {
+            var out = {};
+            Object.keys(REGION_FRAMES).forEach(function (key) {
+              var src = REGION_FRAMES[key];
+              out[key] = {};
+              Object.keys(src).forEach(function (field) { out[key][field] = src[field]; });
+            });
+            return out;
+          },
+          /* 按 (au, v) 算区域掩码权重——与 shader 里 regionMaskGlsl 完全同一套公式。
+           * 探针用它断言「睫毛尖拿得到权重、额头/眉毛拿不到」，不必靠截图认图。 */
+          regionWeight: function (kind, au, v) {
+            var f = REGION_FRAMES[kind];
+            if (!f) return 0;
+            var du = (au - f.uc) / f.ur;
+            var dv = (v - f.vc) / (v > f.vc ? f.vrUp : f.vrDn);
+            var pw = Number(f.p) || 2;
+            var d = pw === 2 ? du * du + dv * dv
+              : Math.pow(Math.abs(du), pw) + Math.pow(Math.abs(dv), pw);
+            var t = Math.min(1, Math.max(0, (d - f.lo) / Math.max(f.hi - f.lo, 1e-6)));
+            return 1 - t * t * (3 - 2 * t);
+          },
+          /* 每个材质的 l3EyePart：FaceEyes（眼球 / 睫毛）必须是 1，皮肤必须是 0 */
+          materialParts: function () {
+            return materialParts.map(function (item) { return { name: item.name, part: item.part }; });
+          },
+          /* 部位顶点数：睫毛 / 眼球 / 口腔必须是不同的类，否则「拉睫毛带牙齿」的
+           * 老毛病会回来，而且肉眼看不出来 */
+          partStats: function () { return partCounts ? Object.assign({}, partCounts) : null; },
+          /* 部位包围盒 + 模型高度：睫毛长度 / 翘度的位移量按它定标 */
+          partBounds: function () {
+            return partBoxes ? {
+              boxes: JSON.parse(JSON.stringify(partBoxes)),
+              height: restMaxY - restMinY
+            } : null;
+          },
+          /* 顶点变形那段 GLSL 的原文（探针拿它守住「眼形参数走眼圈口径」
+           * 和「睫毛 / 眼球按 aPart 分开动」这两件事没被改回去）。 */
+          deformSource: function () { return SHAPE_VERT_HEAD; },
+          gizmoAnchor: gizmoAnchor,
+          projectAnchor: projectAnchor,
+          gizmoGain: gizmoGain,
+          setHighlight: setFaceHighlight,
+          setFaceHighlight: setFaceHighlight,
+          faceHighlight: function () {
+            var mask = selState.mask;
+            var kind = shapeUniforms.highlightMix.value;
+            return {
+              on: !!mask && selState.strength > 0,
+              /* 覆层画在本体材质的 fragment 里，不是独立的叠加网格——
+               * 测试用这个字段守住「不要再退回碎面片」 */
+              mode: 'material',
+              kind: mask ? (mask.coil ? 'coil' : 'region') : 'none',
+              key: mask && mask.key ? mask.key : null,
+              region: mask && mask.region ? mask.region : null,
+              maskId: kind,
+              strength: selState.strength,
+              alpha: shapeUniforms.selA.value,
+              threshold: SEL_CORE,
+              color: '#' + shapeUniforms.selColor.value.getHexString(),
+              /* 叠加网格数量：覆层方案下必须是 0 */
+              overlayMeshes: 0
+            };
+          },
+          textureImage: function () { return currentTextureImage; },
+          textureURL: function () { return currentTextureURL; },
+          originalTextureURL: function () { return meta.texture; },
+          textureSize: function () {
+            var image = currentTextureImage;
+            return image ? [image.width || image.naturalWidth, image.height || image.naturalHeight] : [0, 0];
+          },
+          regionMask: regionMask,
+          regions: function () {
+            var mask = regionMask();
+            return mask ? mask.list : [];
+          },
+          setTextureURL: loadTextureURL,
+          applyCanvasTexture: applyCanvasTexture,
+          dispose: function () {
+            if (resizeObserver) resizeObserver.disconnect();
+            canvas.removeEventListener('pointerdown', down);
+            canvas.removeEventListener('pointermove', move);
+            canvas.removeEventListener('pointerup', end);
+            canvas.removeEventListener('pointercancel', end);
+            canvas.removeEventListener('wheel', wheel);
+            geometries.forEach(function (g) { g.dispose(); });
+            materials.forEach(function (m) { m.dispose(); });
+            textures.forEach(function (t) { t.dispose(); });
+            renderer.dispose();
+            if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
+          }
+        };
+        api.channels = api.morphNames.map(function (name) { return { name: name }; });
+        setShapes({});
+        return api;
+      });
+  }
+
+  /* ---------- 表演曲线播放器 ---------- */
+  function createCurvePlayer() {
+    var pack = window.LUMEN3D_CURVES;
+    var meta = window.LUMEN3D_META;
+    if (!pack || !meta) throw new Error('表演曲线数据缺失');
+    var catalog = meta.catalog;
+    var bytes = new Uint8Array(b64ToBuffer(pack.data));
+    var width = pack.channelCount;
+    var scale = pack.valueMax / 255;
+    var tracks = catalog.channels
+      .filter(function (channel) { return channel.kind === 'blendshape'; })
+      .map(function (channel) {
+        return { index: channel.index, name: channel.property.replace(/^blendShape\./, '') };
+      });
+    var neutral = catalog.styles.filter(function (style) {
+      return String(style.id) === String(catalog.neutral_style);
+    })[0] || catalog.styles[0];
+    var selected = neutral;
+    var position = 0;
+    var transition = null;
+    var fadeSeconds = 0.4;
+
+    function durationOf(style) { return Math.max(0, (style.frames - 1) / catalog.fps); }
+
+    function readShapes(style, time) {
+      var frame = Math.max(0, Math.min(time * catalog.fps, style.frames - 1));
+      var start = Math.floor(frame);
+      var end = Math.min(start + 1, style.frames - 1);
+      var weight = frame - start;
+      var shapes = {};
+      tracks.forEach(function (track) {
+        var a = bytes[((style.offset + start) * width) + track.index] * scale;
+        var b = bytes[((style.offset + end) * width) + track.index] * scale;
+        shapes[track.name] = a + (b - a) * weight;
+      });
+      return shapes;
+    }
+
+    function sample() {
+      var shapes = readShapes(selected, position);
+      if (transition) {
+        var t = Math.min(1, transition.elapsed / fadeSeconds);
+        var weight = t * t * (3 - 2 * t);
+        Object.keys(shapes).forEach(function (name) {
+          var from = transition.from[name];
+          shapes[name] = (from === undefined ? 0 : from) + (shapes[name] - (from === undefined ? 0 : from)) * weight;
+        });
+      }
+      return shapes;
+    }
+
+    function advance(dt) {
+      if (!transition) return;
+      transition.elapsed += dt;
+      if (transition.elapsed >= fadeSeconds) transition = null;
+    }
+
+    function switchTo(style) {
+      var from = sample();
+      selected = style;
+      position = 0;
+      transition = { from: from, elapsed: 0 };
+    }
+
+    return {
+      styles: catalog.styles,
+      labels: catalog.styles.map(function (style) { return style.label; }),
+      neutral: neutral,
+      get style() { return selected; },
+      get duration() { return durationOf(selected); },
+      sample: sample,
+      choose: function (style) { if (style && style !== selected) switchTo(style); },
+      returnToNeutral: function () { if (selected !== neutral) switchTo(neutral); },
+      tick: function (dt) {
+        var elapsed = Number.isFinite(dt) ? Math.max(0, dt) : 0;
+        var duration = durationOf(selected);
+        if (duration <= 0) { advance(elapsed); return; }
+        var untilEnd = Math.max(0, duration - position);
+        if (elapsed < untilEnd) { position += elapsed; advance(elapsed); return; }
+        position = duration;
+        advance(untilEnd);
+        var from = sample();
+        var remaining = elapsed - untilEnd;
+        if (selected !== neutral) selected = neutral;
+        var nextDuration = durationOf(selected);
+        position = nextDuration > 0 ? remaining % nextDuration : 0;
+        transition = { from: from, elapsed: 0 };
+        advance(remaining);
+      }
+    };
+  }
+
+  /* ---------- 造型：脸型参数 ---------- */
+  function defaultShape() {
+    var out = {};
+    SHAPE_DEFS.forEach(function (def) { out[def.key] = 50; });
+    return out;
+  }
+
+  function cloneShape(source) {
+    var out = {};
+    SHAPE_DEFS.forEach(function (def) { out[def.key] = Number(source && source[def.key]); });
+    return out;
+  }
+
+  function mergeShape(values) {
+    var out = defaultShape();
+    var data = values || {};
+    /* NEUTRAL_KEYS 只用来「随机时不碰」，不能在这里把值压回 50：
+     * 以前眼睛那四项被压回中性，用滑杆调完再读档就被吞了。 */
+    SHAPE_DEFS.forEach(function (def) {
+      var value = Number(data[def.key]);
+      if (Number.isFinite(value)) out[def.key] = clamp(value, 0, 100);
+    });
+    return out;
+  }
+
+  function shapeEquals(a, b) {
+    return SHAPE_DEFS.every(function (def) {
+      return Math.round(Number(a[def.key])) === Math.round(Number(b[def.key]));
+    });
+  }
+
+  function loadShape() {
+    var raw = null;
+    try { raw = localStorage.getItem(SHAPE_KEY); } catch (e) { raw = null; }
+    if (!raw) return defaultShape();
+    var data = null;
+    try { data = JSON.parse(raw); } catch (e) { return defaultShape(); }
+    if (!data || typeof data !== 'object') return defaultShape();
+    return mergeShape(data);
+  }
+
+  function saveShape() {
+    if (!S || !S.shape) return;
+    try { localStorage.setItem(SHAPE_KEY, JSON.stringify(S.shape)); } catch (e) { /* 忽略 */ }
+  }
+
+  /* ---------- 曲面范围线圈：状态与持久化 ---------- */
+  function defaultCoils() {
+    var out = {};
+    SHAPE_DEFS.forEach(function (def) { out[def.key] = DEFAULT_COILS[def.key].slice(); });
+    return out;
+  }
+
+  function clampCoil(values) {
+    var list = Array.isArray(values) ? values : [];
+    var pick = function (value, range) {
+      var num = Number(value);
+      return clamp(Number.isFinite(num) ? num : range[0], range[0], range[1]);
+    };
+    return [
+      pick(list[0], COIL_LIMIT.uc),
+      pick(list[1], COIL_LIMIT.ur),
+      pick(list[2], COIL_LIMIT.vc),
+      pick(list[3], COIL_LIMIT.vr)
+    ];
+  }
+
+  function loadCoils() {
+    var state = { coils: defaultCoils(), on: true };
+    var raw = null;
+    try { raw = localStorage.getItem(COIL_KEY); } catch (e) { raw = null; }
+    if (!raw) return state;
+    var data = null;
+    try { data = JSON.parse(raw); } catch (e) { return state; }
+    if (!data || typeof data !== 'object') return state;
+    if (data.coils && typeof data.coils === 'object') {
+      SHAPE_DEFS.forEach(function (def) {
+        if (data.coils[def.key]) state.coils[def.key] = clampCoil(data.coils[def.key]);
+      });
+    }
+    if (typeof data.on === 'boolean') state.on = data.on;
+    return state;
+  }
+
+  function saveCoils() {
+    if (!S || !S.coils) return;
+    try {
+      localStorage.setItem(COIL_KEY, JSON.stringify({ v: 1, on: S.coilOn !== false, coils: S.coils }));
+    } catch (e) { /* 忽略 */ }
+  }
+
+  /* ---------- 面部轮廓：8 个节点的宽度倍率 ----------
+   * 这里面只存倍率（1 = 原样），节点高度是常量 OUTLINE_KNOTS。
+   * 它和 width / jaw / cheek / forehead 四个滑杆是「乘法叠加」关系，不是接管：
+   * 滑杆管的是某一小块皮肤（带线圈权重、会衰减），轮廓线管的是整条脸缘，
+   * 两者乘在一起。所以「滑杆调完再用轮廓线微调」是正常用法，不会互相抵消。 */
+  function defaultOutline() {
+    return OUTLINE_KNOTS.map(function () { return 1; });
+  }
+
+  function clampOutline(values) {
+    var list = Array.isArray(values) ? values : [];
+    return OUTLINE_KNOTS.map(function (t, i) {
+      var raw = Number(list[i]);
+      return Number.isFinite(raw) ? clamp(raw, OUTLINE_LIMIT[0], OUTLINE_LIMIT[1]) : 1;
+    });
+  }
+
+  function loadOutline() {
+    var raw = null;
+    try { raw = localStorage.getItem(OUTLINE_KEY); } catch (e) { raw = null; }
+    if (!raw) return defaultOutline();
+    var data = null;
+    try { data = JSON.parse(raw); } catch (e) { return defaultOutline(); }
+    if (!Array.isArray(data)) return defaultOutline();
+    return clampOutline(data);
+  }
+
+  function saveOutline() {
+    if (!S || !S.outline) return;
+    try { localStorage.setItem(OUTLINE_KEY, JSON.stringify(S.outline)); } catch (e) { /* 忽略 */ }
+  }
+
+  /* 唯一写入口：uniform、S.outline、图库曲线一起更新。
+   * 拖节点时 persist 传 false（每帧都写 localStorage 太浪费），松手再落盘。 */
+  function applyOutline(values, persist) {
+    if (!S) return null;
+    S.outline = clampOutline(values);
+    if (S.face && S.face.setOutline) S.face.setOutline(S.outline);
+    if (persist !== false) saveOutline();
+    renderCurve();
+    paintOutline();
+    return S.outline;
+  }
+
+  /* ---------- 眼睛 / 嘴巴的 3D 变换：状态与持久化 ---------- */
+  function defaultXform() {
+    return { eye: XFORM_DEFAULT.slice(), mouth: XFORM_DEFAULT.slice() };
+  }
+
+  function readXformState(list) {
+    var src = Array.isArray(list) ? list : [];
+    var scale = Number(src[3]);
+    return [
+      Number(src[0]) || 0,
+      Number(src[1]) || 0,
+      Number(src[2]) || 0,
+      Number.isFinite(scale) && scale > 0 ? scale : 1
+    ];
+  }
+
+  function loadXform() {
+    var state = defaultXform();
+    var raw = null;
+    try { raw = localStorage.getItem(XFORM_KEY); } catch (e) { raw = null; }
+    if (!raw) return state;
+    var data = null;
+    try { data = JSON.parse(raw); } catch (e) { return state; }
+    if (!data || typeof data !== 'object') return state;
+    state.eye = readXformState(data.eye);
+    state.mouth = readXformState(data.mouth);
+    return state;
+  }
+
+  function saveXform() {
+    if (!S || !S.xform) return;
+    try { localStorage.setItem(XFORM_KEY, JSON.stringify({ v: 1, eye: S.xform.eye, mouth: S.xform.mouth })); } catch (e) { /* 忽略 */ }
+  }
+
+  /* 自定义预设：名字 + 完整 16 项参数，最多存 20 个 */
+  function loadCustomPresets() {
+    var raw = null;
+    try { raw = localStorage.getItem(SHAPE_PRESET_KEY); } catch (e) { raw = null; }
+    if (!raw) return [];
+    var list = null;
+    try { list = JSON.parse(raw); } catch (e) { return []; }
+    if (!Array.isArray(list)) return [];
+    return list.filter(function (item) {
+      return item && typeof item.name === 'string' && item.name.length > 0 && item.values;
+    }).slice(0, 20);
+  }
+
+  function saveCustomPresets(list) {
+    try { localStorage.setItem(SHAPE_PRESET_KEY, JSON.stringify(list)); } catch (e) { /* 忽略 */ }
+  }
+
+  /* ---------- 历史（撤销 / 重做） ---------- */
+  function paintShapeButtons() {
+    if (!S || !S.refs) return;
+    var hist = S.shapeHist;
+    if (S.refs.shapeUndo) S.refs.shapeUndo.disabled = !hist || hist.index <= 0;
+    if (S.refs.shapeRedo) S.refs.shapeRedo.disabled = !hist || hist.index >= hist.stack.length - 1;
+  }
+
+  /* 一帧历史 = 参数 + 轮廓。轮廓以前不在历史里，「拖完轮廓线按撤销」会把参数倒回去、
+   * 轮廓却纹丝不动 —— 用户看到的是「撤销没生效」。 */
+  function shapeStateOf() {
+    return { shape: cloneShape(S.shape), outline: (S.outline || defaultOutline()).slice() };
+  }
+
+  function historyEquals(a, b) {
+    if (!a || !b || !a.outline || !b.outline) return false;
+    if (!shapeEquals(a.shape, b.shape)) return false;
+    if (a.outline.length !== b.outline.length) return false;
+    return a.outline.every(function (k, i) { return Math.abs(k - b.outline[i]) < 0.002; });
+  }
+
+  /* 每次参数落定后记一帧；重复状态自动跳过 */
+  function commitShapeHistory() {
+    if (!S || !S.shape) return;
+    var hist = S.shapeHist;
+    var top = hist.stack[hist.index];
+    var snap = shapeStateOf();
+    if (top && historyEquals(top, snap)) return;
+    hist.stack = hist.stack.slice(0, hist.index + 1);
+    hist.stack.push(snap);
+    if (hist.stack.length > 40) hist.stack.shift();
+    hist.index = hist.stack.length - 1;
+    paintShapeButtons();
+  }
+
+  function applyShapeState(values, presetName) {
+    /* 两种入参：{ shape, outline }（历史帧），或者一张纯参数表（预设 / 复原）。 */
+    var packed = values && values.shape ? values : { shape: values };
+    S.shape = mergeShape(packed.shape);
+    SHAPE_DEFS.forEach(function (def) { paintShapeRow(def.key); });
+    if (S.face) S.face.setShapeAll(S.shape);
+    saveShape();
+    /* 预设里没有轮廓数据，所以换预设 / 复原一律把轮廓放回原样：
+     * 留着上一条脸的轮廓去套新预设，出来的脸既不像预设也不像上一条。 */
+    applyOutline(packed.outline || defaultOutline(), true);
+    if (arguments.length > 1) {
+      S.presetName = presetName || '';
+      paintPresetState();
+    }
+    paintShapeButtons();
+    renderCurve();
+  }
+
+  function undoShape() {
+    if (!S) return;
+    var hist = S.shapeHist;
+    if (hist.index <= 0) return;
+    hist.index--;
+    applyShapeState(hist.stack[hist.index], '');
+  }
+
+  function redoShape() {
+    if (!S) return;
+    var hist = S.shapeHist;
+    if (hist.index >= hist.stack.length - 1) return;
+    hist.index++;
+    applyShapeState(hist.stack[hist.index], '');
+  }
+
+  /* ---------- 参数读写与联动 ---------- */
+  function paintShapeRow(name) {
+    if (!S || !S.refs || !S.refs.shapeList) return;
+    var range = S.refs.shapeList.querySelector('[data-shape="' + name + '"]');
+    if (!range) return;
+    var value = Math.round(S.shape[name]);
+    range.value = String(value);
+    var num = S.refs.shapeList.querySelector('[data-shape-num="' + name + '"]');
+    if (num) num.value = String(value);
+  }
+
+  function setShapeValue(name, value, fromUI) {
+    if (!S || !S.shape || !(name in S.shape)) return null;
+    S.shape[name] = clamp(Number(value), 0, 100);
+    if (S.face) S.face.setShape(name, S.shape[name]);
+    if (!fromUI) {
+      paintShapeRow(name);
+      commitShapeHistory();
+    }
+    if (S.presetName) {
+      S.presetName = '';
+      paintPresetState();
+    }
+    saveShape();
+    renderCurve();
+    return S.shape[name];
+  }
+
+  function resetShape() {
+    if (!S) return;
+    applyShapeState(defaultShape(), '原始');
+    commitShapeHistory();
+    resetCoil();
+    resetXform();
+  }
+
+  function randomShape() {
+    if (!S) return;
+    var values = {};
+    SHAPE_DEFS.forEach(function (def) {
+      if (!NEUTRAL_KEYS[def.key]) values[def.key] = Math.round(rand(28, 72));
+    });
+    applyShapeState(values, '');
+    commitShapeHistory();
+  }
+
+  function presetValues(name) {
+    for (var i = 0; i < SHAPE_PRESETS.length; i++) {
+      if (SHAPE_PRESETS[i].name === name) return mergeShape(SHAPE_PRESETS[i].values);
+    }
+    for (var k = 0; k < S.presets.length; k++) {
+      if (S.presets[k].name === name) return mergeShape(S.presets[k].values);
+    }
+    return null;
+  }
+
+  function applyPreset(name) {
+    if (!S) return null;
+    var values = presetValues(name);
+    if (!values) return null;
+    applyShapeState(values, name);
+    commitShapeHistory();
+    return name;
+  }
+
+  function saveCurrentPreset() {
+    if (!S || !S.refs || !S.refs.shapeSaveName) return null;
+    var input = S.refs.shapeSaveName;
+    var name = String(input.value || '').replace(/^\s+|\s+$/g, '').slice(0, 12);
+    if (!name) return null;
+    var reserved = SHAPE_PRESETS.some(function (item) { return item.name === name; });
+    if (reserved) return null;
+    var entry = { name: name, values: cloneShape(S.shape) };
+    var replaced = false;
+    S.presets = S.presets.map(function (item) {
+      if (item.name === name) { replaced = true; return entry; }
+      return item;
+    });
+    if (!replaced) S.presets.push(entry);
+    S.presets = S.presets.slice(-20);
+    saveCustomPresets(S.presets);
+    input.value = '';
+    if (S.refs.shapeSaveRow) S.refs.shapeSaveRow.hidden = true;
+    renderShapePresets();
+    S.presetName = name;
+    paintPresetState();
+    return name;
+  }
+
+  function deletePreset(name) {
+    if (!S) return;
+    S.presets = S.presets.filter(function (item) { return item.name !== name; });
+    saveCustomPresets(S.presets);
+    renderShapePresets();
+    if (S.presetName === name) {
+      S.presetName = '';
+      paintPresetState();
+    }
+  }
+
+  /* ---------- 预设条 ---------- */
+  function paintPresetState() {
+    if (!S || !S.refs || !S.refs.shapePresets) return;
+    S.refs.shapePresets.querySelectorAll('[data-preset]').forEach(function (button) {
+      button.classList.toggle('on', button.getAttribute('data-preset') === S.presetName);
+    });
+  }
+
+  function renderShapePresets() {
+    if (!S || !S.refs || !S.refs.shapePresets) return;
+    var host = S.refs.shapePresets;
+    host.innerHTML = '';
+    SHAPE_PRESETS.forEach(function (item) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'l3-preset';
+      button.setAttribute('data-preset', item.name);
+      button.textContent = item.name;
+      host.appendChild(button);
+    });
+    S.presets.forEach(function (item) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'l3-preset l3-preset-custom';
+      button.setAttribute('data-preset', item.name);
+      button.textContent = item.name;
+      var del = document.createElement('span');
+      del.className = 'l3-preset-del';
+      del.setAttribute('data-del-preset', item.name);
+      del.setAttribute('role', 'button');
+      del.setAttribute('aria-label', '删除预设 ' + item.name);
+      del.textContent = '×';
+      button.appendChild(del);
+      host.appendChild(button);
+    });
+    paintPresetState();
+  }
+
+  /* ---------- 脸型面板 ---------- */
+  function buildShapePane() {
+    if (!S || !S.refs || !S.refs.shapeList) return;
+    var host = S.refs.shapeList;
+    if (host.dataset.ready === '1') return;
+    SLIDER_GROUPS.forEach(function (group) {
+      /* NEUTRAL_KEYS 只管「随机时要不要参与」，不再拿来藏滑杆：
+       * 眼睛那四项以前就是被它滤掉的，结果眼睛在抽屉里连个滑杆都没有。 */
+      var defs = SHAPE_DEFS.filter(function (def) { return def.group === group; });
+      if (!defs.length) return;
+      var title = document.createElement('div');
+      title.className = 'l3-shape-group';
+      title.textContent = group;
+      host.appendChild(title);
+      defs.forEach(function (def) {
+        var row = document.createElement('div');
+        row.className = 'l3-shape-row';
+        var name = document.createElement('span');
+        name.className = 'l3-shape-name';
+        name.textContent = def.label;
+        name.title = '双击恢复 ' + def.label;
+        var range = document.createElement('input');
+        range.type = 'range';
+        range.min = '0';
+        range.max = '100';
+        range.value = String(Math.round(S.shape[def.key]));
+        range.setAttribute('data-shape', def.key);
+        range.title = '双击恢复';
+        var num = document.createElement('input');
+        num.type = 'number';
+        num.className = 'l3-shape-val';
+        num.min = '0';
+        num.max = '100';
+        num.step = '1';
+        num.value = String(Math.round(S.shape[def.key]));
+        num.setAttribute('data-shape-num', def.key);
+
+        range.addEventListener('input', function () {
+          setShapeValue(def.key, range.value, true);
+          num.value = String(Math.round(S.shape[def.key]));
+        });
+        range.addEventListener('change', commitShapeHistory);
+        function commitNumber() {
+          if (!Number.isFinite(Number(num.value))) { paintShapeRow(def.key); return; }
+          setShapeValue(def.key, num.value, true);
+          paintShapeRow(def.key);
+          commitShapeHistory();
+        }
+        num.addEventListener('change', commitNumber);
+        function restoreOne() {
+          setShapeValue(def.key, 50, true);
+          paintShapeRow(def.key);
+          commitShapeHistory();
+        }
+        name.addEventListener('dblclick', restoreOne);
+        num.addEventListener('dblclick', restoreOne);
+
+        row.appendChild(name);
+        row.appendChild(range);
+        row.appendChild(num);
+        host.appendChild(row);
+      });
+    });
+    /* 眼睛 / 嘴部已经交给脸上的三维手柄，这里说明一句，免得用户翻不到滑杆 */
+    var note = document.createElement('p');
+    note.className = 'l3-shape-note';
+    note.textContent = '眼睛与嘴部不再用滑杆：切到上面「三维直接操控」的眼睛 / 嘴部分组，' +
+      '在脸上的白色选区里直接移动、旋转、缩放。';
+    host.appendChild(note);
+    host.dataset.ready = '1';
+  }
+
+  /* ---------- 三维直接操控 ---------- */
+  /* 脸上的手柄按分组显示，拖动直接改对应参数；悬停 / 拖动时用线圈染色显示曲面范围。 */
+  function ensureGizmoLayer() {
+    if (!S || !S.refs || !S.refs.canvasHost) return null;
+    var layer = S.refs.canvasHost.querySelector('.l3-gizmos');
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.className = 'l3-gizmos is-off';
+      layer.id = 'l3Gizmos';
+      S.refs.canvasHost.appendChild(layer);
+    }
+    return layer;
+  }
+
+  function gizmoDefs() {
+    if (SLIDER_GROUPS.indexOf(S.gizmoGroup) < 0) return [];
+    return SHAPE_DEFS.filter(function (def) { return def.group === S.gizmoGroup; });
+  }
+
+  /* 眼睛 / 嘴部两个分组走区域手柄，不再显示参数锚点 */
+  function regionKindOf(group) {
+    return group === '眼睛' ? 'eye' : (group === '嘴部' ? 'mouth' : null);
+  }
+
+  function gizmoVisible() {
+    if (!S || !S.face || !S.gizmoOn || !S.refs || !S.refs.drawer) return false;
+    return S.drawerTab === 'shape';
+  }
+
+  function coilOf(key) {
+    if (!S || !S.coils) return null;
+    return S.coils[key] || DEFAULT_COILS[key] || null;
+  }
+
+  /* 选区提示：轮廓 / 鼻子按参数线圈，眼睛 / 嘴部按固定区域；
+   * 两者都不是画出来的曲线，而是把模型表面真正会被影响的三角面点亮。 */
+  function syncGizmoHighlight(strength) {
+    if (!S || !S.face) return;
+    if (!gizmoVisible() || !S.coilOn) { S.face.setFaceHighlight(null, 0); return; }
+    var value = strength;
+    if (value === undefined) value = (S.coilDrag || S.regionDrag) ? 0.95 : 0.78;
+    var kind = regionKindOf(S.gizmoGroup);
+    if (kind) { S.face.setFaceHighlight({ region: kind }, value); return; }
+    if (!S.gizmoKey) { S.face.setFaceHighlight(null, 0); return; }
+    S.face.setFaceHighlight({ coil: coilOf(S.gizmoKey), key: S.gizmoKey }, value);
+  }
+
+  function paintGizmoSelection() {
+    var layer = ensureGizmoLayer();
+    if (!layer) return;
+    layer.querySelectorAll('.l3-gizmo').forEach(function (handle) {
+      handle.classList.toggle('on', handle.getAttribute('data-gizmo') === S.gizmoKey);
+    });
+  }
+
+  function paintPull(layer, drag) {
+    if (!layer) return;
+    var line = layer.querySelector('.l3-pull');
+    if (!drag) { if (line) line.style.display = 'none'; return; }
+    if (!line) {
+      line = document.createElement('i');
+      line.className = 'l3-pull';
+      layer.appendChild(line);
+    }
+    var handle = layer.querySelector('.l3-gizmo.is-dragging');
+    if (!handle) { line.style.display = 'none'; return; }
+    var x1 = drag.restX, y1 = drag.restY;
+    var x2 = parseFloat(handle.style.left) || x1;
+    var y2 = parseFloat(handle.style.top) || y1;
+    var len = Math.hypot(x2 - x1, y2 - y1);
+    if (len < 3) { line.style.display = 'none'; return; }
+    line.style.display = '';
+    line.style.left = x1.toFixed(1) + 'px';
+    line.style.top = y1.toFixed(1) + 'px';
+    line.style.width = len.toFixed(1) + 'px';
+    line.style.transform = 'rotate(' + Math.atan2(y2 - y1, x2 - x1).toFixed(4) + 'rad)';
+  }
+
+  function paintGizmos() {
+    if (!S || !S.face || !gizmoVisible()) { hideCoil(); hideRegion(); hideOutline(); return; }
+    var kind = regionKindOf(S.gizmoGroup);
+    var layer = ensureGizmoLayer();
+    if (kind) {
+      if (layer) layer.classList.add('is-off');
+      hideCoil();
+      hideOutline();
+      paintRegion(kind);
+      return;
+    }
+    hideRegion();
+    if (!layer) return;
+    layer.classList.remove('is-off');
+    var drag = S.gizmoDrag;
+    layer.querySelectorAll('.l3-gizmo').forEach(function (handle) {
+      var key = handle.getAttribute('data-gizmo');
+      var pos = S.face.projectAnchor(key);
+      if (!pos || !pos.visible) {
+        handle.style.display = 'none';
+        return;
+      }
+      handle.style.display = '';
+      /* 拖动中让手柄贴在指针上：位置 = 静止锚点 + 已产生的位移 */
+      var ox = 0, oy = 0;
+      if (drag && drag.key === key) { ox = drag.ox; oy = drag.oy; }
+      handle.style.left = (pos.x + ox).toFixed(1) + 'px';
+      handle.style.top = (pos.y + oy).toFixed(1) + 'px';
+    });
+    paintPull(layer, drag);
+    paintCoil();
+    paintOutline();
+  }
+
+  /* ---------- 选区：模型表面的面高亮 ----------
+   * 以前这里的选区是屏幕上投出来的一圈贴脸椭圆（填充 + 呼吸 + 流动虚线），
+   * 看着像浮在脸前的一张半透明纸，跟网格没关系；现在这些全删掉，
+   * 选区由 3D 里的叠加网格把真实三角面点亮（见 createFace 的 setFaceHighlight），
+   * 这里只留几个小手柄用来改范围：中心移动、四边缩放。
+   *
+   * ⚠ 这些手柄只管「影响范围」，不管形状：形状照样由滑杆 / 抓手决定。
+   * 线圈是按 |u| 镜像求值的，所以 uc 只能 ≥ 0；范围越铺越宽时手柄会被钳在
+   * 脸的轮廓或中线上 —— 那种手柄怎么拖都不会动，属于死区，必须藏起来，
+   * 否则用户抓到它的第一反应就是「这个控制坏了」（见 coilPinnedEdges）。 */
+  var COIL_EDGE_ROLE = ['right', 'left', 'top', 'bottom'];
+  /* 范围铺到多宽时中心就不能再横移（uc 会被钳在 0） */
+  var COIL_SLIDE_MAX = 0.95;
+
+  function ensureCoilLayer() {
+    if (!S || !S.refs || !S.refs.canvasHost) return null;
+    var layer = S.refs.canvasHost.querySelector('.l3-coil');
+    if (layer) return layer;
+    layer = document.createElement('div');
+    layer.className = 'l3-coil is-off';
+    layer.id = 'l3Coil';
+    layer.innerHTML =
+      '<button type="button" class="l3-coil-handle is-center" data-coil-edge="center" data-axis="both" ' +
+        'data-tip="影响范围 · 拖动移位，双击复位" ' +
+        'aria-label="拖动移动影响范围，双击复位"><span></span></button>' +
+      COIL_EDGE_ROLE.map(function (role) {
+        var axis = role === 'top' || role === 'bottom' ? 'v' : 'h';
+        var tip = axis === 'v' ? '上下拖动缩放范围' : '左右拖动缩放范围';
+        return '<button type="button" class="l3-coil-handle is-edge" data-coil-edge="' + role +
+          '" data-axis="' + axis + '" data-tip="' + tip +
+          '" aria-label="拖动缩放影响范围"><span></span></button>';
+      }).join('');
+    S.refs.canvasHost.appendChild(layer);
+    layer.querySelectorAll('[data-coil-edge]').forEach(function (handle) {
+      handle.addEventListener('pointerdown', function (event) {
+        startCoilDrag(event, handle.getAttribute('data-coil-edge'));
+      });
+      if (handle.getAttribute('data-coil-edge') === 'center') {
+        handle.addEventListener('dblclick', function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (S && S.gizmoKey) resetCoil(S.gizmoKey);
+        });
+      }
+    });
+    return layer;
+  }
+
+  function hideCoil() {
+    if (!S || !S.refs || !S.refs.canvasHost) return;
+    var layer = S.refs.canvasHost.querySelector('.l3-coil');
+    if (layer) layer.classList.add('is-off');
+  }
+
+  /* 哪些边被钳死在脸上（拖了也不会动）：u/v 都会被 clamp 到 [-1,1] / [0,1]，
+   * 顶到边界的那条边就算继续拖也只是数字在变，手柄和覆层都不动 —— 死区。 */
+  function coilPinnedEdges(coil) {
+    var uc = Number(coil[0]) || 0, ur = Number(coil[1]) || 0;
+    var vc = Number(coil[2]) || 0, vr = Number(coil[3]) || 0;
+    return {
+      right: uc + ur >= 1 - 1e-4,
+      left: uc - ur <= 1e-4,
+      top: vc + vr >= 1 - 1e-4,
+      bottom: vc - vr <= 1e-4
+    };
+  }
+
+  function paintCoil() {
+    if (!S || !S.face || !S.coilOn || !S.gizmoKey || !gizmoVisible()) { hideCoil(); return; }
+    if (regionKindOf(S.gizmoGroup)) { hideCoil(); return; }
+    var layer = ensureCoilLayer();
+    if (!layer) return;
+    var data = S.face.projectCoil(S.gizmoKey);
+    if (!data) { layer.classList.add('is-off'); return; }
+    layer.classList.remove('is-off');
+    var coil = coilOf(S.gizmoKey) || [0, 0, 0, 0];
+    var pinned = coilPinnedEdges(coil);
+    var canSlide = Number(coil[1]) < COIL_SLIDE_MAX;
+    /* 只摆手柄：范围本身已经由模型上的面高亮画出来了 */
+    layer.querySelectorAll('[data-coil-edge]').forEach(function (handle) {
+      var role = handle.getAttribute('data-coil-edge');
+      var pos = role === 'center' ? data.center : data.edges[role];
+      /* 钳死在轮廓 / 中线上的边不摆出来：它拖不动，摆着只会被当成坏了 */
+      if (!pos || !pos.visible || pinned[role]) { handle.style.display = 'none'; return; }
+      handle.style.display = '';
+      handle.style.left = pos.x.toFixed(1) + 'px';
+      handle.style.top = pos.y.toFixed(1) + 'px';
+      if (role === 'center') {
+        /* 范围已经铺满整个宽度时 uc 被钳在 0，横拖是死区：光标与提示改成「只能上下」 */
+        handle.setAttribute('data-axis', canSlide ? 'both' : 'v');
+        handle.setAttribute('data-tip', canSlide
+          ? '影响范围 · 拖动移位，双击复位'
+          : '影响范围 · 只能上下移动，双击复位');
+      }
+    });
+  }
+
+  /* ---------- 面部轮廓线：直接拖脸缘 ----------
+   * 8 个节点 × 左右两侧，落在 u=±1 的真实脸缘上（不是参数锚点）。
+   * 拖哪个方向就按「中线 → 脸缘」那条线段的比例改宽度倍率，
+   * 松手落盘 + 记一帧历史；双击单个节点复位。
+   * 只在「轮廓」分组下出现：眼睛 / 嘴部有自己的区域手柄，混在一起会互相抢指针。 */
+  /* 两侧按「u 的符号」命名，不按屏幕左右：相机在 -z 看 +z，世界 +x 落在屏幕**左**边
+   * （同一个约定见 startCoilDrag：「屏幕右移对应 u 减小」）。用屏幕方位命名的话，
+   * 用户把模型转半圈，代码里的 right 就跑到左边去了。 */
+  var OUTLINE_SIDES = ['pos', 'neg'];
+
+  function outlineShown() {
+    if (!S || !S.face || !S.face.projectOutline) return false;
+    if (S.outlineOn === false) return false;
+    if (S.gizmoGroup !== '轮廓') return false;
+    return gizmoVisible();
+  }
+
+  function ensureOutlineLayer() {
+    if (!S || !S.refs || !S.refs.canvasHost) return null;
+    var layer = S.refs.canvasHost.querySelector('.l3-outline');
+    if (layer) return layer;
+    layer = document.createElement('div');
+    layer.className = 'l3-outline is-off';
+    layer.id = 'l3Outline';
+    layer.innerHTML = OUTLINE_KNOTS.map(function (t, index) {
+      return OUTLINE_SIDES.map(function (side) {
+        /* 复用线圈手柄的视觉（同一个 is-edge 小圆点），免得画布上出现第三套手柄外观 */
+        return '<button type="button" class="l3-coil-handle is-edge l3-out-handle" data-axis="h"' +
+          ' data-out-index="' + index + '" data-out-side="' + side + '"' +
+          ' data-tip="左右拖动改脸缘宽窄，双击复位">' +
+          '<i class="l3-out-tag">×1.00</i></button>';
+      }).join('');
+    }).join('');
+    S.refs.canvasHost.appendChild(layer);
+    layer.querySelectorAll('[data-out-index]').forEach(function (handle) {
+      handle.addEventListener('pointerdown', function (event) {
+        startOutlineDrag(event,
+          Number(handle.getAttribute('data-out-index')),
+          handle.getAttribute('data-out-side'));
+      });
+      handle.addEventListener('dblclick', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        resetOutlineKnot(Number(handle.getAttribute('data-out-index')));
+      });
+    });
+    return layer;
+  }
+
+  function hideOutline() {
+    if (!S || !S.refs || !S.refs.canvasHost) return;
+    var layer = S.refs.canvasHost.querySelector('.l3-outline');
+    if (layer) layer.classList.add('is-off');
+  }
+
+  function paintOutline() {
+    if (!outlineShown()) { hideOutline(); return; }
+    var layer = ensureOutlineLayer();
+    if (!layer) return;
+    var data = S.face.projectOutline();
+    if (!data || !data.length) { layer.classList.add('is-off'); return; }
+    layer.classList.remove('is-off');
+    var byIndex = Object.create(null);
+    data.forEach(function (item) { byIndex[item.index] = item; });
+    layer.querySelectorAll('[data-out-index]').forEach(function (handle) {
+      var item = byIndex[handle.getAttribute('data-out-index')];
+      var far = !item ? null : (handle.getAttribute('data-out-side') === 'neg' ? item.edgeL : item.edge);
+      if (!far || !far.visible || !item.center.visible) {
+        handle.style.display = 'none';
+        return;
+      }
+      handle.style.display = '';
+      /* 位置直接取 projectOutline 给的脸缘点：它已经按「加位移」公式算好了，
+       * 界面再乘一次倍率就会和脸上的形变对不上 */
+      handle.style.left = far.x.toFixed(1) + 'px';
+      handle.style.top = far.y.toFixed(1) + 'px';
+      handle.classList.toggle('is-changed', Math.abs(item.k - 1) >= 0.02);
+      handle.setAttribute('data-out-k', item.k.toFixed(3));
+      var tag = handle.querySelector('.l3-out-tag');
+      if (tag) tag.textContent = '×' + item.k.toFixed(2);
+    });
+  }
+
+  function resetOutlineKnot(index) {
+    if (!S || !S.outline) return;
+    var next = S.outline.slice();
+    next[index] = 1;
+    applyOutline(next, true);
+    commitShapeHistory();
+  }
+
+  function setOutlineOn(on) {
+    if (!S) return;
+    S.outlineOn = !!on;
+    if (S.refs && S.refs.outlineOn) S.refs.outlineOn.checked = S.outlineOn;
+    paintOutline();
+  }
+
+  function startOutlineDrag(event, index, side) {
+    if (!S || !S.face || !S.face.projectOutline) return;
+    if (event.button !== undefined && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    var handle = event.currentTarget;
+    var item = null;
+    S.face.projectOutline().forEach(function (row) { if (row.index === index) item = row; });
+    if (!item) return;
+    var rest = side === 'neg' ? item.baseL : item.base;
+    if (!rest) return;
+    /* 基准长度取「倍率 1 的脸缘」（base）到中线的屏幕距离：形变是加位移，
+     * 每 +1 的倍率正好把脸缘推出去这么远，所以位移 / 基准 = Δk。
+     * 用当前脸缘（edge）当基准的话，拖到一半基准会跟着变长，越拖越钝。 */
+    var ax = rest.x - item.center.x, ay = rest.y - item.center.y;
+    var len = Math.sqrt(ax * ax + ay * ay);
+    if (len < 6) return;
+    var start = (S.outline || defaultOutline()).slice();
+    var drag = {
+      index: index, side: side, x: event.clientX, y: event.clientY,
+      start: start, base: start[index],
+      dirX: ax / len, dirY: ay / len, len: len
+    };
+    S.outlineDrag = drag;
+    handle.classList.add('is-dragging');
+    try { handle.setPointerCapture(event.pointerId); } catch (e) { /* 忽略 */ }
+
+    function move(ev) {
+      if (!S || S.outlineDrag !== drag) return;
+      var dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+      /* 只认沿这条线的分量：斜着拖不会把倍率带偏 */
+      var along = dx * drag.dirX + dy * drag.dirY;
+      var next = drag.start.slice();
+      next[drag.index] = drag.base + along / drag.len;
+      applyOutline(next, false);
+    }
+    function end() {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      handle.classList.remove('is-dragging');
+      if (!S) return;
+      S.outlineDrag = null;
+      saveOutline();
+      commitShapeHistory();
+      paintOutline();
+    }
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+    paintOutline();
+  }
+
+  /* ---------- 眼睛 / 嘴巴：面高亮 + 移动 / 旋转 / 缩放手柄 ----------
+   * 眼睛不再走线性滑杆，改成每只眼一片会被一起带动的面（不跨鼻梁、不被中线切开），
+   * 面上挂三个手柄：中心移动、外侧缩放、上方旋转；嘴巴同一套。
+   * 选区本身由面高亮给出，这里只负责手柄。 */
+  var REGION_HANDLES = ['center', 'scale', 'rotate'];
+
+  function ensureRegionLayer() {
+    if (!S || !S.refs || !S.refs.canvasHost) return null;
+    var layer = S.refs.canvasHost.querySelector('.l3-region');
+    if (layer) return layer;
+    layer = document.createElement('div');
+    layer.className = 'l3-region is-off';
+    layer.id = 'l3Region';
+    S.refs.canvasHost.appendChild(layer);
+    return layer;
+  }
+
+  function hideRegion() {
+    if (!S || !S.refs || !S.refs.canvasHost) return;
+    var layer = S.refs.canvasHost.querySelector('.l3-region');
+    if (layer) layer.classList.add('is-off');
+  }
+
+  function paintRegion(kind) {
+    if (!S || !S.face || !gizmoVisible()) { hideRegion(); return; }
+    var layer = ensureRegionLayer();
+    if (!layer || !S.face.projectRegion) return;
+    var data = S.face.projectRegion(kind);
+    if (!data) { layer.classList.add('is-off'); return; }
+    layer.classList.remove('is-off');
+    var items = data.items;
+    var count = items.length * REGION_HANDLES.length;
+    if (Number(layer.dataset.count) !== count || layer.dataset.kind !== kind) {
+      layer.dataset.count = String(count);
+      layer.dataset.kind = kind;
+      layer.querySelectorAll('.l3-region-handle').forEach(function (n) { n.remove(); });
+      items.forEach(function (item) {
+        REGION_HANDLES.forEach(function (role) {
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'l3-region-handle is-' + role;
+          button.setAttribute('data-region-role', role);
+          button.setAttribute('data-side', String(item.side));
+          button.title = role === 'center' ? '拖动移动（双击复位）' : (role === 'scale' ? '拖动缩放' : '拖动旋转');
+          button.setAttribute('aria-label', button.title);
+          button.addEventListener('pointerdown', function (event) {
+            startRegionDrag(event, kind, role, item.side);
+          });
+          if (role === 'center') {
+            button.addEventListener('dblclick', function (event) {
+              event.preventDefault();
+              event.stopPropagation();
+              resetXform(kind);
+            });
+          }
+          layer.appendChild(button);
+        });
+      });
+    }
+    var buttons = layer.querySelectorAll('.l3-region-handle');
+    var cursor = 0;
+    items.forEach(function (item) {
+      REGION_HANDLES.forEach(function (role) {
+        var button = buttons[cursor++];
+        if (!button) return;
+        var pos = item[role];
+        if (!pos || !pos.visible) { button.style.display = 'none'; return; }
+        button.style.display = '';
+        button.style.left = pos.x.toFixed(1) + 'px';
+        button.style.top = pos.y.toFixed(1) + 'px';
+        var drag = S.regionDrag;
+        button.classList.toggle('is-dragging', !!(drag && drag.kind === kind &&
+          drag.side === item.side && drag.role === role));
+      });
+    });
+  }
+
+  function xformLimit(kind, list) {
+    var lim = XFORM_LIMIT[kind];
+    if (!lim) return XFORM_DEFAULT.slice();
+    return [
+      clamp(Number(list[0]) || 0, -lim.tx, lim.tx),
+      clamp(Number(list[1]) || 0, -lim.ty, lim.ty),
+      clamp(Number(list[2]) || 0, -lim.rot, lim.rot),
+      clamp(Number(list[3]) || 1, lim.scale[0], lim.scale[1])
+    ];
+  }
+
+  function applyXform(kind, values, persist) {
+    if (!S || !S.xform || !S.xform[kind]) return null;
+    var next = xformLimit(kind, values);
+    S.xform[kind] = next;
+    if (S.face) {
+      var payload = {};
+      payload[kind] = next;
+      S.face.setXform(payload);
+    }
+    if (persist !== false) saveXform();
+    if (gizmoVisible()) paintRegion(kind);
+    return next;
+  }
+
+  function resetXform(kind) {
+    if (!S) return;
+    if (kind) {
+      applyXform(kind, XFORM_DEFAULT.slice(), true);
+    } else {
+      applyXform('eye', XFORM_DEFAULT.slice(), false);
+      applyXform('mouth', XFORM_DEFAULT.slice(), false);
+      saveXform();
+    }
+  }
+
+  function startRegionDrag(event, kind, role, side) {
+    if (!S || !S.face || !gizmoVisible()) return;
+    if (event.button !== undefined && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    var data = S.face.projectRegion(kind);
+    if (!data) return;
+    var item = null;
+    data.items.forEach(function (it) { if (it.side === side) item = it; });
+    if (!item) item = data.items[0];
+    /* 手柄坐标是相对画布的，指针是视口坐标：先换算到同一坐标系，否则旋转 / 缩放的半径全错 */
+    var rect = S.refs.canvasHost.getBoundingClientRect();
+    function local(ev) {
+      return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+    }
+    var at = local(event);
+    var center = item.center || { x: 0, y: 0 };
+    var start = S.xform[kind].slice();
+    var drag = {
+      kind: kind,
+      role: role,
+      side: side,
+      x: at.x,
+      y: at.y,
+      start: start,
+      center: center,
+      gain: item.gain,
+      dist: Math.max(1, Math.hypot(at.x - center.x, at.y - center.y)),
+      angle: Math.atan2(-(at.y - center.y), at.x - center.x)
+    };
+    S.regionDrag = drag;
+    var handle = event.currentTarget;
+    handle.classList.add('is-dragging');
+    try { handle.setPointerCapture(event.pointerId); } catch (e) { /* 忽略 */ }
+    syncGizmoHighlight();
+
+    function move(ev) {
+      if (!S || S.regionDrag !== drag) return;
+      var here = local(ev);
+      var next = drag.start.slice();
+      if (role === 'center') {
+        /* 2×2 雅可比求逆：屏幕位移 → tx / ty，手柄因此紧贴指针 */
+        var dx = here.x - drag.x;
+        var dy = here.y - drag.y;
+        var gx = drag.gain.tx, gy = drag.gain.ty;
+        var det = gx[0] * gy[1] - gy[0] * gx[1];
+        if (Math.abs(det) > 1e-6) {
+          next[0] = drag.start[0] + (dx * gy[1] - gy[0] * dy) / det;
+          next[1] = drag.start[1] + (gx[0] * dy - dx * gx[1]) / det;
+        }
+      } else if (role === 'scale') {
+        var dist = Math.hypot(here.x - drag.center.x, here.y - drag.center.y);
+        next[3] = drag.start[3] * (dist / drag.dist);
+      } else {
+        var ang = Math.atan2(-(here.y - drag.center.y), here.x - drag.center.x);
+        var delta = ang - drag.angle;
+        while (delta > Math.PI) delta -= Math.PI * 2;
+        while (delta < -Math.PI) delta += Math.PI * 2;
+        /* 屏幕 x 与模型 x 反向（正对镜头），所以屏幕上的顺时针就是模型里的正角度；
+         * 眼睛左右镜像：两只眼共用一份参数，拖左眼时取反才会同步外翻。 */
+        next[2] = drag.start[2] - delta * (kind === 'eye' ? side : 1);
+      }
+      applyXform(kind, next, false);
+    }
+    function end() {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      handle.classList.remove('is-dragging');
+      if (S) {
+        S.regionDrag = null;
+        saveXform();
+        paintRegion(kind);
+        syncGizmoHighlight();
+      }
+    }
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+    paintRegion(kind);
+  }
+
+  /* 写线圈：uniform、面高亮范围、localStorage 一起更新 */
+  function applyCoil(key, values, persist) {
+    if (!S || !S.coils || !(key in S.coils)) return null;
+    var next = clampCoil(values);
+    S.coils[key] = next;
+    if (S.face) {
+      var payload = {};
+      payload[key] = next;
+      S.face.setCoils(payload);
+      /* 范围一变，亮起来的面片跟着重算：拖手柄时看到的就是最新范围 */
+      if (S.gizmoKey === key) syncGizmoHighlight();
+    }
+    if (persist !== false) saveCoils();
+    paintCoil();
+    return next;
+  }
+
+  function resetCoil(key) {
+    if (!S) return;
+    if (key) {
+      applyCoil(key, DEFAULT_COILS[key], true);
+    } else {
+      Object.keys(DEFAULT_COILS).forEach(function (name) { applyCoil(name, DEFAULT_COILS[name], false); });
+      saveCoils();
+    }
+    syncGizmoHighlight();
+    paintCoil();
+  }
+
+  function setCoilOn(on) {
+    if (!S) return;
+    S.coilOn = !!on;
+    if (S.refs && S.refs.coilOn) S.refs.coilOn.checked = S.coilOn;
+    saveCoils();
+    syncGizmoHighlight();
+    if (gizmoVisible()) paintGizmos();
+    else { hideCoil(); hideRegion(); }
+  }
+
+  function startCoilDrag(event, role) {
+    if (!S || !S.face || !S.gizmoKey) return;
+    if (event.button !== undefined && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    var key = S.gizmoKey;
+    var start = coilOf(key).slice();
+    /* 钳死在轮廓 / 中线上的边不接拖拽：拖了也不会动，别让它吃掉指针 */
+    if (role !== 'center' && coilPinnedEdges(start)[role]) return;
+    var handle = event.currentTarget;
+    var layer = ensureCoilLayer();
+    var centerHandle = layer.querySelector('[data-coil-edge="center"]');
+    var centerX = parseFloat(centerHandle && centerHandle.style.left) || 0;
+    var centerY = parseFloat(centerHandle && centerHandle.style.top) || 0;
+    var dirX = (parseFloat(handle.style.left) || 0) - centerX;
+    var dirY = (parseFloat(handle.style.top) || 0) - centerY;
+    var dirLen = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+    dirX /= dirLen;
+    dirY /= dirLen;
+    var drag = {
+      key: key, role: role, x: event.clientX, y: event.clientY,
+      start: start, dirX: dirX, dirY: dirY
+    };
+    S.coilDrag = drag;
+    handle.classList.add('is-dragging');
+    try { handle.setPointerCapture(event.pointerId); } catch (e) { /* 忽略 */ }
+    syncGizmoHighlight(0.95);
+
+    function move(ev) {
+      if (!S || S.coilDrag !== drag) return;
+      var dx = ev.clientX - drag.x;
+      var dy = ev.clientY - drag.y;
+      var next = drag.start.slice();
+      if (role === 'center') {
+        /* 相机在 -z 看向 +z：屏幕右移对应 u 减小，下移对应 v 减小 */
+        next[0] = drag.start[0] - dx * 0.0040;
+        next[2] = drag.start[2] - dy * 0.0040;
+      } else {
+        var along = dx * drag.dirX + dy * drag.dirY;
+        if (role === 'top' || role === 'bottom') next[3] = drag.start[3] + along * 0.0032;
+        else next[1] = drag.start[1] + along * 0.0042;
+      }
+      applyCoil(drag.key, next, false);
+    }
+    function end() {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      handle.classList.remove('is-dragging');
+      if (S) {
+        S.coilDrag = null;
+        saveCoils();
+        syncGizmoHighlight();
+        paintCoil();
+      }
+    }
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  }
+
+  function startGizmoDrag(event, def) {
+    if (event.button !== undefined && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    var handle = event.currentTarget;
+    var rest = S.face && S.face.projectAnchor ? S.face.projectAnchor(def.key) : null;
+    var drag = {
+      key: def.key,
+      x: event.clientX,
+      y: event.clientY,
+      start: Number(S.shape[def.key]),
+      /* 该参数 +1 时锚点在屏幕上的位移方向；沿它拖 = 顺着力的方向捏，反向 = 往回推 */
+      gain: S.face && S.face.gizmoGain ? S.face.gizmoGain(def.key) : [0, 0],
+      restX: rest ? rest.x : event.clientX,
+      restY: rest ? rest.y : event.clientY,
+      ox: 0,
+      oy: 0
+    };
+    S.gizmoKey = def.key;
+    S.gizmoDrag = drag;
+    handle.classList.add('is-dragging');
+    try { handle.setPointerCapture(event.pointerId); } catch (e) { /* 忽略 */ }
+
+    function move(ev) {
+      if (!S || S.gizmoDrag !== drag) return;
+      var dx = ev.clientX - drag.x;
+      var dy = ev.clientY - drag.y;
+      var gx = drag.gain[0], gy = drag.gain[1];
+      var denom = gx * gx + gy * gy;
+      var units, alongX = 0, alongY = 0;
+      if (denom > 1e-3) {
+        /* 把指针位移投影到变形方向：顺着力的方向拖才放大，反向就缩小 */
+        units = (dx * gx + dy * gy) / denom;
+        alongX = gx * units;
+        alongY = gy * units;
+      } else {
+        units = (dx - dy) * 0.6;
+        alongX = dx;
+        alongY = dy;
+      }
+      /* 垂直于变形方向的余量只做三成橡皮跟随：手感像抓住皮肤被拽，
+       * 但真正写进参数的只有沿力方向的那一段，不会被横着拖乱。 */
+      var rx = dx - alongX;
+      var ry = dy - alongY;
+      drag.ox = alongX + rx * 0.30;
+      drag.oy = alongY + ry * 0.30;
+      setShapeValue(drag.key, drag.start + units, true);
+      paintShapeRow(drag.key);
+      paintGizmos();
+    }
+    function end() {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      handle.classList.remove('is-dragging');
+      if (S) {
+        S.gizmoDrag = null;
+        commitShapeHistory();
+        syncGizmoHighlight();
+        paintGizmos();
+      }
+    }
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+    paintGizmoSelection();
+    syncGizmoHighlight(0.85);
+    paintGizmos();
+  }
+
+  function renderGizmos() {
+    var layer = ensureGizmoLayer();
+    if (!layer) return;
+    layer.innerHTML = '';
+    gizmoDefs().forEach(function (def) {
+      var handle = document.createElement('button');
+      handle.type = 'button';
+      handle.className = 'l3-gizmo';
+      handle.setAttribute('data-gizmo', def.key);
+      handle.setAttribute('aria-label', '在脸上拖动调整' + def.label);
+      handle.title = def.label + ' · 拖动即可修改';
+      var dot = document.createElement('span');
+      dot.className = 'l3-gizmo-dot';
+      var tag = document.createElement('span');
+      tag.className = 'l3-gizmo-tag';
+      tag.textContent = def.label;
+      handle.appendChild(dot);
+      handle.appendChild(tag);
+      handle.addEventListener('pointerenter', function () {
+        S.gizmoKey = def.key;
+        paintGizmoSelection();
+        if (!S.gizmoDrag) syncGizmoHighlight(0.5);
+      });
+      handle.addEventListener('pointerleave', function () {
+        if (!S.gizmoDrag) syncGizmoHighlight();
+      });
+      handle.addEventListener('pointerdown', function (event) { startGizmoDrag(event, def); });
+      layer.appendChild(handle);
+    });
+    paintGizmoSelection();
+    paintGizmos();
+  }
+
+  function updateSculptHint() {
+    if (!S || !S.refs || !S.refs.sculptHint) return;
+    var kind = regionKindOf(S.gizmoGroup);
+    if (kind === 'eye') {
+      S.refs.sculptHint.textContent = '眼睛：模型表面亮起来的这片覆层就是会一起动的范围；拖中心移动、拖外侧圆点缩放、拖上方圆点旋转，双击中心复位。';
+    } else if (kind === 'mouth') {
+      S.refs.sculptHint.textContent = '嘴巴：模型表面亮起来的这片覆层就是会一起动的范围；拖中心移动、拖外侧圆点缩放、拖上方圆点旋转，双击中心复位。';
+    } else {
+      S.refs.sculptHint.textContent = '脸上的圆点＝参数（往外拉变大、往里推变小）；亮起来的覆层＝它真正影响到的范围。'
+        + '脸缘那一圈小点＝轮廓线：左右拖动直接改这一层的脸宽，双击单个点复位；它和脸宽 / 下颌 / 颧骨 / 额头四个滑杆是叠加关系，'
+        + '换预设或复原会把轮廓一起清回原样。';
+    }
+  }
+
+  function setGizmoGroup(name) {
+    if (!S) return;
+    S.gizmoGroup = SHAPE_GROUPS.indexOf(name) >= 0 ? name : SHAPE_GROUPS[0];
+    S.regionDrag = null;
+    var first = gizmoDefs()[0];
+    S.gizmoKey = first ? first.key : null;
+    if (S.refs.gizmoGroups) {
+      S.refs.gizmoGroups.querySelectorAll('[data-gizmo-group]').forEach(function (chip) {
+        chip.classList.toggle('on', chip.getAttribute('data-gizmo-group') === S.gizmoGroup);
+      });
+    }
+    updateSculptHint();
+    renderGizmos();
+    syncGizmoHighlight();
+  }
+
+  function setGizmoOn(on) {
+    if (!S) return;
+    S.gizmoOn = !!on;
+    if (S.refs.gizmoOn) S.refs.gizmoOn.checked = S.gizmoOn;
+    updateGizmoVisibility();
+  }
+
+  function updateGizmoVisibility() {
+    var layer = ensureGizmoLayer();
+    if (!layer) return;
+    var on = gizmoVisible();
+    if (!on) {
+      layer.classList.add('is-off');
+      hideCoil();
+      hideRegion();
+      hideOutline();
+      syncGizmoHighlight();
+      return;
+    }
+    if (regionKindOf(S.gizmoGroup)) {
+      paintGizmos();
+    } else {
+      layer.classList.remove('is-off');
+      if (!layer.querySelector('.l3-gizmo')) renderGizmos();
+      else paintGizmos();
+    }
+    syncGizmoHighlight();
+  }
+
+  /* ---------- 轮廓曲线：拖控制点改脸宽 / 下颌 / 颧骨 / 额头 ---------- */
+  var CURVE_CTRL = [
+    { key: 'jaw', t: 0.14 },
+    { key: 'cheek', t: 0.30 },
+    { key: 'width', t: 0.45 },
+    { key: 'forehead', t: 0.72 }
+  ];
+  var CURVE_BASE = [
+    [0.00, 0.33], [0.06, 0.42], [0.14, 0.60], [0.22, 0.74], [0.29, 0.93], [0.36, 1.00],
+    [0.45, 0.89], [0.55, 0.92], [0.62, 0.90], [0.72, 0.79], [0.82, 0.73], [0.90, 0.71], [1.00, 0.60]
+  ];
+
+  function segValue(t, a, b, va, vb) {
+    var k = clamp((t - a) / Math.max(b - a, 1e-5), 0, 1);
+    return va + (vb - va) * k;
+  }
+
+  function smooth01(a, b, x) {
+    var k = clamp((x - a) / (b - a), 0, 1);
+    return k * k * (3 - 2 * k);
+  }
+
+  /* 与 shader 的 l3V 同分段，曲线坐标要用同一套锚点 */
+  function gizmoV(t) {
+    var v = segValue(t, 0.000, 0.120, 0.00, 0.30);
+    if (t >= 0.120) v = segValue(t, 0.120, 0.215, 0.30, 0.55);
+    if (t >= 0.215) v = segValue(t, 0.215, 0.290, 0.55, 0.66);
+    if (t >= 0.290) v = segValue(t, 0.290, 0.450, 0.66, 0.80);
+    if (t >= 0.450) v = segValue(t, 0.450, 0.600, 0.80, 0.90);
+    if (t >= 0.600) v = segValue(t, 0.600, 0.800, 0.90, 0.97);
+    if (t >= 0.800) v = segValue(t, 0.800, 1.000, 0.97, 1.00);
+    return v;
+  }
+
+  /* 与 shader 的 l3HalfW 同表，线圈采样需要把顶点换算回 u */
+  function gizmoHalfW(t) {
+    var w = segValue(t, 0.000, 0.040, 0.015, 0.030);
+    if (t >= 0.040) w = segValue(t, 0.040, 0.080, 0.030, 0.042);
+    if (t >= 0.080) w = segValue(t, 0.080, 0.120, 0.042, 0.050);
+    if (t >= 0.120) w = segValue(t, 0.120, 0.160, 0.050, 0.056);
+    if (t >= 0.160) w = segValue(t, 0.160, 0.200, 0.056, 0.070);
+    if (t >= 0.200) w = segValue(t, 0.200, 0.250, 0.070, 0.074);
+    if (t >= 0.250) w = segValue(t, 0.250, 0.290, 0.074, 0.080);
+    if (t >= 0.290) w = segValue(t, 0.290, 0.350, 0.080, 0.081);
+    if (t >= 0.350) w = segValue(t, 0.350, 0.450, 0.081, 0.072);
+    if (t >= 0.450) w = segValue(t, 0.450, 0.600, 0.072, 0.077);
+    if (t >= 0.600) w = segValue(t, 0.600, 0.750, 0.077, 0.061);
+    if (t >= 0.750) w = segValue(t, 0.750, 0.900, 0.061, 0.058);
+    if (t >= 0.900) w = segValue(t, 0.900, 1.000, 0.058, 0.050);
+    return w;
+  }
+
+  /* 与 shader 的 l3Coil 同公式，供轮廓曲线取某一点的范围权重 */
+  function coilAt(key, u, v) {
+    var c = S && S.coils ? S.coils[key] : DEFAULT_COILS[key];
+    if (!c) return 0;
+    var du = (Math.abs(u) - c[0]) / Math.max(c[1], 1e-4);
+    var dv = (v - c[2]) / Math.max(c[3], 1e-4);
+    return 1 - smooth01(0.15, 1.10, du * du + dv * dv);
+  }
+
+  function curveBase(t) {
+    for (var i = 1; i < CURVE_BASE.length; i++) {
+      if (t <= CURVE_BASE[i][0]) {
+        return segValue(t, CURVE_BASE[i - 1][0], CURVE_BASE[i][0], CURVE_BASE[i - 1][1], CURVE_BASE[i][1]);
+      }
+    }
+    return CURVE_BASE[CURVE_BASE.length - 1][1];
+  }
+
+  function curveHalf(t) {
+    var shape = S.shape || defaultShape();
+    var v = gizmoV(t);
+    var w = curveBase(t);
+    /* 轮廓曲线取脸缘（|u| = 1），与 shader 里的线圈权重保持一致 */
+    w *= 1 + (shape.width - 50) / 50 * 0.24 * coilAt('width', 1, v);
+    w *= 1 - (shape.jaw - 50) / 50 * 0.18 * coilAt('jaw', 1, v);
+    w *= 1 + (shape.cheek - 50) / 50 * 0.11 * coilAt('cheek', 1, v);
+    w *= 1 + (shape.forehead - 50) / 50 * 0.16 * coilAt('forehead', 1, v);
+    /* 轮廓线是直接乘在脸缘 x 上的，二维曲线必须跟着乘同一条曲线，
+     * 否则「曲线画在 A、脸在 B」——这正是用户看不见效果的原因之一。 */
+    if (S.face && S.face.outlineAt) w *= S.face.outlineAt(t);
+    return w;
+  }
+
+  function curveHalfPx(t) { return 16 + curveHalf(t) * 44; }
+
+  function renderCurve() {
+    var svg = S && S.refs && S.refs.curveSvg;
+    if (!svg) return;
+    var right = [], left = [];
+    for (var i = 0; i <= 24; i++) {
+      var t = i / 24;
+      var half = curveHalfPx(t);
+      var y = 124 - t * 108;
+      right.push((120 + half).toFixed(1) + ',' + y.toFixed(1));
+      left.unshift((120 - half).toFixed(1) + ',' + y.toFixed(1));
+    }
+    var d = 'M120,124 L' + right.join(' L') + ' L120,16 L' + left.join(' L') + ' Z';
+    var html = '<path class="l3-curve-face" d="' + d + '"></path>' +
+      '<line class="l3-curve-axis" x1="120" y1="14" x2="120" y2="126"></line>';
+    CURVE_CTRL.forEach(function (item) {
+      var half = curveHalfPx(item.t);
+      var y = (124 - item.t * 108).toFixed(1);
+      html += '<circle class="l3-curve-pt" data-curve="' + item.key + '" cx="' +
+        (120 + half).toFixed(1) + '" cy="' + y + '" r="5"></circle>' +
+        '<circle class="l3-curve-ghost" cx="' + (120 - half).toFixed(1) + '" cy="' + y + '" r="3"></circle>';
+    });
+    svg.innerHTML = html;
+  }
+
+  function bindCurve(svg) {
+    svg.addEventListener('pointerdown', function (event) {
+      var point = event.target.closest('[data-curve]');
+      if (!point) return;
+      event.preventDefault();
+      var key = point.getAttribute('data-curve');
+      var startX = event.clientX;
+      var start = Number(S.shape[key]);
+      function move(ev) {
+        setShapeValue(key, start + (ev.clientX - startX) * 1.1, true);
+        paintShapeRow(key);
+      }
+      function end() {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', end);
+        commitShapeHistory();
+      }
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', end);
+    });
+  }
+
+  /* ---------- 右侧检查器 ---------- */
+  /* 检查器是常驻右列：对话 / 捏脸 / 纹理共用一个面板，切换页签只换内容，
+   * 画布宽度由 flex 自动重算，编辑面板永远不会盖住预览。 */
+  function syncModeButtons(name) {
+    if (!S || !S.refs || !S.refs.modes) return;
+    S.refs.modes.querySelectorAll('[data-mode]').forEach(function (button) {
+      button.classList.toggle('on', button.getAttribute('data-mode') === name);
+    });
+  }
+
+  function setDrawerTab(tab) {
+    if (!S || !S.refs || !S.refs.drawer) return;
+    var name = tab === 'texture' ? 'texture' : (tab === 'chat' ? 'chat' : 'shape');
+    S.drawerTab = name;
+    S.refs.drawer.setAttribute('data-tab', name);
+    S.refs.drawer.querySelectorAll('.l3-insp-tabs [data-tab]').forEach(function (button) {
+      var on = button.getAttribute('data-tab') === name;
+      button.classList.toggle('on', on);
+      button.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    S.refs.drawer.querySelectorAll('[data-pane]').forEach(function (pane) {
+      pane.hidden = pane.getAttribute('data-pane') !== name;
+    });
+    syncModeButtons(name);
+    updateGizmoVisibility();
+    if (name === 'texture') ensureTextureEditor();
+  }
+
+  function openDrawer(tab) {
+    if (!S || !S.refs || !S.refs.drawer) return;
+    setDrawerTab(tab || S.drawerTab || 'shape');
+  }
+
+  function closeDrawer() {
+    setDrawerTab('chat');
+  }
+
+  /* ---------- 贴图持久化 ---------- */
+  function loadTextureRecord() {
+    var raw = null;
+    try { raw = localStorage.getItem(TEX_KEY); } catch (e) { raw = null; }
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch (e) { return null; }
+  }
+
+  function registerTexBlobRoot() {
+    if (typeof blobRegisterRoot !== 'function') return;
+    try {
+      blobRegisterRoot(function () {
+        var rec = loadTextureRecord();
+        return rec && rec.src ? { tex: rec.src } : null;
+      });
+    } catch (e) { /* 存储不可用 */ }
+  }
+
+  function savedTextureURL() {
+    var rec = loadTextureRecord();
+    if (!rec || !rec.src) return Promise.resolve('');
+    var src = String(rec.src);
+    if (src.indexOf('blob:') === 0) {
+      if (typeof blobResolveAsync !== 'function') return Promise.resolve('');
+      return Promise.resolve(blobResolveAsync(src)).then(function (value) {
+        return (typeof value === 'string' && value.indexOf('data:') === 0) ? value : '';
+      }).catch(function () { return ''; });
+    }
+    return Promise.resolve(src.indexOf('data:') === 0 ? src : '');
+  }
+
+  function persistCurrentTexture() {
+    if (!S || !S.tex || !S.tex.ready) return;
+    var data = '';
+    try { data = S.tex.canvas.toDataURL('image/png'); } catch (e) { return; }
+    var src = data;
+    if (typeof blobPut === 'function' && typeof blobIdFor === 'function' && data.length > 40000) {
+      try {
+        var id = blobIdFor(data);
+        blobPut(id, data);
+        src = 'blob:' + id;
+      } catch (e) { src = data; }
+    }
+    try { localStorage.setItem(TEX_KEY, JSON.stringify({ v: 1, src: src })); } catch (e) { /* 配额不足 */ }
+  }
+
+  /* ---------- 贴图编辑器 ---------- */
+  function hexRgb(hex) {
+    var m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+    if (!m) return [224, 90, 90];
+    var n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+
+  function texSnapshot() {
+    var t = S.tex;
+    try {
+      t.undo.push(t.canvas.toDataURL('image/png'));
+      if (t.undo.length > 8) t.undo.shift();
+      t.redo.length = 0;
+    } catch (e) { /* 画布不可读 */ }
+    paintTexHistory();
+  }
+
+  function paintTexHistory() {
+    if (!S || !S.refs) return;
+    if (S.refs.texUndo) S.refs.texUndo.disabled = !S.tex.undo.length;
+    if (S.refs.texRedo) S.refs.texRedo.disabled = !S.tex.redo.length;
+  }
+
+  function texLoad(url, done) {
+    var image = new Image();
+    image.onload = function () {
+      var t = S.tex;
+      t.ctx.clearRect(0, 0, t.canvas.width, t.canvas.height);
+      t.ctx.drawImage(image, 0, 0, t.canvas.width, t.canvas.height);
+      if (done) done(true);
+    };
+    image.onerror = function () { if (done) done(false); };
+    image.src = url;
+  }
+
+  function texUndo() {
+    var t = S.tex;
+    if (!t.ready || !t.undo.length) return;
+    t.redo.push(t.canvas.toDataURL('image/png'));
+    texLoad(t.undo.pop(), function () { paintTexHistory(); texPreview(); });
+    paintTexHistory();
+  }
+
+  function texRedo() {
+    var t = S.tex;
+    if (!t.ready || !t.redo.length) return;
+    t.undo.push(t.canvas.toDataURL('image/png'));
+    texLoad(t.redo.pop(), function () { paintTexHistory(); texPreview(); });
+    paintTexHistory();
+  }
+
+  function texPoint(event) {
+    var t = S.tex;
+    var rect = t.canvas.getBoundingClientRect();
+    return {
+      x: clamp((event.clientX - rect.left) / (rect.width || 1) * t.canvas.width, 0, t.canvas.width - 1),
+      y: clamp((event.clientY - rect.top) / (rect.height || 1) * t.canvas.height, 0, t.canvas.height - 1)
+    };
+  }
+
+  /* 当前选区：0 表示「全部」（只排除 UV 未使用区域），其余对应 face 遮罩里的分区 id */
+  function texMaskAllows(index) {
+    var ids = S.tex.maskIds;
+    if (!ids) return true;
+    var id = ids[index];
+    if (!id) return false;
+    var want = S.tex.maskId || 0;
+    return !want || id === want;
+  }
+
+  /* 笔刷逐像素穿过选区遮罩：先画到暂存画布，再按 mask 合成回主画布。
+   * 这样落笔边界严格贴住选中部位的 UV，不会蹭到相邻区域。 */
+  function texStamp(x, y) {
+    var t = S.tex, ctx = t.ctx;
+    var radius = Math.max(1, t.size / 2);
+    var width = t.canvas.width, height = t.canvas.height;
+    var x0 = Math.max(0, Math.floor(x - radius - 1));
+    var y0 = Math.max(0, Math.floor(y - radius - 1));
+    var x1 = Math.min(width, Math.ceil(x + radius + 1));
+    var y1 = Math.min(height, Math.ceil(y + radius + 1));
+    var w = x1 - x0, h = y1 - y0;
+    if (w <= 0 || h <= 0) return;
+    if (!t.scratch) {
+      t.scratch = document.createElement('canvas');
+      t.scratch.width = 512;
+      t.scratch.height = 512;
+      t.scratchCtx = t.scratch.getContext('2d', { willReadFrequently: true });
+    }
+    var sctx = t.scratchCtx;
+    var ox = x - x0, oy = y - y0;
+    sctx.clearRect(0, 0, w, h);
+    var rgb = hexRgb(t.color);
+    var erase = t.tool === 'eraser';
+    var gradient = sctx.createRadialGradient(ox, oy, radius * 0.2, ox, oy, radius);
+    if (erase) {
+      gradient.addColorStop(0, 'rgba(0,0,0,1)');
+      gradient.addColorStop(0.7, 'rgba(0,0,0,0.85)');
+      gradient.addColorStop(1, 'rgba(0,0,0,0)');
+    } else {
+      gradient.addColorStop(0, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.95)');
+      gradient.addColorStop(0.7, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.55)');
+      gradient.addColorStop(1, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0)');
+    }
+    sctx.fillStyle = gradient;
+    sctx.beginPath();
+    sctx.arc(ox, oy, radius, 0, Math.PI * 2);
+    sctx.fill();
+    var src = sctx.getImageData(0, 0, w, h).data;
+    var shot = ctx.getImageData(x0, y0, w, h);
+    var dst = shot.data;
+    var ids = t.maskIds;
+    var want = t.maskId || 0;
+    for (var yy = 0; yy < h; yy++) {
+      var row = (y0 + yy) * width + x0;
+      for (var xx = 0; xx < w; xx++) {
+        var maskId = ids ? ids[row + xx] : 1;
+        if (!maskId || (want && maskId !== want)) continue;
+        var p = (yy * w + xx) * 4;
+        var alpha = src[p + 3] / 255;
+        if (alpha <= 0.002) continue;
+        if (erase) {
+          dst[p + 3] = Math.round(dst[p + 3] * (1 - alpha));
+        } else {
+          var da = dst[p + 3] / 255;
+          var outA = alpha + da * (1 - alpha);
+          if (outA <= 0) { dst[p + 3] = 0; continue; }
+          var keep = da * (1 - alpha);
+          dst[p] = Math.round((src[p] * alpha + dst[p] * keep) / outA);
+          dst[p + 1] = Math.round((src[p + 1] * alpha + dst[p + 1] * keep) / outA);
+          dst[p + 2] = Math.round((src[p + 2] * alpha + dst[p + 2] * keep) / outA);
+          dst[p + 3] = Math.round(outA * 255);
+        }
+      }
+    }
+    ctx.putImageData(shot, x0, y0);
+  }
+
+  function texLine(from, to) {
+    var t = S.tex;
+    var dx = to.x - from.x, dy = to.y - from.y;
+    var length = Math.hypot(dx, dy);
+    var step = Math.max(1, t.size * 0.18);
+    var count = Math.max(1, Math.ceil(length / step));
+    for (var i = 1; i <= count; i++) {
+      texStamp(from.x + dx * (i / count), from.y + dy * (i / count));
+    }
+  }
+
+  function texPick(point) {
+    var t = S.tex;
+    var data = t.ctx.getImageData(Math.floor(point.x), Math.floor(point.y), 1, 1).data;
+    var hex = '#' + [data[0], data[1], data[2]].map(function (v) {
+      return ('0' + clamp(v, 0, 255).toString(16)).slice(-2);
+    }).join('');
+    t.color = hex;
+    if (S.refs.texColor) S.refs.texColor.value = hex;
+    if (S.refs.repFrom) S.refs.repFrom.value = hex;
+    return hex;
+  }
+
+  function texFlood(sx, sy) {
+    var t = S.tex, canvas = t.canvas, ctx = t.ctx;
+    var width = canvas.width, height = canvas.height;
+    sx = Math.floor(sx); sy = Math.floor(sy);
+    var image = ctx.getImageData(0, 0, width, height);
+    var data = image.data;
+    var at = (sy * width + sx) * 4;
+    var sr = data[at], sg = data[at + 1], sb = data[at + 2], sa = data[at + 3];
+    var rgb = hexRgb(t.color);
+    if (Math.abs(sr - rgb[0]) + Math.abs(sg - rgb[1]) + Math.abs(sb - rgb[2]) < 6 && sa === 255) return;
+    var tolerance = t.tolerance;
+    var seen = new Uint8Array(width * height);
+    var stack = new Int32Array(width * height);
+    var top = 0;
+    var start = sy * width + sx;
+    if (!texMaskAllows(start)) return;
+    stack[top++] = start;
+    seen[start] = 1;
+    while (top > 0) {
+      var index = stack[--top];
+      if (!texMaskAllows(index)) continue;
+      var pixel = index * 4;
+      if (Math.abs(data[pixel] - sr) > tolerance || Math.abs(data[pixel + 1] - sg) > tolerance ||
+          Math.abs(data[pixel + 2] - sb) > tolerance || Math.abs(data[pixel + 3] - sa) > tolerance) continue;
+      data[pixel] = rgb[0];
+      data[pixel + 1] = rgb[1];
+      data[pixel + 2] = rgb[2];
+      data[pixel + 3] = 255;
+      var x = index % width, y = (index / width) | 0;
+      if (x > 0 && !seen[index - 1]) { seen[index - 1] = 1; stack[top++] = index - 1; }
+      if (x < width - 1 && !seen[index + 1]) { seen[index + 1] = 1; stack[top++] = index + 1; }
+      if (y > 0 && !seen[index - width]) { seen[index - width] = 1; stack[top++] = index - width; }
+      if (y < height - 1 && !seen[index + width]) { seen[index + width] = 1; stack[top++] = index + width; }
+    }
+    ctx.putImageData(image, 0, 0);
+  }
+
+  function texAdjust() {
+    var t = S.tex;
+    var brightness = Number(S.refs.adjBright.value) * 2.55;
+    var contrast = Number(S.refs.adjContrast.value);
+    var saturation = Number(S.refs.adjSat.value) / 100;
+    if (!brightness && !contrast && !saturation) return;
+    texSnapshot();
+    var image = t.ctx.getImageData(0, 0, t.canvas.width, t.canvas.height);
+    var data = image.data;
+    var factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+    for (var i = 0; i < data.length; i += 4) {
+      if (!data[i + 3]) continue;
+      if (!texMaskAllows(i >> 2)) continue;
+      var r = (data[i] + brightness - 128) * factor + 128;
+      var g = (data[i + 1] + brightness - 128) * factor + 128;
+      var b = (data[i + 2] + brightness - 128) * factor + 128;
+      var lum = r * 0.299 + g * 0.587 + b * 0.114;
+      data[i] = clamp(lum + (r - lum) * (1 + saturation), 0, 255);
+      data[i + 1] = clamp(lum + (g - lum) * (1 + saturation), 0, 255);
+      data[i + 2] = clamp(lum + (b - lum) * (1 + saturation), 0, 255);
+    }
+    t.ctx.putImageData(image, 0, 0);
+    S.refs.adjBright.value = 0;
+    S.refs.adjContrast.value = 0;
+    S.refs.adjSat.value = 0;
+    texPreview();
+  }
+
+  function texReplace() {
+    var t = S.tex;
+    var from = hexRgb(S.refs.repFrom.value);
+    var to = hexRgb(S.refs.repTo.value);
+    var tolerance = t.tolerance;
+    texSnapshot();
+    var image = t.ctx.getImageData(0, 0, t.canvas.width, t.canvas.height);
+    var data = image.data;
+    for (var i = 0; i < data.length; i += 4) {
+      if (!data[i + 3]) continue;
+      if (!texMaskAllows(i >> 2)) continue;
+      if (Math.abs(data[i] - from[0]) <= tolerance &&
+          Math.abs(data[i + 1] - from[1]) <= tolerance &&
+          Math.abs(data[i + 2] - from[2]) <= tolerance) {
+        data[i] = to[0];
+        data[i + 1] = to[1];
+        data[i + 2] = to[2];
+      }
+    }
+    t.ctx.putImageData(image, 0, 0);
+    texPreview();
+  }
+
+  function texFit(force) {
+    var t = S.tex;
+    var view = S.refs.texView;
+    if (!t.ready || !view) return;
+    if (force) {
+      var available = Math.max(160, view.clientWidth - 20);
+      t.zoom = available / t.canvas.width;
+    }
+    texApplyZoom();
+  }
+
+  function texApplyZoom() {
+    var t = S.tex;
+    if (!t.ready) return;
+    var size = Math.max(80, Math.round(t.canvas.width * t.zoom));
+    t.canvas.style.width = size + 'px';
+    t.canvas.style.height = size + 'px';
+  }
+
+  /* ---------- 分区选择 ---------- */
+
+  function texRegionDef(key) {
+    var list = S.tex.regionList || [];
+    for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
+    return list[0] || null;
+  }
+
+  function paintTexRegions() {
+    var refs = S.refs;
+    if (!refs || !refs.texRegions) return;
+    refs.texRegions.innerHTML = '';
+    (S.tex.regionList || []).forEach(function (item) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'l3-regionchip' + (item.key === S.tex.regionKey ? ' on' : '');
+      button.setAttribute('data-region', item.key);
+      button.textContent = item.label;
+      button.title = item.pixels
+        ? item.label + ' · ' + item.pixels.toLocaleString() + ' UV 像素'
+        : '整张 UV 图，只允许画在模型已映射的区域';
+      refs.texRegions.appendChild(button);
+    });
+    if (refs.texRegionHint) {
+      var def = texRegionDef(S.tex.regionKey);
+      refs.texRegionHint.textContent = !def || def.key === 'all'
+        ? '全部区域：只在模型已映射的 UV 上落笔，未使用的贴图空白不会沾色。'
+        : '当前选区「' + def.label + '」：只有该部位对应的 UV 接受笔迹，其余位置自动忽略。';
+    }
+  }
+
+  /* 圈外压暗：选中区域保持原图，其余 UV 盖一层浅色纱，避免看错位置 */
+  function texBuildVeil() {
+    var t = S.tex;
+    var veil = S.refs && S.refs.texVeil;
+    if (!veil || !t.ready) return;
+    var vctx = veil.getContext('2d');
+    vctx.clearRect(0, 0, veil.width, veil.height);
+    if (!t.maskIds) return;
+    if (veil.width !== t.canvas.width || veil.height !== t.canvas.height) {
+      veil.width = t.canvas.width;
+      veil.height = t.canvas.height;
+    }
+    if (!t.maskCanvas) {
+      t.maskCanvas = document.createElement('canvas');
+      t.maskCanvas.width = t.canvas.width;
+      t.maskCanvas.height = t.canvas.height;
+    }
+    var mctx = t.maskCanvas.getContext('2d');
+    var image = mctx.createImageData(t.maskCanvas.width, t.maskCanvas.height);
+    var data = image.data;
+    var ids = t.maskIds;
+    var want = t.maskId || 0;
+    for (var i = 0; i < ids.length; i++) {
+      var id = ids[i];
+      if (!id || (want && id !== want)) continue;
+      var p = i * 4;
+      data[p] = 255;
+      data[p + 1] = 255;
+      data[p + 2] = 255;
+      data[p + 3] = 255;
+    }
+    mctx.putImageData(image, 0, 0);
+    vctx.fillStyle = 'rgba(244,247,251,0.78)';
+    vctx.fillRect(0, 0, veil.width, veil.height);
+    vctx.globalCompositeOperation = 'destination-out';
+    vctx.drawImage(t.maskCanvas, 0, 0, veil.width, veil.height);
+    vctx.globalCompositeOperation = 'source-over';
+  }
+
+  function texFitRegion(bbox) {
+    var t = S.tex;
+    var view = S.refs && S.refs.texView;
+    if (!t.ready || !view || !bbox) return;
+    var u0 = Math.max(0, bbox[0] - 0.015);
+    var v0 = Math.max(0, bbox[1] - 0.015);
+    var u1 = Math.min(1, bbox[2] + 0.015);
+    var v1 = Math.min(1, bbox[3] + 0.015);
+    var bw = Math.max(1, (u1 - u0) * t.canvas.width);
+    var bh = Math.max(1, (v1 - v0) * t.canvas.height);
+    var availW = Math.max(120, view.clientWidth - 24);
+    var availH = Math.max(120, view.clientHeight - 24);
+    t.zoom = clamp(Math.min(availW / bw, availH / bh), 0.12, 4);
+    texApplyZoom();
+    var cx = (u0 + u1) / 2 * t.canvas.width * t.zoom;
+    var cy = (1 - (v0 + v1) / 2) * t.canvas.height * t.zoom;
+    view.scrollLeft = cx - view.clientWidth / 2;
+    view.scrollTop = cy - view.clientHeight / 2;
+  }
+
+  function texSetRegion(key, fit) {
+    var t = S.tex;
+    var def = texRegionDef(key) || texRegionDef('all');
+    t.regionKey = def ? def.key : 'all';
+    t.maskId = def ? def.id : 0;
+    paintTexRegions();
+    texBuildVeil();
+    if (fit) {
+      if (def && def.bbox) texFitRegion(def.bbox);
+      else texFit(true);
+    }
+  }
+
+  /* 编辑中的实时预览：只换材质贴图，不写持久化（应用按钮才存） */
+  function texPreview() {
+    if (!S || !S.face || !S.tex.ready) return;
+    try { S.face.applyCanvasTexture(S.tex.canvas); } catch (e) { /* 预览失败不影响继续编辑 */ }
+  }
+
+  function texZoomAt(clientX, clientY, factor) {
+    var t = S.tex;
+    var view = S.refs.texView;
+    if (!view) return;
+    var before = t.canvas.getBoundingClientRect();
+    var rx = before.width ? (clientX - before.left) / before.width : 0.5;
+    var ry = before.height ? (clientY - before.top) / before.height : 0.5;
+    t.zoom = clamp(t.zoom * factor, 0.12, 4);
+    texApplyZoom();
+    var after = t.canvas.getBoundingClientRect();
+    view.scrollLeft += (after.left + rx * after.width) - clientX;
+    view.scrollTop += (after.top + ry * after.height) - clientY;
+  }
+
+  function bindTextureEditor() {
+    var t = S.tex;
+    var canvas = t.canvas;
+    var view = S.refs.texView;
+    canvas.addEventListener('contextmenu', function (event) { event.preventDefault(); });
+    canvas.addEventListener('pointerdown', function (event) {
+      if (event.button === 2) {
+        t.pan = { x: event.clientX, y: event.clientY, left: view.scrollLeft, top: view.scrollTop };
+        try { canvas.setPointerCapture(event.pointerId); } catch (e) { /* 忽略 */ }
+        return;
+      }
+      if (event.button !== 0) return;
+      var point = texPoint(event);
+      if (t.tool === 'pick' || event.altKey) { texPick(point); return; }
+      var index = Math.floor(point.y) * t.canvas.width + Math.floor(point.x);
+      if (!texMaskAllows(index)) return;
+      if (t.tool === 'bucket') {
+        texSnapshot();
+        texFlood(point.x, point.y);
+        texPreview();
+        return;
+      }
+      texSnapshot();
+      t.drawing = true;
+      t.last = point;
+      try { canvas.setPointerCapture(event.pointerId); } catch (e) { /* 忽略 */ }
+      texStamp(point.x, point.y);
+    });
+    canvas.addEventListener('pointermove', function (event) {
+      if (t.pan) {
+        view.scrollLeft = t.pan.left - (event.clientX - t.pan.x);
+        view.scrollTop = t.pan.top - (event.clientY - t.pan.y);
+        return;
+      }
+      if (!t.drawing) return;
+      var point = texPoint(event);
+      if (t.last) texLine(t.last, point);
+      t.last = point;
+    });
+    function stop() {
+      if (t.drawing) texPreview();
+      t.pan = null;
+      t.drawing = false;
+      t.last = null;
+    }
+    canvas.addEventListener('pointerup', stop);
+    canvas.addEventListener('pointercancel', stop);
+    view.addEventListener('wheel', function (event) {
+      if (!t.ready) return;
+      event.preventDefault();
+      texZoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0015));
+    }, { passive: false });
+  }
+
+  function ensureTextureEditor() {
+    if (!S || !S.face || !S.refs || !S.refs.texCanvas) return;
+    var t = S.tex;
+    if (t.ready) {
+      if (t.regionKey && t.regionKey !== 'all') texSetRegion(t.regionKey, true);
+      else texFit(false);
+      return;
+    }
+    t.canvas = S.refs.texCanvas;
+    t.ctx = t.canvas.getContext('2d', { willReadFrequently: true });
+    var mask = S.face.regionMask ? S.face.regionMask() : null;
+    if (mask && mask.ids && mask.ids.length === t.canvas.width * t.canvas.height) {
+      t.maskIds = mask.ids;
+      t.regionList = [{ key: 'all', label: '全部', id: 0 }].concat(mask.list);
+    } else {
+      t.maskIds = null;
+      t.regionList = [{ key: 'all', label: '全部', id: 0 }];
+    }
+    t.regionKey = 'all';
+    t.maskId = 0;
+    var image = S.face.textureImage();
+    if (image) t.ctx.drawImage(image, 0, 0, t.canvas.width, t.canvas.height);
+    t.ready = true;
+    t.zoom = 1;
+    bindTextureEditor();
+    paintTexRegions();
+    texBuildVeil();
+    texFit(true);
+    paintTexHistory();
+  }
+
+  function texApply() {
+    if (!S || !S.face || !S.tex.ready) return false;
+    S.face.applyCanvasTexture(S.tex.canvas);
+    persistCurrentTexture();
+    return true;
+  }
+
+  function texExport() {
+    if (!S || !S.tex.ready) return;
+    var link = document.createElement('a');
+    link.download = '流明贴图.png';
+    link.href = S.tex.canvas.toDataURL('image/png');
+    link.click();
+  }
+
+  function texReset() {
+    if (!S || !S.face || !S.tex.ready) return;
+    texSnapshot();
+    texLoad(S.face.originalTextureURL(), texPreview);
+  }
+
+  function bindTexturePanel() {
+    if (!S || !S.refs || S.texPanelBound) return;
+    var refs = S.refs;
+    S.texPanelBound = true;
+    refs.drawer.querySelectorAll('[data-tool]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        S.tex.tool = button.getAttribute('data-tool');
+        refs.drawer.querySelectorAll('[data-tool]').forEach(function (item) {
+          item.classList.toggle('on', item === button);
+        });
+      });
+    });
+    if (refs.texSize) refs.texSize.addEventListener('input', function () {
+      S.tex.size = Number(refs.texSize.value);
+      if (refs.texSizeVal) refs.texSizeVal.textContent = refs.texSize.value;
+    });
+    if (refs.texColor) refs.texColor.addEventListener('input', function () {
+      S.tex.color = refs.texColor.value;
+    });
+    if (refs.texTol) refs.texTol.addEventListener('input', function () {
+      S.tex.tolerance = Number(refs.texTol.value);
+    });
+    if (refs.texRegions) {
+      refs.texRegions.addEventListener('click', function (event) {
+        var chip = event.target.closest('[data-region]');
+        if (chip) texSetRegion(chip.getAttribute('data-region'), true);
+      });
+    }
+    if (refs.texUndo) refs.texUndo.addEventListener('click', texUndo);
+    if (refs.texRedo) refs.texRedo.addEventListener('click', texRedo);
+    if (refs.texReset) refs.texReset.addEventListener('click', texReset);
+    if (refs.texExport) refs.texExport.addEventListener('click', texExport);
+    if (refs.texApply) refs.texApply.addEventListener('click', texApply);
+    if (refs.adjApply) refs.adjApply.addEventListener('click', texAdjust);
+    if (refs.repRun) refs.repRun.addEventListener('click', texReplace);
+  }
+
+  /* ---------- App 状态 ---------- */
+  function loadStore() {
+    var out = { msgs: [], voiceOn: true, style: '', voice: '' };
+    var raw = null;
+    try { raw = localStorage.getItem(STORE_KEY); } catch (e) { raw = null; }
+    if (!raw) return out;
+    var data = null;
+    try { data = JSON.parse(raw); } catch (e) { return out; }
+    if (!data || (data.v !== 1 && data.v !== STORE_VER)) return out;
+    if (Array.isArray(data.msgs)) out.msgs = data.msgs.filter(function (m) {
+      return m && (m.r === 'u' || m.r === 'a') && typeof m.t === 'string';
+    }).slice(-60);
+    if (typeof data.voiceOn === 'boolean') out.voiceOn = data.voiceOn;
+    if (typeof data.style === 'string') out.style = data.style;
+    if (typeof data.voice === 'string') out.voice = data.voice;
+    return out;
+  }
+
+  function saveStore() {
+    if (!S) return;
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({
+        v: STORE_VER,
+        msgs: S.msgs.slice(-60),
+        voiceOn: S.voiceOn,
+        style: S.styleLabel || '',
+        voice: currentVoice()
+      }));
+    } catch (e) { /* 无痕模式忽略 */ }
+  }
+
+  /* ---------- 语音 ---------- */
+  function currentVoice() {
+    try { return String(localStorage.getItem('hf_ttsVoice') || ''); } catch (e) { return ''; }
+  }
+  function setCurrentVoice(value) {
+    try { localStorage.setItem('hf_ttsVoice', value || ''); } catch (e) { /* 忽略 */ }
+  }
+  function ttsApi() {
+    var bridge = window.ttsBridge;
+    return (bridge && typeof bridge.catalog === 'function') ? bridge : null;
+  }
+  function voiceSpec() {
+    var api = ttsApi();
+    if (api) {
+      try { return api.spec(currentVoice()); } catch (e) { return null; }
+    }
+    return null;
+  }
+  function systemVoices() {
+    try { return window.speechSynthesis ? (window.speechSynthesis.getVoices() || []) : []; }
+    catch (e) { return []; }
+  }
+  function pickSystemVoice() {
+    var list = systemVoices();
+    if (!list.length) return null;
+    var zh = list.filter(function (v) {
+      return /zh|chinese|中文|普通话/i.test((v.lang || '') + ' ' + (v.name || ''));
+    });
+    return zh.filter(function (v) {
+      return /female|xiaoxiao|huihui|tingting|yaoyao|女/i.test(v.name || '');
+    })[0] || zh[0] || null;
+  }
+
+  function stopSpeech() {
+    if (!S) return;
+    S.mouth.ttsUntil = 0;
+    if (S.audio) {
+      try { S.audio.pause(); } catch (e) { /* 已结束 */ }
+      S.audio = null;
+    }
+    try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) { /* 无引擎 */ }
+  }
+
+  function speakSystem(text) {
+    if (!window.speechSynthesis || typeof window.SpeechSynthesisUtterance !== 'function') return;
+    try {
+      window.speechSynthesis.cancel();
+      var utterance = new window.SpeechSynthesisUtterance(text);
+      utterance.lang = 'zh-CN';
+      utterance.rate = 1.02;
+      utterance.pitch = 1.08;
+      var voice = pickSystemVoice();
+      if (voice) utterance.voice = voice;
+      S.mouth.ttsUntil = S.clock + Math.min(30, Math.max(1.4, text.length / 5.4));
+      utterance.onboundary = function (event) {
+        if (!S) return;
+        var len = (event && event.charLength) || 2;
+        S.mouth.pulse = clamp(0.4 + len * 0.12 + Math.random() * 0.25, 0, 1);
+        S.mouth.pulseUntil = S.clock + 0.16;
+        S.mouth.ttsUntil = Math.max(S.mouth.ttsUntil, S.clock + 0.6);
+      };
+      utterance.onend = function () {
+        if (S) S.mouth.ttsUntil = Math.min(S.mouth.ttsUntil, S.clock + 0.25);
+      };
+      utterance.onerror = function () { if (S) S.mouth.ttsUntil = 0; };
+      window.speechSynthesis.speak(utterance);
+    } catch (e) { S.mouth.ttsUntil = 0; }
+  }
+
+  function speakLocal(text, spec) {
+    if (!spec || typeof fetch !== 'function' || typeof rtBase !== 'function' || typeof Audio !== 'function') return false;
+    var base = rtBase();
+    if (!base) return false;
+    var payload = { text: text, engine: spec.engine, rate: 1.02 };
+    if (spec.engine === 'kokoro') payload.sid = spec.sid;
+    else if (spec.engine === 'piper') payload.voice = spec.voice;
+    S.mouth.ttsUntil = S.clock + Math.min(30, Math.max(1.4, text.length / 5.4));
+    fetch(base + '/tts/speak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.json().then(function (json) {
+          throw new Error((json && json.error) || ('HTTP ' + res.status));
+        });
+      }
+      return res.blob();
+    }).then(function (blob) {
+      if (!S || !blob || !blob.size) throw new Error('没有返回音频');
+      var url = URL.createObjectURL(blob);
+      var audio = new Audio(url);
+      S.audio = audio;
+      audio.onended = audio.onerror = function () {
+        if (!S) return;
+        S.mouth.ttsUntil = Math.min(S.mouth.ttsUntil, S.clock + 0.25);
+        S.audio = null;
+        try { URL.revokeObjectURL(url); } catch (e) { /* 已释放 */ }
+      };
+      var playing = audio.play();
+      if (playing && playing.catch) playing.catch(function () { if (S) S.mouth.ttsUntil = 0; });
+    }).catch(function () {
+      if (S) speakSystem(text);
+    });
+    return true;
+  }
+
+  function speakAloud(text, force) {
+    if (!S || (!S.voiceOn && !force) || !text) return;
+    var clean = String(text).trim();
+    if (!clean) return;
+    try {
+      stopSpeech();
+      var spec = voiceSpec();
+      if (spec && speakLocal(clean, spec)) return;
+      speakSystem(clean);
+    } catch (e) { S.mouth.ttsUntil = 0; }
+  }
+
+  /* ---------- 口型 / 眨眼 ---------- */
+  function speechFeed(text) {
+    if (!S || !text) return;
+    S.mouth.queue += String(text);
+    if (S.mouth.queue.length > 120) S.mouth.queue = S.mouth.queue.slice(-120);
+  }
+
+  function pickViseme(ch) {
+    if (/[\s，。！？、,.!?…~～—：；]/.test(ch)) return 'sil';
+    return MOUTH_CHANNELS[ch.charCodeAt(0) % MOUTH_CHANNELS.length];
+  }
+
+  function tickMouth(dt) {
+    var mouth = S.mouth;
+    if (mouth.queue) {
+      mouth.acc += dt * 15.5;
+      while (mouth.acc >= 1 && mouth.queue.length) {
+        mouth.acc -= 1;
+        var ch = mouth.queue.charAt(0);
+        mouth.queue = mouth.queue.slice(1);
+        mouth.viseme = pickViseme(ch);
+        mouth.pulse = mouth.viseme === 'sil' ? 0 : rand(0.45, 0.95);
+        mouth.pulseUntil = S.clock + 0.12;
+      }
+    }
+    if (S.clock < mouth.ttsUntil && S.clock >= (mouth.ttsTick || 0)) {
+      mouth.pulse = rand(0.45, 0.9);
+      mouth.pulseUntil = S.clock + 0.12;
+      mouth.ttsTick = S.clock + 0.12;
+    }
+    if (S.clock >= mouth.ttsUntil) mouth.ttsTick = 0;
+    var target = S.clock < mouth.pulseUntil ? mouth.pulse : 0;
+    mouth.open += (target - mouth.open) * Math.min(1, dt * 20);
+    if (mouth.open < 0.004) mouth.open = 0;
+  }
+
+  function tickBlink(dt) {
+    var blink = S.blink;
+    blink.t += dt;
+    if (blink.t < blink.next) { blink.value = 0; return; }
+    blink.phase += dt;
+    var p = blink.phase;
+    if (p < 0.09) blink.value = p / 0.09;
+    else if (p < 0.14) blink.value = 1;
+    else if (p < 0.28) blink.value = 1 - (p - 0.14) / 0.14;
+    else {
+      blink.phase = 0;
+      blink.t = 0;
+      blink.value = 0;
+      blink.next = Math.random() < 0.18 ? 0.3 : rand(2.2, 5.2);
+    }
+    S.browPulse.L = Math.max(0, S.browPulse.L - dt / 1.4);
+    S.browPulse.R = Math.max(0, S.browPulse.R - dt / 1.4);
+  }
+
+  function composeShapes() {
+    var shapes = S.player ? S.player.sample() : {};
+    if (shapes === undefined || shapes === null) shapes = {};
+    if (S.browPulse.L > 0.01) {
+      shapes.eyebrow_up_L = Math.max(shapes.eyebrow_up_L || 0, 100 * S.browPulse.L);
+    }
+    if (S.browPulse.R > 0.01) {
+      shapes.eyebrow_up_R = Math.max(shapes.eyebrow_up_R || 0, 100 * S.browPulse.R);
+    }
+    var open = S.mouth.open;
+    if (open > 0.012) {
+      shapes['vrc.v_sil'] = (1 - open) * 12;
+      MOUTH_CHANNELS.forEach(function (name) {
+        shapes['vrc.v_' + name] = name === S.mouth.viseme ? open * 100 : 0;
+      });
+    }
+    shapes.eye_close = Math.max(shapes.eye_close || 0, S.blink.value * 100);
+    return shapes;
+  }
+
+  /* ---------- 表情 ---------- */
+  function styleForLabel(label) {
+    if (!S || !S.player) return null;
+    var key = String(label || '').replace(/\s+/g, '');
+    if (!key) return null;
+    var styles = S.player.styles;
+    var hit = styles.filter(function (style) { return style.label === key; });
+    if (!hit.length && ALIAS[key]) {
+      var mapped = ALIAS[key];
+      hit = styles.filter(function (style) { return style.label === mapped; });
+    }
+    if (!hit.length) {
+      hit = styles.filter(function (style) {
+        return style.label.indexOf(key) >= 0 || key.indexOf(style.label) >= 0;
+      });
+    }
+    return hit[0] || null;
+  }
+
+  function setExprChip(text) {
+    if (S && S.refs.expr) S.refs.expr.textContent = text || '自然放松';
+  }
+
+  function playLabel(label) {
+    if (!S || !S.player) return;
+    var key = String(label || '').replace(/\s+/g, '');
+    if (key.indexOf('右眉') >= 0) {
+      S.browPulse.R = 1;
+      setExprChip('右眉上挑');
+      S.styleLabel = '右眉上挑';
+      return;
+    }
+    if (key.indexOf('左眉') >= 0) {
+      S.browPulse.L = 1;
+      setExprChip('左眉上挑');
+      S.styleLabel = '左眉上挑';
+      return;
+    }
+    var style = styleForLabel(key);
+    if (!style) return;
+    S.player.choose(style);
+    S.styleLabel = style.label;
+    setExprChip(style.label);
+    if (S.refs.style) S.refs.style.value = style.label;
+    saveStore();
+  }
+
+  /* ---------- 对话 ---------- */
+  function buildSystem() {
+    var labels = [];
+    if (S && S.player) {
+      S.player.styles.forEach(function (style) {
+        if (labels.indexOf(style.label) < 0) labels.push(style.label);
+      });
+    }
+    return [
+      '你叫「流明」，是一个有三维脸部模型的虚拟角色。用户能看见你的表情，你能听见、也能用语音回答。',
+      '规则一：每次回复必须以一个中文圆括号标签开头，标签只能从下面这些里选，不要自创：',
+      labels.join('、') + '。',
+      '规则二：标签只用来驱动表情，不要在台词里解释它，也不要说“我露出微笑”这类描述。',
+      '规则三：台词会被直接朗读，不要用 Markdown、列表或颜文字；语气自然，1 到 3 句，不超过 80 个汉字。',
+      '示例：（微笑）早上好，今天也一起加油吧。'
+    ].join('\n');
+  }
+
+  function history() {
+    return S.msgs.slice(-12).map(function (m) {
+      return { role: m.r === 'u' ? 'user' : 'assistant', content: m.t };
+    });
+  }
+
+  function addMsg(role, text) {
+    var el = document.createElement('div');
+    el.className = 'l3-msg ' + role;
+    el.textContent = text;
+    S.refs.msgs.appendChild(el);
+    S.refs.msgs.scrollTop = S.refs.msgs.scrollHeight;
+    return el;
+  }
+
+  function scrollMsgs() {
+    if (S && S.refs.msgs) S.refs.msgs.scrollTop = S.refs.msgs.scrollHeight;
+  }
+
+  function renderMsgs() {
+    S.refs.msgs.innerHTML = '';
+    if (!S.msgs.length) {
+      addMsg('a', '你好，我是流明。说点什么，我会用表情和声音回应你。');
+      return;
+    }
+    S.msgs.forEach(function (m) { addMsg(m.r, m.t); });
+  }
+
+  function growInput() {
+    var input = S.refs.input;
+    input.style.height = 'auto';
+    input.style.height = Math.min(108, input.scrollHeight) + 'px';
+  }
+
+  function setBusy(busy) {
+    S.busy = busy;
+    S.refs.send.disabled = busy;
+    S.refs.send.textContent = busy ? '生成中' : '发送';
+  }
+
+  function finishAnswer(raw, bubble) {
+    var text = stripTags(raw) || '……';
+    bubble.classList.remove('typing');
+    bubble.textContent = text;
+    S.msgs.push({ r: 'a', t: text });
+    if (S.msgs.length > 60) S.msgs = S.msgs.slice(-60);
+    saveStore();
+    speakAloud(text);
+    scrollMsgs();
+  }
+
+  function send() {
+    if (!S || S.busy) return;
+    var text = S.refs.input.value.trim();
+    if (!text) { S.refs.input.focus(); return; }
+    S.refs.input.value = '';
+    growInput();
+    addMsg('u', text);
+    S.msgs.push({ r: 'u', t: text });
+    saveStore();
+
+    stopSpeech();
+    S.player.returnToNeutral();
+    S.browPulse.L = 0;
+    S.browPulse.R = 0;
+
+    setBusy(true);
+    var bubble = addMsg('a', '…');
+    bubble.classList.add('typing');
+    var acc = '';
+    var fed = '';
+    var lastTag = '';
+    var controller = new AbortController();
+    S.abort = controller;
+
+    if (typeof llmStreamRequest !== 'function') {
+      setBusy(false);
+      bubble.classList.remove('typing');
+      bubble.className = 'l3-msg s';
+      bubble.textContent = '语言模型模块没有加载（llmStreamRequest 不可用）。';
+      return;
+    }
+
+    llmStreamRequest(buildSystem(), history(), function (full, delta) {
+      acc = full;
+      var tag = firstTag(full);
+      if (tag && tag !== lastTag) {
+        lastTag = tag;
+        playLabel(tag);
+      }
+      var clean = stripTags(full);
+      bubble.textContent = clean || '…';
+      bubble.classList.toggle('typing', !clean);
+      if (clean.length > fed.length) speechFeed(clean.slice(fed.length));
+      fed = clean;
+      scrollMsgs();
+    }, { app: 'lumen3d', signal: controller.signal }).then(function (finalText) {
+      var raw = (typeof finalText === 'string' && finalText) ? finalText : acc;
+      var tag = firstTag(raw);
+      if (tag) playLabel(tag);
+      finishAnswer(raw, bubble);
+    }).catch(function (err) {
+      if (err && err.name === 'AbortError') {
+        var partial = stripTags(acc);
+        if (partial) finishAnswer(acc, bubble);
+        else {
+          bubble.classList.remove('typing');
+          bubble.className = 'l3-msg s';
+          bubble.textContent = '已停止生成';
+        }
+        return;
+      }
+      bubble.classList.remove('typing');
+      bubble.className = 'l3-msg s';
+      bubble.textContent = '连接模型失败：' + (err && err.message ? err.message : String(err));
+    }).then(function () {
+      S.abort = null;
+      setBusy(false);
+    });
+  }
+
+  function abortSend() {
+    if (S && S.abort) {
+      try { S.abort.abort(); } catch (e) { /* 已结束 */ }
+    }
+    stopSpeech();
+  }
+
+  /* ---------- 音色 ---------- */
+  function fillVoices() {
+    var select = S.refs.voice;
+    var api = ttsApi();
+    var snapshot = api ? api.catalog() : null;
+    var system = snapshot ? (snapshot.system || []) : systemVoices().map(function (v) {
+      return { value: v.name, name: v.name, lang: v.lang || '' };
+    });
+    var local = snapshot ? (snapshot.local || []) : [];
+    var current = currentVoice();
+
+    select.innerHTML = '';
+    var def = document.createElement('option');
+    def.value = '';
+    def.textContent = system.length ? '系统默认（自动挑中文音色）' : '系统默认（未检测到系统语音）';
+    select.appendChild(def);
+
+    if (system.length) {
+      var group = document.createElement('optgroup');
+      group.label = '系统语音';
+      system.forEach(function (v) {
+        var option = document.createElement('option');
+        option.value = v.value;
+        option.textContent = v.name + (v.lang ? ' · ' + v.lang : '');
+        group.appendChild(option);
+      });
+      select.appendChild(group);
+    }
+    if (local.length) {
+      var localGroup = document.createElement('optgroup');
+      localGroup.label = '本地模型';
+      local.forEach(function (v) {
+        var option = document.createElement('option');
+        option.value = v.value;
+        option.textContent = v.name + (v.ready ? '' : (v.needRef ? '（缺参考录音）' : '（未就绪）'));
+        localGroup.appendChild(option);
+      });
+      select.appendChild(localGroup);
+    }
+    if (current && !system.some(function (v) { return v.value === current; }) &&
+        !local.some(function (v) { return v.value === current; })) {
+      var keep = document.createElement('option');
+      keep.value = current;
+      keep.textContent = (api ? api.label(current) : current) + '（未就绪）';
+      select.appendChild(keep);
+    }
+    select.value = current;
+    if (select.value !== current) select.value = '';
+    paintEngine();
+  }
+
+  function paintEngine() {
+    if (!S || !S.refs.engine) return;
+    var isLocal = !!voiceSpec();
+    S.refs.engine.textContent = isLocal ? '本地模型' : '系统语音';
+  }
+
+  function syncVoiceBtn() {
+    if (!S) return;
+    S.refs.voiceBtn.setAttribute('aria-pressed', S.voiceOn ? 'true' : 'false');
+    S.refs.voiceBtn.textContent = S.voiceOn ? '朗读 开' : '朗读 关';
+  }
+
+  /* ---------- 资源加载 ---------- */
+  function setStatus(text, kind) {
+    if (!S || !S.refs.state) return;
+    S.refs.state.textContent = text;
+    S.refs.state.className = 'l3-chip' + (kind ? ' is-' + kind : '');
+  }
+
+  function loadFace() {
+    var chain = Promise.resolve();
+    PACKS.forEach(function (src) {
+      chain = chain.then(function () { return injectScript(src); });
+    });
+    chain.then(function () { return savedTextureURL(); })
+      .then(function (textureURL) {
+        return createFaceView(S.refs.canvasHost, textureURL);
+      })
+      .then(function (face) {
+      if (!S) return;
+      S.face = face;
+      if (S.shape) face.setShapeAll(S.shape);
+      face.setCoils(S.coils);
+      /* 轮廓要在脸模建好之后立刻灌进去，否则读档的脸型是原样、滑杆却是存档值 */
+      if (S.outline) face.setOutline(S.outline);
+      if (S.xform) face.setXform(S.xform);
+      if (S.refs.coilOn) S.refs.coilOn.checked = S.coilOn;
+      if (S.refs.outlineOn) S.refs.outlineOn.checked = S.outlineOn !== false;
+      S.player = createCurvePlayer();
+      S.morphCount = face.morphNames.length;
+      var neutral = S.player.neutral;
+      setExprChip(neutral ? neutral.label : '自然放松');
+      if (neutral && S.styleLabel === '') S.styleLabel = neutral.label;
+      setStatus('就绪 · ' + S.morphCount + ' 个形态键', 'ok');
+      S.refs.loading.classList.add('is-done');
+      fillStyles();
+      updateGizmoVisibility();
+      startLoop();
+    }).catch(function (err) {
+      if (!S) return;
+      S.refs.loading.classList.add('is-error');
+      var text = S.refs.loading.querySelector('.l3-loading-text');
+      if (text) text.textContent = (err && err.message) || String(err);
+      setStatus('加载失败', 'error');
+    });
+  }
+
+  function fillStyles() {
+    var labels = [];
+    S.player.styles.forEach(function (style) {
+      if (labels.indexOf(style.label) < 0) labels.push(style.label);
+    });
+    var select = S.refs.style;
+    select.innerHTML = '';
+    labels.forEach(function (label) {
+      var option = document.createElement('option');
+      option.value = label;
+      option.textContent = label;
+      select.appendChild(option);
+    });
+    var current = S.styleLabel || (S.player.neutral && S.player.neutral.label) || labels[0];
+    select.value = labels.indexOf(current) >= 0 ? current : labels[0];
+
+    var quick = S.refs.quick;
+    quick.innerHTML = '';
+    QUICK.forEach(function (label) {
+      if (labels.indexOf(label) < 0) return;
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.addEventListener('click', function () { playLabel(label); });
+      quick.appendChild(button);
+    });
+  }
+
+  /* ---------- 帧循环 ---------- */
+  function startLoop() {
+    if (S.raf) return;
+    var last = 0;
+    S.clock = 0;
+    function frame(now) {
+      S.raf = requestAnimationFrame(frame);
+      if (!S || !S.face) return;
+      var dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
+      last = now;
+      S.clock += dt;
+      if (S.player) S.player.tick(dt);
+      if (S.player && S.player.style && S.browPulse.L < 0.01 && S.browPulse.R < 0.01 &&
+          S.player.style.label !== S.styleLabel) {
+        /* 片段播完会自动回到自然放松，标签跟着曲线走，避免显示残留 */
+        S.styleLabel = S.player.style.label;
+        setExprChip(S.styleLabel);
+        if (S.refs.style && S.refs.style.value !== S.styleLabel) S.refs.style.value = S.styleLabel;
+      }
+      tickMouth(dt);
+      tickBlink(dt);
+      S.face.setShapes(composeShapes());
+      S.face.tick(dt, S.clock);
+      paintGizmos();
+    }
+    S.raf = requestAnimationFrame(frame);
+  }
+
+  /* ---------- 绑定 ---------- */
+  function bind() {
+    var refs = S.refs;
+    refs.form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      send();
+    });
+    refs.input.addEventListener('input', growInput);
+    refs.input.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        send();
+      }
+    });
+    refs.voiceBtn.addEventListener('click', function () {
+      S.voiceOn = !S.voiceOn;
+      if (!S.voiceOn) stopSpeech();
+      syncVoiceBtn();
+      saveStore();
+    });
+    refs.style.addEventListener('change', function () {
+      playLabel(refs.style.value);
+    });
+    refs.play.addEventListener('click', function () { playLabel(refs.style.value); });
+    refs.neutral.addEventListener('click', function () {
+      if (!S.player) return;
+      S.player.returnToNeutral();
+      S.styleLabel = S.player.neutral ? S.player.neutral.label : '自然放松';
+      setExprChip(S.styleLabel);
+      saveStore();
+    });
+    refs.voice.addEventListener('change', function () {
+      setCurrentVoice(refs.voice.value);
+      paintEngine();
+      saveStore();
+    });
+    refs.test.addEventListener('click', function () {
+      speakAloud('你好，我是流明。很高兴见到你。', true);
+    });
+    refs.views.addEventListener('click', function (event) {
+      var button = event.target.closest('[data-view]');
+      if (!button || !S.face) return;
+      refs.views.querySelectorAll('button').forEach(function (item) {
+        item.classList.toggle('on', item === button);
+      });
+      S.face.setView(button.getAttribute('data-view'));
+    });
+    refs.lookBtn.addEventListener('click', function () { setDrawerTab('shape'); });
+    if (refs.modes) {
+      refs.modes.addEventListener('click', function (event) {
+        var button = event.target.closest('[data-mode]');
+        if (button) setDrawerTab(button.getAttribute('data-mode'));
+      });
+    }
+    refs.drawer.querySelectorAll('.l3-insp-tabs [data-tab]').forEach(function (button) {
+      button.addEventListener('click', function () { setDrawerTab(button.getAttribute('data-tab')); });
+    });
+    if (refs.shapeReset) refs.shapeReset.addEventListener('click', resetShape);
+    if (refs.shapeRandom) refs.shapeRandom.addEventListener('click', randomShape);
+    if (refs.shapeUndo) refs.shapeUndo.addEventListener('click', undoShape);
+    if (refs.shapeRedo) refs.shapeRedo.addEventListener('click', redoShape);
+    if (refs.shapeSave) {
+      refs.shapeSave.addEventListener('click', function () {
+        if (!refs.shapeSaveRow) return;
+        refs.shapeSaveRow.hidden = !refs.shapeSaveRow.hidden;
+        if (!refs.shapeSaveRow.hidden && refs.shapeSaveName) refs.shapeSaveName.focus();
+      });
+    }
+    if (refs.shapeSaveOk) refs.shapeSaveOk.addEventListener('click', saveCurrentPreset);
+    if (refs.shapeSaveCancel) {
+      refs.shapeSaveCancel.addEventListener('click', function () {
+        if (refs.shapeSaveName) refs.shapeSaveName.value = '';
+        if (refs.shapeSaveRow) refs.shapeSaveRow.hidden = true;
+      });
+    }
+    if (refs.shapeSaveName) {
+      refs.shapeSaveName.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') { event.preventDefault(); saveCurrentPreset(); }
+      });
+    }
+    if (refs.shapePresets) {
+      refs.shapePresets.addEventListener('click', function (event) {
+        var del = event.target.closest('[data-del-preset]');
+        if (del) {
+          event.stopPropagation();
+          deletePreset(del.getAttribute('data-del-preset'));
+          return;
+        }
+        var chip = event.target.closest('[data-preset]');
+        if (chip) applyPreset(chip.getAttribute('data-preset'));
+      });
+    }
+    if (refs.gizmoGroups) {
+      refs.gizmoGroups.addEventListener('click', function (event) {
+        var chip = event.target.closest('[data-gizmo-group]');
+        if (chip) setGizmoGroup(chip.getAttribute('data-gizmo-group'));
+      });
+    }
+    if (refs.gizmoOn) {
+      refs.gizmoOn.addEventListener('change', function () { setGizmoOn(refs.gizmoOn.checked); });
+    }
+    if (refs.coilOn) {
+      refs.coilOn.addEventListener('change', function () { setCoilOn(refs.coilOn.checked); });
+    }
+    if (refs.outlineOn) {
+      refs.outlineOn.addEventListener('change', function () { setOutlineOn(refs.outlineOn.checked); });
+    }
+    if (refs.coilReset) {
+      refs.coilReset.addEventListener('click', function () {
+        var kind = regionKindOf(S && S.gizmoGroup);
+        if (kind) resetXform(kind);
+        else resetCoil();
+      });
+    }
+    if (refs.curveSvg) bindCurve(refs.curveSvg);
+    if (!S.keysBound) {
+      S.keysBound = true;
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && S && S.busy) abortSend();
+      });
+    }
+  }
+
+  function cacheRefs() {
+    var body = S.body;
+    function q(sel) { return body.querySelector(sel); }
+    S.refs = {
+      canvasHost: q('#l3Canvas'),
+      stage: q('#l3Stage'),
+      loading: q('#l3Loading'),
+      state: q('#l3State'),
+      expr: q('#l3Expr'),
+      views: q('#l3Views'),
+      modes: q('#l3Modes'),
+      msgs: q('#l3Msgs'),
+      quick: q('#l3Quick'),
+      form: q('#l3Form'),
+      input: q('#l3Input'),
+      send: q('#l3Send'),
+      style: q('#l3Style'),
+      play: q('#l3Play'),
+      neutral: q('#l3Neutral'),
+      voice: q('#l3Voice'),
+      engine: q('#l3Engine'),
+      test: q('#l3Test'),
+      voiceBtn: q('#l3VoiceBtn'),
+      lookBtn: q('#l3LookBtn'),
+      drawer: q('#l3Drawer'),
+      shapeList: q('#l3ShapeList'),
+      shapePresets: q('#l3ShapePresets'),
+      shapeRandom: q('#l3ShapeRandom'),
+      shapeUndo: q('#l3ShapeUndo'),
+      shapeRedo: q('#l3ShapeRedo'),
+      shapeSave: q('#l3ShapeSave'),
+      shapeSaveRow: q('#l3ShapeSaveRow'),
+      shapeSaveName: q('#l3ShapeSaveName'),
+      shapeSaveOk: q('#l3ShapeSaveOk'),
+      shapeSaveCancel: q('#l3ShapeSaveCancel'),
+      shapeReset: q('#l3ShapeReset'),
+      gizmoGroups: q('#l3GizmoGroups'),
+      gizmoOn: q('#l3GizmoOn'),
+      coilOn: q('#l3CoilOn'),
+      outlineOn: q('#l3OutlineOn'),
+      coilReset: q('#l3CoilReset'),
+      sculptHint: q('#l3SculptHint'),
+      curveSvg: q('#l3CurveSvg'),
+      texView: q('#l3TexView'),
+      texCanvas: q('#l3TexCanvas'),
+      texVeil: q('#l3TexVeil'),
+      texRegions: q('#l3TexRegions'),
+      texRegionHint: q('#l3TexRegionHint'),
+      texSize: q('#l3TexSize'),
+      texSizeVal: q('#l3TexSizeVal'),
+      texColor: q('#l3TexColor'),
+      texTol: q('#l3TexTol'),
+      texTolVal: q('#l3TexTolVal'),
+      texUndo: q('#l3TexUndo'),
+      texRedo: q('#l3TexRedo'),
+      texReset: q('#l3TexReset'),
+      texExport: q('#l3TexExport'),
+      texApply: q('#l3TexApply'),
+      adjBright: q('#l3AdjBright'),
+      adjContrast: q('#l3AdjContrast'),
+      adjSat: q('#l3AdjSat'),
+      adjApply: q('#l3AdjApply'),
+      repFrom: q('#l3RepFrom'),
+      repTo: q('#l3RepTo'),
+      repRun: q('#l3RepRun')
+    };
+  }
+
+  function boot(body) {
+    var saved = loadStore();
+    var coilState = loadCoils();
+    S = {
+      body: body,
+      msgs: saved.msgs,
+      voiceOn: saved.voiceOn,
+      styleLabel: saved.style,
+      busy: false,
+      abort: null,
+      audio: null,
+      face: null,
+      player: null,
+      raf: 0,
+      clock: 0,
+      lastMouth: 0,
+      morphCount: 0,
+      mouth: { queue: '', acc: 0, pulse: 0, pulseUntil: 0, open: 0, viseme: 'sil', ttsUntil: 0, ttsTick: 0 },
+      blink: { t: 0, next: rand(1.4, 3.4), phase: 0, value: 0 },
+      browPulse: { L: 0, R: 0 },
+      keysBound: false,
+      shape: loadShape(),
+      coils: coilState.coils,
+      coilOn: coilState.on,
+      coilDrag: null,
+      outline: loadOutline(),
+      outlineOn: true,
+      outlineDrag: null,
+      xform: loadXform(),
+      regionDrag: null,
+      shapeHist: { stack: [], index: -1 },
+      presetName: '',
+      presets: loadCustomPresets(),
+      drawerTab: 'chat',
+      gizmoOn: true,
+      gizmoGroup: '轮廓',
+      gizmoKey: 'width',
+      gizmoDrag: null,
+      texPanelBound: false,
+      tex: {
+        ready: false,
+        canvas: null,
+        ctx: null,
+        tool: 'brush',
+        color: '#e05a5a',
+        size: 36,
+        tolerance: 36,
+        zoom: 1,
+        undo: [],
+        redo: [],
+        drawing: false,
+        last: null,
+        pan: null,
+        regionKey: 'all',
+        maskId: 0,
+        regionList: [{ key: 'all', label: '全部', id: 0 }],
+        maskIds: null,
+        maskCanvas: null,
+        scratch: null,
+        scratchCtx: null
+      }
+    };
+    cacheRefs();
+    bind();
+    S.shapeHist.stack = [shapeStateOf()];
+    S.shapeHist.index = 0;
+    buildShapePane();
+    renderShapePresets();
+    paintShapeButtons();
+    setGizmoGroup('轮廓');
+    renderCurve();
+    bindTexturePanel();
+    registerTexBlobRoot();
+    renderMsgs();
+    syncVoiceBtn();
+    fillVoices();
+    body.dataset.ready = '1';
+    setStatus('正在加载脸模…', '');
+    loadFace();
+
+    /* 调试口：探针用它读取形态键、切换表情、验证口型 */
+    window.__lumen3d = function () {
+      if (!S || !S.face || !S.player) return null;
+      return {
+        ready: true,
+        morphs: S.face.morphNames.length,
+        styles: S.player.styles.length,
+        labels: S.player.labels.filter(function (label, index, list) { return list.indexOf(label) === index; }),
+        current: S.player.style.label,
+        mouthOpen: S.mouth.open,
+        blink: S.blink.value,
+        influence: function (name) { return S.face.influence(name); },
+        peak: function () { return S.face.peak(); },
+        play: function (label) { playLabel(label); return S.player.style.label; },
+        setMouth: function (viseme, open) {
+          S.mouth.viseme = viseme || 'aa';
+          S.mouth.open = clamp(Number(open) || 0, 0, 1);
+          S.mouth.pulseUntil = S.clock + 2;
+          S.mouth.ttsUntil = S.clock + 2;
+        },
+        shape: function (name) { return S.shape ? S.shape[name] : null; },
+        setShape: function (name, value) { return setShapeValue(name, value, false); },
+        shapeValues: function () { return cloneShape(S.shape); },
+        shapeUniforms: function () { return S.face ? S.face.shapeUniforms() : null; },
+        shapePreset: function () { return S.presetName; },
+        applyPreset: applyPreset,
+        randomShape: function () { randomShape(); return cloneShape(S.shape); },
+        undoShape: undoShape,
+        redoShape: redoShape,
+        shapeHistory: function () {
+          return { index: S.shapeHist.index, size: S.shapeHist.stack.length };
+        },
+        savePreset: function (name) {
+          if (!S.refs.shapeSaveName) return null;
+          S.refs.shapeSaveName.value = name;
+          return saveCurrentPreset();
+        },
+        deletePreset: deletePreset,
+        openDrawer: openDrawer,
+        closeDrawer: closeDrawer,
+        drawerTab: function () { return S.drawerTab; },
+        gizmos: function () {
+          var layer = ensureGizmoLayer();
+          if (!layer) return [];
+          return Array.prototype.map.call(layer.querySelectorAll('.l3-gizmo'), function (handle) {
+            var key = handle.getAttribute('data-gizmo');
+            var pos = S.face ? S.face.projectAnchor(key) : null;
+            return {
+              key: key,
+              label: handle.querySelector('.l3-gizmo-tag').textContent,
+              x: pos ? Math.round(pos.x) : 0,
+              y: pos ? Math.round(pos.y) : 0,
+              visible: !!pos && pos.visible && handle.style.display !== 'none'
+            };
+          });
+        },
+        gizmoGroup: function () { return S.gizmoGroup; },
+        gizmoKey: function () { return S.gizmoKey; },
+        setGizmoGroup: setGizmoGroup,
+        setGizmoOn: setGizmoOn,
+        gizmoHighlight: function () {
+          return S.face ? S.face.shapeUniforms() : null;
+        },
+        faceHighlight: function () {
+          return S.face && S.face.faceHighlight ? S.face.faceHighlight() : null;
+        },
+        coilOn: function () { return S.coilOn; },
+        setCoilOn: setCoilOn,
+        coils: function () {
+          var out = {};
+          Object.keys(S.coils).forEach(function (key) { out[key] = S.coils[key].slice(); });
+          return out;
+        },
+        setCoil: function (key, values) { return applyCoil(key, values, true); },
+        resetCoil: resetCoil,
+        /* 面部轮廓：探针靠这一组验证「手柄画在哪、脸就动在哪」 */
+        outline: function () { return (S.outline || defaultOutline()).slice(); },
+        /* 手柄读数必须和真正送进 shader 的 uniform 一致：两处只要有一处忘了写，
+         * 界面上的倍率就是假的（看着拖了、脸没动） */
+        outlineUniform: function () { return S.face && S.face.outlineValues ? S.face.outlineValues() : null; },
+        setOutline: function (list) { return applyOutline(list, true); },
+        resetOutline: function () { return applyOutline(defaultOutline(), true); },
+        outlineNodes: function () { return S.face && S.face.projectOutline ? S.face.projectOutline() : []; },
+        outlineHandles: function () {
+          var layer = S.refs.canvasHost && S.refs.canvasHost.querySelector('.l3-outline');
+          if (!layer) return [];
+          return Array.prototype.map.call(layer.querySelectorAll('[data-out-index]'), function (handle) {
+            return {
+              index: Number(handle.getAttribute('data-out-index')),
+              side: handle.getAttribute('data-out-side'),
+              k: Number(handle.getAttribute('data-out-k') || 1),
+              changed: handle.classList.contains('is-changed'),
+              shown: layer.classList.contains('is-off') === false && handle.style.display !== 'none',
+              x: parseFloat(handle.style.left) || 0,
+              y: parseFloat(handle.style.top) || 0
+            };
+          });
+        },
+        outlineShown: outlineShown,
+        setOutlineOn: setOutlineOn,
+        projectCoil: function (key) { return S.face ? S.face.projectCoil(key) : null; },
+        projectRegion: function (kind) { return S.face && S.face.projectRegion ? S.face.projectRegion(kind) : null; },
+        regionFrames: function () { return S.face && S.face.regionFrames ? S.face.regionFrames() : null; },
+        materialParts: function () { return S.face && S.face.materialParts ? S.face.materialParts() : []; },
+        regionWeight: function (kind, au, v) {
+          return S.face && S.face.regionWeight ? S.face.regionWeight(kind, au, v) : 0;
+        },
+        partStats: function () { return S.face && S.face.partStats ? S.face.partStats() : null; },
+        partBounds: function () { return S.face && S.face.partBounds ? S.face.partBounds() : null; },
+        deformSource: function () { return S.face && S.face.deformSource ? S.face.deformSource() : ''; },
+        gizmoGain: function (key) { return S.face && S.face.gizmoGain ? S.face.gizmoGain(key) : [0, 0]; },
+        xform: function () { return S.face && S.face.currentXform ? S.face.currentXform() : null; },
+        /* 覆层掩码：{ region: 'eye' | 'mouth' } 或 { coil: [...] }，strength 0–1。
+         * 亮到哪就是真的动到哪 —— 探针/截图靠它确认掩码有没有盖住睫毛。 */
+        setHighlight: function (mask, strength) {
+          return S.face && S.face.setHighlight ? S.face.setHighlight(mask, strength) : null;
+        },
+        setXform: function (kind, values) { return applyXform(kind, values, true); },
+        resetXform: resetXform,
+        regionHandles: function () {
+          var layer = S.refs.canvasHost && S.refs.canvasHost.querySelector('.l3-region');
+          if (!layer) return [];
+          return Array.prototype.map.call(layer.querySelectorAll('.l3-region-handle'), function (button) {
+            return {
+              role: button.getAttribute('data-region-role'),
+              side: Number(button.getAttribute('data-side')),
+              x: Math.round(parseFloat(button.style.left) || 0),
+              y: Math.round(parseFloat(button.style.top) || 0),
+              visible: button.style.display !== 'none'
+            };
+          });
+        },
+        /* 范围手柄现状：每个手柄的可用轴与是否被摆出来。
+         * 钳死在脸上的边（拖不动的死区）必须是 display:none。 */
+        coilHandles: function () {
+          var layer = S.refs.canvasHost && S.refs.canvasHost.querySelector('#l3Coil');
+          if (!layer) return [];
+          return Array.prototype.map.call(layer.querySelectorAll('[data-coil-edge]'), function (button) {
+            return {
+              role: button.getAttribute('data-coil-edge'),
+              axis: button.getAttribute('data-axis'),
+              tip: button.getAttribute('data-tip'),
+              visible: button.style.display !== 'none'
+            };
+          });
+        },
+        /* 选区现状：面高亮 + 手柄可见性。
+         * legacyCurve 专门给回归测试用：它必须是 0，证明「3D 曲线曲面」确实下线了。 */
+        selection: function () {
+          var host = S.refs.canvasHost;
+          var coilLayer = host && host.querySelector('.l3-coil');
+          var regionLayer = host && host.querySelector('.l3-region');
+          return {
+            highlight: S.face && S.face.faceHighlight ? S.face.faceHighlight() : null,
+            handles: {
+              coil: !!coilLayer && !coilLayer.classList.contains('is-off'),
+              region: !!regionLayer && !regionLayer.classList.contains('is-off')
+            },
+            legacyCurve: host ? host.querySelectorAll('.l3-sel-fill, .l3-sel-ants').length : 0
+          };
+        },
+        curvePoints: function () {
+          var svg = S.refs.curveSvg;
+          if (!svg) return [];
+          return Array.prototype.map.call(svg.querySelectorAll('[data-curve]'), function (point) {
+            return {
+              key: point.getAttribute('data-curve'),
+              x: Number(point.getAttribute('cx')),
+              y: Number(point.getAttribute('cy'))
+            };
+          });
+        },
+        curvePath: function () {
+          var path = S.refs.curveSvg && S.refs.curveSvg.querySelector('.l3-curve-face');
+          return path ? path.getAttribute('d') : '';
+        },
+        texture: function () {
+          return S.tex.ready
+            ? { ready: true, width: S.tex.canvas.width, height: S.tex.canvas.height }
+            : { ready: false, width: 0, height: 0 };
+        },
+        texturePixel: function (x, y) {
+          if (!S.tex.ready) return null;
+          var data = S.tex.ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+          return [data[0], data[1], data[2], data[3]];
+        },
+        textureRegion: function () {
+          return {
+            key: S.tex.regionKey,
+            id: S.tex.maskId,
+            zoom: S.tex.zoom,
+            list: (S.tex.regionList || []).map(function (item) {
+              return { key: item.key, label: item.label, pixels: item.pixels || 0 };
+            })
+          };
+        },
+        setTextureRegion: function (key) { texSetRegion(key, true); return S.tex.regionKey; },
+        regionAt: function (x, y) {
+          var ids = S.tex.maskIds;
+          if (!ids) return 0;
+          return ids[Math.floor(y) * S.tex.canvas.width + Math.floor(x)] || 0;
+        },
+        paintTexture: function (x, y) {
+          if (!S.tex.ready) return false;
+          texStamp(Number(x) || 0, Number(y) || 0);
+          texPreview();
+          return true;
+        },
+        applyTexture: texApply
+      };
+    };
+  }
+
+  /* ---------- 注册 ---------- */
+  registerApp({
+    id: 'lumen3d',
+    name: '流明3D',
+    title: '流明3D · 三维数字人',
+    sub: '参考脸 + 自然语言表情，可对话、可朗读',
+    icon: ICON,
+    order: 17,
+    cls: 'lumen3d',
+    win: 'lumen3dWin',
+    css: ['apps/lumen3d/app.css'],
+    body: BODY_HTML,
+    mount: function (body) {
+      if (S && S.body === body && body.dataset.ready === '1') {
+        /* 切回来只同步状态：不重建 DOM，canvas 与聊天记录都保留 */
+        syncVoiceBtn();
+        fillVoices();
         return;
       }
       boot(body);
@@ -17923,6 +26525,2884 @@ window.STUDIO_BODY = `
       }
     }
   };
+})();
+
+/* ---- apps/tripostudio/body.js ---- */
+/* Tripo 工坊 —— 窗口 DOM 骨架。
+ *
+ * 只放静态结构，所有行为在 app.js。body.js 由 app-scan 自动排在 app.js 之前内联，
+ * 所以 app.js 里可以直接 `body: window.TPS_BODY`。
+ */
+window.TPS_BODY = `
+<div class="tps-app" data-panel="image" data-stage="empty">
+  <header class="tps-bar">
+    <div class="tps-brand">
+      <span class="tps-brand-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3.1 20 7.5v9L12 20.9 4 16.5v-9l8-4.4Z"/>
+          <path d="m4 7.5 8 4.4 8-4.4M12 11.9v9"/>
+          <path d="M8.1 5.3 16 9.6"/>
+        </svg>
+      </span>
+      <span class="tps-brand-text">
+        <b>Tripo 工坊</b>
+        <small>IMAGE · MODEL · TEXTURE</small>
+      </span>
+    </div>
+
+    <nav class="tps-menus" data-role="menus" aria-label="主菜单">
+      <div class="tps-menu" data-menu>
+        <button class="tps-menu-btn" type="button">文件</button>
+        <div class="tps-menu-pop">
+          <button type="button" data-act="importImage">导入图像…<kbd>Ctrl+O</kbd></button>
+          <button type="button" data-act="importModel">导入模型…</button>
+          <button type="button" data-act="importTexture">导入纹理…</button>
+          <hr>
+          <button type="button" data-act="exportImage">导出当前图像</button>
+          <button type="button" data-act="exportModel">导出当前模型 GLB</button>
+          <button type="button" data-act="pinAsset">保存到本地资产</button>
+          <hr>
+          <button type="button" data-act="clearAll">清空项目</button>
+        </div>
+      </div>
+      <div class="tps-menu" data-menu>
+        <button class="tps-menu-btn" type="button">编辑</button>
+        <div class="tps-menu-pop">
+          <button type="button" data-act="copyPrompt">复制提示词</button>
+          <button type="button" data-act="copyUrl">复制资源地址</button>
+          <button type="button" data-act="removeAsset">删除当前资源<kbd>Del</kbd></button>
+          <hr>
+          <button type="button" data-act="imageToRef">当前图像 → 参考图</button>
+          <button type="button" data-act="imageToTexture">当前图像 → 模型纹理</button>
+        </div>
+      </div>
+      <div class="tps-menu" data-menu>
+        <button class="tps-menu-btn" type="button">视图</button>
+        <div class="tps-menu-pop">
+          <button type="button" data-act="fit">适应窗口<kbd>F</kbd></button>
+          <button type="button" data-act="actual">实际大小<kbd>1:1</kbd></button>
+          <button type="button" data-act="toggleGrid">网格显示</button>
+          <button type="button" data-act="toggleBg">切换背景</button>
+          <button type="button" data-act="toggleInspect">检查器</button>
+          <hr>
+          <button type="button" data-act="panel" data-panel="image">生图面板<kbd>1</kbd></button>
+          <button type="button" data-act="panel" data-panel="model">模型面板<kbd>2</kbd></button>
+          <button type="button" data-act="panel" data-panel="texture">纹理面板<kbd>3</kbd></button>
+          <button type="button" data-act="panel" data-panel="assets">资产面板<kbd>4</kbd></button>
+        </div>
+      </div>
+      <div class="tps-menu" data-menu>
+        <button class="tps-menu-btn" type="button">生成</button>
+        <div class="tps-menu-pop">
+          <button type="button" data-act="genImage">生成图像<kbd>Ctrl+↵</kbd></button>
+          <button type="button" data-act="genModel">生成模型</button>
+          <button type="button" data-act="genTexture">生成并应用纹理</button>
+          <hr>
+          <button type="button" data-act="pullBack">拉回生成结果…</button>
+          <button type="button" data-act="pullAll">校验全部资源</button>
+        </div>
+      </div>
+      <div class="tps-menu" data-menu>
+        <button class="tps-menu-btn" type="button">帮助</button>
+        <div class="tps-menu-pop">
+          <button type="button" data-act="login">打开 Tripo 登录页</button>
+          <button type="button" data-act="about">关于 Tripo 工坊</button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="tps-conn" data-role="conn">
+      <i class="tps-dot" data-role="connDot"></i>
+      <span class="tps-conn-text" data-role="connText">检测助手…</span>
+      <button class="tps-mini" type="button" data-act="connCheck">检测</button>
+      <button class="tps-mini hidden" type="button" data-act="toggleEmbed" data-role="embedBtn" title="在工坊内打开 Tripo 网页">内嵌</button>
+      <button class="tps-mini tps-mini-accent" type="button" data-act="login">登录</button>
+    </div>
+  </header>
+
+  <div class="tps-body">
+    <nav class="tps-rail" aria-label="工作区">
+      <button class="tps-rail-btn is-on" type="button" data-panel="image" title="生图 (1)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.6" width="17.2" height="14.8" rx="2.4"/><circle cx="8.8" cy="9.8" r="1.5"/><path d="m4.2 16.6 4.6-4.2 3.4 2.8 3-2.4 4.2 3.8"/></svg>
+        <span>生图</span>
+      </button>
+      <button class="tps-rail-btn" type="button" data-panel="model" title="生模型 (2)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 20 7.6v8.8L12 20.8 4 16.4V7.6l8-4.4Z"/><path d="m4 7.6 8 4.4 8-4.4M12 12v8.8"/></svg>
+        <span>模型</span>
+      </button>
+      <button class="tps-rail-btn" type="button" data-panel="texture" title="纹理 (3)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.6" y="3.6" width="7.2" height="7.2" rx="1.6"/><rect x="13.2" y="3.6" width="7.2" height="7.2" rx="1.6"/><rect x="3.6" y="13.2" width="7.2" height="7.2" rx="1.6"/><rect x="13.2" y="13.2" width="7.2" height="7.2" rx="1.6"/></svg>
+        <span>纹理</span>
+      </button>
+      <div class="tps-rail-sp"></div>
+      <button class="tps-rail-btn" type="button" data-panel="assets" title="资产 (4)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.2 4.4h6.6a2.6 2.6 0 0 1 2.6 2.6v8.6"/><rect x="3.4" y="7" width="13.4" height="13.4" rx="2.4"/><circle cx="7.6" cy="11.6" r="1.3"/><path d="m4.4 18.4 3-2.8a1.5 1.5 0 0 1 2.1 0l1.6 1.5 1.1-1a1.5 1.5 0 0 1 2.1 0l1.4 1.3"/></svg>
+        <span>资产</span>
+      </button>
+    </nav>
+
+    <aside class="tps-side" data-role="side">
+      <section class="tps-pane" data-pane="image">
+        <div class="tps-pane-head">
+          <span class="tps-pane-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.6" width="17.2" height="14.8" rx="2.4"/><circle cx="8.8" cy="9.8" r="1.5"/><path d="m4.2 16.6 4.6-4.2 3.4 2.8 3-2.4 4.2 3.8"/></svg>
+          </span>
+          <div class="tps-pane-copy">
+            <span class="tps-eyebrow">Generate</span>
+            <h3>生图</h3>
+            <p>Tripo 网页 · 文生图 / 图生图</p>
+          </div>
+        </div>
+        <div class="tps-sec">
+          <label class="tps-label" for="tpsImgPrompt">提示词 <span class="tps-muted" data-role="imgPromptCount">0 / 1200</span></label>
+          <textarea class="tps-textarea" id="tpsImgPrompt" rows="5" data-form="image.prompt" maxlength="1200" placeholder="描述画面主体、风格、材质、光照与构图…"></textarea>
+          <div class="tps-chips">
+            <button type="button" class="tps-chip" data-chip="image.prompt" data-text="角色三视图，正面 / 侧面 / 背面，全身，纯色背景，均匀光照，高细节">角色三视图</button>
+            <button type="button" class="tps-chip" data-chip="image.prompt" data-text="游戏道具，单个物体，居中构图，纯色背景，PBR 细节，高精度">游戏道具</button>
+            <button type="button" class="tps-chip" data-chip="image.prompt" data-text="无缝贴图，四方连续，无接缝，顶视图平铺，均匀光照，无阴影，高细节">无缝贴图</button>
+          </div>
+        </div>
+        <div class="tps-sec">
+          <div class="tps-label">参考图（最多 3 张，可拖入）</div>
+          <div class="tps-refs" data-role="imgRefs">
+            <div class="tps-ref" data-ref="image:0" role="button" tabindex="0"><img alt=""><span class="tps-ref-plus">＋</span><b class="tps-ref-x" data-x="image:0" title="移除">×</b><i class="tps-ref-tag">1</i></div>
+            <div class="tps-ref" data-ref="image:1" role="button" tabindex="0"><img alt=""><span class="tps-ref-plus">＋</span><b class="tps-ref-x" data-x="image:1" title="移除">×</b><i class="tps-ref-tag">2</i></div>
+            <div class="tps-ref" data-ref="image:2" role="button" tabindex="0"><img alt=""><span class="tps-ref-plus">＋</span><b class="tps-ref-x" data-x="image:2" title="移除">×</b><i class="tps-ref-tag">3</i></div>
+          </div>
+        </div>
+        <div class="tps-sec">
+          <div class="tps-row">
+            <label class="tps-field">模式
+              <select class="tps-select" data-form="image.mode">
+                <option value="auto">自动（有参考图走图生图）</option>
+                <option value="text">文生图</option>
+                <option value="image">图生图</option>
+              </select>
+            </label>
+            <label class="tps-field">比例
+              <select class="tps-select" data-form="image.ratio">
+                <option value="1:1">1:1</option>
+                <option value="16:9">16:9</option>
+                <option value="9:16">9:16</option>
+                <option value="4:3">4:3</option>
+                <option value="3:4">3:4</option>
+                <option value="auto">自动（跟随页面）</option>
+              </select>
+            </label>
+          </div>
+          <label class="tps-field">超时
+            <input class="tps-input" type="number" min="10" max="900" step="10" data-form="image.timeout">
+            <span class="tps-unit">秒</span>
+          </label>
+        </div>
+        <div class="tps-sec tps-sec-actions">
+          <button class="tps-primary" type="button" data-act="genImage">生成图像 <kbd>Ctrl+↵</kbd></button>
+          <p class="tps-hint">走 Tripo 网页账号，不消耗 API Key；生成结果会自动载入编辑器并进入项目资源。</p>
+        </div>
+      </section>
+
+      <section class="tps-pane hidden" data-pane="model">
+        <div class="tps-pane-head">
+          <span class="tps-pane-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 20 7.6v8.8L12 20.8 4 16.4V7.6l8-4.4Z"/><path d="m4 7.6 8 4.4 8-4.4M12 12v8.8"/></svg>
+          </span>
+          <div class="tps-pane-copy">
+            <span class="tps-eyebrow">Generate</span>
+            <h3>生模型</h3>
+            <p>图生 3D · 单图或多视图</p>
+          </div>
+        </div>
+        <div class="tps-sec">
+          <div class="tps-seg" data-role="modelSeg">
+            <button type="button" class="is-on" data-mmode="single">单图</button>
+            <button type="button" data-mmode="multi">多视图</button>
+          </div>
+        </div>
+        <div class="tps-sec" data-role="modelSingle">
+          <div class="tps-label">参考图（单张）</div>
+          <div class="tps-refs tps-refs-one">
+            <div class="tps-ref tps-ref-wide" data-ref="model:single" role="button" tabindex="0"><img alt=""><span class="tps-ref-plus">＋ 上传参考图</span><b class="tps-ref-x" data-x="model:single" title="移除">×</b></div>
+          </div>
+          <button class="tps-mini" type="button" data-act="refFromCurrent" data-target="model:single">用当前图像</button>
+        </div>
+        <div class="tps-sec hidden" data-role="modelMulti">
+          <div class="tps-label">多视图参考（前 / 左 / 右 / 后，至少一张）</div>
+          <div class="tps-refs tps-refs-views">
+            <div class="tps-ref" data-ref="model:front" role="button" tabindex="0"><img alt=""><span class="tps-ref-plus">＋</span><i class="tps-ref-tag">前</i><b class="tps-ref-x" data-x="model:front" title="移除">×</b></div>
+            <div class="tps-ref" data-ref="model:left" role="button" tabindex="0"><img alt=""><span class="tps-ref-plus">＋</span><i class="tps-ref-tag">左</i><b class="tps-ref-x" data-x="model:left" title="移除">×</b></div>
+            <div class="tps-ref" data-ref="model:right" role="button" tabindex="0"><img alt=""><span class="tps-ref-plus">＋</span><i class="tps-ref-tag">右</i><b class="tps-ref-x" data-x="model:right" title="移除">×</b></div>
+            <div class="tps-ref" data-ref="model:back" role="button" tabindex="0"><img alt=""><span class="tps-ref-plus">＋</span><i class="tps-ref-tag">后</i><b class="tps-ref-x" data-x="model:back" title="移除">×</b></div>
+          </div>
+          <div class="tps-minirow">
+            <button class="tps-mini" type="button" data-act="refFromCurrent" data-target="model:front">当前图像 → 前视图</button>
+            <button class="tps-mini" type="button" data-act="refFromModel" data-target="model:front">模型截图 → 前视图</button>
+          </div>
+        </div>
+        <div class="tps-sec">
+          <div class="tps-row">
+            <label class="tps-field">模式
+              <select class="tps-select" data-form="model.mode">
+                <option value="smart">智能网格</option>
+                <option value="hd">高精度模型</option>
+                <option value="">页面默认</option>
+              </select>
+            </label>
+            <label class="tps-field">网格版本
+              <select class="tps-select" data-form="model.version">
+                <option value="P2.0">P2.0</option>
+                <option value="P1.0">P1.0</option>
+                <option value="">页面默认</option>
+              </select>
+            </label>
+          </div>
+          <div class="tps-row">
+            <label class="tps-field">拓扑
+              <select class="tps-select" data-form="model.topology">
+                <option value="">页面默认</option>
+                <option value="quad">四边面</option>
+                <option value="tri">三角面</option>
+              </select>
+            </label>
+            <label class="tps-field">面数
+              <input class="tps-input" type="number" min="0" max="25000" step="100" data-form="model.faceCount">
+            </label>
+          </div>
+          <div class="tps-row">
+            <label class="tps-field">数量
+              <select class="tps-select" data-form="model.count">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="4">4</option>
+              </select>
+            </label>
+            <label class="tps-field">格式
+              <select class="tps-select" data-form="model.format">
+                <option value="">页面默认</option>
+                <option value="glb">GLB</option>
+                <option value="obj">OBJ</option>
+                <option value="fbx">FBX</option>
+                <option value="stl">STL</option>
+                <option value="usdz">USDZ</option>
+              </select>
+            </label>
+          </div>
+          <label class="tps-field">超时
+            <input class="tps-input" type="number" min="30" max="1800" step="30" data-form="model.timeout">
+            <span class="tps-unit">秒</span>
+          </label>
+        </div>
+        <div class="tps-sec tps-sec-actions">
+          <button class="tps-primary" type="button" data-act="genModel">生成模型</button>
+          <p class="tps-hint">走网页自动化，会消耗网页账号积分；生成完成后模型自动进入 3D 视口。</p>
+        </div>
+      </section>
+
+      <section class="tps-pane hidden" data-pane="texture">
+        <div class="tps-pane-head">
+          <span class="tps-pane-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.6" y="3.6" width="7.2" height="7.2" rx="1.6"/><rect x="13.2" y="3.6" width="7.2" height="7.2" rx="1.6"/><rect x="3.6" y="13.2" width="7.2" height="7.2" rx="1.6"/><rect x="13.2" y="13.2" width="7.2" height="7.2" rx="1.6"/></svg>
+          </span>
+          <div class="tps-pane-copy">
+            <span class="tps-eyebrow">Material</span>
+            <h3>生成纹理</h3>
+            <p>无缝贴图 · 直接贴到当前模型</p>
+          </div>
+        </div>
+        <div class="tps-sec">
+          <label class="tps-label" for="tpsTexPrompt">纹理描述 <span class="tps-muted" data-role="texPromptCount">0 / 800</span></label>
+          <textarea class="tps-textarea" id="tpsTexPrompt" rows="4" data-form="tex.prompt" maxlength="800" placeholder="例如：深灰色做旧皮革，细密划痕，接缝处有浅色包边…"></textarea>
+          <div class="tps-chips">
+            <button type="button" class="tps-chip" data-chip="tex.prompt" data-text="无缝布料，细密织物纹理，轻微磨损，均匀光照，四方连续">无缝布料</button>
+            <button type="button" class="tps-chip" data-chip="tex.prompt" data-text="深色木纹，清晰年轮与细裂纹，哑光，四方连续">木纹</button>
+            <button type="button" class="tps-chip" data-chip="tex.prompt" data-text="拉丝金属，银灰色，细密划痕，各向异性高光">金属拉丝</button>
+            <button type="button" class="tps-chip" data-chip="tex.prompt" data-text="卡通平涂，干净色块，手绘描边细节，四方连续">卡通平涂</button>
+          </div>
+          <label class="tps-check"><input type="checkbox" data-form="tex.fromModel"> 以当前模型视图为参考</label>
+        </div>
+        <div class="tps-sec">
+          <div class="tps-row">
+            <label class="tps-field">平铺
+              <input class="tps-range" type="range" min="1" max="8" step="1" data-form="tex.tile">
+              <output class="tps-out" data-role="texTileOut">2</output>
+            </label>
+            <label class="tps-field">粗糙度
+              <input class="tps-range" type="range" min="0" max="1" step="0.01" data-form="tex.roughness">
+              <output class="tps-out" data-role="texRoughOut">0.62</output>
+            </label>
+          </div>
+          <label class="tps-field">金属度
+            <input class="tps-range" type="range" min="0" max="1" step="0.01" data-form="tex.metalness">
+            <output class="tps-out" data-role="texMetalOut">0.00</output>
+          </label>
+          <label class="tps-field">超时
+            <input class="tps-input" type="number" min="10" max="900" step="10" data-form="tex.timeout">
+            <span class="tps-unit">秒</span>
+          </label>
+        </div>
+        <div class="tps-sec tps-sec-actions">
+          <button class="tps-primary" type="button" data-act="genTexture">生成并应用纹理</button>
+          <div class="tps-minirow">
+            <button class="tps-mini" type="button" data-act="genTextureOnly">仅生成纹理</button>
+            <button class="tps-mini" type="button" data-act="clearTexture">移除纹理</button>
+          </div>
+          <p class="tps-hint">纹理作为基础色贴图叠加到当前模型材质；可在检查器里实时调平铺、粗糙度与金属度。</p>
+        </div>
+      </section>
+
+      <section class="tps-pane hidden" data-pane="assets">
+        <div class="tps-pane-head">
+          <span class="tps-pane-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3.4 8 4-8 4-8-4 8-4Z"/><path d="m4 12 8 4 8-4"/><path d="m4 16.6 8 4 8-4"/></svg>
+          </span>
+          <div class="tps-pane-copy">
+            <span class="tps-eyebrow">Library</span>
+            <h3>项目资源</h3>
+            <p>生成结果与本地导入统一管理</p>
+          </div>
+        </div>
+        <div class="tps-sec">
+          <div class="tps-filters" data-role="assetFilters">
+            <button type="button" class="is-on" data-filter="all">全部</button>
+            <button type="button" data-filter="image">图像</button>
+            <button type="button" data-filter="model">模型</button>
+            <button type="button" data-filter="texture">纹理</button>
+          </div>
+          <div class="tps-assetlist" data-role="assetList"></div>
+        </div>
+        <div class="tps-sec tps-sec-actions">
+          <div class="tps-minirow">
+            <button class="tps-mini" type="button" data-act="importImage">导入图像</button>
+            <button class="tps-mini" type="button" data-act="importModel">导入模型</button>
+          </div>
+          <button class="tps-primary" type="button" data-act="pullBack">拉回生成结果…</button>
+          <p class="tps-hint">「拉回」可以把 Tripo 助手输出目录、图床或本地中转里的结果重新接回项目，生成记录不会丢。</p>
+        </div>
+      </section>
+    </aside>
+
+    <main class="tps-stage">
+      <div class="tps-stagebar">
+        <div class="tps-toolgroup" data-role="tools2d">
+          <button type="button" data-act="fit" title="适应窗口 (F)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>适应
+          </button>
+          <button type="button" data-act="actual" title="实际大小">1:1</button>
+          <button type="button" data-act="zoomOut" title="缩小">−</button>
+          <span class="tps-zoomtext" data-role="zoomText">100%</span>
+          <button type="button" data-act="zoomIn" title="放大">＋</button>
+          <span class="tps-toolsep"></span>
+          <button type="button" data-act="toggleGrid" data-toggle="grid">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M9 3.5v17M15 3.5v17M3.5 9h17M3.5 15h17"/></svg>网格
+          </button>
+        </div>
+        <div class="tps-toolgroup hidden" data-role="tools3d">
+          <button type="button" data-act="fit" title="适应窗口 (F)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>适应
+          </button>
+          <select class="tps-select tps-select-mini" data-role="camPreset" title="相机视角">
+            <option value="persp">透视</option>
+            <option value="front">前</option>
+            <option value="back">后</option>
+            <option value="left">左</option>
+            <option value="right">右</option>
+            <option value="top">顶</option>
+          </select>
+          <span class="tps-toolsep"></span>
+          <div class="tps-seg tps-seg-mini" data-role="matSeg">
+            <button type="button" class="is-on" data-mat="texture">材质</button>
+            <button type="button" data-mat="clay">白模</button>
+            <button type="button" data-mat="wire">线框</button>
+          </div>
+          <span class="tps-toolsep"></span>
+          <button type="button" data-act="toggleGrid" data-toggle="grid">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M9 3.5v17M15 3.5v17M3.5 9h17M3.5 15h17"/></svg>网格
+          </button>
+          <button type="button" data-act="toggleRotate" data-toggle="rotate">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v4.5h-4.5"/></svg>旋转
+          </button>
+          <button type="button" data-act="shot">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="6.5" width="17" height="13" rx="2.4"/><circle cx="12" cy="13" r="3.2"/><path d="M8.6 6.5 10 4.2h4l1.4 2.3"/></svg>截图
+          </button>
+          <button type="button" data-act="exportModel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7.5 8.5 4.5-4.5 4.5 4.5"/><path d="M4.5 15v3.5a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V15"/></svg>导出 GLB
+          </button>
+        </div>
+        <div class="tps-stagetitle" data-role="stageTitle">未选择资源</div>
+        <div class="tps-busy hidden" data-role="busy">
+          <i class="tps-spin"></i>
+          <span data-role="busyText">生成中…</span>
+          <button type="button" data-act="cancel">取消</button>
+        </div>
+      </div>
+
+      <div class="tps-viewport" data-role="viewport">
+        <div class="tps-imgstage" data-role="imgStage">
+          <div class="tps-imgtile" data-role="imgTile"><img data-role="img" alt=""></div>
+          <div class="tps-gridoverlay hidden" data-role="grid2d"></div>
+          <div class="tps-empty" data-role="empty">
+            <div class="tps-emptyicon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.6" width="17.2" height="14.8" rx="2.4"/><circle cx="8.8" cy="9.8" r="1.5"/><path d="m4.2 16.6 4.6-4.2 3.4 2.8 3-2.4 4.2 3.8"/></svg>
+            </div>
+            <b>生成或拉回一张图像</b>
+            <p>左侧填写提示词开始生图；也可以把图片拖进这里，或从「文件 → 导入图像」进入项目。</p>
+          </div>
+        </div>
+        <div class="tps-scene3d hidden" data-role="scene3d">
+          <div class="tps-3dhost" data-role="host3d"></div>
+        </div>
+        <div class="tps-missing hidden" data-role="missing">
+          <b>资源暂不可用</b>
+          <p data-role="missingText">文件可能已被清理，或本地助手尚未启动。</p>
+          <div class="tps-minirow">
+            <button class="tps-mini" type="button" data-act="retryAsset">重试加载</button>
+            <button class="tps-mini" type="button" data-act="pinAsset">保存到本地资产</button>
+          </div>
+        </div>
+        <div class="tps-dropmask hidden" data-role="dropmask"><b>松开以导入</b><span>图像 / GLB / glTF / OBJ / FBX</span></div>
+
+        <!-- 内嵌 Tripo 网页：登录和生成都在这个 guest 里完成，桌面版专用 -->
+        <div class="tps-embed hidden" data-role="embed">
+          <div class="tps-embed-bar">
+            <b>Tripo 网页</b>
+            <span class="tps-embed-state" data-role="embedState">连接中…</span>
+            <span class="tps-spacer"></span>
+            <button class="tps-mini" type="button" data-act="embedHome">打开工作台</button>
+            <button class="tps-mini" type="button" data-act="embedReload">刷新</button>
+            <button class="tps-mini" type="button" data-act="embedClose">切回编辑器</button>
+          </div>
+          <div class="tps-embed-host" data-role="embedHost"></div>
+          <div class="tps-embed-note" data-role="embedNote">内嵌网页仅在桌面版可用；登录、生图和下载都在这个页面里完成。</div>
+        </div>
+      </div>
+
+      <footer class="tps-stagefoot">
+        <span data-role="assetMeta">—</span>
+        <span class="tps-spacer"></span>
+        <span data-role="stageHint">就绪</span>
+      </footer>
+    </main>
+
+    <aside class="tps-inspect" data-role="inspect">
+      <div class="tps-inspect-head">
+        <span>检查器</span>
+        <button type="button" class="tps-mini" data-act="toggleInspect" title="收起检查器">«</button>
+      </div>
+      <div class="tps-inspect-body">
+        <section class="tps-insp-sec">
+          <h4>资源信息</h4>
+          <dl class="tps-info" data-role="info"><dt>资源</dt><dd>未选择</dd></dl>
+        </section>
+        <section class="tps-insp-sec" data-role="texSec">
+          <h4>模型纹理</h4>
+          <div class="tps-insp-controls">
+            <label class="tps-field">平铺
+              <input class="tps-range" type="range" min="1" max="8" step="1" data-form="tex.tile">
+              <output class="tps-out" data-role="texTileOut2">2</output>
+            </label>
+            <label class="tps-field">粗糙度
+              <input class="tps-range" type="range" min="0" max="1" step="0.01" data-form="tex.roughness">
+              <output class="tps-out" data-role="texRoughOut2">0.62</output>
+            </label>
+            <label class="tps-field">金属度
+              <input class="tps-range" type="range" min="0" max="1" step="0.01" data-form="tex.metalness">
+              <output class="tps-out" data-role="texMetalOut2">0.00</output>
+            </label>
+          </div>
+          <div class="tps-minirow">
+            <button class="tps-mini" type="button" data-act="applyCurrentTexture">应用纹理</button>
+            <button class="tps-mini" type="button" data-act="clearTexture">移除</button>
+          </div>
+        </section>
+        <section class="tps-insp-sec">
+          <h4>任务</h4>
+          <div class="tps-queue" data-role="queue">空闲</div>
+        </section>
+        <section class="tps-insp-sec tps-insp-log">
+          <h4>日志 <button type="button" class="tps-mini" data-act="clearLog">清空</button></h4>
+          <div class="tps-log" data-role="log"></div>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <div class="tps-timeline">
+    <div class="tps-timeline-head">
+      <div class="tps-timeline-title">项目资源 <span class="tps-count" data-role="assetCount">0</span></div>
+      <div class="tps-timeline-actions">
+        <button type="button" data-act="pullBack">拉回结果…</button>
+        <button type="button" data-act="pullAll">校验</button>
+        <button type="button" data-act="clearAll">清空</button>
+      </div>
+    </div>
+    <div class="tps-strip" data-role="strip"></div>
+  </div>
+
+  <div class="tps-statusbar">
+    <span data-role="statusMain">就绪</span>
+    <span class="tps-spacer"></span>
+    <span data-role="statusConn">Tripo 助手未检测</span>
+    <span class="tps-statussep"></span>
+    <span data-role="statusCount">0 个资源</span>
+  </div>
+
+  <div class="tps-dialog hidden" data-role="dialog">
+    <div class="tps-dialog-box" role="dialog" aria-modal="true" aria-label="拉回生成结果">
+      <h3>拉回生成结果</h3>
+      <p>粘贴生成结果地址（Tripo 助手输出目录、图床或本地中转），把结果重新接回当前项目。</p>
+      <input class="tps-input" type="text" data-role="pullUrl" placeholder="http://127.0.0.1:8790/out/model_xxx.glb">
+      <div class="tps-row">
+        <label class="tps-field">类型
+          <select class="tps-select" data-role="pullKind">
+            <option value="auto">自动识别</option>
+            <option value="image">图像</option>
+            <option value="model">模型</option>
+            <option value="texture">纹理</option>
+          </select>
+        </label>
+        <label class="tps-check"><input type="checkbox" data-role="pullAsTexture"> 作为纹理应用到当前模型</label>
+      </div>
+      <div class="tps-dialog-actions">
+        <button type="button" data-act="pullCancel">取消</button>
+        <button type="button" class="tps-primary" data-act="pullDo">拉回</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="tps-toast" data-role="toast"></div>
+
+  <input type="file" hidden data-role="fileImage" accept="image/*" multiple>
+  <input type="file" hidden data-role="fileModel" accept=".glb,.gltf,.obj,.fbx,.stl">
+  <input type="file" hidden data-role="fileTexture" accept="image/*">
+</div>`;
+
+/* ---- apps/tripostudio/app.js ---- */
+/* Tripo 工坊 —— 生图 / 生模型 / 纹理 / 拉回结果。
+ *
+ * 生成链路刻意复用工作流里已有的两个 Tripo 网页节点实现：
+ *   wfTripoWebImage(prompt, images, opts)   ← node-defs 的 tripoImg
+ *   wfTripoWebModel(image, opts)            ← node-defs 的 tripoModel / tripoModelMulti
+ * 这样 App 与工作流共用同一套请求体、超时、中断和错误文案，不再各写一份。
+ *
+ * 所有渲染逻辑包在 IIFE 内；对外的唯一调试入口是 window.TripStudio。
+ */
+(function () {
+  'use strict';
+
+  var APP_ID = 'tripostudio';
+  var LS_KEY = 'hf_tripoStudioProj';
+  var MAX_ASSETS = 120;
+  var MAX_MODEL_THUMBS = 24;
+  var IMAGE_REF_KEYS = ['image:0', 'image:1', 'image:2'];
+  var MODEL_REF_KEYS = ['model:single', 'model:front', 'model:left', 'model:right', 'model:back'];
+  var MODEL_EXT_RE = /\.(glb|gltf|obj|fbx|stl)(?:$|[?#])/i;
+  /* 内嵌视图地址：openagi_embed=1 是给助手认领 guest 的标记（浏览器 App 里手动打开的
+     Tripo 页没有这个参数），站点就算把它丢掉，助手也会退回按 studio 域名匹配。 */
+  var TPS_EMBED_URL = 'https://studio.tripo3d.com/?openagi_embed=1';
+
+  /* ------------------------------------------------------------------ *
+   * 小工具
+   * ------------------------------------------------------------------ */
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+  function uid(prefix) {
+    return (prefix || 'a') + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+  function basename(url) {
+    var s = String(url || '').split(/[?#]/)[0];
+    try { return decodeURIComponent(s.split('/').pop() || ''); } catch (e) { return s.split('/').pop() || ''; }
+  }
+  function extOf(url) {
+    var m = String(url || '').split(/[?#]/)[0].match(/\.([a-z0-9]+)$/i);
+    return m ? m[1].toLowerCase() : '';
+  }
+  function guessKind(url) {
+    return MODEL_EXT_RE.test(String(url || '')) ? 'model' : 'image';
+  }
+  function kindLabel(kind) {
+    return kind === 'model' ? '模型' : (kind === 'texture' ? '纹理' : '图像');
+  }
+  function bust(url) {
+    if (!/^https?:/i.test(url || '')) return url;
+    return url + (url.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
+  }
+  function fmtTime(ts) {
+    if (!ts) return '—';
+    var d = new Date(ts);
+    function p(n) { return n < 10 ? '0' + n : '' + n; }
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function fmtDur(ms) {
+    var s = Math.max(0, Math.round(ms / 1000));
+    return s < 60 ? (s + ' 秒') : (Math.floor(s / 60) + ' 分 ' + (s % 60) + ' 秒');
+  }
+  function fmtSize(n) {
+    n = Number(n) || 0;
+    if (!n) return '—';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(2) + ' MB';
+  }
+  function errMsg(e) {
+    return String((e && e.message) || e || '未知错误');
+  }
+  function truncate(s, n) {
+    s = String(s || '');
+    return s.length > n ? s.slice(0, n - 1) + '…' : s;
+  }
+
+  function defaultState() {
+    return {
+      v: 1,
+      panel: 'image',
+      selId: '',
+      assets: [],
+      image: { prompt: '', mode: 'auto', ratio: '1:1', timeout: 240 },
+      model: { mode: 'smart', version: 'P2.0', topology: '', faceCount: 0, count: 1, format: '', timeout: 420, multi: false },
+      tex: { prompt: '', tile: 2, roughness: 0.62, metalness: 0, fromModel: true, timeout: 240 },
+      stage: { grid: true, rotate: false, mat: 'texture', bg: 'studio' },
+      conn: { state: 'checking', text: '检测助手…', ready: false, modelReady: false, running: false, title: '', mode: 'none', embedded: false }
+    };
+  }
+
+  function getPath(obj, path) {
+    var parts = String(path).split('.');
+    var cur = obj;
+    for (var i = 0; i < parts.length; i++) {
+      if (cur == null) return '';
+      cur = cur[parts[i]];
+    }
+    return cur;
+  }
+  function setPath(obj, path, val) {
+    var parts = String(path).split('.');
+    var cur = obj;
+    for (var i = 0; i < parts.length - 1; i++) {
+      if (!cur[parts[i]] || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
+      cur = cur[parts[i]];
+    }
+    cur[parts[parts.length - 1]] = val;
+  }
+
+  function copyText(text) {
+    if (!text) { toast('没有可复制的内容', 'warn'); return; }
+    function fallback() {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        toast('已复制');
+      } catch (e) { toast('复制失败', 'err'); }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { toast('已复制'); }, fallback);
+    } else fallback();
+  }
+
+  function downloadBlob(blob, name) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = name || 'download.bin';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+
+  function dataURLToBlob(dataUrl) {
+    var parts = String(dataUrl).split(',');
+    var m = /data:([^;]+);base64/.exec(parts[0] || '');
+    var mime = m ? m[1] : 'application/octet-stream';
+    var bin = atob(parts[1] || '');
+    var arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
+
+  function fileToDataURL(file, limitMB) {
+    return new Promise(function (resolve, reject) {
+      if (!file) { reject(new Error('没有文件')); return; }
+      var limit = (limitMB || 24) * 1024 * 1024;
+      if (file.size > limit) { reject(new Error('文件超过 ' + (limitMB || 24) + ' MB 上限')); return; }
+      var fr = new FileReader();
+      fr.onload = function () { resolve(String(fr.result || '')); };
+      fr.onerror = function () { reject(new Error('读取文件失败')); };
+      fr.readAsDataURL(file);
+    });
+  }
+
+  function packLocal(dataUrl) {
+    if (typeof blobPack === 'function') {
+      try { return blobPack(dataUrl); } catch (e) { /* 落到 data URL */ }
+    }
+    return dataUrl;
+  }
+
+  function isStub(url) {
+    return typeof url === 'string' && /^blob:/.test(url);
+  }
+
+  async function resolveUrl(url) {
+    if (!url) throw new Error('资源地址为空');
+    if (!isStub(url)) return url;
+    if (typeof blobResolveAsync !== 'function') throw new Error('本地资产库未加载');
+    var v = await blobResolveAsync(url);
+    if (!v || v === url) throw new Error('本地资产已丢失');
+    return v;
+  }
+
+  async function fetchBlobByUrl(url) {
+    if (/^data:/i.test(url)) return dataURLToBlob(url);
+    var init = { cache: 'no-store' };
+    var req = (typeof apiRequest === 'function') ? apiRequest(url, init) : { url: url, init: init };
+    var timer = null;
+    var ctrl = new AbortController();
+    timer = setTimeout(function () { ctrl.abort(); }, 60000);
+    try {
+      var res = await fetch(req.url, Object.assign({}, req.init, { signal: ctrl.signal }));
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.blob();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function bridgeBase() {
+    try { if (typeof TRIPO_WEB_BASE !== 'undefined' && TRIPO_WEB_BASE) return TRIPO_WEB_BASE; } catch (e) { /* ignore */ }
+    return 'http://127.0.0.1:8790';
+  }
+
+  function bridgeFetch(path, opts, timeoutMs) {
+    if (typeof tripoWebFetch === 'function') return tripoWebFetch(path, opts, timeoutMs);
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, timeoutMs || 8000);
+    return fetch(bridgeBase() + path, Object.assign({ signal: ctrl.signal }, opts || {}))
+      .then(function (r) { return r.json().catch(function () { return null; }).then(function (d) { if (!r.ok) throw new Error((d && d.message) || ('HTTP ' + r.status)); return d || {}; }); })
+      .finally(function () { clearTimeout(timer); });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 运行时状态（不持久化）
+   * ------------------------------------------------------------------ */
+  var S = defaultState();
+  var RT = {
+    imgRefs: [null, null, null],
+    modelRefs: { single: null, front: null, left: null, right: null, back: null },
+    fileTarget: '',
+    busyCtrl: null,
+    busyTimer: 0,
+    statusTimer: 0,
+    toastTimer: 0,
+    saveTimer: 0,
+    logs: [],
+    filter: 'all',
+    resolved: {},
+    thumbs: {},
+    thumbMiss: {},
+    thumbQueued: {},
+    thumbQueue: [],
+    thumbBusy: false,
+    lastModelId: '',
+    loadedModelId: '',
+    showToken: 0,
+    /* 内嵌 Tripo 网页。supported = 桌面外壳；bridge = 助手报告支持内嵌（CDP 端口已开）。
+       只有两者同时成立才会显示「内嵌」按钮；否则所有流程保持原来的外部 Edge 逻辑。 */
+    embed: { supported: false, bridge: false, on: false, ready: false, wv: null }
+  };
+  var E = {};
+  var viewport2d = null;
+  var viewport3d = null;
+
+  /* ------------------------------------------------------------------ *
+   * 持久化
+   * ------------------------------------------------------------------ */
+  function loadState() {
+    var s = defaultState();
+    var parsed = null;
+    try { parsed = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { parsed = null; }
+    if (parsed && parsed.v === 1) {
+      if (parsed.panel) s.panel = parsed.panel;
+      if (parsed.selId) s.selId = parsed.selId;
+      ['image', 'model', 'tex'].forEach(function (k) {
+        if (parsed[k] && typeof parsed[k] === 'object') {
+          Object.keys(s[k]).forEach(function (f) {
+            if (parsed[k][f] !== undefined && parsed[k][f] !== null) s[k][f] = parsed[k][f];
+          });
+        }
+      });
+      if (parsed.stage && typeof parsed.stage === 'object') {
+        Object.keys(s.stage).forEach(function (f) {
+          if (parsed.stage[f] !== undefined && parsed.stage[f] !== null) s.stage[f] = parsed.stage[f];
+        });
+      }
+      if (Array.isArray(parsed.assets)) {
+        s.assets = parsed.assets.filter(function (a) {
+          return a && typeof a.url === 'string' && /^(https?:|data:|blob:)/.test(a.url);
+        }).slice(0, MAX_ASSETS).map(function (a, i) {
+          return {
+            id: a.id || ('a' + i),
+            kind: a.kind === 'model' || a.kind === 'texture' ? a.kind : 'image',
+            url: a.url,
+            file: a.file || '',
+            name: a.name || a.file || basename(a.url),
+            prompt: a.prompt || '',
+            ts: Number(a.ts) || Date.now(),
+            pulled: a.pulled !== false,
+            meta: a.meta && typeof a.meta === 'object' ? a.meta : {}
+          };
+        });
+      }
+    }
+    // 数值兜底
+    s.image.timeout = clamp(Number(s.image.timeout) || 240, 10, 900);
+    s.model.timeout = clamp(Number(s.model.timeout) || 420, 30, 1800);
+    s.model.faceCount = clamp(Number(s.model.faceCount) || 0, 0, 25000);
+    s.model.count = [1, 2, 4].indexOf(Number(s.model.count)) >= 0 ? Number(s.model.count) : 1;
+    s.tex.timeout = clamp(Number(s.tex.timeout) || 240, 10, 900);
+    s.tex.tile = clamp(Number(s.tex.tile) || 1, 1, 8);
+    s.tex.roughness = clamp(Number(s.tex.roughness) || 0, 0, 1);
+    s.tex.metalness = clamp(Number(s.tex.metalness) || 0, 0, 1);
+    if (['image', 'model', 'texture', 'assets'].indexOf(s.panel) < 0) s.panel = 'image';
+    if (['texture', 'clay', 'wire'].indexOf(s.stage.mat) < 0) s.stage.mat = 'texture';
+    if (['studio', 'dark', 'light'].indexOf(s.stage.bg) < 0) s.stage.bg = 'studio';
+    S = s;
+  }
+
+  function saveNow() {
+    clearTimeout(RT.saveTimer);
+    RT.saveTimer = 0;
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify({
+        v: 1,
+        panel: S.panel,
+        selId: S.selId,
+        assets: S.assets,
+        image: S.image,
+        model: S.model,
+        tex: S.tex,
+        stage: S.stage
+      }));
+    } catch (e) {
+      log('项目保存失败：' + errMsg(e), 'warn');
+    }
+  }
+  function saveSoon() {
+    clearTimeout(RT.saveTimer);
+    RT.saveTimer = setTimeout(saveNow, 300);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 元素
+   * ------------------------------------------------------------------ */
+  function bindEls(body) {
+    E.body = body;
+    E.app = $('.tps-app', body);
+    E.conn = $('[data-role="conn"]', body);
+    E.connText = $('[data-role="connText"]', body);
+    E.menus = $('[data-role="menus"]', body);
+    E.side = $('[data-role="side"]', body);
+    E.stageTitle = $('[data-role="stageTitle"]', body);
+    E.tools2d = $('[data-role="tools2d"]', body);
+    E.tools3d = $('[data-role="tools3d"]', body);
+    E.zoomText = $('[data-role="zoomText"]', body);
+    E.busy = $('[data-role="busy"]', body);
+    E.busyText = $('[data-role="busyText"]', body);
+    E.viewport = $('[data-role="viewport"]', body);
+    E.imgStage = $('[data-role="imgStage"]', body);
+    E.imgTile = $('[data-role="imgTile"]', body);
+    E.img = $('[data-role="img"]', body);
+    E.empty = $('[data-role="empty"]', body);
+    E.grid2d = $('[data-role="grid2d"]', body);
+    E.scene3d = $('[data-role="scene3d"]', body);
+    E.host3d = $('[data-role="host3d"]', body);
+    E.missing = $('[data-role="missing"]', body);
+    E.missingText = $('[data-role="missingText"]', body);
+    E.dropmask = $('[data-role="dropmask"]', body);
+    E.assetMeta = $('[data-role="assetMeta"]', body);
+    E.stageHint = $('[data-role="stageHint"]', body);
+    E.info = $('[data-role="info"]', body);
+    E.queue = $('[data-role="queue"]', body);
+    E.log = $('[data-role="log"]', body);
+    E.strip = $('[data-role="strip"]', body);
+    E.assetCount = $('[data-role="assetCount"]', body);
+    E.assetList = $('[data-role="assetList"]', body);
+    E.assetFilters = $('[data-role="assetFilters"]', body);
+    E.statusMain = $('[data-role="statusMain"]', body);
+    E.statusConn = $('[data-role="statusConn"]', body);
+    E.statusCount = $('[data-role="statusCount"]', body);
+    E.texSec = $('[data-role="texSec"]', body);
+    E.dialog = $('[data-role="dialog"]', body);
+    E.pullUrl = $('[data-role="pullUrl"]', body);
+    E.pullKind = $('[data-role="pullKind"]', body);
+    E.pullAsTexture = $('[data-role="pullAsTexture"]', body);
+    E.fileImage = $('[data-role="fileImage"]', body);
+    E.fileModel = $('[data-role="fileModel"]', body);
+    E.fileTexture = $('[data-role="fileTexture"]', body);
+    E.toast = $('[data-role="toast"]', body);
+    E.camPreset = $('[data-role="camPreset"]', body);
+    E.matSeg = $('[data-role="matSeg"]', body);
+    E.modelSeg = $('[data-role="modelSeg"]', body);
+    E.modelSingle = $('[data-role="modelSingle"]', body);
+    E.modelMulti = $('[data-role="modelMulti"]', body);
+    E.imgPromptCount = $('[data-role="imgPromptCount"]', body);
+    E.texPromptCount = $('[data-role="texPromptCount"]', body);
+    E.inspect = $('[data-role="inspect"]', body);
+    E.embed = $('[data-role="embed"]', body);
+    E.embedBtn = $('[data-role="embedBtn"]', body);
+    E.embedHost = $('[data-role="embedHost"]', body);
+    E.embedState = $('[data-role="embedState"]', body);
+    E.embedNote = $('[data-role="embedNote"]', body);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 渲染
+   * ------------------------------------------------------------------ */
+  function currentAsset() {
+    if (!S.selId) return null;
+    return findAsset(S.selId);
+  }
+  function findAsset(id) {
+    for (var i = 0; i < S.assets.length; i++) if (S.assets[i].id === id) return S.assets[i];
+    return null;
+  }
+  function currentModelAsset() {
+    var a = currentAsset();
+    if (a && a.kind === 'model') return a;
+    if (RT.lastModelId) {
+      var m = findAsset(RT.lastModelId);
+      if (m && m.kind === 'model') return m;
+    }
+    return null;
+  }
+  function displayName(a) {
+    return a.name || a.file || basename(a.url) || (kindLabel(a.kind) + '资源');
+  }
+
+  function setConn(state, text, extra) {
+    S.conn = Object.assign({ state: state, text: text, ready: false, modelReady: false, running: false, title: '' }, extra || {});
+    if (E.conn) {
+      E.conn.dataset.state = state;
+      E.connText.textContent = text;
+    }
+    if (E.statusConn) E.statusConn.textContent = text;
+  }
+
+  function renderConn() {
+    var c = S.conn;
+    if (!E.conn) return;
+    var state = c.state || 'off';
+    E.conn.dataset.state = state;
+    var text;
+    var where = c.mode === 'embedded' ? '内嵌' : '浏览器';
+    if (state === 'checking') text = '检测助手…';
+    else if (state === 'off') text = c.embedded ? '内嵌网页未连接' : '助手未启动';
+    else if (c.ready) text = '已连接 · ' + where + '生图页就绪';
+    else if (c.modelReady) text = '已连接 · ' + where + '生成页就绪';
+    else text = where + '已打开 · 请登录';
+    E.connText.textContent = text;
+    E.statusConn.textContent = text;
+  }
+
+  function renderPromptCounts() {
+    if (E.imgPromptCount) E.imgPromptCount.textContent = (S.image.prompt || '').length + ' / 1200';
+    if (E.texPromptCount) E.texPromptCount.textContent = (S.tex.prompt || '').length + ' / 800';
+  }
+
+  function renderTexOutputs() {
+    $$('[data-role="texTileOut"],[data-role="texTileOut2"]').forEach(function (o) { o.textContent = String(S.tex.tile); });
+    $$('[data-role="texRoughOut"],[data-role="texRoughOut2"]').forEach(function (o) { o.textContent = Number(S.tex.roughness).toFixed(2); });
+    $$('[data-role="texMetalOut"],[data-role="texMetalOut2"]').forEach(function (o) { o.textContent = Number(S.tex.metalness).toFixed(2); });
+  }
+
+  function syncForms() {
+    $$('[data-form]').forEach(function (el) {
+      var path = el.getAttribute('data-form');
+      var v = getPath(S, path);
+      if (el.type === 'checkbox') el.checked = !!v;
+      else if (el.type === 'number') el.value = v === '' || v == null ? '' : Number(v);
+      else el.value = v == null ? '' : v;
+    });
+    renderPromptCounts();
+    renderTexOutputs();
+  }
+
+  function renderModelMode() {
+    if (!E.modelSeg) return;
+    $$('button[data-mmode]', E.modelSeg).forEach(function (b) {
+      b.classList.toggle('is-on', (b.getAttribute('data-mmode') === 'multi') === !!S.model.multi);
+    });
+    E.modelSingle.classList.toggle('hidden', !!S.model.multi);
+    E.modelMulti.classList.toggle('hidden', !S.model.multi);
+  }
+
+  function renderStageTools() {
+    var mode = E.app.getAttribute('data-stage');
+    var model = mode === 'model';
+    // 空舞台也归 2D：没有资源时工具栏消失会显得窗口是空的
+    E.tools2d.classList.toggle('hidden', model);
+    E.tools3d.classList.toggle('hidden', !model);
+    $$('[data-toggle="grid"]').forEach(function (b) { b.classList.toggle('is-on', !!S.stage.grid); });
+    $$('[data-toggle="rotate"]').forEach(function (b) { b.classList.toggle('is-on', !!S.stage.rotate); });
+    if (E.matSeg) {
+      $$('button[data-mat]', E.matSeg).forEach(function (b) {
+        b.classList.toggle('is-on', b.getAttribute('data-mat') === S.stage.mat);
+      });
+    }
+    if (E.camPreset) E.camPreset.value = S.stage.cam || 'persp';
+    E.scene3d.classList.remove('tps-bg-studio', 'tps-bg-dark', 'tps-bg-light');
+    E.scene3d.classList.add('tps-bg-' + (S.stage.bg || 'studio'));
+  }
+
+  function setStageMode(mode) {
+    E.app.setAttribute('data-stage', mode);
+    var model = mode === 'model';
+    E.imgStage.classList.toggle('hidden', model);
+    E.scene3d.classList.toggle('hidden', !model);
+    E.tools2d.classList.toggle('hidden', model);
+    E.tools3d.classList.toggle('hidden', !model);
+    if (model && viewport3d) viewport3d.resize();
+    renderStageTools();
+  }
+
+  function renderRefs() {
+    $$('.tps-ref').forEach(function (slot) {
+      var key = slot.getAttribute('data-ref');
+      var v = refGet(key);
+      slot.classList.toggle('has', !!v);
+      var img = $('img', slot);
+      if (!img) return;
+      if (v) {
+        if (img.getAttribute('src') !== v) img.src = v;
+      } else {
+        img.removeAttribute('src');
+      }
+    });
+  }
+
+  function renderCounts() {
+    if (E.assetCount) E.assetCount.textContent = String(S.assets.length);
+    if (E.statusCount) E.statusCount.textContent = S.assets.length + ' 个资源';
+  }
+
+  function makeChip(kind) {
+    var span = document.createElement('span');
+    span.className = 'tps-card-kind';
+    span.setAttribute('data-kind', kind);
+    span.textContent = kind === 'model' ? '3D' : (kind === 'texture' ? 'TEX' : 'IMG');
+    return span;
+  }
+
+  function makeCard(a) {
+    var card = document.createElement('div');
+    card.className = 'tps-card' + (a.id === S.selId ? ' is-on' : '') + (a.meta && a.meta.missing ? ' is-missing' : '');
+    card.setAttribute('data-asset-id', a.id);
+    card.title = displayName(a);
+
+    var thumb = document.createElement('div');
+    thumb.className = 'tps-card-thumb';
+    thumb.setAttribute('data-thumb-id', a.id);
+    if (a.kind === 'model') {
+      var cached = RT.thumbs[a.url];
+      if (cached) {
+        var im = document.createElement('img');
+        im.src = cached;
+        im.alt = '';
+        thumb.appendChild(im);
+      } else {
+        thumb.textContent = '3D';
+        enqueueThumb(a);
+      }
+    } else {
+      var im2 = document.createElement('img');
+      im2.alt = '';
+      thumb.appendChild(im2);
+      paintAssetThumb(a, im2);
+    }
+    card.appendChild(thumb);
+
+    var label = document.createElement('div');
+    label.className = 'tps-card-label';
+    label.appendChild(makeChip(a.kind));
+    var txt = document.createElement('span');
+    txt.textContent = truncate(displayName(a), 22);
+    label.appendChild(txt);
+    card.appendChild(label);
+
+    var del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'tps-card-del';
+    del.setAttribute('data-del', a.id);
+    del.title = '删除';
+    del.textContent = '×';
+    card.appendChild(del);
+
+    return card;
+  }
+
+  function renderStrip() {
+    if (!E.strip) return;
+    E.strip.textContent = '';
+    if (!S.assets.length) {
+      var empty = document.createElement('div');
+      empty.className = 'tps-strip-empty';
+      empty.textContent = '还没有资源 · 生成结果会自动出现在这里';
+      E.strip.appendChild(empty);
+    } else {
+      S.assets.forEach(function (a) { E.strip.appendChild(makeCard(a)); });
+    }
+    renderCounts();
+  }
+
+  function paintAssetThumb(a, imgEl) {
+    if (!imgEl) return;
+    resolveUrl(a.url).then(function (src) {
+      if (imgEl.isConnected) imgEl.src = bust(src);
+    }).catch(function () {
+      if (imgEl.isConnected) imgEl.removeAttribute('src');
+    });
+  }
+
+  function paintThumbById(id) {
+    var a = findAsset(id);
+    if (!a) return;
+    var cardThumb = E.strip && $('[data-thumb-id="' + id + '"]', E.strip);
+    if (cardThumb) {
+      cardThumb.textContent = '';
+      var im = document.createElement('img');
+      im.src = RT.thumbs[a.url];
+      im.alt = '';
+      cardThumb.appendChild(im);
+    }
+    var rowThumb = E.assetList && $('[data-thumb-row="' + id + '"]', E.assetList);
+    if (rowThumb) {
+      rowThumb.textContent = '';
+      var im2 = document.createElement('img');
+      im2.src = RT.thumbs[a.url];
+      im2.alt = '';
+      rowThumb.appendChild(im2);
+    }
+  }
+
+  function enqueueThumb(a) {
+    if (!a || a.kind !== 'model' || !a.url) return;
+    if (RT.thumbs[a.url] || RT.thumbMiss[a.url] || RT.thumbQueued[a.url]) return;
+    if (Object.keys(RT.thumbs).length >= MAX_MODEL_THUMBS) return;
+    RT.thumbQueued[a.url] = true;
+    RT.thumbQueue.push(a);
+    pumpThumbs();
+  }
+
+  async function pumpThumbs() {
+    if (RT.thumbBusy) return;
+    RT.thumbBusy = true;
+    while (RT.thumbQueue.length) {
+      var a = RT.thumbQueue.shift();
+      try {
+        if (!window.Model3D || typeof window.Model3D.renderThumb !== 'function') break;
+        var src = await resolveUrl(a.url);
+        var r = await window.Model3D.renderThumb(src, { size: 160 });
+        RT.thumbs[a.url] = r.dataURL;
+        delete RT.thumbQueued[a.url];
+        paintThumbById(a.id);
+      } catch (e) {
+        RT.thumbMiss[a.url] = true;
+        delete RT.thumbQueued[a.url];
+      }
+    }
+    RT.thumbBusy = false;
+  }
+
+  function renderAssetList() {
+    if (!E.assetList) return;
+    E.assetList.textContent = '';
+    var list = S.assets.filter(function (a) { return RT.filter === 'all' || a.kind === RT.filter; });
+    if (!list.length) {
+      var empty = document.createElement('div');
+      empty.className = 'tps-assetempty';
+      empty.textContent = RT.filter === 'all' ? '项目里还没有资源' : ('还没有' + kindLabel(RT.filter) + '资源');
+      E.assetList.appendChild(empty);
+      return;
+    }
+    list.forEach(function (a) {
+      var row = document.createElement('div');
+      row.className = 'tps-assetrow' + (a.id === S.selId ? ' is-on' : '') + (a.meta && a.meta.missing ? ' is-missing' : '');
+      row.setAttribute('data-asset-row', a.id);
+
+      var thumb = document.createElement('div');
+      thumb.className = 'tps-assetrow-thumb';
+      thumb.setAttribute('data-thumb-row', a.id);
+      if (a.kind === 'model') {
+        if (RT.thumbs[a.url]) {
+          var im = document.createElement('img');
+          im.src = RT.thumbs[a.url];
+          im.alt = '';
+          thumb.appendChild(im);
+        } else {
+          thumb.textContent = '3D';
+          enqueueThumb(a);
+        }
+      } else {
+        var im2 = document.createElement('img');
+        im2.alt = '';
+        thumb.appendChild(im2);
+        paintAssetThumb(a, im2);
+      }
+      row.appendChild(thumb);
+
+      var main = document.createElement('div');
+      main.className = 'tps-assetrow-main';
+      var b = document.createElement('b');
+      b.textContent = displayName(a);
+      var small = document.createElement('small');
+      small.textContent = kindLabel(a.kind) + ' · ' + fmtTime(a.ts) + (a.meta && a.meta.missing ? ' · 不可用' : '');
+      main.appendChild(b);
+      main.appendChild(small);
+      row.appendChild(main);
+
+      E.assetList.appendChild(row);
+    });
+  }
+
+  function renderFilters() {
+    if (!E.assetFilters) return;
+    $$('button[data-filter]', E.assetFilters).forEach(function (b) {
+      b.classList.toggle('is-on', b.getAttribute('data-filter') === RT.filter);
+    });
+  }
+
+  function addInfoRow(dt, dd) {
+    var d1 = document.createElement('dt');
+    d1.textContent = dt;
+    var d2 = document.createElement('dd');
+    d2.textContent = dd == null || dd === '' ? '—' : dd;
+    E.info.appendChild(d1);
+    E.info.appendChild(d2);
+  }
+
+  function renderInspector() {
+    if (!E.info) return;
+    var a = currentAsset();
+    E.info.textContent = '';
+    if (!a) {
+      addInfoRow('资源', '未选择');
+      addInfoRow('提示', '生成图像、模型或从外部拉回资源');
+    } else {
+      addInfoRow('类型', kindLabel(a.kind));
+      addInfoRow('名称', truncate(displayName(a), 44));
+      addInfoRow('来源', a.meta && a.meta.source === 'tripo-web' ? 'Tripo 网页' : (a.meta && a.meta.source === 'screenshot' ? '模型截图' : '本地 / 导入'));
+      addInfoRow('时间', fmtTime(a.ts));
+      if (a.prompt) addInfoRow('提示词', truncate(a.prompt, 260));
+      if (a.kind === 'model') {
+        var loaded = RT.loadedModelId === a.id && viewport3d;
+        var st = loaded ? viewport3d.stats() : null;
+        addInfoRow('面数', st ? st.tris.toLocaleString() : (a.meta.tris ? Number(a.meta.tris).toLocaleString() : '载入后统计'));
+        addInfoRow('顶点', st ? st.verts.toLocaleString() : (a.meta.verts ? Number(a.meta.verts).toLocaleString() : '载入后统计'));
+        addInfoRow('UV', st ? (st.hasUV ? '有' : '无 UV') : '载入后统计');
+        addInfoRow('纹理', (a.meta.textureUrl ? '已应用' : '未应用') + (st && st.hasTexture ? '（当前生效）' : ''));
+        if (a.meta.multi !== undefined) addInfoRow('生成方式', a.meta.multi ? '多视图' : '单图');
+        if (a.meta.mode) addInfoRow('模式', a.meta.mode === 'hd' ? '高精度模型' : (a.meta.mode === 'smart' ? '智能网格' : a.meta.mode));
+        if (a.meta.format) addInfoRow('格式', String(a.meta.format).toUpperCase());
+      }
+      addInfoRow('文件', a.file || basename(a.url) || '—');
+      if (a.meta && a.meta.durationMs) addInfoRow('耗时', fmtDur(a.meta.durationMs));
+      addInfoRow('地址', truncate(a.url, 120));
+    }
+    E.texSec.classList.toggle('hidden', !(a && a.kind === 'model'));
+    renderTexOutputs();
+  }
+
+  function renderBusy() {
+    if (!E.busy) return;
+    if (!S.busy) {
+      E.busy.classList.add('hidden');
+      if (E.statusMain) E.statusMain.textContent = '就绪';
+      if (E.queue) E.queue.textContent = '空闲';
+      return;
+    }
+    var elapsed = Math.max(0, Math.round((Date.now() - S.busy.started) / 1000));
+    E.busy.classList.remove('hidden');
+    E.busyText.textContent = S.busy.label + ' · ' + elapsed + 's';
+    if (E.statusMain) E.statusMain.textContent = '生成中：' + S.busy.label;
+    if (E.queue) {
+      E.queue.textContent = '';
+      var b = document.createElement('b');
+      b.textContent = S.busy.label;
+      E.queue.appendChild(b);
+      E.queue.appendChild(document.createElement('br'));
+      E.queue.appendChild(document.createTextNode('已用时 ' + elapsed + ' 秒 · Tripo 助手单任务串行'));
+    }
+    $$('[data-act="genImage"],[data-act="genModel"],[data-act="genTexture"],[data-act="genTextureOnly"]').forEach(function (b) { b.disabled = true; });
+  }
+
+  function renderLog() {
+    if (!E.log) return;
+    E.log.textContent = '';
+    RT.logs.slice(-120).forEach(function (it) {
+      var line = document.createElement('div');
+      if (it.type === 'warn' || it.type === 'err') line.className = 'tps-log-' + it.type;
+      var d = new Date(it.t);
+      function p(n) { return n < 10 ? '0' + n : '' + n; }
+      line.textContent = p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '  ' + it.text;
+      E.log.appendChild(line);
+    });
+    E.log.scrollTop = E.log.scrollHeight;
+  }
+
+  function log(text, type) {
+    RT.logs.push({ t: Date.now(), text: String(text), type: type || '' });
+    if (RT.logs.length > 240) RT.logs.splice(0, RT.logs.length - 240);
+    renderLog();
+  }
+
+  function toast(text, type) {
+    if (!E.toast) return;
+    E.toast.textContent = text;
+    E.toast.setAttribute('data-type', type || '');
+    E.toast.classList.add('is-on');
+    clearTimeout(RT.toastTimer);
+    RT.toastTimer = setTimeout(function () { E.toast.classList.remove('is-on'); }, 2800);
+  }
+
+  function renderAll() {
+    renderConn();
+    syncForms();
+    renderModelMode();
+    renderRefs();
+    renderStrip();
+    renderAssetList();
+    renderFilters();
+    renderInspector();
+    renderBusy();
+    renderCounts();
+    renderStageTools();
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 助手连接
+   * ------------------------------------------------------------------ */
+  function refreshStatus(manual) {
+    return bridgeFetch('/status', {}, 6000).then(function (d) {
+      var running = !!(d && d.running);
+      var ready = !!(d && d.ready);
+      var modelReady = !!(d && d.modelReady);
+      S.conn = {
+        state: !running ? 'off' : ((ready || modelReady) ? 'ready' : 'login'),
+        ready: ready,
+        modelReady: modelReady,
+        running: running,
+        title: (d && d.title) || '',
+        mode: (d && d.mode) || 'none',
+        embedded: !!(d && d.embedded)
+      };
+      RT.embed.bridge = !!(d && d.embedded);
+      renderEmbedButton();
+      renderConn();
+      if (manual) {
+        if (!running) toast('助手未启动：请先双击 start.bat', 'warn');
+        else if (ready || modelReady) toast('已连接 Tripo 网页助手');
+        else toast('页面已打开，请完成登录并进入生图 / 生成页', 'warn');
+      }
+    }).catch(function (e) {
+      S.conn = { state: 'off', ready: false, modelReady: false, running: false, title: '', mode: 'none', embedded: false };
+      RT.embed.bridge = false;
+      renderEmbedButton();
+      renderConn();
+      if (manual) toast('无法连接本地助手：' + errMsg(e), 'err');
+    });
+  }
+
+  async function ensureBridge() {
+    if (S.conn.state === 'off' || !S.conn.running) await refreshStatus(false);
+    if (S.conn.state === 'off') {
+      throw new Error('Tripo 助手未启动：请先双击 start.bat 启动项目，再点右上角「登录」');
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 内嵌 Tripo 网页（仅桌面版）
+   *
+   * 登录与生成都由助手插件直接驱动这个 <webview>（走 CDP），所以这里只负责：
+   *   1) 判断当前外壳是不是 Electron；2) 按需创建 webview；3) 和 /login 对齐。
+   * 浏览器环境完全不碰 webview，退回原来的外部 Edge 流程。
+   * ------------------------------------------------------------------ */
+  function isDesktopShell() {
+    return /Electron\//i.test(navigator.userAgent || '');
+  }
+
+  function setupEmbed() {
+    RT.embed.supported = isDesktopShell();
+    // 窗口关闭再打开时 rebuild 了 DOM，旧 webview 的引用不能继续用
+    if (RT.embed.wv && !RT.embed.wv.isConnected) {
+      RT.embed.wv = null;
+      RT.embed.ready = false;
+      RT.embed.on = false;
+    }
+    if (!RT.embed.supported) {
+      if (E.embedBtn) E.embedBtn.classList.add('hidden');
+      if (E.embed) E.embed.classList.add('hidden');
+      if (E.embedNote) {
+        E.embedNote.textContent = '内嵌网页只在桌面版可用。当前是浏览器环境，请点「登录」用外部 Edge 完成登录与生成。';
+        E.embedNote.classList.remove('hidden');
+      }
+      return;
+    }
+    renderEmbedButton();
+  }
+
+  function renderEmbedButton() {
+    if (!E.embedBtn) return;
+    E.embedBtn.classList.toggle('hidden', !(RT.embed.supported && RT.embed.bridge));
+    E.embedBtn.classList.toggle('is-on', !!RT.embed.on);
+  }
+
+  function embedState(text) {
+    if (E.embedState) E.embedState.textContent = text;
+  }
+
+  function createWebview() {
+    if (RT.embed.wv && RT.embed.wv.isConnected) return RT.embed.wv;
+    if (!E.embedHost) return null;
+    var wv = document.createElement('webview');
+    wv.className = 'tps-embedview';
+    /* 分区由主进程白名单放行：登录态独立于「浏览器」App，下载落到 tripo_out。
+       allowpopups 是第三方登录（Google 等）开新窗口的必要条件。 */
+    wv.setAttribute('partition', 'persist:tripo-embed');
+    wv.setAttribute('allowpopups', '');
+    wv.setAttribute('webpreferences', 'nodeIntegration=no, contextIsolation=yes, sandbox=yes');
+    /* 去掉 Electron / 应用名标识：Tripo 的 Cloudflare 对 Electron UA 更敏感。
+       主进程给分区设了同一套 UA，这里显式写一遍，避免 webview 默认继承宿主 UA。 */
+    var ua = String(navigator.userAgent || '')
+      .replace(/\sElectron\/[\d.]+/i, '')
+      .replace(/\s(?:openagi|the-seed)\/[\d.]+/ig, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (ua) wv.setAttribute('useragent', ua);
+    wv.setAttribute('src', TPS_EMBED_URL);
+    wv.addEventListener('did-start-loading', function () { embedState('加载中…'); });
+    wv.addEventListener('dom-ready', function () {
+      RT.embed.ready = true;
+      embedState('已就绪');
+      if (E.embedNote) E.embedNote.classList.add('hidden');
+    });
+    wv.addEventListener('did-stop-loading', function () { if (RT.embed.ready) embedState('已就绪'); });
+    wv.addEventListener('did-fail-load', function (ev) {
+      if (ev && ev.errorCode === -3) return; // 主动跳转打断的加载，不算失败
+      embedState('加载失败');
+      if (E.embedNote) {
+        E.embedNote.textContent = 'Tripo 页面加载失败（' + ((ev && ev.errorDescription) || '网络错误') + '）。可以点「刷新」重试，或改用外部浏览器登录。';
+        E.embedNote.classList.remove('hidden');
+      }
+    });
+    E.embedHost.appendChild(wv);
+    RT.embed.wv = wv;
+    if (E.embedNote) E.embedNote.classList.add('hidden');
+    return wv;
+  }
+
+  function embedNavigate(url) {
+    var wv = createWebview();
+    if (!wv) return Promise.resolve();
+    return new Promise(function (resolve) {
+      var done = false;
+      function fin() { if (done) return; done = true; resolve(); }
+      try { wv.addEventListener('did-stop-loading', fin, { once: true }); } catch (e) { /* ignore */ }
+      setTimeout(fin, 5000);
+      try {
+        if (RT.embed.ready && typeof wv.loadURL === 'function') wv.loadURL(url);
+        else wv.setAttribute('src', url);
+      } catch (e) {
+        try { wv.setAttribute('src', url); } catch (err) { /* ignore */ }
+        fin();
+      }
+    });
+  }
+
+  /* 收起用 is-off（visibility），不用 display:none：webview 一旦没有尺寸，
+     guest 会白屏，登录态和正在生成的页面都会跟着出问题。 */
+  function showEmbed(on) {
+    if (!RT.embed.supported) {
+      toast('内嵌网页只在桌面版可用，请点「登录」使用外部浏览器', 'warn');
+      return;
+    }
+    if (on && !RT.embed.bridge) {
+      toast('本地助手没有开启内嵌模式，请改用外部浏览器登录', 'warn');
+      return;
+    }
+    RT.embed.on = !!on;
+    renderEmbedButton();
+    if (!E.embed) return;
+    if (on) {
+      E.embed.classList.remove('hidden');
+      E.embed.classList.remove('is-off');
+      createWebview();
+      log('内嵌 Tripo 页面已打开');
+    } else {
+      E.embed.classList.add('is-off');
+      log('已切回编辑器（内嵌页面保持运行）');
+    }
+  }
+
+  /* 等内嵌页面第一次 dom-ready（或已就绪）。不抛错：助手自己会再等 guest 出现。 */
+  function waitEmbedReady() {
+    var wv = RT.embed.wv;
+    if (!wv || RT.embed.ready) return Promise.resolve();
+    return new Promise(function (resolve) {
+      var done = false;
+      function fin() { if (done) return; done = true; resolve(); }
+      try { wv.addEventListener('dom-ready', fin, { once: true }); } catch (e) { /* ignore */ }
+      setTimeout(fin, 8000);
+    });
+  }
+
+  function openLogin() {
+    var target = '';
+    try { if (typeof confGet === 'function') target = confGet('tripoWebUrl') || ''; } catch (e) { target = ''; }
+
+    /* 桌面版优先内嵌：不在工坊外面再弹一个 Edge。助手侧 /login 会直接挂到 webview，
+       并负责把页面导航到 target —— 这里不抢先导航，否则 openagi_embed=1 标记会先丢掉，
+       助手可能认领到「浏览器」App 里另一个 Tripo 页。 */
+    if (RT.embed.supported && RT.embed.bridge) {
+      showEmbed(true);
+      log('请求内嵌 Tripo 登录页');
+      waitEmbedReady().then(function () {
+        return bridgeFetch('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: target })
+        }, 20000);
+      }).then(function (d) {
+        if (d && d.needOpen) {
+          toast('内嵌页面还没就绪，稍等一下再点「登录」', 'warn');
+          return;
+        }
+        toast((d && d.message) || '已切换到内嵌 Tripo 页面，请在其中登录');
+        setTimeout(function () { refreshStatus(false); }, 1200);
+      }).catch(function (e) {
+        toast('内嵌登录请求失败：' + errMsg(e), 'err');
+        log('内嵌登录请求失败：' + errMsg(e), 'err');
+      });
+      return;
+    }
+
+    bridgeFetch('/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: target })
+    }, 15000).then(function () {
+      toast('已打开 Tripo 登录页，登录完成后回到这里点「检测」');
+      log('已请求打开 Tripo 登录页');
+      setTimeout(function () { refreshStatus(false); }, 1500);
+    }).catch(function (e) {
+      toast('打开登录页失败：' + errMsg(e), 'err');
+      log('打开登录页失败：' + errMsg(e), 'err');
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 任务
+   * ------------------------------------------------------------------ */
+  function beginBusy(label, ctrl) {
+    S.busy = { label: label, started: Date.now() };
+    RT.busyCtrl = ctrl || null;
+    clearInterval(RT.busyTimer);
+    RT.busyTimer = setInterval(renderBusy, 1000);
+    renderBusy();
+    log('开始：' + label);
+  }
+
+  function endBusy() {
+    S.busy = null;
+    RT.busyCtrl = null;
+    clearInterval(RT.busyTimer);
+    RT.busyTimer = 0;
+    renderBusy();
+    $$('[data-act="genImage"],[data-act="genModel"],[data-act="genTexture"],[data-act="genTextureOnly"]').forEach(function (b) { b.disabled = false; });
+    saveSoon();
+  }
+
+  function runTask(label, fn) {
+    if (S.busy) { toast('已有任务在进行中', 'warn'); return; }
+    var ctrl = new AbortController();
+    beginBusy(label, ctrl);
+    Promise.resolve().then(function () { return fn(ctrl.signal); }).then(function () {
+      log('完成：' + label);
+    }).catch(function (e) {
+      if (e && e._stopped) {
+        log('已取消：' + label, 'warn');
+        toast('已取消');
+        return;
+      }
+      log(label + '失败：' + errMsg(e), 'err');
+      toast(label + '失败：' + errMsg(e), 'err');
+    }).finally(function () {
+      endBusy();
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 生图
+   * ------------------------------------------------------------------ */
+  function doGenImage() {
+    var prompt = String(S.image.prompt || '').trim();
+    if (!prompt) { toast('请先填写提示词', 'warn'); return; }
+    runTask('生成图像', async function (signal) {
+      await ensureBridge();
+      var refs = RT.imgRefs.filter(Boolean).slice(0, 3);
+      if (typeof wfTripoWebImage !== 'function') throw new Error('工作流运行时未加载，无法调用 Tripo 生图节点');
+      var t0 = Date.now();
+      var r = await wfTripoWebImage(prompt, refs, {
+        signal: signal,
+        timeoutSec: S.image.timeout,
+        ratio: S.image.ratio,
+        mode: S.image.mode === 'auto' ? '' : S.image.mode
+      });
+      var a = {
+        kind: 'image',
+        url: r.url,
+        file: r.file || '',
+        name: r.file || '生成图像',
+        prompt: prompt,
+        meta: {
+          source: 'tripo-web',
+          ratio: S.image.ratio,
+          mode: S.image.mode,
+          refs: refs.length,
+          durationMs: Date.now() - t0
+        }
+      };
+      addAsset(a);
+      log('图像生成完成 · ' + fmtDur(Date.now() - t0));
+      toast('图像已生成并载入编辑器');
+      refreshStatus(false);
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 生模型
+   * ------------------------------------------------------------------ */
+  function doGenModel() {
+    var multi = !!S.model.multi;
+    if (multi) {
+      var views = {
+        front: RT.modelRefs.front || '',
+        left: RT.modelRefs.left || '',
+        right: RT.modelRefs.right || '',
+        back: RT.modelRefs.back || ''
+      };
+      if (!views.front && !views.left && !views.right && !views.back) {
+        toast('多视图模式至少要提供一张参考图', 'warn');
+        return;
+      }
+    } else if (!RT.modelRefs.single) {
+      toast('请先上传一张参考图', 'warn');
+      return;
+    }
+
+    runTask('生成模型', async function (signal) {
+      await ensureBridge();
+      if (typeof wfTripoWebModel !== 'function') throw new Error('工作流运行时未加载，无法调用 Tripo 模型节点');
+      var t0 = Date.now();
+      var opts = {
+        signal: signal,
+        multi: multi,
+        views: multi ? {
+          front: RT.modelRefs.front || '',
+          left: RT.modelRefs.left || '',
+          right: RT.modelRefs.right || '',
+          back: RT.modelRefs.back || ''
+        } : null,
+        mode: S.model.mode,
+        version: S.model.version,
+        topology: S.model.topology,
+        faceCount: S.model.faceCount,
+        count: S.model.count,
+        format: S.model.format,
+        timeoutSec: S.model.timeout
+      };
+      var r = await wfTripoWebModel(multi ? (RT.modelRefs.front || '') : RT.modelRefs.single, opts);
+      var a = {
+        kind: 'model',
+        url: r.url,
+        file: r.file || '',
+        size: r.size || 0,
+        name: r.file || '生成模型',
+        prompt: String(S.image.prompt || '').trim(),
+        meta: {
+          source: 'tripo-web',
+          multi: multi,
+          mode: S.model.mode,
+          version: S.model.version,
+          topology: S.model.topology,
+          faceCount: S.model.faceCount,
+          count: S.model.count,
+          format: S.model.format,
+          size: r.size || 0,
+          durationMs: Date.now() - t0
+        }
+      };
+      addAsset(a);
+      log('模型生成完成 · ' + fmtDur(Date.now() - t0) + (r.size ? (' · ' + fmtSize(r.size)) : ''));
+      toast('模型已生成并载入 3D 视口');
+      refreshStatus(false);
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 纹理
+   * ------------------------------------------------------------------ */
+  async function ensureModelLoaded(model) {
+    if (!model) throw new Error('请先选择一个模型');
+    if (RT.loadedModelId === model.id && viewport3d) return true;
+    var ok = await selectAsset(model.id);
+    if (!ok) throw new Error('模型载入失败，无法应用纹理');
+    return true;
+  }
+
+  async function applyTextureToModel(model, texUrl) {
+    if (!model) throw new Error('请先选择一个模型');
+    await ensureModelLoaded(model);
+    var src = await resolveUrl(texUrl);
+    await viewport3d.applyTexture(src, {
+      tile: S.tex.tile,
+      roughness: S.tex.roughness,
+      metalness: S.tex.metalness
+    });
+    model.meta.textureUrl = texUrl;
+    model.meta.tex = { tile: S.tex.tile, roughness: S.tex.roughness, metalness: S.tex.metalness };
+    S.stage.mat = 'texture';
+    renderStageTools();
+    renderInspector();
+    renderStrip();
+    saveSoon();
+    log('纹理已应用到：' + displayName(model));
+  }
+
+  function doGenTexture(apply) {
+    var prompt = String(S.tex.prompt || '').trim();
+    if (!prompt) { toast('请先填写纹理描述', 'warn'); return; }
+    var model = apply ? currentModelAsset() : null;
+    if (apply && !model) { toast('请先选择一个模型，再生成并应用纹理', 'warn'); return; }
+    if (S.tex.fromModel && !currentModelAsset()) { toast('「以当前模型视图为参考」需要先选择一个模型', 'warn'); return; }
+
+    runTask(apply ? '生成并应用纹理' : '生成纹理', async function (signal) {
+      await ensureBridge();
+      var refs = [];
+      if (S.tex.fromModel) {
+        var refModel = currentModelAsset();
+        await ensureModelLoaded(refModel);
+        refs = [viewport3d.screenshot()];
+      }
+      var enriched = prompt + '，无缝贴图，四方连续，无接缝，顶视图平铺，均匀光照，无阴影，高细节';
+      var t0 = Date.now();
+      var r = await wfTripoWebImage(enriched, refs, {
+        signal: signal,
+        timeoutSec: S.tex.timeout,
+        ratio: '1:1',
+        mode: refs.length ? 'image' : 'text'
+      });
+      var texAsset = {
+        kind: 'texture',
+        url: r.url,
+        file: r.file || '',
+        name: r.file || '生成纹理',
+        prompt: prompt,
+        meta: {
+          source: 'tripo-web',
+          ratio: '1:1',
+          refs: refs.length,
+          tile: S.tex.tile,
+          roughness: S.tex.roughness,
+          metalness: S.tex.metalness,
+          durationMs: Date.now() - t0
+        }
+      };
+      addAsset(texAsset, { select: !apply });
+      if (apply && model) {
+        await applyTextureToModel(model, texAsset.url);
+        toast('纹理已生成并应用到当前模型');
+      } else {
+        toast('纹理已生成');
+      }
+      log('纹理生成完成 · ' + fmtDur(Date.now() - t0));
+    });
+  }
+
+  function doClearTexture() {
+    var model = currentModelAsset();
+    if (!model) { toast('请先选择一个模型', 'warn'); return; }
+    if (viewport3d && RT.loadedModelId === model.id) viewport3d.clearTexture();
+    delete model.meta.textureUrl;
+    delete model.meta.tex;
+    renderInspector();
+    renderStrip();
+    saveSoon();
+    toast('已移除模型纹理');
+  }
+
+  function doApplyCurrentTexture() {
+    var a = currentAsset();
+    if (!a) { toast('请先选择一张图像或纹理', 'warn'); return; }
+    var model = currentModelAsset();
+    if (!model) { toast('请先选择一个模型', 'warn'); return; }
+    if (a.kind !== 'image' && a.kind !== 'texture') { toast('当前资源不是图像，无法作为纹理', 'warn'); return; }
+    runTask('应用纹理', async function () {
+      await applyTextureToModel(model, a.url);
+      toast('已应用到：' + displayName(model));
+    });
+  }
+
+  function applyTexOptsLive() {
+    var model = currentModelAsset();
+    if (!model || !model.meta.textureUrl) return;
+    if (!viewport3d || RT.loadedModelId !== model.id) return;
+    var ok = viewport3d.updateTexture({
+      tile: S.tex.tile,
+      roughness: S.tex.roughness,
+      metalness: S.tex.metalness
+    });
+    if (ok) {
+      model.meta.tex = { tile: S.tex.tile, roughness: S.tex.roughness, metalness: S.tex.metalness };
+      saveSoon();
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 资源选择 / 载入
+   * ------------------------------------------------------------------ */
+  function showMissing(msg) {
+    E.missing.classList.remove('hidden');
+    E.missingText.textContent = msg || '文件可能已被清理，或本地助手尚未启动。';
+  }
+  function hideMissing() { E.missing.classList.add('hidden'); }
+
+  function setStageTitle(text) {
+    if (E.stageTitle) E.stageTitle.textContent = text || '未选择资源';
+  }
+
+  function updateStageMeta(a) {
+    if (!E.assetMeta) return;
+    if (!a) { E.assetMeta.textContent = '—'; return; }
+    var bits = [kindLabel(a.kind), displayName(a)];
+    if (a.kind === 'model' && a.meta && a.meta.size) bits.push(fmtSize(a.meta.size));
+    if (a.meta && a.meta.durationMs) bits.push('耗时 ' + fmtDur(a.meta.durationMs));
+    E.assetMeta.textContent = bits.join(' · ');
+  }
+
+  function ensure3d() {
+    if (viewport3d) return viewport3d;
+    if (!window.TripStudioViewport || typeof window.TripStudioViewport.createModelStage !== 'function') {
+      throw new Error('3D 视口模块未加载');
+    }
+    viewport3d = window.TripStudioViewport.createModelStage({
+      host: E.host3d,
+      sceneEl: E.scene3d,
+      onChange: function (ev) {
+        if (ev && ev.type === 'model') {
+          var a = currentAsset();
+          if (a && a.kind === 'model') {
+            a.meta.verts = ev.stats.verts;
+            a.meta.tris = ev.stats.tris;
+            renderInspector();
+            saveSoon();
+          }
+        }
+      }
+    });
+    viewport3d.setGrid(!!S.stage.grid);
+    viewport3d.setAutoRotate(!!S.stage.rotate);
+    viewport3d.setMaterialMode(S.stage.mat);
+    return viewport3d;
+  }
+
+  async function showImage(a, token) {
+    setStageMode('image');
+    hideMissing();
+    setStageTitle(displayName(a) + ' · ' + kindLabel(a.kind));
+    updateStageMeta(a);
+    try {
+      var src = await resolveUrl(a.url);
+      if (token !== RT.showToken) return false;
+      var dims = await viewport2d.setSrc(bust(src));
+      if (token !== RT.showToken) return false;
+      if (dims) {
+        a.meta.w = dims.w;
+        a.meta.h = dims.h;
+        a.meta.missing = false;
+      }
+      E.stageHint.textContent = dims ? (dims.w + ' × ' + dims.h + ' px') : '已载入';
+      renderInspector();
+      return true;
+    } catch (e) {
+      if (token === RT.showToken) {
+        viewport2d.clear();
+        a.meta.missing = true;
+        showMissing('图像加载失败：' + errMsg(e));
+        setStageTitle(displayName(a) + ' · 不可用');
+        E.stageHint.textContent = '加载失败';
+        renderStrip();
+        renderAssetList();
+      }
+      return false;
+    }
+  }
+
+  async function showModel(a, token) {
+    try {
+      var v3 = ensure3d();
+      setStageMode('model');
+      hideMissing();
+      setStageTitle(displayName(a) + ' · 模型');
+      updateStageMeta(a);
+      E.stageHint.textContent = '载入模型…';
+      var src = await resolveUrl(a.url);
+      if (token !== RT.showToken) return false;
+      var texSpec = null;
+      if (a.meta && a.meta.textureUrl) {
+        try {
+          var texSrc = await resolveUrl(a.meta.textureUrl);
+          var t = a.meta.tex || {};
+          texSpec = {
+            url: texSrc,
+            tile: t.tile !== undefined ? t.tile : S.tex.tile,
+            roughness: t.roughness !== undefined ? t.roughness : S.tex.roughness,
+            metalness: t.metalness !== undefined ? t.metalness : S.tex.metalness,
+            texAssetUrl: a.meta.textureUrl
+          };
+        } catch (e) { /* 纹理丢了不影响模型 */ }
+      }
+      var res = await v3.load(src, texSpec);
+      if (token !== RT.showToken || !res) return false;
+      RT.loadedModelId = a.id;
+      a.meta.missing = false;
+      a.meta.verts = res.stats.verts;
+      a.meta.tris = res.stats.tris;
+      E.stageHint.textContent = '已载入 · ' + res.stats.tris.toLocaleString() + ' 三角面';
+      v3.setGrid(!!S.stage.grid);
+      v3.setAutoRotate(!!S.stage.rotate);
+      v3.setMaterialMode(S.stage.mat);
+      v3.resize();
+      renderInspector();
+      renderStrip();
+      return true;
+    } catch (e) {
+      if (token === RT.showToken) {
+        a.meta.missing = true;
+        setStageMode('model');
+        showMissing('模型加载失败：' + errMsg(e));
+        setStageTitle(displayName(a) + ' · 不可用');
+        E.stageHint.textContent = '加载失败';
+        renderStrip();
+        renderAssetList();
+      }
+      return false;
+    }
+  }
+
+  async function selectAsset(id) {
+    var a = findAsset(id);
+    var token = ++RT.showToken;
+    S.selId = a ? a.id : '';
+    if (!a) {
+      setStageMode('empty');
+      setStageTitle('未选择资源');
+      updateStageMeta(null);
+      viewport2d.clear();
+      hideMissing();
+      renderStrip();
+      renderAssetList();
+      renderInspector();
+      saveSoon();
+      return false;
+    }
+    if (a.kind === 'model') {
+      RT.lastModelId = a.id;
+      if (a.meta && a.meta.tex) {
+        S.tex.tile = a.meta.tex.tile !== undefined ? a.meta.tex.tile : S.tex.tile;
+        S.tex.roughness = a.meta.tex.roughness !== undefined ? a.meta.tex.roughness : S.tex.roughness;
+        S.tex.metalness = a.meta.tex.metalness !== undefined ? a.meta.tex.metalness : S.tex.metalness;
+        renderTexOutputs();
+      }
+    } else {
+      viewport2d.clear();
+    }
+    renderStrip();
+    renderAssetList();
+    renderInspector();
+    saveSoon();
+    if (a.kind === 'model') return showModel(a, token);
+    return showImage(a, token);
+  }
+
+  function removeAsset(id) {
+    var idx = -1;
+    for (var i = 0; i < S.assets.length; i++) if (S.assets[i].id === id) { idx = i; break; }
+    if (idx < 0) return;
+    S.assets.splice(idx, 1);
+    if (RT.lastModelId === id) RT.lastModelId = '';
+    if (RT.loadedModelId === id) RT.loadedModelId = '';
+    if (S.selId === id) {
+      S.selId = '';
+      var next = S.assets[idx] || S.assets[idx - 1] || null;
+      if (next) selectAsset(next.id);
+      else selectAsset('');
+    } else {
+      renderStrip();
+      renderAssetList();
+      renderInspector();
+      saveSoon();
+    }
+    log('已删除资源');
+  }
+
+  function addAsset(a, opts) {
+    opts = opts || {};
+    a.id = a.id || uid('a');
+    a.ts = a.ts || Date.now();
+    a.meta = a.meta && typeof a.meta === 'object' ? a.meta : {};
+    a.name = a.name || a.file || basename(a.url) || kindLabel(a.kind);
+    if (!a.kind) a.kind = guessKind(a.url);
+    S.assets.unshift(a);
+    if (S.assets.length > MAX_ASSETS) S.assets.length = MAX_ASSETS;
+    if (opts.select !== false) selectAsset(a.id);
+    else {
+      renderStrip();
+      renderAssetList();
+      renderCounts();
+      renderInspector();
+    }
+    saveSoon();
+    return a;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 参考图
+   * ------------------------------------------------------------------ */
+  function refGet(key) {
+    if (/^image:/.test(key)) return RT.imgRefs[Number(key.split(':')[1])] || null;
+    return RT.modelRefs[key.split(':')[1]] || null;
+  }
+  function refSet(key, val) {
+    if (/^image:/.test(key)) RT.imgRefs[Number(key.split(':')[1])] = val || null;
+    else RT.modelRefs[key.split(':')[1]] = val || null;
+    renderRefs();
+  }
+
+  async function setRefFromCurrent(target) {
+    var a = currentAsset();
+    if (!a || a.kind === 'model') { toast('请先选择一张图像或纹理', 'warn'); return; }
+    try {
+      var src = await resolveUrl(a.url);
+      refSet(target, src);
+      toast('已填入参考图');
+    } catch (e) { toast('读取图像失败：' + errMsg(e), 'err'); }
+  }
+
+  function setRefFromModel(target) {
+    var model = currentModelAsset();
+    if (!model) { toast('请先选择一个模型', 'warn'); return; }
+    if (!viewport3d || RT.loadedModelId !== model.id) {
+      selectAsset(model.id).then(function (ok) {
+        if (ok) setRefFromModel(target);
+      });
+      return;
+    }
+    try {
+      var shot = viewport3d.screenshot();
+      refSet(target, shot);
+      toast('已用当前模型视图填入参考图');
+    } catch (e) { toast('截图失败：' + errMsg(e), 'err'); }
+  }
+
+  function pickImage(target) {
+    RT.fileTarget = target;
+    E.fileImage.value = '';
+    E.fileImage.click();
+  }
+
+  function importImage() {
+    RT.fileTarget = 'importImage';
+    E.fileImage.value = '';
+    E.fileImage.click();
+  }
+  function importModel() {
+    RT.fileTarget = 'importModel';
+    E.fileModel.value = '';
+    E.fileModel.click();
+  }
+  function importTexture() {
+    RT.fileTarget = 'importTexture';
+    E.fileTexture.value = '';
+    E.fileTexture.click();
+  }
+
+  async function consumeImageFiles(files) {
+    var list = Array.prototype.slice.call(files || []);
+    if (!list.length) return;
+    var target = RT.fileTarget;
+    RT.fileTarget = '';
+    if (/^ref:/.test(target)) {
+      var key = target.slice(4);
+      try {
+        var data = await fileToDataURL(list[0], 24);
+        refSet(key, data);
+        toast('参考图已更新');
+      } catch (e) { toast('参考图读取失败：' + errMsg(e), 'err'); }
+      return;
+    }
+    if (target === 'importTexture') {
+      try {
+        var dataTex = await fileToDataURL(list[0], 32);
+        var texAsset = {
+          kind: 'texture',
+          url: packLocal(dataTex),
+          name: list[0].name,
+          file: list[0].name,
+          prompt: '',
+          meta: { source: 'local', w: 0, h: 0 }
+        };
+        addAsset(texAsset);
+        log('已导入纹理：' + list[0].name);
+      } catch (e) { toast('导入纹理失败：' + errMsg(e), 'err'); }
+      return;
+    }
+    // 普通导入
+    for (var i = 0; i < list.length; i++) {
+      try {
+        var d = await fileToDataURL(list[i], 32);
+        var a = {
+          kind: 'image',
+          url: packLocal(d),
+          name: list[i].name,
+          file: list[i].name,
+          prompt: '',
+          meta: { source: 'local' }
+        };
+        addAsset(a, { select: i === list.length - 1 });
+        log('已导入图像：' + list[i].name);
+      } catch (e) {
+        toast('导入失败：' + errMsg(e), 'err');
+      }
+    }
+    toast('已导入 ' + list.length + ' 个图像');
+  }
+
+  async function consumeModelFiles(files) {
+    var list = Array.prototype.slice.call(files || []);
+    if (!list.length) return;
+    RT.fileTarget = '';
+    var model = list.find(function (f) { return MODEL_EXT_RE.test('.' + (f.name.split('.').pop() || '')) || /\.(glb|gltf|obj|fbx|stl)$/i.test(f.name); }) || list[0];
+    try {
+      var data = await fileToDataURL(model, 160);
+      var a = {
+        kind: 'model',
+        url: packLocal(data),
+        name: model.name,
+        file: model.name,
+        size: model.size,
+        prompt: '',
+        meta: { source: 'local', size: model.size }
+      };
+      addAsset(a);
+      log('已导入模型：' + model.name + ' · ' + fmtSize(model.size));
+      toast('模型已导入');
+    } catch (e) { toast('导入模型失败：' + errMsg(e), 'err'); }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 拉回 / 本地保存 / 导出
+   * ------------------------------------------------------------------ */
+  function openPullDialog(prefill) {
+    if (!E.dialog) return;
+    E.dialog.classList.remove('hidden');
+    if (E.pullUrl) {
+      E.pullUrl.value = prefill || '';
+      setTimeout(function () { E.pullUrl.focus(); }, 30);
+    }
+  }
+  function closePullDialog() {
+    if (E.dialog) E.dialog.classList.add('hidden');
+  }
+
+  async function doPull() {
+    var url = String((E.pullUrl && E.pullUrl.value) || '').trim();
+    if (!url) { toast('请填写结果地址', 'warn'); return; }
+    if (!/^(https?:|data:|blob:)/i.test(url)) { toast('只支持 http(s) / data / blob 地址', 'warn'); return; }
+    var kind = E.pullKind ? E.pullKind.value : 'auto';
+    if (kind === 'auto') kind = guessKind(url);
+    var asTex = !!(E.pullAsTexture && E.pullAsTexture.checked);
+    closePullDialog();
+    if (asTex) {
+      var model = currentModelAsset();
+      if (!model) { toast('请先选择一个模型，再作为纹理拉回', 'warn'); return; }
+      var tex = {
+        kind: 'texture',
+        url: url,
+        name: basename(url) || '拉回纹理',
+        file: basename(url),
+        prompt: '',
+        meta: { source: 'pull' }
+      };
+      addAsset(tex, { select: false });
+      try {
+        await applyTextureToModel(model, tex.url);
+        toast('已拉回并应用纹理');
+      } catch (e) {
+        toast('纹理应用失败：' + errMsg(e), 'err');
+      }
+      return;
+    }
+    var a = {
+      kind: kind,
+      url: url,
+      name: basename(url) || ('拉回' + kindLabel(kind)),
+      file: basename(url),
+      prompt: '',
+      meta: { source: 'pull' }
+    };
+    addAsset(a);
+    log('已拉回资源：' + truncate(url, 120));
+    toast('已拉回' + kindLabel(kind) + '，正在载入');
+  }
+
+  async function probeAsset(a) {
+    try {
+      var src = await resolveUrl(a.url);
+      if (a.kind === 'model') {
+        var req = (typeof apiRequest === 'function') ? apiRequest(src, { method: 'HEAD', cache: 'no-store' }) : { url: src, init: { method: 'HEAD' } };
+        var ctrl = new AbortController();
+        var timer = setTimeout(function () { ctrl.abort(); }, 6000);
+        try {
+          var res = await fetch(req.url, Object.assign({}, req.init, { signal: ctrl.signal }));
+          return res.ok;
+        } finally { clearTimeout(timer); }
+      }
+      return await new Promise(function (resolve) {
+        var img = new Image();
+        var done = false;
+        function fin(v) { if (!done) { done = true; resolve(v); } }
+        img.onload = function () { fin(true); };
+        img.onerror = function () { fin(false); };
+        img.src = bust(src);
+        setTimeout(function () { fin(false); }, 12000);
+      });
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function pullAllCheck() {
+    if (!S.assets.length) { toast('项目里还没有资源'); return; }
+    if (S.busy) { toast('已有任务在进行中', 'warn'); return; }
+    var ctrl = new AbortController();
+    beginBusy('校验资源', ctrl);
+    var miss = 0;
+    try {
+      for (var i = 0; i < S.assets.length; i++) {
+        if (ctrl.signal.aborted) break;
+        var a = S.assets[i];
+        E.statusMain.textContent = '校验资源 ' + (i + 1) + ' / ' + S.assets.length;
+        var ok = await probeAsset(a);
+        a.meta = a.meta || {};
+        a.meta.missing = !ok;
+        if (!ok) miss++;
+      }
+    } finally {
+      endBusy();
+      renderStrip();
+      renderAssetList();
+      renderInspector();
+      saveSoon();
+      if (miss) {
+        toast(miss + ' 个资源已不可用，可用「拉回结果」重新接入', 'warn');
+        log('校验完成：' + miss + ' 个资源不可用', 'warn');
+      } else {
+        toast('全部资源可用');
+        log('校验完成：全部资源可用');
+      }
+    }
+  }
+
+  async function pinAsset() {
+    var a = currentAsset();
+    if (!a) { toast('请先选择一个资源', 'warn'); return; }
+    if (isStub(a.url)) { toast('该资源已经是本地资产'); return; }
+    if (S.busy) { toast('已有任务在进行中', 'warn'); return; }
+    runTask('保存到本地资产', async function () {
+      var blob = await fetchBlobByUrl(a.url);
+      var data = await new Promise(function (resolve, reject) {
+        var fr = new FileReader();
+        fr.onload = function () { resolve(String(fr.result || '')); };
+        fr.onerror = function () { reject(new Error('读取下载内容失败')); };
+        fr.readAsDataURL(blob);
+      });
+      a.url = packLocal(data);
+      a.meta = a.meta || {};
+      a.meta.pinned = true;
+      a.meta.size = blob.size;
+      a.pulled = true;
+      saveSoon();
+      renderStrip();
+      renderAssetList();
+      renderInspector();
+      if (S.selId === a.id) selectAsset(a.id);
+      toast('已保存到本地资产，服务器清理结果也不影响');
+      log('已固化资源到本地资产库：' + displayName(a));
+    });
+  }
+
+  async function exportCurrentImage() {
+    var a = currentAsset();
+    if (!a || a.kind === 'model') { toast('请先选择一张图像或纹理', 'warn'); return; }
+    try {
+      var src = await resolveUrl(a.url);
+      var blob;
+      if (/^data:/i.test(src)) blob = dataURLToBlob(src);
+      else blob = await fetchBlobByUrl(src);
+      var ext = /png/i.test(blob.type) ? 'png' : (/jpe?g/i.test(blob.type) ? 'jpg' : 'png');
+      downloadBlob(blob, 'tripo-' + a.kind + '-' + Date.now() + '.' + ext);
+      toast('图像已导出');
+    } catch (e) { toast('导出失败：' + errMsg(e), 'err'); }
+  }
+
+  async function exportCurrentModel() {
+    var a = currentAsset();
+    var model = (a && a.kind === 'model') ? a : currentModelAsset();
+    if (!model) { toast('请先选择一个模型', 'warn'); return; }
+    if (S.busy) { toast('已有任务在进行中', 'warn'); return; }
+    runTask('导出 GLB', async function () {
+      await ensureModelLoaded(model);
+      var data = await viewport3d.exportGLB();
+      var blob = new Blob([data], { type: 'model/gltf-binary' });
+      downloadBlob(blob, (displayName(model).replace(/\.[^.]+$/, '') || 'tripo-model') + '.glb');
+      toast('GLB 已导出');
+      log('已导出 GLB：' + fmtSize(blob.size));
+    });
+  }
+
+  function takeScreenshot() {
+    var model = currentModelAsset();
+    if (!model) { toast('请先选择一个模型', 'warn'); return; }
+    try {
+      if (!viewport3d || RT.loadedModelId !== model.id) {
+        selectAsset(model.id).then(function (ok) { if (ok) takeScreenshot(); });
+        return;
+      }
+      var shot = viewport3d.screenshot();
+      addAsset({
+        kind: 'image',
+        url: packLocal(shot),
+        name: '模型截图',
+        file: 'screenshot-' + Date.now() + '.png',
+        prompt: '',
+        meta: { source: 'screenshot', w: 0, h: 0 }
+      }, { select: false });
+      toast('截图已加入项目资源');
+      log('已截取当前 3D 视图');
+    } catch (e) { toast('截图失败：' + errMsg(e), 'err'); }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 菜单动作
+   * ------------------------------------------------------------------ */
+  function setPanel(name) {
+    if (['image', 'model', 'texture', 'assets'].indexOf(name) < 0) return;
+    S.panel = name;
+    E.app.setAttribute('data-panel', name);
+    $$('.tps-rail-btn').forEach(function (b) { b.classList.toggle('is-on', b.getAttribute('data-panel') === name); });
+    $$('.tps-pane').forEach(function (p) { p.classList.toggle('hidden', p.getAttribute('data-pane') !== name); });
+    saveSoon();
+  }
+
+  function fitStage() {
+    if (E.app.getAttribute('data-stage') === 'model' && viewport3d) viewport3d.fit();
+    else viewport2d.fit();
+  }
+  function actualStage() {
+    if (E.app.getAttribute('data-stage') === 'image') viewport2d.actual();
+  }
+  function toggleGrid() {
+    S.stage.grid = !S.stage.grid;
+    viewport2d.setGrid(S.stage.grid);
+    if (viewport3d) viewport3d.setGrid(S.stage.grid);
+    renderStageTools();
+    saveSoon();
+  }
+  function toggleRotate() {
+    if (E.app.getAttribute('data-stage') !== 'model') { toast('旋转只在 3D 视口生效', 'warn'); return; }
+    S.stage.rotate = !S.stage.rotate;
+    if (viewport3d) viewport3d.setAutoRotate(S.stage.rotate);
+    renderStageTools();
+    saveSoon();
+  }
+  function toggleBg() {
+    var order = ['studio', 'dark', 'light'];
+    S.stage.bg = order[(order.indexOf(S.stage.bg) + 1) % order.length];
+    renderStageTools();
+    saveSoon();
+  }
+  function setMatMode(mode) {
+    if (['texture', 'clay', 'wire'].indexOf(mode) < 0) return;
+    S.stage.mat = mode;
+    if (viewport3d) viewport3d.setMaterialMode(mode);
+    renderStageTools();
+    saveSoon();
+  }
+
+  function clearAll() {
+    if (!S.assets.length) { toast('项目已经是空的'); return; }
+    if (!window.confirm('清空项目中的所有资源？本地资产库里的文件不会被删除。')) return;
+    S.assets = [];
+    S.selId = '';
+    RT.lastModelId = '';
+    RT.loadedModelId = '';
+    viewport2d.clear();
+    if (viewport3d) viewport3d.clearTexture();
+    setStageMode('empty');
+    setStageTitle('未选择资源');
+    updateStageMeta(null);
+    hideMissing();
+    renderStrip();
+    renderAssetList();
+    renderInspector();
+    saveNow();
+    toast('项目已清空');
+    log('项目已清空');
+  }
+
+  function imageToRef() {
+    var a = currentAsset();
+    if (!a || a.kind === 'model') { toast('请先选择一张图像或纹理', 'warn'); return; }
+    var target;
+    if (S.panel === 'model') target = S.model.multi ? 'model:front' : 'model:single';
+    else {
+      var empty = IMAGE_REF_KEYS.find(function (k) { return !refGet(k); });
+      target = empty || 'image:0';
+    }
+    setRefFromCurrent(target);
+  }
+
+  function runAction(act, node) {
+    switch (act) {
+      case 'connCheck': refreshStatus(true); break;
+      case 'login': openLogin(); break;
+      case 'toggleEmbed': showEmbed(!RT.embed.on); break;
+      case 'embedClose': showEmbed(false); break;
+      case 'embedReload': if (RT.embed.wv) { try { RT.embed.wv.reload(); } catch (e) { showEmbed(true); } } else showEmbed(true); break;
+      case 'embedHome': showEmbed(true); embedNavigate(TPS_EMBED_URL); break;
+      case 'genImage': doGenImage(); break;
+      case 'genModel': doGenModel(); break;
+      case 'genTexture': doGenTexture(true); break;
+      case 'genTextureOnly': doGenTexture(false); break;
+      case 'clearTexture': doClearTexture(); break;
+      case 'applyCurrentTexture': doApplyCurrentTexture(); break;
+      case 'importImage': importImage(); break;
+      case 'importModel': importModel(); break;
+      case 'importTexture': importTexture(); break;
+      case 'exportImage': exportCurrentImage(); break;
+      case 'exportModel': exportCurrentModel(); break;
+      case 'pinAsset': pinAsset(); break;
+      case 'downloadModel': exportCurrentModel(); break;
+      case 'clearAll': clearAll(); break;
+      case 'copyPrompt': {
+        var a = currentAsset();
+        copyText(a && a.prompt ? a.prompt : (S.panel === 'texture' ? S.tex.prompt : S.image.prompt));
+        break;
+      }
+      case 'copyUrl': {
+        var b = currentAsset();
+        if (b) copyText(b.url); else toast('请先选择一个资源', 'warn');
+        break;
+      }
+      case 'removeAsset': {
+        var c = currentAsset();
+        if (c) removeAsset(c.id); else toast('请先选择一个资源', 'warn');
+        break;
+      }
+      case 'imageToRef': imageToRef(); break;
+      case 'imageToTexture': doApplyCurrentTexture(); break;
+      case 'refFromCurrent': {
+        var target = (node && node.getAttribute('data-target')) || (S.model.multi ? 'model:front' : 'model:single');
+        setRefFromCurrent(target);
+        break;
+      }
+      case 'refFromModel': {
+        var target2 = (node && node.getAttribute('data-target')) || (S.model.multi ? 'model:front' : 'model:single');
+        setRefFromModel(target2);
+        break;
+      }
+      case 'fit': fitStage(); break;
+      case 'actual': actualStage(); break;
+      case 'zoomIn': if (E.app.getAttribute('data-stage') === 'image') viewport2d.zoomIn(); break;
+      case 'zoomOut': if (E.app.getAttribute('data-stage') === 'image') viewport2d.zoomOut(); break;
+      case 'toggleGrid': toggleGrid(); break;
+      case 'toggleRotate': toggleRotate(); break;
+      case 'toggleBg': toggleBg(); break;
+      case 'toggleInspect': E.app.classList.toggle('is-inspect-off'); break;
+      case 'shot': takeScreenshot(); break;
+      case 'panel': setPanel((node && node.getAttribute('data-panel')) || 'image'); break;
+      case 'pullBack': openPullDialog(''); break;
+      case 'pullAll': pullAllCheck(); break;
+      case 'pullDo': doPull(); break;
+      case 'pullCancel': closePullDialog(); break;
+      case 'retryAsset': {
+        var d = currentAsset();
+        if (d) selectAsset(d.id);
+        break;
+      }
+      case 'cancel': {
+        if (RT.busyCtrl) RT.busyCtrl.abort();
+        toast('已请求取消，等待当前步骤退出');
+        break;
+      }
+      case 'clearLog': RT.logs = []; renderLog(); break;
+      case 'about':
+        toast('Tripo 工坊 v1.0 · 复用工作流 tripoImg / tripoModel 节点');
+        log('Tripo 工坊 v1.0 · 生图 / 生模型 / 纹理 / 拉回结果');
+        break;
+      default: break;
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 事件绑定
+   * ------------------------------------------------------------------ */
+  function bindEvents() {
+    // 菜单开关
+    $$('.tps-menu-btn', E.menus).forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var menu = btn.parentNode;
+        var was = menu.classList.contains('open');
+        $$('.tps-menu').forEach(function (m) { m.classList.remove('open'); });
+        if (!was) menu.classList.add('open');
+      });
+    });
+    document.addEventListener('click', function (e) {
+      if (!E.menus) return;
+      if (!e.target.closest('.tps-menu')) $$('.tps-menu').forEach(function (m) { m.classList.remove('open'); });
+    });
+
+    // 统一点击委派
+    E.app.addEventListener('click', function (e) {
+      var del = e.target.closest('[data-del]');
+      if (del) {
+        e.preventDefault();
+        e.stopPropagation();
+        removeAsset(del.getAttribute('data-del'));
+        return;
+      }
+      var x = e.target.closest('[data-x]');
+      if (x) {
+        e.preventDefault();
+        e.stopPropagation();
+        refSet(x.getAttribute('data-x'), null);
+        return;
+      }
+      var act = e.target.closest('[data-act]');
+      if (act) {
+        e.preventDefault();
+        $$('.tps-menu').forEach(function (m) { m.classList.remove('open'); });
+        runAction(act.getAttribute('data-act'), act);
+        return;
+      }
+      var panel = e.target.closest('[data-panel]');
+      if (panel) {
+        e.preventDefault();
+        setPanel(panel.getAttribute('data-panel'));
+        return;
+      }
+      var mmode = e.target.closest('[data-mmode]');
+      if (mmode) {
+        e.preventDefault();
+        S.model.multi = mmode.getAttribute('data-mmode') === 'multi';
+        renderModelMode();
+        saveSoon();
+        return;
+      }
+      var mat = e.target.closest('[data-mat]');
+      if (mat) {
+        e.preventDefault();
+        setMatMode(mat.getAttribute('data-mat'));
+        return;
+      }
+      var chip = e.target.closest('[data-chip]');
+      if (chip) {
+        e.preventDefault();
+        var path = chip.getAttribute('data-chip');
+        var old = String(getPath(S, path) || '').trim();
+        setPath(S, path, old ? (old + '\n' + chip.getAttribute('data-text')) : chip.getAttribute('data-text'));
+        syncForms();
+        saveSoon();
+        return;
+      }
+      var filter = e.target.closest('[data-filter]');
+      if (filter) {
+        e.preventDefault();
+        RT.filter = filter.getAttribute('data-filter');
+        renderFilters();
+        renderAssetList();
+        return;
+      }
+      var ref = e.target.closest('[data-ref]');
+      if (ref) {
+        e.preventDefault();
+        pickImage('ref:' + ref.getAttribute('data-ref'));
+        return;
+      }
+      var card = e.target.closest('[data-asset-id]');
+      if (card) {
+        e.preventDefault();
+        selectAsset(card.getAttribute('data-asset-id'));
+        return;
+      }
+      var row = e.target.closest('[data-asset-row]');
+      if (row) {
+        e.preventDefault();
+        selectAsset(row.getAttribute('data-asset-row'));
+        return;
+      }
+      if (e.target.closest('[data-role="dialog"]') && !e.target.closest('.tps-dialog-box')) {
+        closePullDialog();
+      }
+    });
+
+    // 表单
+    function onForm(e) {
+      var el = e.target.closest('[data-form]');
+      if (!el) return;
+      var path = el.getAttribute('data-form');
+      var val;
+      if (el.type === 'checkbox') val = el.checked;
+      else if (el.type === 'number' || el.type === 'range') val = el.value === '' ? 0 : Number(el.value);
+      else val = el.value;
+      if (path === 'image.timeout') val = clamp(Number(val) || 240, 10, 900);
+      if (path === 'model.timeout') val = clamp(Number(val) || 420, 30, 1800);
+      if (path === 'tex.timeout') val = clamp(Number(val) || 240, 10, 900);
+      if (path === 'model.faceCount') val = clamp(Number(val) || 0, 0, 25000);
+      if (path === 'tex.tile') val = clamp(Number(val) || 1, 1, 8);
+      if (path === 'tex.roughness' || path === 'tex.metalness') val = clamp(Number(val) || 0, 0, 1);
+      setPath(S, path, val);
+      if (el.type === 'checkbox') {
+        // 同一字段只同步复选框，不覆盖其它控件
+        $$('[data-form="' + path + '"]').forEach(function (o) { if (o.type === 'checkbox' && o !== el) o.checked = !!val; });
+      } else {
+        $$('[data-form="' + path + '"]').forEach(function (o) { if (o !== el && o.type !== 'checkbox') o.value = val; });
+      }
+      renderPromptCounts();
+      renderTexOutputs();
+      if (path.indexOf('tex.') === 0) applyTexOptsLive();
+      saveSoon();
+    }
+    E.app.addEventListener('input', onForm);
+    E.app.addEventListener('change', onForm);
+
+    // 参考图槽拖放
+    $$('.tps-ref').forEach(function (slot) {
+      slot.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        slot.style.borderColor = '#8ea4ff';
+      });
+      slot.addEventListener('dragleave', function () { slot.style.borderColor = ''; });
+      slot.addEventListener('drop', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        slot.style.borderColor = '';
+        var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (!f || !/^image\//.test(f.type)) { toast('这里只能放图像', 'warn'); return; }
+        fileToDataURL(f, 24).then(function (data) {
+          refSet(slot.getAttribute('data-ref'), data);
+          toast('参考图已更新');
+        }).catch(function (er) { toast('读取失败：' + errMsg(er), 'err'); });
+      });
+    });
+
+    // 文件选择
+    E.fileImage.addEventListener('change', function () { consumeImageFiles(E.fileImage.files); });
+    E.fileModel.addEventListener('change', function () { consumeModelFiles(E.fileModel.files); });
+    E.fileTexture.addEventListener('change', function () { consumeImageFiles(E.fileTexture.files); });
+
+    // 相机视角
+    if (E.camPreset) {
+      E.camPreset.addEventListener('change', function () {
+        S.stage.cam = E.camPreset.value;
+        if (viewport3d) viewport3d.setCameraPreset(S.stage.cam);
+        saveSoon();
+      });
+    }
+
+    // 舞台拖放（导入）
+    var dragDepth = 0;
+    ['dragenter', 'dragover'].forEach(function (t) {
+      E.viewport.addEventListener(t, function (e) {
+        if (!e.dataTransfer || Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') < 0) return;
+        e.preventDefault();
+        if (t === 'dragenter') dragDepth++;
+        E.dropmask.classList.remove('hidden');
+      });
+    });
+    E.viewport.addEventListener('dragleave', function (e) {
+      e.preventDefault();
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (!dragDepth) E.dropmask.classList.add('hidden');
+    });
+    E.viewport.addEventListener('drop', function (e) {
+      e.preventDefault();
+      dragDepth = 0;
+      E.dropmask.classList.add('hidden');
+      var files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length) return;
+      var f = files[0];
+      if (MODEL_EXT_RE.test(f.name)) consumeModelFiles(files);
+      else if (/^image\//.test(f.type)) consumeImageFiles(files);
+      else toast('暂不支持该文件类型', 'warn');
+    });
+
+    // 键盘
+    document.addEventListener('keydown', function (e) {
+      if (!E.app || !E.app.offsetParent) return;
+      var mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key === 'Enter') {
+        e.preventDefault();
+        if (S.panel === 'model') doGenModel();
+        else if (S.panel === 'texture') doGenTexture(true);
+        else doGenImage();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); importImage(); return; }
+      if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); exportCurrentModel(); return; }
+      var tag = (e.target && e.target.tagName) || '';
+      if (/INPUT|TEXTAREA|SELECT/.test(tag) || (e.target && e.target.isContentEditable)) return;
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        var a = currentAsset();
+        if (a) { e.preventDefault(); removeAsset(a.id); }
+        return;
+      }
+      if (e.key === 'f' || e.key === 'F') { e.preventDefault(); fitStage(); return; }
+      if (e.key === '1') { setPanel('image'); return; }
+      if (e.key === '2') { setPanel('model'); return; }
+      if (e.key === '3') { setPanel('texture'); return; }
+      if (e.key === '4') { setPanel('assets'); return; }
+      if (e.code === 'Space') {
+        if (E.app.getAttribute('data-stage') === 'model') { e.preventDefault(); toggleRotate(); }
+      }
+    });
+
+    window.addEventListener('beforeunload', saveNow);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * mount
+   * ------------------------------------------------------------------ */
+  function mount(body) {
+    if (!body) return;
+    if (body.dataset.ready === '1') {
+      setupEmbed();
+      renderAll();
+      refreshStatus(false);
+      if (viewport2d) {
+        if (S.selId) selectAsset(S.selId);
+      }
+      if (viewport3d) viewport3d.resize();
+      return;
+    }
+
+    bindEls(body);
+    loadState();
+    bindEvents();
+    setupEmbed();
+
+    if (window.TripStudioViewport) {
+      viewport2d = window.TripStudioViewport.createImageStage({
+        stage: E.imgStage,
+        tile: E.imgTile,
+        img: E.img,
+        empty: E.empty,
+        grid: E.grid2d,
+        onChange: function (v) {
+          if (E.zoomText) E.zoomText.textContent = Math.round(v.zoom * 100) + '%';
+        }
+      });
+    }
+
+    setPanel(S.panel);
+    renderAll();
+    renderLog();
+
+    E.imgStage.classList.remove('hidden');
+    E.scene3d.classList.add('hidden');
+    setStageMode('empty');
+    hideMissing();
+
+    if (S.selId && findAsset(S.selId)) {
+      selectAsset(S.selId);
+    } else {
+      S.selId = '';
+      viewport2d.clear();
+      setStageMode('empty');
+      updateStageMeta(null);
+    }
+
+    if (S.stage.grid) viewport2d.setGrid(true);
+
+    log('Tripo 工坊已就绪 · 复用工作流 tripoImg / tripoModel 节点');
+    refreshStatus(false);
+
+    clearInterval(RT.statusTimer);
+    RT.statusTimer = setInterval(function () {
+      if (!E.app || !E.app.offsetParent) return;
+      if (S.busy) return;
+      refreshStatus(false);
+    }, 30000);
+
+    body.dataset.ready = '1';
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 调试 / 自动化入口（探针与二次开发用）
+   * ------------------------------------------------------------------ */
+  window.TripStudio = {
+    version: '1.0.0',
+    appId: APP_ID,
+    state: function () { return S; },
+    addAsset: function (a, opts) { return addAsset(a, opts); },
+    select: function (id) { return selectAsset(id); },
+    remove: function (id) { removeAsset(id); },
+    pull: function (url, kind) { return addAsset({ kind: kind || guessKind(url), url: url, name: basename(url) }); },
+    applyTexture: function (url) {
+      var model = currentModelAsset();
+      return applyTextureToModel(model, url);
+    },
+    has3d: function () { return !!viewport3d; },
+    stats: function () { return viewport3d ? viewport3d.stats() : null; },
+    getPanel: function () { return S.panel; },
+    setPanel: setPanel,
+    getStage: function () { return E.app ? E.app.getAttribute('data-stage') : ''; },
+    ready: function () { return !!(E.body && E.body.dataset.ready === '1'); },
+    embed: function () {
+      return { supported: !!RT.embed.supported, bridge: !!RT.embed.bridge, on: !!RT.embed.on, ready: !!RT.embed.ready, hasWebview: !!(RT.embed.wv && RT.embed.wv.isConnected) };
+    },
+    toggleEmbed: function (on) { showEmbed(typeof on === 'boolean' ? on : !RT.embed.on); }
+  };
+
+  registerApp({
+    id: 'tripostudio',
+    name: 'Tripo 工坊',
+    order: 20,
+    cls: 'tripostudio',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 20 7.6v8.8L12 20.8 4 16.4V7.6l8-4.4Z"/><path d="m4 7.6 8 4.4 8-4.4M12 12v8.8"/><path d="M17.6 3.1v3.2M16 4.7h3.2"/></svg>',
+    desc: '生图 / 生模型 / 纹理 / 拉回结果',
+    body: window.TPS_BODY,
+    css: ['apps/tripostudio/app.css'],
+    scripts: ['apps/tripostudio/viewport.js'],
+    mount: mount
+  });
 })();
 
 /* ---- apps/tunnel/app.js ---- */

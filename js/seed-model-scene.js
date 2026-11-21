@@ -304,7 +304,12 @@
       meshRef: str(n.meshRef, MESH_REF),
       materialSlots: Array.isArray(n.materialSlots) ? n.materialSlots.map(String) : [],
       /* D4：修改器栈只保留字段与求值接口，M1 不做 UI / 不做求值 */
-      modifiers: Array.isArray(n.modifiers) ? clone(n.modifiers) : []
+      modifiers: Array.isArray(n.modifiers) ? clone(n.modifiers) : [],
+      /* 组件来源（可选）：{ id, params } —— 这个节点是某个组件源生成的，带着它自己的参数。
+       * ⚠ 只存**纯数据**：组件的行为（怎么把参数变成形状）在组件源里，不在文档里。
+       *   不保留这个字段的后果是「存盘重开 = 头模退化成一个普通网格」，
+       *   表情、贴图、来源全都调不回来了 —— 那才是把特殊组件当成普通零件。 */
+      comp: (isObj(n.comp) && n.comp.id) ? clone(n.comp) : null
     };
   }
 
@@ -962,6 +967,10 @@
     getMesh: getMesh,
     setMesh: setMesh,
     nodeOf: nodeOf,
+    /* 按 id 取节点：外包（属性面板的「调整这个组件」、大纲、探针）都要按 id 找，
+     * 早先只有内部能用 nodeById，外部只好自己遍历 nodes —— 写漏一次就成了
+     * 「静默不工作」（try/catch 一包，异常变成 null，功能只是消失，不报错）。 */
+    nodeById: nodeById,
     nodesOf: nodesOf,
     activeNode: activeNode,
     setActiveNode: setActiveNode,

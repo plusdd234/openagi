@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>捏脸编辑器 · 界面调研与设计方案</title>
+<style>
+  :root{
+    --ink:#1f2328; --sub:#5c6877; --dim:#8b94a3; --line:#e5e8eb;
+    --bg:#f6f8fb; --card:#fff; --accent:#5b8fd9; --accent-deep:#3f6fb5;
+    --ok:#2f9e6e; --warn:#c98a2e; --bad:#c0504d;
+    --shadow:0 10px 30px rgba(31,35,40,.07);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 28px 90px}
+  header.hero{
+    padding:42px 40px; border-radius:20px; color:#fff;
+    background:linear-gradient(135deg,#2f4f7a 0%,#3f6fb5 48%,#6f9fdc 100%);
+    box-shadow:0 18px 46px rgba(47,79,122,.25);
+  }
+  .hero .kicker{font-size:13px;letter-spacing:.16em;text-transform:uppercase;opacity:.78}
+  .hero h1{margin:10px 0 8px;font-size:34px;line-height:1.25}
+  .hero p{margin:0;max-width:720px;opacity:.9;font-size:15px}
+  .meta{margin-top:22px;display:flex;flex-wrap:wrap;gap:8px}
+  .meta span{
+    font-size:12px;padding:4px 11px;border-radius:999px;
+    background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22)
+  }
+  h2{margin:52px 0 14px;font-size:23px;letter-spacing:.01em}
+  h2 .num{color:var(--accent);font-size:14px;margin-right:8px;vertical-align:2px;letter-spacing:.12em}
+  h3{margin:26px 0 8px;font-size:17px}
+  p{margin:10px 0}
+  .lead{color:var(--sub);font-size:15px}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:18px 18px 16px;box-shadow:var(--shadow)
+  }
+  .card h4{margin:0 0 6px;font-size:15px}
+  .card .tag{
+    display:inline-block;font-size:11px;color:var(--accent-deep);background:#eef5ff;
+    border-radius:999px;padding:2px 9px;margin-bottom:8px
+  }
+  .card ul{margin:8px 0 0;padding-left:18px;color:var(--sub);font-size:13.5px}
+  .card li{margin:4px 0}
+  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13.5px}
+  th,td{padding:11px 13px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{background:#f2f5f9;color:#3b4654;font-weight:600;white-space:nowrap}
+  tr:last-child td{border-bottom:0}
+  td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:999px;white-space:nowrap}
+  .pill.ok{background:#eaf7f1;color:#22765a}
+  .pill.mid{background:#fdf4e6;color:#9a6a1d}
+  .pill.no{background:#fbeeee;color:#a8443f}
+  .callout{
+    border-left:3px solid var(--accent);background:#f4f8fe;border-radius:0 12px 12px 0;
+    padding:14px 18px;margin:18px 0;color:#33404f;font-size:14px
+  }
+  .callout strong{color:var(--accent-deep)}
+  .checklist{list-style:none;padding:0;margin:12px 0}
+  .checklist li{
+    position:relative;padding:7px 0 7px 30px;border-bottom:1px dashed var(--line);font-size:14px;color:#3b4654
+  }
+  .checklist li:last-child{border-bottom:0}
+  .checklist li::before{
+    content:"✓";position:absolute;left:2px;top:6px;width:18px;height:18px;border-radius:50%;
+    background:#eaf7f1;color:var(--ok);font-size:12px;text-align:center;line-height:18px
+  }
+  .checklist li.plan::before{content:"○";background:#f2f5f9;color:var(--dim)}
+  .checklist li small{color:var(--dim);font-size:12px;margin-left:6px}
+  /* 版式示意 */
+  .diagram{
+    display:grid;grid-template-columns:1fr 300px;gap:0;height:330px;
+    border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff;box-shadow:var(--shadow)
+  }
+  .d-stage{position:relative;background:
+    radial-gradient(420px 260px at 50% 0%,#f2f7ff,rgba(242,247,255,0) 62%),
+    linear-gradient(168deg,#f9fbfe,#e9eff8)}
+  .d-bar{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;gap:6px}
+  .d-chip{font-size:11px;background:rgba(255,255,255,.9);border:1px solid var(--line);border-radius:8px;padding:4px 9px;color:#64707f}
+  .d-chip.on{background:#eaf1fc;color:var(--accent-deep);font-weight:600}
+  .d-state{position:absolute;left:10px;bottom:22px;font-size:10.5px;color:#8b94a3}
+  .d-hint{position:absolute;right:10px;bottom:8px;font-size:10.5px;color:#a7b0bd}
+  .d-face{
+    position:absolute;left:50%;top:54%;width:120px;height:168px;transform:translate(-50%,-50%);
+    border-radius:50% 50% 46% 46%/54% 54% 46% 46%;
+    background:linear-gradient(180deg,#f7e6da,#efd6c8);
+    box-shadow:inset 0 -14px 24px rgba(190,150,130,.18),0 10px 24px rgba(31,35,40,.08)
+  }
+  .d-face::before,.d-face::after{
+    content:"";position:absolute;top:62px;width:15px;height:6px;border-radius:50%;
+    background:#6b6f78
+  }
+  .d-face::before{left:24px}
+  .d-face::after{right:24px}
+  .d-gizmo{
+    position:absolute;width:10px;height:10px;border-radius:50%;border:2px solid var(--accent-deep);
+    background:#fff;box-shadow:0 1px 4px rgba(31,35,40,.25)
+  }
+  .d-gizmo span{
+    position:absolute;left:14px;top:-5px;font-size:9.5px;color:#4a5563;background:rgba(255,255,255,.92);
+    border:1px solid var(--line);border-radius:999px;padding:1px 5px;white-space:nowrap
+  }
+  .d-panel{display:flex;flex-direction:column;border-left:1px solid var(--line);background:#fff}
+  .d-panel .tabs{display:flex;gap:4px;padding:6px 8px;border-bottom:1px solid var(--line)}
+  .d-panel .tabs i{
+    flex:1;text-align:center;font-style:normal;font-size:11px;color:#64707f;padding:5px 0;border-radius:7px
+  }
+  .d-panel .tabs i.on{background:#eef5ff;color:var(--accent-deep);font-weight:600}
+  .d-panel .body{padding:10px;display:flex;flex-direction:column;gap:7px;overflow:hidden}
+  .d-row{display:flex;align-items:center;gap:7px;font-size:10.5px;color:#5c6877}
+  .d-row b{font-weight:400;width:38px;flex:0 0 auto}
+  .d-track{flex:1;height:4px;border-radius:99px;background:#e6ebf2;position:relative}
+  .d-track em{position:absolute;left:50%;top:-3px;width:10px;height:10px;border-radius:50%;background:var(--accent)}
+  code{
+    background:#eef1f5;border-radius:5px;padding:1px 5px;font-size:12.5px;
+    font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#3b4654
+  }
+  .kv{display:flex;gap:10px;font-size:13.5px;color:var(--sub);padding:5px 0;border-bottom:1px dashed var(--line)}
+  .kv:last-child{border-bottom:0}
+  .kv b{flex:0 0 128px;color:#3b4654;font-weight:600}
+  footer{margin-top:60px;color:var(--dim);font-size:12.5px;text-align:center}
+  @media (max-width:760px){
+    .g2,.g3{grid-template-columns:1fr}
+    .diagram{grid-template-columns:1fr;height:auto}
+    .d-stage{height:240px}
+    .d-panel{border-left:0;border-top:1px solid var(--line)}
+    .hero{padding:30px 22px}
+    .hero h1{font-size:26px}
+    .wrap{padding:26px 16px 60px}
+    th,td{padding:9px 10px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="kicker">Lumen3D · Editor UX</div>
+    <h1>捏脸编辑器界面调研<br>与右侧统一检查器设计方案</h1>
+    <p>把编辑界面收敛到展示区右侧，先横向比较成熟角色创建器的布局与操作范式，再枚举四套改良方案，最后给出已落地的界面规范与交互规则。</p>
+    <div class="meta">
+      <span>状态：已生效（方案 A 已实现）</span>
+      <span>日期：2026-11-21</span>
+      <span>适用范围：apps/lumen3d</span>
+    </div>
+  </header>
+
+  <h2><span class="num">01</span>调研：成熟产品怎么做</h2>
+  <p class="lead">选取六类有代表性的角色创建 / 雕刻工具，重点看三件事：分区怎么摆、参数怎么调、直接操控怎么和数值面板配合。</p>
+
+  <div class="grid g3">
+    <div class="card">
+      <span class="tag">MMO · 端游</span>
+      <h4>Black Desert Online</h4>
+      <ul>
+        <li>视口居中偏左，右侧长列表按「脸型 / 皮肤 / 眼睛 / 鼻子 / 嘴 / 发型 / 化妆」分类。</li>
+        <li>脸部可直接拖拽骨骼控制点，滑杆做精调；支持对称编辑与半脸锁定。</li>
+        <li>相机预设聚焦到当前部位，改哪看哪。</li>
+        <li>「美容相册」沉淀社区预设，一键套用后再微调。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <span class="tag">二次元 · 免费工具</span>
+      <h4>VRoid Studio</h4>
+      <ul>
+        <li>左侧工具轨（脸 / 头发 / 身体 / 服装 / 纹理），右侧是当前模式的参数面板。</li>
+        <li>参数按部位分组，滑杆 + 数字框并存，改完即时预览。</li>
+        <li>纹理模式直接在模型上涂抹，2D 画布与 3D 预览并排。</li>
+        <li>预设色板与「一键风格」降低新手门槛。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <span class="tag">写实 · 引擎管线</span>
+      <h4>MetaHuman Creator</h4>
+      <ul>
+        <li>先选预设，再用混合滑杆在多个脸之间插值，最后进入雕刻。</li>
+        <li>右侧细节面板只呈现当前层级（脸型 / 皮肤 / 毛发），避免一次铺满。</li>
+        <li>底部资源架放预设与收藏，主视口始终最大。</li>
+        <li>强调「先粗后细」：整体比例 → 五官 → 材质。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <span class="tag">专业管线</span>
+      <h4>Character Creator 4</h4>
+      <ul>
+        <li>左场景树、中视口、右 Modify 面板，三栏各司其职。</li>
+        <li>Morph 面板带搜索、分组折叠与数值输入，适合参数极多的场景。</li>
+        <li>内容库常驻底部，拖拽即用。</li>
+        <li>面板可折叠 / 浮动，适配不同工作流。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <span class="tag">通用雕刻</span>
+      <h4>Blender / ZBrush</h4>
+      <ul>
+        <li>工具即模式：笔刷、遮罩、对称、动态拓扑用快捷键切换。</li>
+        <li>笔刷落点直接作用在曲面，径向菜单减少面板往返。</li>
+        <li>N 面板承载精确数值，视口 HUD 承载即时状态。</li>
+        <li>对称、遮罩、局部化是防穿模的核心手段。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <span class="tag">大众向</span>
+      <h4>The Sims 4 / 主机捏脸</h4>
+      <ul>
+        <li>默认「捏」而不是「调」：点住脸部直接拖，滑杆退居其次。</li>
+        <li>左右分区按身体 / 脸 / 服装，图标化、低文字密度。</li>
+        <li>镜头自动拉近到操作部位，减少手动找视角。</li>
+        <li>对比按钮（按住看原样）降低试错成本。</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>六款产品沉淀出的共性</h3>
+  <div class="grid g2">
+    <div class="card">
+      <h4>布局：视口优先，面板靠边</h4>
+      <ul>
+        <li>主视口永远占据最大面积，参数面板固定在左或右，不用浮层盖住模型。</li>
+        <li>模式 / 分类在边缘（左轨或顶部），属性在另一侧，形成「选模式 → 调属性」的动线。</li>
+        <li>面板宽度随模式变化，纹理、材质类模式需要更宽的工作区。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>操作：直接操控 + 数值精修</h4>
+      <ul>
+        <li>脸上的控制点负责「找感觉」，滑杆 / 数字框负责「对齐规格」，两者必须双向同步。</li>
+        <li>悬停即高亮受影响区域，是防穿模、防误改的关键反馈。</li>
+        <li>拖动步长要比滑杆更粗，精调交给数字输入或修饰键。</li>
+        <li>单击即可选中、双击复位、撤销栈覆盖所有编辑入口。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>对 Lumen3D 的直接结论：</strong>此前「造型 / 纹理」以浮层抽屉出现，展开时压住脸，参数面板与聊天侧栏又是两套并行的右列，动线割裂。专业产品的共性是「一个常驻检查器 + 一个不被遮挡的视口」，因此本轮把对话、捏脸、纹理收敛为同一右列的三个页签。
+  </div>
+
+  <h2><span class="num">02</span>改良方案枚举</h2>
+  <p class="lead">四套方案都能做到「面板在展示区右侧」，差别在分类扩展性、视口面积和实现成本。</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>方案</th><th>结构</th><th>优点</th><th>代价</th><th>结论</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>A. 统一右侧检查器</b><br><span class="pill ok">已采用</span></td>
+        <td>左侧视口 + 右侧常驻面板，页签：对话 / 捏脸 / 纹理；宽度按页签变化。</td>
+        <td>动线最短；对话与编辑共用一列；视口永不被盖；实现成本低；窄窗可自然堆叠。</td>
+        <td>页签超过 4 个后分类会变挤，需要折叠或二级导航。</td>
+        <td>当前规模（3 类）最合适。</td>
+      </tr>
+      <tr>
+        <td><b>B. 左分类轨 + 右属性</b><br><span class="pill mid">备选</span></td>
+        <td>左侧图标轨（脸 / 眼 / 鼻 / 嘴 / 皮肤 / 毛发），右侧只放当前分类参数。</td>
+        <td>分类扩展性最好；符合 VRoid / CC4 的专业心智；视口仍然完整。</td>
+        <td>1024 宽窗口下两条边缘栏会压缩视口；对话需要另找入口。</td>
+        <td>分类增长到 6 个以上时再升级。</td>
+      </tr>
+      <tr>
+        <td><b>C. 顶部模式条 + 上下文面板</b><br><span class="pill mid">部分采用</span></td>
+        <td>顶部切「捏脸 / 纹理 / 对话」，右侧面板内容随模式整体替换。</td>
+        <td>模式感强，接近 Blender / MetaHuman；视口顶部操作集中。</td>
+        <td>切模式要移动视线到顶部；页签与模式容易重复表达。</td>
+        <td>只保留视口左上角的模式快捷键，页面结构仍用 A。</td>
+      </tr>
+      <tr>
+        <td><b>D. 全屏雕刻模式</b><br><span class="pill no">不采用</span></td>
+        <td>进入捏脸后隐藏聊天，检查器变成可收起的浮层，视口全屏。</td>
+        <td>单次雕刻沉浸感最强，视口面积最大。</td>
+        <td>丢失对话上下文；浮层回潮会再次遮挡；退出成本高。</td>
+        <td>与「统一右侧」目标冲突，仅作为未来的专注模式预留。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>为什么推荐 A</h3>
+  <div class="grid g2">
+    <div class="card">
+      <h4>动线与信息层级</h4>
+      <ul>
+        <li>用户视线固定为「左看脸、右调参」，不需要在两条右栏之间来回找。</li>
+        <li>对话是默认页，进入应用先看到角色与聊天，想改脸时再切页签，不打断主流程。</li>
+        <li>页签即模式，避免「顶部模式 + 右侧页签」的重复状态。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>工程与可维护性</h4>
+      <ul>
+        <li>三块内容共用一套 <code>.l3-pane</code> 容器，切换只改 <code>hidden</code> 与 <code>data-tab</code>。</li>
+        <li>画布宽度交给 flex，<code>ResizeObserver</code> 自动重算相机与渲染尺寸，无需手工补偿。</li>
+        <li>窄窗只需一条容器查询把右列改成底部，不必维护覆盖式抽屉的第二套样式。</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2><span class="num">03</span>落地版式</h2>
+
+  <div class="diagram" role="img" aria-label="版式示意：左侧三维视口，右侧三页签检查器">
+    <div class="d-stage">
+      <div class="d-bar">
+        <div style="display:flex;gap:4px">
+          <span class="d-chip on">捏脸</span><span class="d-chip">纹理</span><span class="d-chip">对话</span>
+        </div>
+        <div style="display:flex;gap:4px">
+          <span class="d-chip on">正面</span><span class="d-chip">左侧</span><span class="d-chip">俯视</span>
+        </div>
+      </div>
+      <div class="d-face">
+        <span class="d-gizmo" style="left:8px;top:66px"><span>颧骨</span></span>
+        <span class="d-gizmo" style="right:2px;top:104px"><span>脸宽</span></span>
+        <span class="d-gizmo" style="left:50%;bottom:2px"><span>下巴</span></span>
+      </div>
+      <div class="d-state">● 就绪 · 112 个形态键</div>
+      <div class="d-hint">拖动旋转 · 滚轮缩放</div>
+    </div>
+    <div class="d-panel">
+      <div class="tabs"><i>对话</i><i class="on">捏脸</i><i>纹理</i></div>
+      <div class="body">
+        <div class="d-row"><b>预设</b><span class="d-chip">原始</span><span class="d-chip">Q版</span><span class="d-chip">少女</span></div>
+        <div class="d-row"><b>脸宽</b><span class="d-track"><em></em></span><span>50</span></div>
+        <div class="d-row"><b>脸长</b><span class="d-track"><em style="left:38%"></em></span><span>44</span></div>
+        <div class="d-row"><b>颧骨</b><span class="d-track"><em style="left:62%"></em></span><span>56</span></div>
+        <div class="d-row"><b>眼距</b><span class="d-track"><em style="left:47%"></em></span><span>49</span></div>
+        <div class="d-row"><b>鼻长</b><span class="d-track"><em style="left:55%"></em></span><span>53</span></div>
+        <div class="d-row" style="color:#9aa4b2">轮廓曲线 · 拖控制点改脸型</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>关键约束：</strong>右列始终是 flex 的兄弟节点，画布通过 <code>inset:0</code> 填满舞台剩余宽度。只要检查器存在，编辑面板就不可能盖住脸；页签变宽时，three.js 的 <code>ResizeObserver</code> 会自动更新 aspect 与相机距离。
+  </div>
+
+  <h3>结构约定</h3>
+  <div class="card">
+    <div class="kv"><b>.l3-app</b><span>横向 flex：舞台 + 检查器；窄窗在 760px 容器宽度下改为纵向。</span></div>
+    <div class="kv"><b>.l3-stage</b><span>三维视口、顶栏（模式 + 视角）、左下状态、右下操作提示、加载遮罩。</span></div>
+    <div class="kv"><b>.l3-inspector</b><span>常驻右列；<code>data-tab</code> 决定宽度：对话 336 / 捏脸 396 / 纹理 440。</span></div>
+    <div class="kv"><b>.l3-insp-tabs</b><span>三个等宽页签，与视口左上角模式按钮双向同步。</span></div>
+    <div class="kv"><b>.l3-pane</b><span>对话、捏脸、纹理三块内容，切换只改 <code>hidden</code>。</span></div>
+  </div>
+
+  <h2><span class="num">04</span>交互规则</h2>
+
+  <h3>已实现</h3>
+  <ul class="checklist">
+    <li><b>三页签常驻</b><small>对话 / 捏脸 / 纹理；默认停在对话，进入应用不打断聊天</small></li>
+    <li><b>视口不被遮挡</b><small>检查器是 flex 兄弟节点，实测间隔 0px、右缘贴合窗口</small></li>
+    <li><b>宽度自适应</b><small>纹理 440px、捏脸 396px、对话 336px；画布与相机自动重算</small></li>
+    <li><b>模式双向同步</b><small>点视口「捏脸 / 纹理 / 对话」与点右列页签效果一致</small></li>
+    <li><b>脸上的分组操控点</b><small>轮廓 / 眼睛 / 鼻子 / 嘴部四组，投影跟随相机，背面自动隐藏</small></li>
+    <li><b>模型表面的选区覆层</b><small>直接在模型自身材质里按掩码刷一层色，连续无缝；既不画浮在脸前的椭圆曲线，也不叠独立面片</small></li>
+    <li><b>抓手拖拽</b><small>沿「力的方向」拖才放大、反向拖收窄，手柄 1:1 跟手，垂直余量留三成橡皮跟随</small></li>
+    <li><b>轮廓曲线</b><small>4 个控制点对应下颌 / 颧骨 / 脸宽 / 额头，拖动即改脸型并重绘</small></li>
+    <li><b>参数单列排布</b><small>右列只放一列滑杆，滑杆更长、数值框可输入、双击可复位</small></li>
+    <li><b>眼睛 / 嘴部改三维操控</b><small>移除了 7 个线性滑杆，改为「移动 / 旋转 / 缩放」三手柄；左右眼各点亮一片面，不再被鼻梁中线切开</small></li>
+    <li><b>纹理分区绘制</b><small>全部 / 面部 / 眼睛 / 眉毛 / 鼻子 / 嘴巴，只改选区 UV，左侧 3D 实时预览</small></li>
+    <li><b>窄窗堆叠</b><small>760px 以下变上下布局，画布保持满宽，不再出现覆盖式抽屉</small></li>
+  </ul>
+
+  <h3>计划中</h3>
+  <ul class="checklist">
+    <li class="plan"><b>对称编辑</b><small>镜像左右脸，只改一侧；手柄成对显示</small></li>
+    <li class="plan"><b>按住对比</b><small>按住空格临时回到原始脸模，松开恢复</small></li>
+    <li class="plan"><b>部位聚焦</b><small>切换分组时相机平滑推近到对应区域</small></li>
+    <li class="plan"><b>修饰键精调</b><small>Shift 拖动降为 1/4 步长，Alt 单独改一侧</small></li>
+    <li class="plan"><b>快捷键</b><small>1/2/3 切页签、G 开关操控点、Ctrl+Z / Ctrl+Shift+Z 历史</small></li>
+    <li class="plan"><b>分类扩展</b><small>五官分类超过 6 个时，升级为方案 B 的左侧图标轨</small></li>
+  </ul>
+
+  <h2><span class="num">05</span>本轮交互修订（2026-11-21）</h2>
+  <p class="lead">上一版仍把三维操控做成了「屏幕滑条」：拖动只认单一方向的位移，眼睛还留着线性滑杆，范围提示是 shader 里按顶点密度染的蓝，一块深一块浅。这一版按四条重做。</p>
+  <div class="grid g2">
+    <div class="card">
+      <h4>① 抓手拖拽，方向与力一致</h4>
+      <ul>
+        <li>拖动时把指针位移投影到该参数的<b>变形方向</b>（由锚点位移求得），顺着力的方向拖变大、反向拖变小。</li>
+        <li>手柄沿变形方向 1:1 跟手；垂直方向的余量只做三成橡皮跟随，看起来像抓住皮肤被拽，但不会横着拖乱参数。</li>
+        <li>拖动中用一条虚线引线从静止锚点连到手柄，明确「往哪拉」。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>② 眼睛 / 嘴巴改为三维变换</h4>
+      <ul>
+        <li>移除 <code>eyeDist / eyeWidth / eyeHeight / eyeTilt / mouth / lipThick / mouthPos</code> 七个滑杆，参数固定中性。</li>
+        <li>每只眼一整圈选区（<code>uc ±0.42</code>、半径 <code>0.28 × 0.060</code>），按 <code>±uc</code> 左右各画一圈，不再走 <code>|u|</code> 镜像，鼻梁处不会被中线切断。</li>
+        <li>选区上挂三个手柄：中心移动、外侧缩放、上方旋转；双击中心复位。嘴巴同一套。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>③ 选区改成模型表面的覆层</h4>
+      <ul>
+        <li>做掉贴脸椭圆：SVG 填充 / 呼吸 / 流动虚线 / 闭合路径全部下线，屏幕上不再出现「浮在脸前的 3D 曲线曲面」。</li>
+        <li>覆层直接画在模型自己的材质里：fragment 拿 rest 坐标现算 <code>(au, v)</code>，套与变形同一套掩码（<code>l3Coil</code> / 眼 / 嘴 / 鼻长 z 门槛），权重过 <code>0.46–0.56</code> 的窄过渡后混色。连续、无接缝，边界是掩码等值线，不跟网格密度走。</li>
+        <li>中途试过「同顶点、只换索引的叠加网格」点亮三角面，效果是碎的（一块块面片 + 阶梯边界），已废弃；现在没有任何额外网格，<code>overlayMeshes: 0</code> 写进 API 由测试守住。</li>
+        <li>顶点侧仍是 <code>l3Deform</code>：覆层与变形读同一个 rest 坐标，拖动参数时覆层贴着皮肤一起变形。</li>
+        <li>手柄还在：中心移动、四边缩放（眼睛 / 嘴巴是移动 / 缩放 / 旋转），只负责改范围，不画选区。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>④ 验收口径</h4>
+      <ul>
+        <li><code>node tools/probe-lumen3d.js</code>：滑杆 9 项且不含 <code>eye/mouth/lip</code>；选区是覆层（<code>mode === 'material'</code>、<code>overlayMeshes === 0</code>、<code>alpha ∈ (0.2, 0.7]</code>）；<code>legacyCurve === 0</code>（椭圆曲线确实下线）；顺力方向拖变大、反向拖变小；眼睛 2 块 6 手柄、每块只圈一只眼；旋转方向跟手；嘴巴 1 块 3 手柄。</li>
+        <li>手动：切「鼻子」看高亮是否只贴鼻梁（不带到嘴唇）；切「眼睛」看两片是否各自完整、不被鼻梁切断。</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2><span class="num">06</span>验收与回滚</h2>
+  <div class="grid g2">
+    <div class="card">
+      <h4>验收路径</h4>
+      <ul>
+        <li><code>node tools/app-scan.js</code> 重生成 manifest。</li>
+        <li><code>node tools/probe-lumen3d.js --json</code>：检查器 3 页签、间隔 0px、右缘贴合、操控点投影、纹理停靠。</li>
+        <li><code>node tools/test-headless.js lumen3d</code>：静态守卫 + 目标探针全绿。</li>
+        <li>手动：切三个页签，确认右列宽度变化时脸不变形、不裁切；窄窗拉至 700px 确认上下堆叠。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>回滚点</h4>
+      <ul>
+        <li>改动集中在 <code>apps/lumen3d/</code> 的 <code>body.js</code>、<code>app.js</code>、<code>app.css</code> 与 <code>tools/probe-lumen3d.js</code>。</li>
+        <li>不涉及共享层 <code>js/</code>、<code>css/</code>、<code>index.html</code>。</li>
+        <li>若需回到浮层抽屉，只恢复 <code>.l3-drawer</code> 定位与 <code>syncTexDock()</code> 即可，参数与纹理逻辑无需回退。</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>
+    流明 3D 数字人 · 捏脸编辑器界面调研与设计 · 2026-11-21<br>
+    本文档为记录区材料，现行规范以仓库根目录 AGENTS.md 为准。
+  </footer>
+</div>
+</body>
+</html>
