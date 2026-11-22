@@ -32,6 +32,10 @@
   var M = global.SeedModel = global.SeedModel || {};
   var SCHEMA_VERSION = 2;
   var MESH_REF = 'main';
+  /* 槽的语义（id / 去重 / faceSlots 重排）归 MaterialSlotService；本文件只保留
+   * 「哪个 mesh 用到哪些下标」的归属映射。必须排在 seed-model-scene.js 之前。 */
+  var SLOTS = global.MDMaterialSlots;
+  function bumpMesh(mesh) { M.Mesh.bump(mesh); }
   /* doc → { meshId: 解码后的 mesh }：一个文档可能有多份网格，cache 也必须按 meshId 分桶 */
   var cache = typeof WeakMap === 'function' ? new WeakMap() : null;
   function cacheOf(doc) {
@@ -135,39 +139,15 @@
    * 但每个网格只「拥有」自己用到的下标。追加资产时源材质整体后移，
    * faceSlots 跟着重映射，两个模型就不会再落到同一批槽上。 */
   function uniqSlots(list) {
-    var seen = Object.create(null), out = [];
-    (list || []).forEach(function (v) {
-      var n = Math.round(Number(v));
-      if (!(n >= 0)) return;
-      if (seen[n]) return;
-      seen[n] = 1;
-      out.push(n);
-    });
-    out.sort(function (a, b) { return a - b; });
-    return out;
+    return SLOTS.uniq(list);
   }
   /* GLB 里 faceSlots 是 packI32 的 base64 字符串，不是数组；
    * 直接当数组用会拿到字符串，迁移时按面解码出真实下标。 */
   function packedSlotsOf(meshJson) {
-    var raw = meshJson && meshJson.faceSlots;
-    if (Array.isArray(raw)) return raw;
-    if (typeof raw === 'string' && raw) {
-      try {
-        var bin = global.atob ? global.atob(raw) : '';
-        var n = Math.floor(bin.length / 4), out = new Array(n);
-        for (var i = 0; i < n; i++) {
-          var o = i * 4;
-          out[i] = bin.charCodeAt(o) | (bin.charCodeAt(o + 1) << 8) |
-            (bin.charCodeAt(o + 2) << 16) | (bin.charCodeAt(o + 3) << 24);
-        }
-        return out;
-      } catch (e) { return []; }
-    }
-    return [];
+    return SLOTS.packedSlots(meshJson);
   }
   function usedSlotsOfMeshJson(meshJson) {
-    var fs = packedSlotsOf(meshJson);
-    return uniqSlots(fs.length ? fs : [0]);
+    return SLOTS.usedSlots(meshJson);
   }
   function usedSlotsOfMesh(mesh) {
     return usedSlotsOfMeshJson(mesh);
@@ -218,78 +198,19 @@
   }
 
   function slotIdsOf(doc) {
-    if (!doc) return [];
-    var names = slotNamesOf(doc);
-    doc.materials = doc.materials || {};
-    var ids = doc.materials.slotIds;
-    if (!Array.isArray(ids)) ids = doc.materials.slotIds = [];
-    var seen = Object.create(null);
-    for (var i = 0; i < names.length; i++) {
-      var s = ids[i] ? String(ids[i]) : '';
-      if (!s || seen[s]) {
-        var k = i + 1, id = 'slot-' + k;
-        while (seen[id]) { k++; id = 'slot-' + k; }
-        s = ids[i] = id;
-      }
-      seen[s] = 1;
-    }
-    ids.length = names.length;
-    return ids;
+    return SLOTS.idsOf(doc);
   }
   /* 为「追加进来的材质」生成一批不会撞车的稳定 id */
   function freshSlotIds(ids, n) {
-    var used = Object.create(null), max = 0;
-    (ids || []).forEach(function (x) {
-      var s = String(x);
-      used[s] = 1;
-      var m = /^(?:slot-|m)(\d+)$/.exec(s);
-      if (m) max = Math.max(max, Number(m[1]));
-    });
-    var out = [], k = Math.max(max, (ids || []).length);
-    for (var i = 0; i < n; i++) {
-      var id;
-      do { k++; id = 'm' + k; } while (used[id]);
-      used[id] = 1;
-      out.push(id);
-    }
-    return out;
+    return SLOTS.freshIds(ids, n);
   }
   /* 把另一份文档的材质整体并入当前材质库；返回下标偏移与 id 对照，
    * 调用方据此重映射 faceSlots 并迁移纹理配置。 */
   function adoptMaterials(doc, srcDoc) {
-    var names = slotNamesOf(doc);
-    var colors = slotArray(doc, 'slotColors');
-    var maps = slotArray(doc, 'slotMaps');
-    var ids = slotIdsOf(doc);
-    var sm = (srcDoc && srcDoc.materials) || {};
-    var sNames = Array.isArray(sm.slotNames) ? sm.slotNames : [];
-    var sColors = Array.isArray(sm.slotColors) ? sm.slotColors : [];
-    var sMaps = Array.isArray(sm.slotMaps) ? sm.slotMaps : [];
-    var sIds = Array.isArray(sm.slotIds) ? sm.slotIds : [];
-    var count = Math.max(sNames.length, 1);
-    var offset = names.length;
-    var fresh = freshSlotIds(ids, count);
-    for (var i = 0; i < count; i++) {
-      names.push(str(sNames[i], '插槽 ' + (names.length + 1)).slice(0, 60));
-      colors.push(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(sColors[i] || '')) ? sColors[i] : '#c9ccd4');
-      maps.push(str(sMaps[i], ''));
-      ids.push(fresh[i]);
-    }
-    return {
-      offset: offset, count: count, ids: fresh,
-      srcIds: Array.prototype.slice.call(sIds, 0, count),
-      srcNames: sNames.slice(0, count),
-      textureConfigKey: str(sm.textureConfigKey, srcDoc && srcDoc.assetId)
-    };
+    return SLOTS.adopt(doc, srcDoc);
   }
   function remapSlotIndices(mesh, offset) {
-    if (!mesh || !Array.isArray(mesh.faceSlots) || !offset) return mesh;
-    for (var i = 0; i < mesh.faceSlots.length; i++) {
-      var s = Number(mesh.faceSlots[i]);
-      mesh.faceSlots[i] = (s >= 0 ? s : 0) + offset;
-    }
-    M.Mesh.bump(mesh);
-    return mesh;
+    return SLOTS.remap(mesh, offset, bumpMesh);
   }
 
   /* 节点级表面覆盖（可选）：{ map: dataURL, color: '#hex' }。
@@ -458,7 +379,10 @@
           name: str(lv.name, '关卡 ' + (out.length + 1)).slice(0, 60),
           nodes: [],
           visible: lv.visible !== false,
-          locked: lv.locked === true
+          locked: lv.locked === true,
+          /* 关卡资产 id：保存关卡时落到这一关上，再次保存就覆盖同一份资产，
+           * 而不是每点一次「保存」就在模型库里多一份副本。 */
+          assetId: str(lv.assetId, '').slice(0, 64)
         };
         if (Array.isArray(lv.nodes)) {
           lv.nodes.forEach(function (nid) {
@@ -542,7 +466,7 @@
     if (!base) base = '关卡 ' + (list.length + 1);
     var nm = base, n = 1;
     while (list.some(function (lv) { return lv.name === nm; })) { n++; nm = base + ' ' + n; }
-    var lv = { id: 'lvl-' + Date.now().toString(36) + '-' + (++LEVEL_SEQ), name: nm, nodes: [], visible: true, locked: false };
+    var lv = { id: 'lvl-' + Date.now().toString(36) + '-' + (++LEVEL_SEQ), name: nm, nodes: [], visible: true, locked: false, assetId: '' };
     list.push(lv);
     return lv;
   }
@@ -935,6 +859,17 @@
     return true;
   }
 
+  /* 单个对象改名：只动该节点，不碰文档名（文档名跟激活对象走的 setName 保留原语义） */
+  function renameNode(doc, nodeId, name) {
+    if (!doc) return false;
+    var s = str(name, '').trim().slice(0, 120);
+    if (!s) return false;
+    var node = nodeById(doc, nodeId);
+    if (!node) return false;
+    node.name = s;
+    return true;
+  }
+
   function setNodeTransform(doc, node, position, quaternion, scale) {
     if (!doc) return false;
     node = node || nodeOf(doc);
@@ -955,20 +890,13 @@
    * 删槽要连 faceSlots 一起重排，否则残留的旧下标会指向空槽（渲染时多出一套默认材质）。 */
 
   function slotNamesOf(doc) {
-    if (!doc) return [];
-    doc.materials = doc.materials || {};
-    if (!Array.isArray(doc.materials.slotNames)) doc.materials.slotNames = [];
-    if (!Array.isArray(doc.materials.slotColors)) doc.materials.slotColors = [];
-    if (!Array.isArray(doc.materials.slotMaps)) doc.materials.slotMaps = [];
-    return doc.materials.slotNames;
+    return SLOTS.namesOf(doc);
   }
   function syncSlotNamesToNodes(doc) {
     refreshNodeSlotNames(doc);
   }
   function slotArray(doc, key) {
-    doc.materials = doc.materials || {};
-    if (!Array.isArray(doc.materials[key])) doc.materials[key] = [];
-    return doc.materials[key];
+    return SLOTS.arrayOf(doc, key);
   }
   function addSlot(doc, opts) {
     opts = opts || {};
@@ -1021,12 +949,7 @@
     var target = own.length ? own[0] : (index > 0 ? index - 1 : 1);
     var mesh = null;
     try { mesh = node ? getMesh(doc, node) : null; } catch (e) { mesh = null; }
-    if (mesh && mesh.faceSlots) {
-      for (var f = 0; f < mesh.faceSlots.length; f++) {
-        if ((mesh.faceSlots[f] || 0) === index) mesh.faceSlots[f] = target;
-      }
-      M.Mesh.bump(mesh);
-    }
+    if (mesh) SLOTS.retarget(mesh, index, target, bumpMesh);
     /* 还有别的网格引用这个下标 → 只做对象级摘除，材质库保持不动 */
     var shared = Object.keys(doc.meshSlots || {}).some(function (id) {
       if (id === ref) return false;
@@ -1056,12 +979,7 @@
       var m = null;
       try { m = getMesh(doc, n); } catch (e) { m = null; }
       if (!m || !m.faceSlots) return;
-      for (var i = 0; i < m.faceSlots.length; i++) {
-        var s = m.faceSlots[i] || 0;
-        if (s === index) m.faceSlots[i] = 0;
-        else if (s > index) m.faceSlots[i] = s - 1;
-      }
-      M.Mesh.bump(m);
+      SLOTS.shiftAfterRemoval(m, index, bumpMesh);
       setMesh(doc, m, n);
     });
     Object.keys(doc.meshSlots || {}).forEach(function (id) {
@@ -1079,7 +997,7 @@
     var mesh = getMesh(doc, node);
     if (!mesh) return 0;
     var slotMax = Math.max(0, slotNamesOf(doc).length - 1);
-    slot = Math.max(0, Math.min(slotMax, Math.round(Number(slot) || 0)));
+    slot = SLOTS.clamp(slotMax + 1, slot);
     var changed = 0;
     for (var i = 0; i < faceIds.length; i++) {
       var k = mesh.faceIds.indexOf(faceIds[i]);
@@ -1121,7 +1039,10 @@
       revision: doc.revision,
       /* 槽位归属和网格引用一起回滚：撤销「新建对象 / 结合 / 分离」时，
        * 否则会出现网格没了、归属还挂着的悬空条目 */
-      meshSlots: doc.meshSlots || {}
+      meshSlots: doc.meshSlots || {},
+      /* 关卡也是文档结构的一部分（新建 / 移入 / 改名 / 显隐 / 锁定）。
+       * 不回滚 levels 的话，撤销「置于关卡」只退对象、留下一只空关卡。 */
+      levels: doc.levels || []
     });
   }
 
@@ -1133,6 +1054,7 @@
     if (isObj(snap.selection)) doc.selection = selectionOf(snap.selection);
     if (isObj(snap.revision)) doc.revision = revisionOf(snap.revision);
     if (isObj(snap.meshSlots)) doc.meshSlots = clone(snap.meshSlots);
+    if (Array.isArray(snap.levels)) doc.levels = clone(snap.levels);
     if (!nodeById(doc, doc.activeNodeId)) {
       var next = nodesOf(doc)[0] || doc.nodes[0];
       doc.activeNodeId = next ? next.id : '';
@@ -1223,6 +1145,7 @@
     meshIdOfNode: meshIdOfNode,
     stats: stats,
     setName: setName,
+    renameNode: renameNode,
     setSelection: setSelection,
     setNodeTransform: setNodeTransform,
     revision: revision,

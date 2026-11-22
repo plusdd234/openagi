@@ -76,8 +76,13 @@
     /* 把一张贴图挂到所有对象「第 slot 个材质」上（含平涂缓存材质）。
      * 画笔与纹理混合共用这条路径：谁最后决定材质上放哪张图，都由调用方算好。
      * mdBaseMap 一起换，显示开关「贴图」关掉再打开才不会回到上一张旧图。
+     * opts.skipOwnSurface：跳过组件 / 节点自带表面的材质。没有图层要退回白模时，
+     *   不能把组件自报的脸贴图一起清掉（头模会变白壳）。
+     * opts.color：同时把材质底色改成这个值（白模 = 无贴图 + 白底）。
      * 返回实际挂上的材质数：0 = 视口里没有这个槽的材质（画笔用它提示「画了看不见」）。 */
-    function applySlotTexture(slot, tex) {
+    function applySlotTexture(slot, tex, opts) {
+      var skipOwn = !!(opts && opts.skipOwnSurface);
+      var color = (opts && opts.color) || '';
       var applied = 0;
       /* 只有「贴图的有无 / 编码 / 翻转」变了才需要重编译着色器。
        * 同一张贴图换像素靠 texture.needsUpdate 就够 —— 每帧都置
@@ -86,7 +91,12 @@
       var sig = tex ? (tex.encoding || '') + '|' + (tex.flipY === false ? 'n' : 'y') : 'none';
       function setMap(m) {
         if (!m) return false;
+        if (skipOwn && m.userData && m.userData.mdOwnSurface) return false;
         if (!m.userData.mdPaintOrig) m.userData.mdPaintOrig = m.map || null;
+        if (color && m.color && typeof m.color.set === 'function') {
+          m.color.set(color);
+          m.userData.mdBaseColor = color;
+        }
         m.map = tex || null;
         m.userData.mdBaseMap = tex || null;
         if (m.userData.mdMapSig !== sig) { m.userData.mdMapSig = sig; m.needsUpdate = true; }

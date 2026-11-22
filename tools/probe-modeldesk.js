@@ -1153,6 +1153,110 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
     outBack.docNodes[0].name === '立方体',
     '大纲收回到 1 行真节点（立方体、可见）', JSON.stringify({ o: outBack.outline, v: outBack.nodeVisible, n: outBack.docNodes }));
 
+  /* B2c 大纲：多选 → 导出所选 / 保存场景；右键对象 → 重命名 */
+  await page.evaluate(() => window.modelDesk.createPrimitive('sphere'));
+  await page.waitForTimeout(350);
+  const osIds = await page.evaluate(() => window.modelDesk.getDocument().nodes.map(function (n) { return n.id; }));
+  await page.click('#mdOutlineList .md-part-row[data-md-node="' + osIds[0] + '"]');
+  await page.click('#mdOutlineList .md-part-row[data-md-node="' + osIds[1] + '"]', { modifiers: ['Control'] });
+  await page.waitForTimeout(150);
+  const osMulti = await page.evaluate(() => {
+    const sel = window.modelDesk.getDocument().selection.nodeIds;
+    const bar = document.querySelector('#mdOutlineList .md-oselops');
+    const b = bar && bar.querySelector('[data-md-act="osel-export"]');
+    return {
+      n: sel.length,
+      txt: b ? b.textContent.trim() : '',
+      disabled: b ? b.disabled : true,
+      hasSave: !!(bar && bar.querySelector('[data-md-act="save"]'))
+    };
+  });
+  check(osMulti.n === 2 && !osMulti.disabled && /2/.test(osMulti.txt) && osMulti.hasSave,
+    '大纲 Ctrl 点按多选两个对象，选择条显示所选项数并可保存场景', JSON.stringify(osMulti));
+
+  const selExp = await page.evaluate(async () => {
+    const G = window.SeedGLB, S = window.SeedModel.Scene;
+    const ids = window.modelDesk.getDocument().selection.nodeIds.slice();
+    const a = await window.modelDesk.exportSelectionBytes(ids);
+    const v = S.validate(G.readSeedModel(G.fromDataURL(a.dataURL)));
+    /* 泄漏检查：只导 1 个之后，整场景导出必须仍是 2 个（按 GLB 里的 mesh 数比对） */
+    const one = await window.modelDesk.exportSelectionBytes([ids[0]]);
+    const full = await window.modelDesk.exportBytes();
+    function meshes(buf) {
+      try { return ((G.readJson(buf) || {}).meshes || []).length; } catch (e) { return -1; }
+    }
+    return {
+      ids: ids.length,
+      ok: v.ok,
+      nodes: v.doc ? v.doc.nodes.length : 0,
+      meshes: v.doc ? Object.keys(v.doc.meshes).length : 0,
+      levels: v.doc ? (v.doc.levels || []).length : -1,
+      name: v.doc ? v.doc.name : '',
+      oneMeshes: meshes(one.buffer),
+      selMeshes: meshes(a.buffer),
+      fullMeshes: meshes(full)
+    };
+  });
+  check(selExp.ids === 2 && selExp.ok && selExp.nodes === 2 && selExp.meshes === 2,
+    '导出所选：往返后只有选中的 2 个对象（网格按引用回收）', JSON.stringify(selExp));
+  check(selExp.levels === 0 && /_所选$/.test(selExp.name || ''),
+    '导出所选：不带关卡结构，文档名标「所选」', JSON.stringify({ levels: selExp.levels, name: selExp.name }));
+  check(selExp.oneMeshes === 1 && selExp.selMeshes === selExp.fullMeshes && selExp.fullMeshes >= 2,
+    '导出所选不污染整场景导出（allowlist 用后复位）',
+    JSON.stringify({ one: selExp.oneMeshes, sel: selExp.selMeshes, full: selExp.fullMeshes }));
+
+  /* 右键第一行：菜单弹出 → 重命名（prompt 自动 accept） */
+  const ctxRowId = await page.evaluate(() => window.modelDesk.getDocument().nodes[0].id);
+  page.once('dialog', function (d) { d.accept('主体'); });
+  await page.click('#mdOutlineList .md-part-row[data-md-node="' + ctxRowId + '"]', { button: 'right' });
+  await page.waitForTimeout(150);
+  const ctxUi = await page.evaluate(() => {
+    const m = document.getElementById('mdCtxMenu');
+    return { open: !!m, items: m ? Array.from(m.querySelectorAll('[data-md-ctx]')).map(function (b) { return b.dataset.mdCtx; }) : [] };
+  });
+  await page.click('#mdCtxMenu [data-md-ctx="rename"]');
+  await page.waitForTimeout(200);
+  const renamed = await page.evaluate(function (id) {
+    const doc = window.modelDesk.getDocument();
+    const row = document.querySelector('#mdOutlineList .md-part-row[data-md-node="' + id + '"]');
+    return {
+      name: (doc.nodes.filter(function (n) { return n.id === id; })[0] || {}).name,
+      row: row ? row.querySelector('.md-part-id').textContent : '',
+      menuGone: !document.getElementById('mdCtxMenu'),
+      docName: doc.name
+    };
+  }, ctxRowId);
+  check(ctxUi.open && ctxUi.items.join(',') === 'rename,export',
+    '右键大纲对象弹出菜单（重命名 / 导出所选）', JSON.stringify(ctxUi));
+  check(renamed.name === '主体' && renamed.row === '主体' && renamed.menuGone && renamed.docName !== '主体',
+    '右键重命名对象（大纲同步，不动文档名）', JSON.stringify(renamed));
+
+  /* Esc 收起右键菜单 */
+  await page.click('#mdOutlineList .md-part-row[data-md-node="' + ctxRowId + '"]', { button: 'right' });
+  await page.waitForTimeout(120);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(120);
+  const ctxEsc = await page.evaluate(() => !document.getElementById('mdCtxMenu'));
+  check(ctxEsc, 'Esc 收起大纲右键菜单', '');
+
+  /* 收尾：删掉球、把立方体名字还原（后面的用例假设单立方体） */
+  await page.evaluate(() => {
+    const doc = window.modelDesk.getDocument();
+    const sphere = doc.nodes.filter(function (n) { return n.name !== '主体'; })[0];
+    if (sphere) window.modelDesk.selectNodeById(sphere.id);
+  });
+  await page.waitForTimeout(150);
+  await page.keyboard.press('Delete');
+  await page.waitForTimeout(250);
+  const osClean = await page.evaluate(() => {
+    const doc = window.modelDesk.getDocument();
+    const id = doc.nodes[0] && doc.nodes[0].id;
+    const ok = id ? window.modelDesk.renameNode(id, '立方体') : false;
+    return { ok: ok, n: doc.nodes.length, name: doc.nodes[0] && doc.nodes[0].name };
+  });
+  check(osClean.ok && osClean.n === 1 && osClean.name === '立方体',
+    '重命名 API 独立于文档名，收尾空间回到单立方体', JSON.stringify(osClean));
+
   await page.keyboard.press('h');
   await page.waitForTimeout(250);
   const hid = await page.evaluate(() => {
@@ -1683,7 +1787,7 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
     slotNames: window.modelDesk.getState().slotNames,
     undo: window.modelDesk.getState().undo
   }));
-  check(dockOpen.on && /内容浏览器/.test(dockOpen.tab) && dockOpen.cards === 1 && dockOpen.sub === '1 个模型',
+  check(dockOpen.on && /内容浏览器/.test(dockOpen.tab) && dockOpen.cards === 1 && dockOpen.sub === '1 个资产',
     '工具行「打开」展开内容浏览器并列出模型库', JSON.stringify(dockOpen));
   check(dockOpen.buttons.join(',') === '置于,打开',
     '每个资产都有「置于」「打开」两个动作', dockOpen.buttons.join(','));
@@ -1890,7 +1994,8 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
     '普通 GLB 打开时自动转成可编辑网格（不再「打开失败」）',
     JSON.stringify({ nodes: plainOpen.nodeCount, status: plainOpen.status }));
 
-  /* 11.10b 导入色真的到材质上：slotColors / slotMaps 不能只存在文档里，视口实体材质得吃到 */
+  /* 11.10b 零图层 = 白模：槽色 / 导入贴图仍在文档里（资产内容），
+   * 但视口材质不能直接吃它们 —— 否则「图层 0 层却显示贴图颜色」。 */
   const importedColor = await page.evaluate(() => {
     const d = window.modelDesk.__debug();
     const doc = window.modelDesk.getDocument();
@@ -1910,8 +2015,8 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
   });
   check(importedColor.slotNames > 0 && importedColor.slotColors.length === importedColor.slotNames &&
     importedColor.matColors.length > 0 &&
-    importedColor.matColors[0] === importedColor.slotColors[0],
-    '导入后槽色写进文档并挂到实体材质上（重开不再变灰）',
+    importedColor.matColors[0] === '#ffffff' && importedColor.matMaps[0] === false,
+    '导入后零图层视口按白模显示（白底、无导入贴图），槽色仍留在文档',
     JSON.stringify({ doc: importedColor.slotColors[0], mat: importedColor.matColors[0],
       slots: importedColor.slotNames, maps: importedColor.maps }));
 
@@ -2071,9 +2176,10 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
     '普通 GLB 导入：同名同色但贴图不同的两个对象分成两个槽',
     JSON.stringify({ slots: multiTex.plain.slots, px: [multiTex.plain.colors0, multiTex.plain.colors1],
       nodeSlots: multiTex.plain.nodeSlots }));
-  check(multiTex.primImgs.length === 2 && multiTex.primImgs[0] !== multiTex.primImgs[1] &&
-    multiTex.primImgs.every(i => i >= 0),
-    '导出后两个对象各指一张自己的贴图（不再共用第一张）', JSON.stringify(multiTex.primImgs));
+  /* 零图层 = 白模：导出也不再回挂导入时抽出的 slotMaps。
+   * 槽仍然按对象拆开（上面两条断言），但两个 primitive 都应是无贴图的白色材质。 */
+  check(multiTex.primImgs.length === 2 && multiTex.primImgs.every(i => i === -1),
+    '零图层导出为白模：两个 primitive 都无导入贴图', JSON.stringify(multiTex.primImgs));
 
   /* 11.10b FBX：ASCII 网格走同一条「普通模型」导入路径 */
   const FBX_MINI = `; FBX 7.2.0 project file
@@ -2512,6 +2618,12 @@ Connections:  {
   const uvSt0 = await page.evaluate(() => window.modelDesk.getState());
   check(uvOpen.ok && uvSt0.uvOpen && !!await page.$('#mdUvWin'), 'Shelf ◒ 打开 UV 编辑器窗口',
     JSON.stringify({ clicked: uvOpen.clicked, open: uvSt0.uvOpen }));
+  /* 底图口径与视口一致：没有图层 / 笔迹 / 烘焙图时不铺任何贴图，
+   * 尤其不能把导入时抽出的 slotMaps（已不参与渲染）当成 UV 底图。 */
+  check(!uvSt0.uvMap && !uvSt0.uvMapName,
+    'UV 底图不回落导入贴图：零图层（白模）不铺底图', JSON.stringify({
+      map: uvSt0.uvMap, name: uvSt0.uvMapName
+    }));
 
   const uvUi = await page.evaluate(() => {
     const win = document.getElementById('mdUvWin');
@@ -3506,11 +3618,9 @@ Connections:  {
     '绘制快捷键 B/P/E/R/T/I/W 切换对应工具',
     keyPicks.map(x => x.key + '=' + x.now + (x.now === x.want ? '✓' : '✗')).join(' '));
 
-  /* 底图还在解码时不能拿槽底色起工作副本。TextureLoader 是异步的：打开大模型 /
-   * 应用修改器重建材质后的头几百毫秒，材质上的 map 还没有像素。以前这时会建一张
-   * 「槽底色（导入模型＝纯白）平铺」的工作副本 —— 吸管吸到白色，抬笔再把这张白底
-   * 采纳成最终贴图，模型整片变白（用户反馈）。这里用一张没有像素的 Texture 冒充
-   * 解码中的底图，断言绘画明确拒绝，一个像素都不产生。 */
+  /* 零图层 = 白模：起笔不从导入贴图 / 槽底色起工作副本，而是从白底开始。
+   * 这里用一张没有像素的 Texture 冒充「导入底图还在解码」，断言它不再阻塞绘画：
+   * 吸管读到白色（白模），落笔照样生成工作副本与 stroke 层。 */
   const loadingBase = await page.evaluate(async () => {
     const API = window.modelDesk, T = window.THREE;
     const raf = () => new Promise(r => requestAnimationFrame(r));
@@ -3570,16 +3680,22 @@ Connections:  {
     await raf();
     const afterBrush = API.__debug().paintState;
     const ops = window.TexStack ? window.TexStack.ops(API.__debug().doc, 0).length : 0;
+    /* 撤销会把工作区丢掉（paintDropTarget），所以这两个值必须在撤销前取 */
     const seed = afterBrush.canvas ? afterBrush.canvas.width + '×' + afterBrush.canvas.height : null;
+    const hadTex = !!afterBrush.tex;
 
     API.applySlotTexture(0, origTex);   /* 还原材质上原来的贴图 */
+    /* 这一笔清掉，后面的笔迹测试从空栈开始 */
+    API.undo();
+    await raf();
+    const undoOps = window.TexStack ? window.TexStack.ops(API.__debug().doc, 0).length : 0;
     pickTool('brush');
-    return { status: st, colorBefore, colorAfter: afterPick.color, seed, tex: !!afterBrush.tex, ops };
+    return { status: st, colorBefore, colorAfter: afterPick.color, seed, tex: hadTex, ops, undoOps };
   });
-  check(!loadingBase.skip && /解码/.test(loadingBase.status || '') &&
-    loadingBase.colorAfter === loadingBase.colorBefore && !loadingBase.seed &&
-    !loadingBase.tex && loadingBase.ops === 0,
-    '底图未解码时不建白底工作副本：吸管不改色、落笔不产生贴图',
+  check(!loadingBase.skip && loadingBase.colorAfter === '#ffffff' &&
+    loadingBase.seed === '2048×2048' && loadingBase.tex && loadingBase.ops === 1 &&
+    loadingBase.undoOps === 0,
+    '零图层起笔从白底开始：吸管读白、落笔生成工作副本与 stroke 层，撤销后清空',
     JSON.stringify(loadingBase));
 
   const paintOpts = await page.evaluate(() => {
@@ -5261,19 +5377,36 @@ Connections:  {
       shiftKey: !!(mods && mods.shift), ctrlKey: !!(mods && mods.ctrl)
     }));
     const click = (pt, mods) => { send('pointerdown', pt, mods); send('pointerup', pt, mods); };
+    /* 对象高亮：和单选同一条拓扑边线，只是换色；不透明、走深度测试（不穿透） */
+    const wires = () => (API.__debug().objSelGroup || []).map(b => ({
+      c: b.material.color.getHexString(), a: !!b.userData.mdActive,
+      n: b.geometry.attributes.position ? b.geometry.attributes.position.count : 0,
+      opaque: b.material.transparent === false,
+      depth: b.material.depthTest !== false
+    }));
+    /* 每个对象的拓扑边数 × 2 = 线框顶点数（三角化对角线不算） */
+    const expect = {};
+    {
+      const S2 = window.SeedModel.Scene, E = window.SeedModel.Evaluator, M = window.SeedModel.Mesh;
+      const doc = API.__debug().doc;
+      S2.nodesOf(doc).forEach(n => {
+        const m = E.evaluate(doc, n) || S2.getMesh(doc, n);
+        expect[n.id] = M.ensureEdges(m).edges.length * 2;
+      });
+    }
     const out = {};
     /* 点第二个对象 = 换选 */
     click(b, null);
     let s = API.getState();
-    out.clickB = { ids: s.nodeIds.slice(), active: s.activeNodeId };
-    /* Shift 点第一个 = 加到 2 个；激活切到第一个，第二个画出包围盒 */
+    out.clickB = { ids: s.nodeIds.slice(), active: s.activeNodeId, wires: wires() };
+    /* Shift 点第一个 = 加到 2 个；激活切到第一个，金色线框跟着它，另一个灰色 */
     click(a, { shift: true });
     s = API.getState();
-    out.shiftA = { ids: s.nodeIds.slice(), active: s.activeNodeId, hi: s.objSelHighlight, hud: document.getElementById('mdHud').textContent };
+    out.shiftA = { ids: s.nodeIds.slice(), active: s.activeNodeId, hi: s.objSelHighlight, wires: wires(), hud: document.getElementById('mdHud').textContent, expect: expect };
     /* Ctrl 再点第二个 = 切换掉（回到 1 个） */
     click(b, { ctrl: true });
     s = API.getState();
-    out.ctrlB = { ids: s.nodeIds.slice(), active: s.activeNodeId, hi: s.objSelHighlight };
+    out.ctrlB = { ids: s.nodeIds.slice(), active: s.activeNodeId, hi: s.objSelHighlight, wires: wires() };
     /* 对象模式框选：拖一个盖住两个对象的矩形 */
     const x0 = Math.max(2, Math.min(a.x, b.x) - 120), y0 = Math.max(2, Math.min(a.y, b.y) - 120);
     const x1 = Math.min(window.innerWidth - 2, Math.max(a.x, b.x) + 120);
@@ -5292,13 +5425,20 @@ Connections:  {
   }, { ids: selSetup.ids, a: selSetup.a, b: selSetup.b });
 
   const o = objSel.out;
-  check(o.clickB.ids.length === 1 && o.clickB.active === objSel.ids[1],
-    '视口点选对象：换选并激活', JSON.stringify(o.clickB));
-  check(o.shiftA.ids.length === 2 && o.shiftA.active === objSel.ids[0] && o.shiftA.hi === true,
-    '视口 Shift 点选 = 对象加选，次选画出包围盒', JSON.stringify(o.shiftA));
+  const GOLD = 'f5a623', GRAY = '8c939c';
+  check(o.clickB.ids.length === 1 && o.clickB.active === objSel.ids[1] && o.clickB.wires.length === 0,
+    '视口点选对象：换选并激活（单选只用手柄，不套线）', JSON.stringify(o.clickB));
+  check(o.shiftA.ids.length === 2 && o.shiftA.active === objSel.ids[0] && o.shiftA.hi === true &&
+    o.shiftA.wires.length === 2 &&
+    o.shiftA.wires.filter(b => b.a && b.c === GOLD).length === 1 &&
+    o.shiftA.wires.filter(b => !b.a && b.c === GRAY).length === 1 &&
+    /* 线框 = 每个对象的拓扑边（不是三角对角线，也不是包围盒），且不透明 + 深度测试 */
+    o.shiftA.wires.every((b, i) => b.n === o.shiftA.expect[o.shiftA.ids[i]] && b.opaque && b.depth),
+    '视口 Shift 多选：金 / 灰拓扑线框与单选同构（不穿透、无三角对角线）', JSON.stringify(o.shiftA));
   check(o.shiftA.hud.indexOf('选择 对象 2') >= 0, 'HUD 显示对象选择数量', o.shiftA.hud);
-  check(o.ctrlB.ids.length === 1 && o.ctrlB.active === objSel.ids[0] && o.ctrlB.hi === false,
-    '视口 Ctrl 点选 = 取消该对象（切换）', JSON.stringify(o.ctrlB));
+  check(o.ctrlB.ids.length === 1 && o.ctrlB.active === objSel.ids[0] && o.ctrlB.hi === false &&
+    o.ctrlB.wires.length === 0,
+    '视口 Ctrl 点选 = 取消该对象（切换），回到单选后收线框', JSON.stringify(o.ctrlB));
   check(o.marquee.count === 2 && o.marquee.hi === true,
     '对象模式框选：框住的两个对象一起选中', JSON.stringify(o.marquee));
   check(o.all.n === 2 && o.all.ids.length === 2, '对象模式全选', JSON.stringify(o.all));
@@ -5908,6 +6048,158 @@ Connections:  {
   check(docSwitch.userSlot === -1 && docSwitch.lockIsland === -1 && !docSwitch.tex && !docSwitch.canvas,
     '换文档后旧材质槽 / 魔棒锁岛 / 绘画工作副本一并失效',
     JSON.stringify(docSwitch));
+
+  /* 14.1 渲染视图：属性面板与视图工坊共用同一个参数内核（js/view-settings.js）。
+   * 这里不比对「长得像不像」，而是比对两边的 FIELDS 是不是同一个对象、
+   * 每一项的键序与默认值是否一致，再验证预览与导出真的跑通。 */
+  const rvOpen = await page.evaluate(() => {
+    const btn = document.querySelector('[data-md-editor-btn="model"]');
+    if (btn) btn.click();
+    if (window.modelDesk.getState().tbKind !== 'props') {
+      const tg = document.getElementById('mdPropsToggle');
+      if (tg) tg.click();
+    }
+    return { kind: window.modelDesk.getState().tbKind, host: !!document.getElementById('mdRvHost') };
+  });
+  check(rvOpen.kind === 'props' && rvOpen.host,
+    '网格对象属性面板出现「渲染视图」区域', JSON.stringify(rvOpen));
+
+  const rvReg = await page.evaluate(() => {
+    const a = window.MV.FIELDS, b = window.ViewSettings.FIELDS;
+    const diffs = [];
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const x = a[i], y = b[i];
+      if (!x || !y) { diffs.push('length'); continue; }
+      if (x.k !== y.k) diffs.push(x.k + '!=' + y.k);
+      if (JSON.stringify(x.def) !== JSON.stringify(y.def)) diffs.push(x.k + ':def');
+    }
+    return {
+      same: window.MV.FIELDS === window.ViewSettings.FIELDS,
+      dr: !!window.MDViewRender,
+      n: b.length, diffs: diffs
+    };
+  });
+  check(rvReg.same && rvReg.dr && rvReg.n >= 30,
+    '渲染视图与视图工坊共用同一份参数表（' + rvReg.n + ' 项）', '');
+  check(rvReg.diffs.length === 0, '两处参数逐项一致（键序 / 默认值）', rvReg.diffs.join(','));
+
+  /* 共享配置可能是用户在视图工坊里存过的那一份（8787 中转会补进 localStorage），
+   * 先走面板自带的「恢复默认参数」，让后面的断言与本机存档无关。 */
+  await page.evaluate(() => {
+    const btn = document.querySelector('#mdRvHost [data-md-rv="reset"]');
+    if (btn) btn.click();
+  });
+  await page.waitForFunction(() => {
+    const im = document.querySelector('#mdRvHost .md-rv-prev img');
+    const meta = document.querySelector('#mdRvHost .md-rv-meta');
+    return !!(im && im.complete && im.naturalWidth > 0 &&
+      meta && meta.textContent.indexOf('4 视图') >= 0);
+  }, null, { timeout: 60000 });
+  const rvPrev = await page.evaluate(() => {
+    const im = document.querySelector('#mdRvHost .md-rv-prev img');
+    const st = window.modelDesk.renderViewState();
+    return {
+      w: im.naturalWidth, h: im.naturalHeight,
+      png: (im.getAttribute('src') || '').indexOf('data:image/png') === 0,
+      views: st.views.slice(), cam: st.cam, mode: st.mode, wire: st.wire,
+      gap: st.gap, margin: st.margin, lineWidth: st.lineWidth,
+      ctrls: document.querySelectorAll('#mdRvHost [data-md-rv]').length
+    };
+  });
+  check(rvPrev.png && rvPrev.w > 100 && rvPrev.h > 100,
+    '自动预览出图（' + rvPrev.w + '×' + rvPrev.h + '）', '');
+  check(rvPrev.views.join() === 'front,back,left,right' && rvPrev.cam === 'ortho' &&
+    rvPrev.mode === 'solid' && rvPrev.wire === true &&
+    rvPrev.gap === 0 && rvPrev.margin === 1.08 && rvPrev.lineWidth === 1.4,
+    '默认参数与视图工坊逐项一致（四视图 / 正交 / 纯色 / 线框 / 间距 0 / 留白 1.08 / 线宽 1.4）',
+    JSON.stringify(rvPrev));
+  check(rvPrev.ctrls > 20, '渲染视图面板控件齐全（' + rvPrev.ctrls + ' 个可交互点）', '');
+
+  const rvAdd = await page.evaluate(() => {
+    const host = document.getElementById('mdRvHost');
+    host.querySelector('[data-md-rv="view"][data-v="iso"]').click();
+    return { views: window.modelDesk.renderViewState().views.slice() };
+  });
+  check(rvAdd.views.length === 5 && rvAdd.views.indexOf('iso') >= 0,
+    '勾选视图即时生效（' + rvAdd.views.join('+') + '）', '');
+
+  /* 配置共用：两边的存档 key 是同一个，且改动会广播到另一边（同一页面内即时生效） */
+  const rvSyncToMv = await page.evaluate(() => ({
+    mdKey: window.MDViewRender.settings() ? window.MDViewRender.settings().key : '',
+    mvKey: window.MV.SET_KEY,
+    views: window.MV.state.views.slice()
+  }));
+  check(rvSyncToMv.mdKey === 'hf_mv_set' && rvSyncToMv.mvKey === rvSyncToMv.mdKey &&
+    rvSyncToMv.views.length === 5 && rvSyncToMv.views.indexOf('iso') >= 0,
+    '建模 App 改配置 → 视图工坊同步（共用同一存档 key）', JSON.stringify(rvSyncToMv));
+
+  await page.waitForTimeout(2600);
+  const rvRe = await page.evaluate(() => {
+    const im = document.querySelector('#mdRvHost .md-rv-prev img');
+    const meta = document.querySelector('#mdRvHost .md-rv-meta');
+    return { w: im && im.naturalWidth, h: im && im.naturalHeight, meta: (meta && meta.textContent) || '' };
+  });
+  check(rvRe.w > 100 && rvRe.h > 100, '改视图后自动重渲（' + rvRe.w + '×' + rvRe.h + '）', rvRe.meta);
+
+  /* 反向：视图工坊改参数 → 建模 App 的 state 与控件跟着变 */
+  const rvSyncFromMv = await page.evaluate(() => {
+    window.MV.state.margin = 1.25;
+    window.MV.publishSet();
+    const host = document.getElementById('mdRvHost');
+    const input = host && host.querySelector('input[data-md-rv="range"][data-k="margin"]');
+    const out = {
+      margin: window.modelDesk.renderViewState().margin,
+      input: input ? Number(input.value) / Number(input.dataset.scale || 1) : -1
+    };
+    window.MV.state.margin = 1.08;
+    window.MV.publishSet();
+    return out;
+  });
+  check(Math.abs(rvSyncFromMv.margin - 1.25) < 1e-6 && Math.abs(rvSyncFromMv.input - 1.25) < 1e-6,
+    '视图工坊改配置 → 建模 App 的 state 与控件同步', JSON.stringify(rvSyncFromMv));
+
+  /* 属性面板只有 300px 宽：任何控件越出右边界都算布局缺陷（不靠截图判断） */
+  const rvFit = await page.evaluate(() => {
+    const host = document.getElementById('mdRvHost');
+    const box = host.getBoundingClientRect();
+    let over = 0, worst = '';
+    Array.from(host.querySelectorAll('*')).forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.right > box.right + 1.5) {
+        over++;
+        if (!worst) worst = (el.className && String(el.className)) || el.tagName;
+      }
+    });
+    return { over: over, worst: worst, sw: host.scrollWidth, cw: host.clientWidth, w: Math.round(box.width) };
+  });
+  check(rvFit.over === 0 && rvFit.sw <= rvFit.cw + 1,
+    '渲染视图在 ' + rvFit.w + 'px 窄栏内不横向溢出', rvFit.over ? rvFit.worst : '');
+
+  /* 导出是数据级断言：不读盘、不看截图 */
+  const rvExp = await page.evaluate(async () => {
+    const o = await window.modelDesk.renderViewExport('color');
+    return o ? { w: o.width, h: o.height, cells: o.cells.length, png: (o.png || '').indexOf('data:image/png') === 0 } : null;
+  });
+  check(!!rvExp && rvExp.w === 2048 && rvExp.h === 2048 && rvExp.cells === 5 && rvExp.png,
+    '导出彩色：2048 正方形 / 5 格 / PNG', JSON.stringify(rvExp));
+
+  const rvDepth = await page.evaluate(async () => {
+    const o = await window.MDViewRender.exportPass('depth', true);
+    return o ? { cells: o.cells.length, png: (o.png || '').indexOf('data:image/png') === 0 } : null;
+  });
+  check(!!rvDepth && rvDepth.cells === 5 && rvDepth.png, '导出深度通道（数据级）', JSON.stringify(rvDepth));
+
+  /* 收尾：撤掉 iso、回到建模工具箱，别把状态留给后面的截图 */
+  await page.evaluate(() => {
+    const host = document.getElementById('mdRvHost');
+    const chip = host && host.querySelector('[data-md-rv="view"][data-v="iso"]');
+    if (chip && chip.classList.contains('on')) chip.click();
+    if (window.modelDesk.getState().tbKind === 'props') {
+      const tg = document.getElementById('mdPropsToggle');
+      if (tg) tg.click();
+    }
+  });
+  await page.waitForTimeout(600);
 
   /* 13. 截图（整窗 + 视口） */
   try {

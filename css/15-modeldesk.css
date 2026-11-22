@@ -906,6 +906,32 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-dock-sub { font-size: 9.5px; color: #6a7488; white-space: nowrap; }
 .md-dock-acts { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .md-dock:not(.on) .md-dock-acts { display: none; }
+/* 内容浏览器的类型筛选 + 搜索：只在展开时出现，和资产网格同一行高 */
+.md-dock-filters {
+  flex: 0 0 24px; display: none; align-items: center; gap: 4px;
+  padding: 0 8px;
+  background: #f6f7f9; border-bottom: 1px solid #e3e6ea;
+}
+.md-dock.on .md-dock-filters { display: flex; }
+.md-dock-filters .md-dock-mini.on {
+  background: #eef4fb; border-color: #a9c9e8; color: #14508c;
+}
+.md-dock-search {
+  margin-left: auto; width: 132px; height: 19px;
+  padding: 0 6px;
+  border: 1px solid #e3e6ea; border-radius: 3px;
+  background: #fff; color: #1f2328;
+  font: inherit; font-size: 10px; outline: none;
+}
+.md-dock-search:focus { border-color: #7db3e6; }
+.md-cb-kind {
+  font-style: normal; display: inline-block;
+  margin-right: 4px; padding: 0 4px;
+  border: 1px solid #d8b46a; border-radius: 2px;
+  background: #fdf6e3; color: #8a5a00;
+  font-size: 8.5px; line-height: 12px; vertical-align: 1px;
+}
+.md-cb-card.md-cb-level { border-color: #e0cfa8; }
 .md-dock-mini {
   height: 19px; padding: 0 8px; flex: 0 0 auto;
   border: 1px solid #e3e6ea; border-top-color: #eceef2; border-radius: 3px;
@@ -4411,6 +4437,14 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
 }
 .md-lvop:hover:not(:disabled) { background: #eaf2fb; border-color: #b7d2ee; }
 .md-lvop:disabled { opacity: .45; cursor: default; }
+/* 大纲选择条：列在对象列表上方，按钮比关卡面板更紧凑 */
+.md-oselops { margin: 4px 6px 6px; gap: 5px; }
+.md-oselops .md-lvop { flex: 0 1 auto; padding: 4px 7px; font-size: 11px; }
+/* 大纲右键菜单：定位在鼠标处，外观沿用 .md-drop */
+.md-app .md-ctx { min-width: 168px; }
+.md-app .md-ctx .md-mtitle {
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .md-lvtag {
   font-size: 10px; font-weight: 600; color: #4a6f9e;
   background: #eaf2fb; border: 1px solid #c4d9ef; border-radius: 4px;
@@ -4430,3 +4464,486 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
   margin: 2px 0 6px; font-size: 10px; color: #5a6068; cursor: pointer;
 }
 .md-ai-ref input { margin: 0; }
+
+/* ============================================================
+ * 16. 工作台内核（js/md-workbench.js）
+ * ------------------------------------------------------------
+ * 分割条 + 命令面板。样式只作用于 .md-app 内部，选择器统一 md-wb-* / md-pal-*，
+ * 不借用也不覆盖面板自身的类，避免后续并入新面板时互相污染。
+ * ============================================================ */
+
+/* ---------- 16.1 可调分割条 ---------- */
+.md-app .md-wb-gutter {
+  flex: 0 0 5px;
+  position: relative;
+  z-index: 5;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.md-app .md-wb-gutter::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 2px; width: 1px;
+  background: var(--md-line);
+  transition: background-color .12s ease, box-shadow .12s ease;
+}
+.md-app .md-wb-gutter:hover::before,
+.md-app .md-wb-gutter.drag::before,
+.md-app .md-wb-gutter:focus-visible::before {
+  background: var(--md-on);
+  box-shadow: 0 0 0 1px rgba(43, 124, 211, .22);
+}
+.md-app .md-wb-gutter.drag { background: rgba(43, 124, 211, .06); }
+.md-app .md-wb-gutter-y { cursor: row-resize; }
+.md-app .md-wb-gutter-y::before {
+  left: 0; right: 0; top: 2px; bottom: auto;
+  width: auto; height: 1px;
+}
+.md-app .md-wb-gutter.off { cursor: default; }
+.md-app .md-wb-gutter.off::before { opacity: .45; background: var(--md-line); box-shadow: none; }
+
+/* 面板标题栏上的折叠按钮（由外壳按需添加，不占普通按钮的样式） */
+.md-app .md-wb-phbtn {
+  flex: 0 0 auto;
+  width: 17px; height: 16px; margin-left: 2px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 2px;
+  background: transparent; color: #6a7488;
+  font: inherit; font-size: 10px; line-height: 1; cursor: pointer;
+}
+.md-app .md-wb-phbtn:hover { background: #fbfbfc; border-color: #e3e6ea; color: #1f2328; }
+.md-app .md-wb-phbtn.on { color: var(--md-on); }
+
+/* ---------- 16.2 命令面板 ---------- */
+.md-palette {
+  position: absolute;
+  inset: 0;
+  z-index: 140;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+.md-palette[hidden] { display: none; }
+.md-pal-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(22, 27, 34, .30);
+}
+.md-pal-box {
+  position: relative;
+  margin-top: 64px;
+  width: min(560px, 74%);
+  max-height: 66%;
+  display: flex;
+  flex-direction: column;
+  background: var(--md-raise);
+  border: 1px solid #d9dde3;
+  border-radius: var(--md-r-pop);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .14);
+  overflow: hidden;
+  animation: md-pal-in .12s ease-out;
+}
+@keyframes md-pal-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.md-pal-top {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--md-line);
+  background: linear-gradient(180deg, #fbfbfc 0%, #f6f7f9 100%);
+}
+.md-pal-ico {
+  flex: 0 0 auto; width: 16px; text-align: center;
+  color: var(--md-on); font-size: 12px;
+}
+.md-pal-input {
+  flex: 1 1 auto; min-width: 0;
+  height: 27px; padding: 0 9px;
+  border: 1px solid var(--md-field-line); border-radius: var(--md-r);
+  background: #fff; color: var(--md-txt);
+  font: inherit; font-size: 12px; outline: none;
+}
+.md-pal-input:focus { border-color: #7db3e6; box-shadow: 0 0 0 2px rgba(125, 179, 230, .20); }
+.md-pal-count { flex: 0 0 auto; font-size: 9.5px; color: var(--md-mute); }
+.md-pal-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px; }
+.md-pal-row {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; min-height: 27px; padding: 0 8px;
+  border: 0; border-radius: var(--md-r);
+  background: transparent; color: var(--md-txt);
+  font: inherit; font-size: 11.5px; text-align: left; cursor: pointer;
+}
+.md-pal-row:hover { background: var(--md-raise-hi); }
+.md-pal-row .md-pal-g {
+  flex: 0 0 52px; width: 52px;
+  font-size: 9.5px; color: var(--md-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.md-pal-row .md-pal-l {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.md-pal-row kbd {
+  flex: 0 0 auto;
+  font: inherit; font-size: 9px; line-height: 1;
+  padding: 2px 5px; border: 1px solid #d9dde3; border-bottom-width: 2px;
+  border-radius: 3px; background: #fff; color: #5a6068;
+}
+.md-pal-row.on { background: var(--md-on); color: #fff; }
+.md-pal-row.on .md-pal-g { color: rgba(255, 255, 255, .74); }
+.md-pal-row.on kbd { border-color: rgba(255, 255, 255, .55); background: transparent; color: #fff; }
+.md-pal-row.off { opacity: .40; }
+.md-pal-empty { padding: 18px 10px; text-align: center; font-size: 11px; color: var(--md-mute); }
+.md-pal-foot {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--md-line);
+  background: #f9fafb;
+  font-size: 9.5px; color: var(--md-mute);
+}
+.md-pal-foot-r { margin-left: auto; }
+
+/* ============================================================
+ * 17. 专业编辑器外壳精修（顶栏命令搜索 / 工作区 / 视口角落读数）
+ * ------------------------------------------------------------
+ * 只增强 chrome 与视口读数，不改面板底色与业务控件：
+ *   - 顶栏右侧：常驻命令搜索 + 工作区切换（与 Ctrl+Shift+P / 菜单同源）；
+ *   - 视口：左下「视图/着色/选择」、右下「点/面/边/对象/rev」分角显示；
+ *   - HUD 用深色玻璃底，在浅色视口上更接近专业 3D 编辑器的读数层。
+ * ============================================================ */
+
+/* ---------- 17.1 顶栏：命令搜索 ---------- */
+.md-app .md-cmdsearch {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid #e2e6eb;
+  border-radius: 3px;
+  background: #fff;
+  color: #5a626c;
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+  cursor: pointer;
+}
+.md-app .md-cmdsearch svg { width: 12px; height: 12px; flex: 0 0 auto; opacity: .8; }
+.md-app .md-cmdsearch > span { flex: 0 0 auto; }
+.md-app .md-cmdsearch kbd {
+  flex: 0 0 auto;
+  padding: 2px 4px;
+  border: 1px solid #e6e9ed;
+  border-radius: 2px;
+  background: #f7f8fa;
+  color: #7a828c;
+  font: inherit;
+  font-size: 8.5px;
+  line-height: 1;
+}
+.md-app .md-cmdsearch:hover { border-color: #cfd6df; background: #fcfdfe; color: #1f2328; }
+.md-app .md-cmdsearch:active { background: #f4f6f8; }
+.md-app .md-cmdsearch:focus-visible { outline: 1px solid #7db3e6; outline-offset: 1px; }
+
+/* ---------- 17.2 顶栏：工作区切换 ---------- */
+.md-app .md-menu-right .md-wsbtn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  margin: 0;
+  padding: 0 7px;
+  border: 1px solid #e2e6eb;
+  border-radius: 3px;
+  background: #f8f9fb;
+  color: #4a515a;
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+}
+.md-app .md-menu-right .md-wsbtn b { color: #2b7cd3; font-weight: 600; }
+.md-app .md-menu-right .md-wsbtn i { font-style: normal; font-size: 8px; color: #8a929c; }
+.md-app .md-menu-right .md-wsbtn:hover,
+.md-app .md-menu-right .md-wsbtn.open { border-color: #cfd6df; background: #fff; color: #1f2328; }
+
+/* 品牌后的模式徽标做轻量描边，和右侧工作区形成同一套「状态标签」语言 */
+.md-app .md-menu-brand span {
+  padding: 1px 5px;
+  border: 1px solid rgba(43, 124, 211, .32);
+  border-radius: 8px;
+  background: rgba(43, 124, 211, .07);
+  color: #2b7cd3;
+  font-size: 9px;
+  letter-spacing: .03em;
+}
+
+/* ---------- 17.3 视口角落读数（HUD） ---------- */
+.md-app .md-hud {
+  background: rgba(27, 31, 37, .80);
+  border: 1px solid rgba(255, 255, 255, .10);
+  border-radius: 4px;
+  color: #c6cfda;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .22);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .01em;
+}
+.md-app .md-hud b { color: #f2f5f8; font-weight: 600; }
+.md-app .md-hud .md-hud-t { color: #fff; font-weight: 600; letter-spacing: .04em; }
+.md-app .md-hud .md-hud-dim { color: #98a3b1; }
+.md-app .md-hud .md-hud-dim b { color: #dbe2ea; font-weight: 500; }
+.md-app .md-hud .md-hud-sep {
+  display: inline-block;
+  width: 1px;
+  height: 9px;
+  margin: 0 1px;
+  background: rgba(255, 255, 255, .16);
+  vertical-align: -1px;
+}
+.md-app .md-hud .md-hud-rev { color: #8b96a4; font-size: 8.5px; }
+.md-app .md-hud .md-hud-rev b { color: #b9c3cf; font-weight: 500; }
+.md-app .md-hud-l { max-width: 58%; }
+.md-app .md-hud-r { left: auto; right: 12px; max-width: 46%; }
+
+/* 面板头数字统一等宽，缩放时行高不跳 */
+.md-app .md-panel-h em,
+.md-app .md-right-h em { font-variant-numeric: tabular-nums; }
+
+/* ---------- 17.4 窄宽度降级：先收快捷键，再收命令文字 ---------- */
+@media (max-width: 1320px) {
+  .md-app .md-cmdsearch kbd { display: none; }
+}
+@media (max-width: 1180px) {
+  .md-app .md-cmdsearch > span { display: none; }
+  .md-app .md-cmdsearch { padding: 0 6px; }
+}
+
+/* ============================================================
+ * 18. 属性面板 · 渲染视图（与视图工坊共用参数）
+ * 目标：300px 宽的属性面板里放下完整的多视图参数，不挤压既有控件。
+ * 所有选择器都带 .md-app 前缀，避免波及别的 App。
+ * ============================================================ */
+.md-app .md-rv-sec .md-h2 { display: flex; align-items: center; gap: 6px; }
+.md-app .md-rv-tag {
+  font-size: 9px; font-weight: 400; letter-spacing: .02em;
+  color: var(--md-mute); padding: 1px 5px;
+  border: 1px solid var(--md-line); border-radius: 8px;
+  background: var(--md-panel-hi);
+}
+
+.md-app .md-rv { display: flex; flex-direction: column; gap: 7px; }
+
+/* ---------- 预览 ---------- */
+.md-app .md-rv-prev {
+  border: 1px solid var(--md-line); border-radius: var(--md-r);
+  background: var(--md-sunken); overflow: hidden;
+}
+.md-app .md-rv-prev.empty {
+  min-height: 92px; display: flex; align-items: center; justify-content: center;
+  color: var(--md-mute); font-size: 10.5px;
+}
+.md-app .md-rv-prev img { display: block; width: 100%; height: auto; }
+.md-app .md-rv-prev .md-rv-meta {
+  padding: 3px 6px; font-size: 9.5px; color: var(--md-mute);
+  background: var(--md-panel-hi); border-top: 1px solid var(--md-line-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 状态 ---------- */
+.md-app .md-rv-status {
+  display: flex; align-items: center; gap: 5px;
+  min-height: 18px; font-size: 10px; color: var(--md-dim);
+}
+.md-app .md-rv-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--md-mute); flex: 0 0 auto; }
+.md-app .md-rv-dot.on { background: var(--md-accent); box-shadow: 0 0 0 2px rgba(232,138,0,.18); }
+.md-app .md-rv-dot.ok { background: #2f9e57; }
+.md-app .md-rv-dot.bad { background: var(--md-err); }
+.md-app .md-rv-status .md-rv-dot.bad ~ * { color: var(--md-err); }
+
+/* ---------- 折叠段 ---------- */
+.md-app .md-rv-sec { border-top: 1px solid var(--md-line-soft); }
+.md-app .md-rv-sec:first-of-type { border-top: 0; }
+.md-app .md-rv-sec > summary {
+  cursor: pointer; user-select: none; list-style: none;
+  padding: 4px 0; font-size: 10.5px; font-weight: 600; color: var(--md-dim);
+  display: flex; align-items: center; gap: 4px;
+}
+.md-app .md-rv-sec > summary::-webkit-details-marker { display: none; }
+.md-app .md-rv-sec > summary::before {
+  content: '▸'; font-size: 9px; color: var(--md-mute); transition: transform .12s ease;
+}
+.md-app .md-rv-sec[open] > summary::before { transform: rotate(90deg); }
+.md-app .md-rv-sec > summary:hover { color: var(--md-txt); }
+
+/* ---------- 视图组 ---------- */
+.md-app .md-rv-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+.md-app .md-rv-chip {
+  height: 20px; padding: 0 7px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--md-line); background: var(--md-ctrl);
+  color: var(--md-dim); font: inherit; font-size: 10px; white-space: nowrap;
+}
+.md-app .md-rv-chip:hover { border-color: var(--md-focus); color: var(--md-txt); }
+.md-app .md-rv-chip.on {
+  background: var(--md-on); border-color: var(--md-on-line); color: #fff;
+}
+.md-app .md-rv-presets { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.md-app .md-rv-pre {
+  height: 19px; padding: 0 7px; border-radius: var(--md-r);
+  border: 1px dashed var(--md-line); background: transparent;
+  color: var(--md-dim); font: inherit; font-size: 10px; cursor: pointer;
+}
+.md-app .md-rv-pre:hover { border-color: var(--md-on); color: var(--md-on); background: var(--md-raise); }
+.md-app .md-rv-count { margin-top: 4px; font-size: 9.5px; color: var(--md-mute); }
+
+/* ---------- 分段按钮 ---------- */
+.md-app .md-rv-seg {
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--md-sunken); border: 1px solid var(--md-line-soft); border-radius: var(--md-r);
+}
+.md-app .md-rv-sb {
+  flex: 1 1 0; min-width: 0; height: 20px; padding: 0 4px;
+  border: 1px solid transparent; border-radius: 2px;
+  background: transparent; color: var(--md-dim); font: inherit; font-size: 10px;
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.md-app .md-rv-sb:hover { background: var(--md-raise); color: var(--md-txt); }
+.md-app .md-rv-sb.on {
+  background: var(--md-raise); border-color: var(--md-line); color: var(--md-txt);
+  box-shadow: 0 1px 2px rgba(0,0,0,.06); font-weight: 600;
+}
+.md-app .md-rv-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+
+/* ---------- 滑条 / 颜色 ---------- */
+.md-app .md-rv-range {
+  display: grid; grid-template-columns: 56px 1fr 38px; align-items: center; gap: 5px;
+  font-size: 10.5px; color: var(--md-dim); min-height: 21px;
+}
+.md-app .md-rv-range > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-app .md-rv-range output {
+  text-align: right; color: var(--md-txt); font-variant-numeric: tabular-nums; font-size: 10px;
+}
+.md-app .md-rv-range input[type="range"] { width: 100%; min-width: 0; accent-color: var(--md-on); }
+.md-app .md-rv-color {
+  display: grid; grid-template-columns: 56px 1fr; align-items: center; gap: 5px;
+  font-size: 10.5px; color: var(--md-dim); min-height: 23px;
+}
+.md-app .md-rv-color input[type="color"] {
+  width: 100%; height: 19px; padding: 0; border: 1px solid var(--md-field-line);
+  border-radius: 2px; background: var(--md-field); cursor: pointer;
+}
+
+/* ---------- 显示开关 ---------- */
+.md-app .md-rv-checks { display: flex; flex-direction: column; gap: 3px; }
+.md-app .md-rv-chkcell {
+  border: 1px solid var(--md-line-soft); border-radius: var(--md-r);
+  background: var(--md-raise); padding: 3px 5px;
+}
+.md-app .md-rv-chkcell.on { border-color: var(--md-line); background: var(--md-raise); }
+.md-app .md-rv-chk {
+  display: flex; align-items: center; gap: 5px; cursor: pointer;
+  font-size: 10.5px; color: var(--md-dim); min-height: 18px;
+}
+.md-app .md-rv-chk input { accent-color: var(--md-on); margin: 0; }
+.md-app .md-rv-chkcell.on .md-rv-chk { color: var(--md-txt); }
+.md-app .md-rv-sub {
+  margin: 3px 0 2px 19px; padding-left: 6px;
+  border-left: 1px solid var(--md-line-soft);
+}
+
+/* ---------- 图层 ---------- */
+.md-app .md-rv-layers { display: flex; flex-direction: column; gap: 2px; }
+.md-app .md-rv-lrow {
+  display: grid; grid-template-columns: 20px 64px 1fr 34px 18px 18px;
+  align-items: center; gap: 3px; min-height: 22px;
+  padding: 1px 3px; border-radius: 2px;
+}
+.md-app .md-rv-lrow:hover { background: var(--md-raise-hi); }
+.md-app .md-rv-lrow.off { opacity: .5; }
+.md-app .md-rv-ltag {
+  font-size: 8px; color: var(--md-mute); letter-spacing: .04em;
+  border: 1px solid var(--md-line-soft); border-radius: 2px; text-align: center;
+}
+.md-app .md-rv-lname {
+  font-size: 10px; color: var(--md-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.md-app .md-rv-lop { width: 100%; min-width: 0; accent-color: var(--md-on); }
+.md-app .md-rv-lrow output { font-size: 9px; color: var(--md-mute); text-align: right; font-variant-numeric: tabular-nums; }
+.md-app .md-rv-lbtn {
+  width: 18px; height: 18px; padding: 0; border: 1px solid var(--md-line-soft);
+  border-radius: 2px; background: var(--md-ctrl); color: var(--md-dim);
+  font: inherit; font-size: 10px; line-height: 1; cursor: pointer;
+}
+.md-app .md-rv-lbtn:hover:not(:disabled) { border-color: var(--md-focus); color: var(--md-txt); }
+.md-app .md-rv-lbtn:disabled { opacity: .3; cursor: default; }
+.md-app .md-rv-note { margin-top: 4px; font-size: 9.5px; line-height: 1.5; color: var(--md-mute); }
+
+/* ---------- 导出 ---------- */
+.md-app .md-rv-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.md-app .md-rv-btn {
+  flex: 1 1 0; min-width: 64px; height: 23px; padding: 0 7px;
+  border: 1px solid var(--md-line); border-radius: var(--md-r);
+  background: var(--md-ctrl); color: var(--md-txt);
+  font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
+}
+.md-app .md-rv-btn:hover { border-color: var(--md-focus); background: var(--md-raise-hi); }
+.md-app .md-rv-btn.primary {
+  background: var(--md-on); border-color: var(--md-on-line); color: #fff;
+}
+.md-app .md-rv-btn.primary:hover { background: var(--md-on-hi); }
+.md-app .md-rv-cells { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 5px; }
+.md-app .md-rv-cell {
+  height: 20px; padding: 0 6px; border: 1px solid var(--md-line-soft);
+  border-radius: 10px; background: var(--md-raise); color: var(--md-dim);
+  font: inherit; font-size: 9.5px; cursor: pointer;
+}
+.md-app .md-rv-cell:hover { border-color: var(--md-on); color: var(--md-on); }
+
+/* ---------- 导出预览浮层 ---------- */
+.md-app .md-rv-xl {
+  position: fixed; inset: 0; z-index: 220;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(16, 20, 26, .58); backdrop-filter: blur(2px);
+}
+.md-app .md-rv-xl-card {
+  width: min(86vw, 900px); max-height: 88vh;
+  display: flex; flex-direction: column;
+  background: var(--md-panel); border: 1px solid var(--md-line);
+  border-radius: var(--md-r-pop); box-shadow: 0 24px 60px rgba(0,0,0,.35);
+  overflow: hidden;
+}
+.md-app .md-rv-xl-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-bottom: 1px solid var(--md-line-soft);
+  font-size: 11.5px; color: var(--md-txt);
+}
+.md-app .md-rv-xl-head b { flex: 1 1 auto; font-weight: 600; }
+.md-app .md-rv-xl-x {
+  width: 22px; height: 22px; padding: 0; border: 1px solid var(--md-line-soft);
+  border-radius: 2px; background: var(--md-ctrl); color: var(--md-dim);
+  font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+}
+.md-app .md-rv-xl-x:hover { color: var(--md-txt); border-color: var(--md-focus); }
+.md-app .md-rv-xl-body {
+  flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px;
+  background: var(--md-sunken);
+}
+.md-app .md-rv-xl-body img {
+  display: block; max-width: 100%; max-height: 70vh; margin: 0 auto;
+  background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.12);
+}
+.md-app .md-rv-xl-foot {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border-top: 1px solid var(--md-line-soft);
+  font-size: 10px; color: var(--md-mute);
+}
+.md-app .md-rv-xl-foot > span { flex: 1 1 auto; font-variant-numeric: tabular-nums; }
+.md-app .md-rv-xl-foot .md-rv-btn { flex: 0 0 auto; }

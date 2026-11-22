@@ -28,7 +28,6 @@
      *   P    = 绘画模块自己的状态（仍挂在 st.paint 上，外壳 UI 还要读写，
      *          等面板迁到模块后整体挪进本文件） */
     var view = st.view, edit = st.edit, P = st.paint;
-    var sharedTexture = ctx.sharedTexture;
     var setStatus = ctx.setStatus, updateChrome = ctx.updateChrome;
     var rebuildModel = ctx.rebuildModel, paintAll = ctx.paintAll;
     var uvRefreshSolidGeometry = ctx.uvRefreshSolidGeometry;
@@ -341,27 +340,14 @@
         return p.tex;
       }
       paintCommit();
-      var mats = (view.doc && view.doc.materials) || {};
-      var url = (mats.slotMaps || [])[slot] || '';
-      /* 底图统一问 TexSource（baked → slotMaps → 混合模块的解码缓存 → live）。
-       * 以前这里是「ctx.baseImageFor → sharedTexture → liveSlotImage」三段手写顺序，
-       * 与投射烘焙、UV 编辑器三处各不相同 —— 同一个槽能读出三张不同的图。
-       * 注意：无论取到哪张，它都是**未合成**的底座，笔迹写回 slotMaps 后
-       * 混合层照旧叠在上面，不会双份。 */
+      /* 底座口径（2026-11 分层）：材质槽的可见内容只来自图层栈 / 笔迹。
+       * 导入时抽出的 slotMaps 不再当底座 —— 否则零图层起笔会把整张资产贴图带出来，
+       * 与「零图层 = 白模」相反。这里只可能拿到「烘焙图」（用户主动固化过）。 */
       var img = null;
       var baseImg = null, baseKey = '';
       p.seedComposed = false;
-      /* 底图统一问 TexSource（baked → slotMaps → 混合模块的解码缓存 → live）。
-       * baseImageFor 会带上混合模块解出来的缓存图；直接调 resolveBase 不传 cached 时，
-       * 只要 slotMaps 读不到就会返回 null —— 工作副本只剩槽底色，
-       * 视口先白一下、下一帧合成图再盖回来，就是用户看到的「绘制瞬间变白」。 */
       if (ctx.baseImageFor) baseImg = ctx.baseImageFor(slot) || null;
-      if (baseImg) baseKey = 'cached';
-      if (!baseImg && global.TexSource) {
-        var r1 = global.TexSource.resolveBase(slot);
-        baseImg = r1.img || null;
-        if (baseImg) baseKey = r1.from + '|' + r1.url;
-      }
+      if (baseImg) baseKey = 'baked';
       /* 先看有没有编辑层（投射）：有的话底图必须是「已投射的样子」，
        * 否则用户画的时候看不到之前投上去的那几块，一落笔还会把它盖掉。 */
       var hasStack = !!(global.TexStack && global.TexStack.has(view.doc, slot));
@@ -369,34 +355,6 @@
         img = global.TexStack.edited(view.doc, slot, { base: baseImg, baseKey: baseKey }) || null;
       }
       if (!img) img = baseImg;
-      /* 仍然没有底座：退回材质上正在显示的那张图（可能已经是合成图）。
-       * 它只当预览底 —— 提交的是独立的增量层，不会把合成图写回 slotMaps。
-       * 少这一步，工作副本会被槽底色填满，落笔瞬间就是一片白/灰。 */
-      if (!img && ctx.liveSlotImage) {
-        var lv0 = ctx.liveSlotImage(slot);
-        var composed = ctx.composedImageFor ? ctx.composedImageFor(slot) : null;
-        /* 跳过自己上一笔挂上去的工作副本（丢笔 / 撤销后材质上可能还挂着它），
-         * 否则预览会把已经不在栈里的旧笔迹再画一遍。 */
-        if (lv0 && lv0 !== p.lastCv && (lv0.width || lv0.naturalWidth)) {
-          img = lv0;
-          /* 底座是「底座 + 图层」的合成图：工作副本里从此含图层像素。
-           * 混合同步时**不能**再把它当成最终像素（隐藏 / 删除图层后颜色会退不掉），
-           * 见 md-texmix 里 adoptPaintCanvas 的守卫。 */
-          p.seedComposed = (lv0 === composed);
-        }
-      }
-      if (!img && url) {
-        var t9 = sharedTexture(url);
-        if (t9 && t9.image && t9.image.width) img = t9.image;
-      }
-      /* 底图还在解码：材质上挂着 map、但贴图还没有像素（刚打开大模型 /
-       * 刚应用完修改器重建材质）。这时绝不能拿槽底色起一张工作副本 ——
-       * 导入模型的槽色往往是纯白，于是吸管读到白色，抬笔还把整张平铺底色
-       * 采纳成最终贴图（模型整片变白）。等解码完再落笔，下一次点击就是正常底图。 */
-      if (!img && ctx.baseLoading && ctx.baseLoading(slot)) {
-        setStatus('绘画：贴图还在解码，稍后再点一次', true);
-        return null;
-      }
       var w = PAINT_MAX, h = PAINT_MAX;
       if (img && img.width && img.height) {
         var sc = Math.min(1, PAINT_MAX / Math.max(img.width, img.height));
@@ -406,7 +364,8 @@
       var cv = document.createElement('canvas');
       cv.width = w; cv.height = h;
       var c2 = cv.getContext('2d');
-      c2.fillStyle = (mats.slotColors || [])[slot] || '#c9ccd4';
+      /* 白底：零图层的工作副本从白色开始，不再铺导入模型的槽色 / 贴图。 */
+      c2.fillStyle = '#ffffff';
       c2.fillRect(0, 0, w, h);
       if (img) c2.drawImage(img, 0, 0, w, h);
       var tex = new THREE.CanvasTexture(cv);

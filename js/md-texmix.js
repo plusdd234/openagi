@@ -594,29 +594,19 @@
       return tex;
     }
 
-    /* 没有混合层 / 烘焙图时回到「基础贴图」：正在画就用绘画工作区那张，
-     * 否则用 doc 里原来的共享贴图（没有就 null = 只吃槽色）。 */
+    /* 没有混合层 / 烘焙图 / 笔迹时的视口口径：白模（白底 + 无贴图）。
+     * 槽的可见内容只来自图层栈，导入时抽出的 slotMaps 不是编辑结果，
+     * 不再作为「基础贴图」回挂。组件 / 节点自带表面（mdOwnSurface）跳过，
+     * 否则流明头模的脸会被刷成白壳。 */
     function applyBase(slot) {
       var rec = recOf(docOf(), slot);
-      /* 上一张是不是本模块挂的合成图：是的话「回到基础贴图」必须把它换掉，
-       * 不能因为材质上还有图就保留 —— 那会把刚隐藏 / 删掉的图层留在视口里。 */
-      var owned = !!rec.tex;
       dropTex(rec);
-      /* 回到基础贴图：合成缓存作废。留着上一张合成图的话，
-       * 保存时「自动烘焙」会把已经删掉的图层又烘回 GLB。 */
+      /* 合成缓存作废：留着上一张合成图，保存时会把已经删掉的图层又烘回 GLB。 */
       rec.canvas = null;
       rec.composeState = null;
-      var pt = paintTexFor ? paintTexFor(slot) : null;
-      /* 工作副本若拿合成图当过底座，里面含图层像素：图层都删光后也不能回挂它 */
-      if (pt && !paintSeedComposed(slot)) { applySlotTexture(slot, pt); return; }
-      var doc = docOf();
-      var url = ((doc && doc.materials && doc.materials.slotMaps) || [])[slot] || '';
-      if (url) { applySlotTexture(slot, sharedTexture(url)); return; }
-      /* slotMaps 里没有 URL 时**不能**把材质清成 null：材质上那张可能就是唯一的图
-       * （只在 map 上的老资产 / 合成图）。清掉就是「撤销一下贴图全没了」。
-       * 只有材质上本来也没图，才真的清空。 */
-      if (!owned && liveSlotImage && liveSlotImage(slot)) return;
-      applySlotTexture(slot, null);
+      rec.baseImg = null;
+      rec.baseUrl = '';
+      applySlotTexture(slot, null, { skipOwnSurface: true, color: '#ffffff' });
     }
 
     /* 编辑层栈的合成结果。kinds 限定只回放某一类层：
@@ -627,12 +617,9 @@
      * 继续用旧合成图会把上一次的像素留在视口里。 */
     function editsFor(slot, doc, rec, kinds) {
       if (!global.TexStack || !global.TexStack.has(doc, slot)) return null;
-      var base = null, key = '';
-      if (global.TexSource) {
-        var r = global.TexSource.resolveBase(slot, { cached: rec && rec.baseImg, cachedUrl: rec && rec.baseUrl });
-        base = r.img;
-        key = r.from + '|' + r.url + '|' + (base ? (base.naturalWidth || base.width) + 'x' + (base.naturalHeight || base.height) : '');
-      }
+      /* 编辑层栈的底座同样只认烘焙图：导入贴图不进图层口径。 */
+      var base = (rec && rec.baked && rec.baked.img) || null;
+      var key = base ? 'baked' : 'white';
       return global.TexStack.edited(doc, slot, { base: base, baseKey: key, kinds: kinds });
     }
 
@@ -740,9 +727,9 @@
         /* 建模 App 的画布是 v=0 在下（贴图 flipY=true），层也都按这个约定画。
          * 配置里若有按 glTF 约定（flipY=false）存的层，TB.compose 会先翻一次再叠。 */
         baseFlipY: true,
-        /* 没有底座时用材质槽色打底，别用 TB 默认的白 —— 否则「没贴图的模型」
-         * 一进合成就变白，和材质本色对不上 */
-        baseColor: ((doc.materials && doc.materials.slotColors) || [])[slot] || '#c9ccd4'
+        /* 白底：槽的可见内容只来自图层栈 / 笔迹，导入贴图不作为底座。
+         * 零图层时这里会走 applyBase，结果同样是白模。 */
+        baseColor: '#ffffff'
       });
       rec.canvas = cv;
       composeN++;
@@ -787,18 +774,13 @@
       applySlotTexture(slot, tex);
     }
 
-    /* 合成用的底座：烘焙图 / 仅投射层 / 解码缓存 / 材质实图。
-     * 唯一要排除的是「绘画工作副本」—— 它已经含笔迹，当底座会成双份。 */
+    /* 合成用的底座：只有「投射层」（用户内容）和烘焙图（调用方另算）。
+     * 导入时抽出的 slotMaps / 材质实图不再垫在下面 —— 它们不是图层，
+     * 垫进来会让「零图层」也显示贴图颜色。 */
     function baseFor(slot, doc, rec) {
       var proj = editsFor(slot, doc, rec, ['project']);
       if (proj) return proj;
-      if (global.TexSource) {
-        var r = global.TexSource.resolveBase(slot, { cached: rec && rec.baseImg, cachedUrl: rec && rec.baseUrl });
-        var img = r.img || null;
-        var pc = paintCanvasFor ? paintCanvasFor(slot) : null;
-        if (img && img !== pc) return img;
-      }
-      return rec.baseImg || null;
+      return null;
     }
 
     /* 工作副本直接当合成图：**不能再回放层栈**。
@@ -953,10 +935,9 @@
       var hasEdits = !!(global.TexStack && global.TexStack.has(doc, slot));
       var idle = !(cfg.layers.length || cfg.baked || hasEdits);
       if (idle) {
-        if (rec.texValid) applyBase(slot);
-        else if (!rec.ready) {
-          /* 没配置也没合成过：什么都不用动，材质本来就是基础贴图 */
-        }
+        /* 零图层口径：白模。不要等 rec.texValid —— 打开一个带导入贴图的模型，
+         * 视口也必须直接是白底，而不是先显示资产贴图再等第一次操作。 */
+        applyBase(slot);
         rec.ready = true; rec.sig = JSON.stringify(cfg);
         return Promise.resolve(0);
       }
@@ -987,35 +968,35 @@
       var rec = recOf(doc, slot);
       return (rec && rec.texValid && rec.tex) ? rec.tex : null;
     }
-    /* 绘画工作区的底图：烘焙图优先于导入的基础色贴图 */
-    /* 这个槽「未合成的底座」—— 混合层要叠在它上面，绘画/投射要在它上面画。
-     * 具体从哪张取由 TexSource 统一决定（baked → slotMaps → 本模块解码缓存 → live），
-     * 四个读者共用同一条顺序，避免各处答案不同（2026-11-11 调研的根因）。 */
+    /* 这一槽有没有「用户可见内容」：可见混合层 / 烘焙图 / 笔迹。
+     * 视口白模与导出都按它判断 —— 没有内容就导出白底，不再回落到导入贴图。 */
+    function hasContent(slot) {
+      var doc = docOf();
+      if (!doc) return false;
+      var cfg = readCfg(doc, slot);
+      if (cfg.baked) return true;
+      if (global.TexStack && global.TexStack.has(doc, slot)) return true;
+      var ls = cfg.layers || [];
+      for (var i = 0; i < ls.length; i++) {
+        var l = ls[i];
+        if (!l || l.visible === false) continue;
+        if (l.opacity != null && !(Number(l.opacity) > 0)) continue;
+        return true;
+      }
+      return false;
+    }
+    /* 绘画工作区的底图：只有「烘焙图」是用户内容。
+     * 导入贴图（slotMaps）不再是底座 —— 否则零图层时起笔会把整张贴图带出来，
+     * 与「零图层 = 白模」的口径相反。 */
     function baseImageFor(slot) {
       var doc = docOf();
       if (!doc) return null;
       var rec = recOf(doc, slot);
-      if (global.TexSource) {
-        var r = global.TexSource.resolveBase(slot, { cached: rec.baseImg, cachedUrl: rec.baseUrl });
-        return r.img || null;
-      }
-      /* TexSource 没加载时的降级（老页面 / 单测直引本文件） */
-      if (rec.baked && rec.baked.img) return rec.baked.img;
-      if (rec.baseImg) return rec.baseImg;
-      var url = ((doc.materials && doc.materials.slotMaps) || [])[slot] || '';
-      if (url) {
-        var t = sharedTexture(url);
-        if (t && t.image && t.image.width) return t.image;
-      }
-      if (liveSlotImage) {
-        var live = liveSlotImage(slot);
-        if (live && (live.width || live.naturalWidth)) return live;
-      }
-      return null;
+      return (rec.baked && rec.baked.img) || null;
     }
 
     /* 上一轮「固化为底图」留下的底图（没有就是 null）。
-     * TexSource 用它作为 slotMaps 之后的第二来源。 */
+     * 保存 / 导出时用它作为合成底座，不再叠加导入贴图。 */
     function bakedImageFor(slot) {
       var doc = docOf();
       if (!doc) return null;
@@ -1325,13 +1306,14 @@
       }
       var pc = paintCanvasFor ? paintCanvasFor(slot) : null;
       var eff = effectiveLayers(rec);
-      var baseImg = pc || (rec.baked && rec.baked.img) || rec.baseImg || null;
+      /* 烘焙同样只从「用户内容」起底：工作副本 / 已有烘焙图 / 白底。 */
+      var baseImg = pc || (rec.baked && rec.baked.img) || null;
       var sz = TB.mixSize({ baseImg: baseImg, layers: eff }, MAX_SIDE);
       var cv = TB.compose({
         w: sz.w, h: sz.h, baseImg: baseImg, layers: eff,
         /* 同 composeOnto：产物按建模 App 的 v-up 约定（flipY=true）当贴图 */
         baseFlipY: true,
-        baseColor: ((doc.materials && doc.materials.slotColors) || [])[slot] || '#c9ccd4'
+        baseColor: '#ffffff'
       });
       var url = cv.toDataURL('image/png');
       var name = (slotKeyOf(doc, slot) || '槽') + ' 烘焙';
@@ -2046,7 +2028,8 @@
         var zero = document.createElement('div');
         zero.className = 'md-mix-empty';
         zero.innerHTML = '<b>＋</b><span>这个材质槽还没有图层</span>' +
-          '<em>点下方「＋ 图层」叠加贴图；每层可调显隐、顺序、混合模式、不透明度与遮罩。保存时自动烘焙成该槽贴图。</em>';
+          '<em>点下方「＋ 图层」叠加贴图；每层可调显隐、顺序、混合模式、不透明度与遮罩。' +
+          '没有图层时为白模；保存到资产库保留图层与遮罩，导出到电脑时按槽合成一张贴图。</em>';
         listEl.appendChild(zero);
       }
       for (var li = cfg.layers.length - 1; li >= 0; li--) {
@@ -2054,14 +2037,14 @@
       }
       wrap.appendChild(listEl);
 
-      /* 底层：模型自带贴图 / 烘焙贴图，只读 */
+      /* 底层：烘焙贴图（用户内容）或白底。导入的模型自带贴图不进图层口径，
+       * 零图层时视口就是白模，所以这里不再显示「模型自带贴图」。 */
       var baseRow = document.createElement('div');
       baseRow.className = 'md-mix-base';
       var bchip = document.createElement('span');
       bchip.className = 'md-mix-chip';
       var hasBaked = !!(cfg.baked && (cfg.baked.id || cfg.baked.src));
-      var hasMap = !!((doc.materials && doc.materials.slotMaps || [])[slot]);
-      bchip.textContent = '底层 · ' + (hasBaked ? '烘焙贴图' : (hasMap ? '模型自带贴图' : '白底')) + '（只读）';
+      bchip.textContent = '底层 · ' + (hasBaked ? '烘焙贴图' : '白底') + '（只读）';
       baseRow.appendChild(bchip);
       wrap.appendChild(baseRow);
 
@@ -2189,6 +2172,8 @@
       /* 单槽刷新（投射改了编辑层栈之后调它）：会重新解码层再合成 */
       refreshSlot: refreshSlot,
       baseImageFor: baseImageFor, bakedImageFor: bakedImageFor, texFor: texFor, applyPatch: applyPatch,
+      /* 有没有用户可见内容（可见层 / 烘焙 / 笔迹）：白模与导出共用这一口径 */
+      hasContent: hasContent,
       /* 导出时判断「这一槽的底座还有没有别的来源」：有混合层就不能把 slotMaps 清成空，
        * 否则重开时 GLB 里的合成图会被当成底座、混合层再叠一遍。 */
       hasLayers: function (slot) { return readCfg(docOf(), slot).layers.length > 0; },

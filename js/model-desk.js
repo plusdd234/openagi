@@ -23,7 +23,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   var st = {
-    host: null, stage: null, canvas: null, overlay: null, statusEl: null, hudEl: null,
+    host: null, stage: null, canvas: null, overlay: null, statusEl: null, hudEl: null, hudStatsEl: null,
     renderer: null, scene: null, camera: null, controls: null, gizmo: null,
     doc: null, node: null, mesh: null, pivot: null,
     running: false, raf: 0, resizeObs: null,
@@ -37,6 +37,8 @@
     /* 视口条上的下拉：灯光预设 / 大纲页签 / 工具架页签 / 面板显隐 */
     lightingPreset: 'default', outlineTab: 'all', shelfTab: 'poly',
     panels: { outline: true, right: true, shelf: true },
+    /* 工作区预设（建模 / UV / 绘制 / 宽视口）：只改布局与模式，结果仍由工作台持久化 */
+    workspace: '建模', wsApplying: false,
     pop: null, popItems: null,
     /* 单独显示（隔离所选）：只影响视口，不写文档里的 node.visible */
     isolate: false,
@@ -79,10 +81,15 @@
     uiReady: false, busy: false, statusTimer: 0, texOpen: false,
     menu: null,
     toolPanel: null,
+    /* 工作台内核（js/md-workbench.js）：面板尺寸 / 分割条 / 命令面板。
+     * 由 ensureUI 末尾创建一次，之后所有面板与命令都往这里注册。 */
+    workbench: null,
     prefs: null,
-    /* 内容浏览器（底部 dock）：收起时只留页签；assets 为 null 表示还没读过 */
+    /* 内容浏览器（底部 dock）：收起时只留页签；assets 为 null 表示还没读过。
+     * filter = all / model / level；query = 名称搜索（大小写不敏感）。 */
     dock: null, dockBody: null, dockOpen: false, dockLoading: false,
     dockAssets: null, dockErr: '', dockThumbs: Object.create(null), dockToken: 0,
+    dockFilter: 'all', dockQuery: '',
     /* 基础体面板（M5）：形状 / 三向尺寸 / 段数；autoName 表示名字还是系统起的 */
     prim: { shape: 'box', size: [1, 1, 1], seg: 16 },
     /* 组件面板：只存「用户在上次面板里的选择」，参数本身由组件源定义。
@@ -182,6 +189,10 @@
       });
     });
   })();
+
+  /* 组件源的目录与异步资产生命周期统一收在 MDComponentRegistry（js/md-component-registry.js）。
+   * 外壳只按 id 取组件、画面板；「资产读没读进来 / 什么时候要等」不再由外壳判断。 */
+  var COMP = global.MDComponentRegistry;
 
   /* 材质槽贴图的读写、解码状态、底图读取统一收在 MDMaterialStore（js/md-material-store.js）。
    * 外壳只保留材质工厂与释放：不再自己缓存贴图，也不再直接回答「底图从哪来」。 */
@@ -486,7 +497,13 @@
       '    </nav>',
       '    <div class="md-drop" id="mdDrop" hidden></div>',
       '    <div class="md-menu-right">',
-      '      <span class="md-workspace">工作区：建模 · 标准</span>',
+      /* 专业编辑器把「命令搜索」和「工作区切换」放在顶栏右侧常驻：
+       * 命令面板不再只靠记快捷键，工作区也能一键换布局。 */
+      '      <button type="button" class="md-cmdsearch" data-md-cmdopen="1" title="命令面板（Ctrl+Shift+P）">' +
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.2"/><path d="m15.2 15.2 4.3 4.3"/></svg>' +
+      '        <span>命令</span><kbd>Ctrl+Shift+P</kbd></button>',
+      '      <button type="button" class="md-mitem md-wsbtn" data-md-menu="工作区" title="切换工作区布局（建模 / UV / 绘制 / 宽视口）">' +
+      '        工作区 <b id="mdWorkspaceName">建模</b><i>▾</i></button>',
       '      <b class="md-name" id="mdName">未命名模型</b>',
       '      <span class="md-ver">MVP-1</span>',
       '    </div>',
@@ -619,12 +636,13 @@
       '      <button type="button" class="md-tool" data-md-tool="scale" title="缩放工具（R）">' + TOOL_ICONS.scale + '<span class="md-toolname">缩放<kbd>R</kbd></span></button>',
       '    </div>',
       '    <aside class="md-outline">',
-      '      <div class="md-panel-h"><span>大纲视图</span><em id="mdOutlineCount">0 个对象</em></div>',
+      '      <div class="md-panel-h"><span>大纲视图</span><em id="mdOutlineCount">0 个对象</em>' +
+      '        <button type="button" class="md-wb-phbtn" data-md-panel="outline" title="折叠 / 展开大纲视图" aria-pressed="true">◧</button></div>',
       '      <div class="md-otabs"><button type="button" class="md-otab on" data-md-otab="all">显示</button><button type="button" class="md-otab" data-md-otab="hidden">隐藏</button><button type="button" class="md-otab" data-md-otab="levels">关卡</button><button type="button" class="md-otab" data-md-otab="help">帮助</button>' +
       '        <button type="button" class="md-otab md-otab-add" id="mdAddCompBtn" data-md-act="comp-open" title="添加组件：把现成零件（二次元头模等）并进当前场景">＋ 组件</button></div>',
       '      <div class="md-osearch"><input id="mdOutlineSearch" type="search" placeholder="按名称搜索节点" autocomplete="off" spellcheck="false"></div>',
       '      <div class="md-tree" id="mdOutlineList"></div>',
-      '      <div class="md-hint">F8–F11 切对象 / 顶点 / 边 / 面，Shift 加选、Ctrl 减选；框选随 S3、挤出等算子随 M6。</div>',
+      '      <div class="md-hint">F8–F11 切对象 / 顶点 / 边 / 面；大纲 Ctrl 点按加减选、Shift 追加，右键对象可重命名 / 导出所选。</div>',
       '    </aside>',
       '    <div class="md-center">',
       '      <div class="md-vpbar">',
@@ -677,12 +695,16 @@
       '          <b class="md-cube-turn left" data-md-turn="left" title="视图向左翻转 90°"></b>',
       '          <b class="md-cube-turn right" data-md-turn="right" title="视图向右翻转 90°"></b>',
       '        </div>',
-      '        <div class="md-hud" id="mdHud"></div>',
+      '        <div class="md-hud md-hud-l" id="mdHud"></div>',
+      /* 右下角统计 HUD：与左下角的「视图 / 着色 / 选择」分开，视口信息按专业编辑器
+       * 的角落读数分布，不再把 revision 这类工程数据挤在用户第一眼位置。 */
+      '        <div class="md-hud md-hud-r" id="mdHudStats"></div>',
       '      </div>',
       '    </div>',
       '    <aside class="md-right">',
       '      <div class="md-panel-h md-right-h"><span class="md-right-t" id="mdRightTitle">建模工具箱</span><em id="mdTbMode">对象</em>' +
-      '        <button type="button" class="md-otab md-propstog" id="mdPropsToggle" title="属性编辑器：变换 / 材质槽 / 操作历史">属性</button></div>',
+      '        <button type="button" class="md-otab md-propstog" id="mdPropsToggle" title="属性编辑器：变换 / 材质槽 / 操作历史">属性</button>' +
+      '        <button type="button" class="md-wb-phbtn" data-md-panel="right" title="折叠 / 展开右侧面板" aria-pressed="true">◨</button></div>',
       '      <section class="md-tb">',
       '        <div class="md-tb-tabs"><button type="button" class="md-otab md-tbtab on" data-md-tbtab="object">对象</button><button type="button" class="md-otab md-tbtab" data-md-tbtab="component">多组件</button></div>',
       '        <div class="md-modebar" id="mdModeBar">',
@@ -779,6 +801,12 @@
       '        <button type="button" class="md-dock-mini" data-md-dock="refresh" title="重新读取模型库">刷新</button>',
       '      </div>',
       '    </div>',
+      '    <div class="md-dock-filters" id="mdDockFilters">',
+      '      <button type="button" class="md-dock-mini on" data-md-cbf="all">全部</button>',
+      '      <button type="button" class="md-dock-mini" data-md-cbf="model">模型</button>',
+      '      <button type="button" class="md-dock-mini" data-md-cbf="level">关卡</button>',
+      '      <input id="mdDockSearch" class="md-dock-search" type="search" autocomplete="off" spellcheck="false" placeholder="搜索名称">',
+      '    </div>',
       '    <div class="md-dock-body" id="mdDockBody"></div>',
       '  </div>',
       '  <div class="md-cmdrow">',
@@ -800,12 +828,14 @@
     st.overlay = $('mdOverlay');
     st.statusEl = $('mdStatus');
     st.hudEl = $('mdHud');
+    st.hudStatsEl = $('mdHudStats');
     st.dock = $('mdDock');
     st.dockBody = $('mdDockBody');
     paintDock();
     bindCube();
 
     host.addEventListener('click', onClick);
+    host.addEventListener('contextmenu', onContextMenu);
     host.addEventListener('input', onInput);
     host.addEventListener('change', onChange);
     host.addEventListener('pointerdown', onSoftCurveDown);
@@ -819,12 +849,19 @@
     /* 主菜单下拉 / 视口条下拉：点外面 / 按 Esc 收起。捕获阶段处理，先于工具层的 Esc。 */
     document.addEventListener('pointerdown', function (e) {
       var tg = e.target;
+      if ($('mdCtxMenu') && !(tg && tg.closest && tg.closest('#mdCtxMenu'))) closeCtxMenu();
       if (st.pop && !(tg && tg.closest && (tg.closest('.md-pop') || tg.closest('.md-popbtn')))) closePop();
       if (!st.menu) return;
       if (tg && tg.closest && (tg.closest('#mdDrop') || tg.closest('.md-mitem'))) return;
       mdCloseMenu();
     }, true);
     document.addEventListener('keydown', function (e) {
+      if ($('mdCtxMenu') && (e.key === 'Escape' || e.key === 'Esc')) {
+        closeCtxMenu();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (st.pop && (e.key === 'Escape' || e.key === 'Esc')) {
         closePop();
         e.preventDefault();
@@ -860,6 +897,9 @@
     if (MIX) MIX.init();
     setPaintTab(st.paintTab);
     st.uiReady = true;
+    /* 工作台内核：面板尺寸 / 分割条 / 命令面板。
+     * 它是外壳能力，初始化失败只影响布局工具，不能挡住建模主流程。 */
+    try { bootWorkbench(); } catch (e) { setStatus('工作台初始化失败：' + ((e && e.message) || e), true); }
   }
 
   function setStatus(text, isErr) {
@@ -1030,7 +1070,7 @@
     var countEl = $('mdOutlineCount');
     if (countEl) countEl.textContent = st.doc.nodes.length + ' 个对象';
     if (tab === 'help') {
-      list.innerHTML = '<div class="md-note">显示：列出相机与全部对象<br>隐藏：只看隐藏对象<br>关卡：分组管理对象（显隐 / 锁定 / 单关导出）<br>双击对象行可重命名；搜索框按名称过滤。</div>';
+      list.innerHTML = '<div class="md-note">显示：列出相机与全部对象<br>隐藏：只看隐藏对象<br>关卡：分组管理对象（显隐 / 锁定 / 单关导出）<br>多选：Ctrl / Cmd 点按加减选，Shift 追加；右键对象行可重命名或导出所选。</div>';
       return;
     }
     if (tab === 'levels') {
@@ -1089,7 +1129,83 @@
         '<em>' + faces + ' 面</em>' +
         '</button>';
     }).join('');
-    list.innerHTML = rows || '<div class="md-note">' + (tab === 'hidden' ? '没有隐藏对象' : '没有匹配的节点') + '</div>';
+    var body = rows || '<div class="md-note">' + (tab === 'hidden' ? '没有隐藏对象' : '没有匹配的节点') + '</div>';
+    /* 选择工具条：多选后导出所选 / 保存整个场景，避免去菜单里绕 */
+    var selN = (st.nodeIds || []).length;
+    var opsRow = '<div class="md-lvops md-oselops">' +
+      '<button type="button" class="md-lvop" data-md-act="osel-all" title="选中大纲里的全部对象">全选</button>' +
+      '<button type="button" class="md-lvop" data-md-act="osel-none"' + (selN ? '' : ' disabled') + '>清空</button>' +
+      '<button type="button" class="md-lvop" data-md-act="osel-export"' + (selN ? '' : ' disabled') +
+      ' title="把选中的对象导出为一份独立 GLB">导出所选（' + selN + '）</button>' +
+      '<button type="button" class="md-lvop" data-md-act="save" title="保存整个场景到资产库">保存场景</button>' +
+      '</div>';
+    list.innerHTML = opsRow + body;
+  }
+
+  /* ---------------- 大纲右键菜单 ----------------
+   * 只放两条真实动作：重命名（改 node.name，不动文档名）、导出所选（GLB）。
+   * 右键未选中的对象 = 先选中它；右键已选中的对象 = 保留当前多选一起导出。 */
+  function closeCtxMenu() {
+    var el = $('mdCtxMenu');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  function renameNodePrompt(nodeId) {
+    if (!st.doc) return false;
+    var n = SeedModel.Scene.nodeById(st.doc, nodeId);
+    if (!n) return false;
+    var nm = window.prompt('对象名称：', n.name || '');
+    if (nm == null) return false;
+    var before = snap();
+    if (!SeedModel.Scene.renameNode(st.doc, nodeId, nm)) {
+      if (String(nm).trim()) setStatus('对象改名失败：名称不能为空', true);
+      return false;
+    }
+    pushHistory(before, snap(), '重命名对象');
+    paintOutline();
+    updateChrome();
+    setStatus('对象已改名为「' + n.name + '」');
+    return true;
+  }
+
+  function openNodeMenu(nodeId, clientX, clientY) {
+    closeCtxMenu();
+    if (!st.doc) return;
+    var app = document.querySelector('.md-app');
+    var n = SeedModel.Scene.nodeById(st.doc, nodeId);
+    if (!app || !n) return;
+    var inSel = (st.nodeIds || []).indexOf(nodeId) >= 0;
+    var selN = inSel ? Math.max(1, (st.nodeIds || []).length) : 1;
+    var box = document.createElement('div');
+    box.id = 'mdCtxMenu';
+    box.className = 'md-drop md-ctx';
+    box.innerHTML =
+      '<div class="md-mtitle">' + esc(n.name || '对象') + '</div>' +
+      '<button type="button" class="md-mi" data-md-ctx="rename"><span>重命名…</span><b>F2</b></button>' +
+      '<button type="button" class="md-mi" data-md-ctx="export"><span>导出所选（' + selN + '）…</span><b>GLB</b></button>';
+    app.appendChild(box);
+    /* 坐标按 .md-app 实测值夹住，右键靠右下角时不会溢出面板 */
+    var ar = app.getBoundingClientRect();
+    var bw = box.offsetWidth || 176, bh = box.offsetHeight || 76;
+    box.style.left = Math.max(4, Math.min(clientX - ar.left, ar.width - bw - 4)) + 'px';
+    box.style.top = Math.max(4, Math.min(clientY - ar.top, ar.height - bh - 4)) + 'px';
+    box.addEventListener('click', function (e) {
+      var b = e.target && e.target.closest ? e.target.closest('[data-md-ctx]') : null;
+      if (!b) return;
+      var act2 = b.dataset.mdCtx;
+      closeCtxMenu();
+      if (act2 === 'rename') renameNodePrompt(nodeId);
+      else if (act2 === 'export') exportSelectedGLB();
+    });
+  }
+
+  function onContextMenu(e) {
+    var row = e.target && e.target.closest ? e.target.closest('#mdOutlineList [data-md-node]') : null;
+    if (!row || !st.doc) return;
+    e.preventDefault();
+    var id = String(row.dataset.mdNode);
+    if ((st.nodeIds || []).indexOf(id) < 0) selectNodeById(id, 'replace');
+    openNodeMenu(id, e.clientX, e.clientY);
   }
 
   /* ---------------- 关卡面板（对标 Unreal 的 Levels 窗口） ----------------
@@ -1113,6 +1229,7 @@
         '<button type="button" class="md-lvbtn" data-md-lv="vis" data-md-lvid="' + esc(lv.id) + '" title="' + (lv.visible ? '隐藏整关' : '显示整关') + '">' + (lv.visible ? '👁' : '🚫') + '</button>' +
         '<button type="button" class="md-lvbtn" data-md-lv="lock" data-md-lvid="' + esc(lv.id) + '" title="' + (lv.locked ? '解锁（恢复拾取编辑）' : '锁定（不可拾取/变换）') + '">' + (lv.locked ? '🔒' : '🔓') + '</button>' +
         '<button type="button" class="md-lvbtn" data-md-lv="export" data-md-lvid="' + esc(lv.id) + '" title="只把这一关导出为 GLB">⬇</button>' +
+        '<button type="button" class="md-lvbtn' + (lv.assetId ? ' on' : '') + '" data-md-lv="save" data-md-lvid="' + esc(lv.id) + '" title="' + (lv.assetId ? '保存到模型库（覆盖同一份关卡资产）' : '保存这一关到模型库') + '">💾</button>' +
         '<button type="button" class="md-lvbtn del" data-md-lv="delete" data-md-lvid="' + esc(lv.id) + '" title="删除关卡（对象全部回主关卡，不删数据）">✕</button>' +
         '</div>';
     });
@@ -1185,6 +1302,120 @@
     }
   }
 
+  /* 文件 → 保存关卡：优先保存关卡面板里选中的目标关；没选目标（主关卡）时，
+   * 主关卡就是整个场景 —— 另存为一份关卡资产，而不是退化成普通模型。 */
+  function saveCurrentLevel() {
+    if (!st.doc) return;
+    var S = SeedModel.Scene;
+    var lv = st.levelsTargetId ? S.levelById(st.doc, st.levelsTargetId) : null;
+    if (!lv) { save({ asLevel: true }); return; }
+    saveLevelAsset(lv.id);
+  }
+
+  /* 保存关卡到模型库（对标 Unreal 的 Save Level）：只含这一关的对象与关卡结构，
+   * 关卡上记 assetId，重复保存覆盖同一份资产，不在模型库里堆副本。 */
+  async function saveLevelAsset(lvid) {
+    if (!st.doc || st.busy) return { ok: false, error: '正在保存中' };
+    var S = SeedModel.Scene;
+    var lv = S.levelById(st.doc, lvid);
+    if (!lv) return { ok: false, error: '关卡不存在' };
+    var ids = S.levelNodeIds(st.doc, lvid);
+    if (!ids.length) {
+      setStatus('「' + lv.name + '」里没有对象；用 文件 → 保存关卡 可保存整个场景', true);
+      return { ok: false, error: '空关卡' };
+    }
+    st.busy = true;
+    setStatus('正在保存关卡「' + lv.name + '」…');
+    try {
+      if (!st.doc.assetId) st.doc.assetId = genId();
+      if (!lv.assetId) lv.assetId = genId();
+      SeedModel.Scene.setMesh(st.doc, st.mesh);
+      /* assetId 必须在导出前写进文档：filterDocJsonForLevel 会原样带进 extras */
+      var dataURL = (await exportLevelBytesImpl(lvid)).dataURL;
+      var label = String(st.doc.name || 'model') + '_' + lv.name;
+      var d = deskApi();
+      if (!d) {
+        Model3D.saveDataURL(label + '.glb', dataURL);
+        setStatus('网页版没有模型库，已改为下载关卡 GLB（' + ids.length + ' 个对象）');
+        return { ok: true, downloaded: true, dataURL: dataURL };
+      }
+      var r = await d.assetPut({
+        id: lv.assetId, kind: 'model', ext: 'glb', name: label + '.glb', data: dataURL,
+        source: 'modeldesk-level',
+        meta: {
+          level: 1, levelId: lv.id, levelName: lv.name,
+          sceneId: st.doc.assetId, nodeCount: ids.length
+        }
+      });
+      if (!(r && r.ok && r.asset && r.asset.id)) throw new Error((r && r.message) || '入库失败');
+      lv.assetId = r.asset.id;
+      revealLevelAsset(lv.assetId);
+      try {
+        if (typeof d.assetThumbSave === 'function') {
+          var th = await Model3D.renderThumb(dataURL, { size: 256 });
+          if (th && th.dataURL) await d.assetThumbSave(lv.assetId, th.dataURL);
+        }
+      } catch (e2) {}
+      setStatus('已保存关卡「' + lv.name + '」到模型库（' + ids.length + ' 个对象）');
+      paintOutline();
+      return { ok: true, id: lv.assetId, asset: r.asset };
+    } catch (e) {
+      var msg = (e && e.message) || String(e);
+      setStatus('关卡保存失败：' + msg, true);
+      return { ok: false, error: msg };
+    } finally {
+      st.busy = false;
+    }
+  }
+
+  /* 大纲多选导出（一组对象 = 一份独立 GLB）：与单关导出同一套流程，
+   * 只是 allowlist 换成用户在场景树里选中的 id。 */
+  async function exportSelectedBytesImpl(ids) {
+    var keep = Object.create(null);
+    (ids || []).forEach(function (id) { keep[String(id)] = 1; });
+    var restoreTex = glbTexSwap();
+    var buf, docJson;
+    try {
+      EXPORT_NODES = keep;
+      buf = await currentGLB();
+      docJson = exportDocJson(buf, null, Object.keys(keep));
+    } finally {
+      EXPORT_NODES = null;
+      restoreTex();
+    }
+    var withExtras = SeedGLB.injectSeedModel(buf, docJson);
+    return { buffer: buf, docJson: docJson, dataURL: SeedGLB.toDataURL(withExtras) };
+  }
+
+  async function exportSelectedGLB() {
+    if (!st.doc || st.busy) return { ok: false };
+    var ids = (st.nodeIds || []).slice();
+    if (!ids.length) { setStatus('先在大纲里选中要导出的对象（Ctrl / Shift 可多选）', true); return { ok: false }; }
+    st.busy = true;
+    var name = String(st.doc.name || 'model').replace(/[\\/:*?"<>|]/g, '_') + '_所选';
+    setStatus('正在导出所选的 ' + ids.length + ' 个对象…');
+    try {
+      var dataURL = (await exportSelectedBytesImpl(ids)).dataURL;
+      var d = global.openagiDesktop;
+      if (!d || typeof d.fileSave !== 'function') {
+        Model3D.saveDataURL(name + '.glb', dataURL);
+        setStatus('网页版没有磁盘写入权限，已改为下载所选 GLB（' + ids.length + ' 个对象）');
+        return { ok: true, downloaded: true };
+      }
+      var r = await d.fileSave({ name: name + '.glb', ext: 'glb', dataURL: dataURL });
+      if (r && r.cancelled) { setStatus('已取消导出'); return { ok: false, cancelled: true }; }
+      if (!(r && r.ok)) throw new Error((r && r.message) || '写入失败');
+      setStatus('已导出所选 ' + ids.length + ' 个对象到：' + r.path);
+      return { ok: true, path: r.path };
+    } catch (e) {
+      var msg = (e && e.message) || String(e);
+      setStatus('导出所选失败：' + msg, true);
+      return { ok: false, error: msg };
+    } finally {
+      st.busy = false;
+    }
+  }
+
   /* 关卡面板的当前「移入目标」（点关卡名选中，Assign 落到这里） */
   function levelsPanelAction(act, lvid) {
     if (!st.doc) return;
@@ -1241,6 +1472,10 @@
     }
     if (act === 'export') {
       exportLevelGLB(lvid);
+      return;
+    }
+    if (act === 'save') {
+      saveLevelAsset(lvid);
       return;
     }
     if (act === 'pick') {
@@ -1722,6 +1957,7 @@
       '</div>',
       modsHtml(),
       componentSectionHtml(),
+      renderViewSectionHtml(),
       '<div class="md-sec">',
       '<div class="md-h2">变换（手柄拖动）</div>',
       '<div class="md-sec-b md-ch-list">',
@@ -1750,6 +1986,7 @@
       '</div>',
       '</div>'
     ].join('');
+    mountRenderView();
   }
 
   /* 属性面板里的「组件」区：只有带 comp 身份的节点才有。
@@ -1789,21 +2026,76 @@
       '</div></div>';
   }
 
+  /* ---------------- 属性面板：渲染视图 ----------------
+   * 与「视图工坊」共用 js/view-settings.js + Model3D.viewGrid：
+   * 参数表、默认值、导出布局、渲染结果完全一致，这里只是把入口放进对象属性面板。
+   * 模型源与存图库都由本 App 注入，js/md-view-render.js 不读文档、不碰 MV.state。 */
+  function renderViewSectionHtml() {
+    var node = st.node;
+    if (!node || node.type !== 'mesh') return '';
+    return '<div class="md-sec md-rv-sec">' +
+      '<div class="md-h2">渲染视图<span class="md-rv-tag">配置与视图工坊共用</span></div>' +
+      '<div class="md-sec-b"><div id="mdRvHost"></div></div>' +
+      '</div>';
+  }
+
+  function mountRenderView() {
+    var host = $('mdRvHost');
+    var node = st.node;
+    if (!host || !node || node.type !== 'mesh') return;
+    var MR = global.MDViewRender;
+    if (!MR) return;
+    var nodeId = node.id;
+    var rev = (st.doc && st.doc.revision)
+      ? (st.doc.revision.mesh || 0) + ':' + (st.doc.revision.current || 0) : '';
+    MR.mount(host, {
+      nodeId: nodeId,
+      nodeName: node.name || '对象',
+      rev: rev,
+      getSource: function () {
+        /* 只把当前对象导成一份临时 GLB：多视图核吃的是模型源，不是视口场景图 */
+        return exportSelectedBytesImpl([nodeId]).then(function (d) { return d.dataURL; });
+      },
+      saveToLib: saveRenderViewToLib,
+      setStatus: setStatus
+    });
+  }
+
+  function saveRenderViewToLib(name, dataURL) {
+    var d = deskApi();
+    if (!d || typeof d.assetPut !== 'function') return Promise.reject(new Error('当前环境没有资产库'));
+    return d.assetPut({
+      kind: 'image', ext: 'png', name: name, data: dataURL,
+      source: 'modeldesk-renderview'
+    });
+  }
+
   function updateHud() {    if (!st.hudEl || !st.doc) return;
     var s = statsNow();
     var t = st.node ? st.node.transform : null;
+    var view = st.quad ? quadViewText() : (st.viewName || '透视');
+    var shade = shadeLabel(st.shading) + (vfOn('wireframe') ? ' + 线框' : '');
+    var sel = SEL_NOUN[st.selMode] +
+      (st.selMode === 'object' ? ' ' + (st.nodeIds ? st.nodeIds.length : 0) : ' ' + selCount()) +
+      (st.selMode === 'island' && st.sel.faceIds.length ? '（' + selectedIslandCount() + ' 岛）' : '');
+    /* 左下：视图 / 着色 / 当前选择（操作时最常看的信息） */
     st.hudEl.innerHTML =
-      '<span>revision <b>' + st.doc.revision.current + '</b></span>' +
-      '<span>网格 <b>' + st.doc.revision.mesh + '</b></span>' +
-      '<span><b>' + s.vertices + '</b> 点 / <b>' + s.faces + '</b> 面 / <b>' + s.edges + '</b> 边</span>' +
-      '<span>视图 <b>' + (st.quad ? quadViewText() : (st.viewName || '透视')) + '</b></span>' +
-      '<span>着色 <b>' + shadeLabel(st.shading) + (vfOn('wireframe') ? ' + 线框' : '') + '</b></span>' +
-      '<span>选择 <b>' + SEL_NOUN[st.selMode] +
-        (st.selMode === 'object' ? ' ' + (st.nodeIds ? st.nodeIds.length : 0) : ' ' + selCount()) +
-        (st.selMode === 'island' && st.sel.faceIds.length ? '（' + selectedIslandCount() + ' 岛）' : '') +
-        '</b></span>' +
-      (t ? '<span>位置 <b>' + t.position.map(fmt).join(', ') + '</b></span>' +
-        '<span>缩放 <b>' + t.scale.map(fmt).join(', ') + '</b></span>' : '');
+      '<span class="md-hud-t">' + view + '</span>' +
+      '<i class="md-hud-sep"></i>' +
+      '<span class="md-hud-dim">' + shade + '</span>' +
+      '<i class="md-hud-sep"></i>' +
+      '<span>选择 <b>' + sel + '</b></span>' +
+      (t ? '<span class="md-hud-dim">位置 <b>' + t.position.map(fmt).join(', ') + '</b></span>' +
+        '<span class="md-hud-dim">缩放 <b>' + t.scale.map(fmt).join(', ') + '</b></span>' : '');
+    /* 右下：网格统计 / 对象数 / 版本（诊断信息，不抢第一眼） */
+    if (st.hudStatsEl) {
+      st.hudStatsEl.innerHTML =
+        '<span><b>' + s.vertices + '</b> 点</span><i class="md-hud-sep"></i>' +
+        '<span><b>' + s.faces + '</b> 面</span><i class="md-hud-sep"></i>' +
+        '<span><b>' + s.edges + '</b> 边</span><i class="md-hud-sep"></i>' +
+        '<span>对象 <b>' + (st.doc.nodes ? st.doc.nodes.length : 0) + '</b></span>' +
+        '<span class="md-hud-rev">rev <b>' + st.doc.revision.current + '</b> · 网格 <b>' + st.doc.revision.mesh + '</b></span>';
+    }
   }
 
   function paintAll() {
@@ -1891,11 +2183,14 @@
 
   /* ---------------- 对象选择高亮（多选） ----------------
    * 对象模式没有「组件」可画，最容易出现「选了但看不出来」。
-   * 这里给**次选对象**画一圈包围盒棱（淡蓝）：激活对象已经有变换手柄 + 大纲高亮，
-   * 再给它套一层盒线只会盖住自己的棱和顶点，反而看不清模型。
-   * 每根棱框挂在自己的 pivot 上、用局部坐标：拖动 / 旋转 / 缩放对象时
-   * 高亮天然跟着变换走，不需要每帧重建几何。 */
+   * 多选（按住 Shift 连选）时给每个选中对象画**自己的网格线框**：**最后点中的
+   * 激活对象用金色**，其余被选中的对象用灰色。金色和变换手柄同色系，能一眼
+   * 分出「谁在编辑」；灰色只说明「也在选择集里」，不抢手柄的注意力。
+   * 单选不套线：手柄 + 视口自带的拓扑线已经足够表示它。
+   * 线框挂在 solid 上、用它的几何：拖动 / 旋转 / 缩放对象时天然跟着变换走，
+   * 不需要每帧重建；选择集一变就整组 dispose 重画。 */
   var BOX_EDGES = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
+  var OBJSEL_COLOR = { active: 0xf5a623, other: 0x8c939c };
 
   function disposeObjectSelection() {
     if (!st.objSelGroup) return;
@@ -1950,36 +2245,40 @@
     return { corners: corners, mids: mids, center: center };
   }
 
+  /* 多选线框：直接复用单选的 buildEdgeLinesFor（同一条拓扑边、同一种不透明材质），
+   * 只把颜色换成金 / 灰。这样「单选 / 多选」看到的线完全同构：
+   * 不出现三角对角线、不做深度穿透，也没有第二套画法需要维护。 */
+  function objWireframeFor(nodeId, isActive) {
+    var node = SeedModel.Scene.nodeById(st.doc, nodeId);
+    if (!node) return null;
+    var mesh = SeedModel.Evaluator.evaluate(st.doc, node) || SeedModel.Scene.getMesh(st.doc, node);
+    if (!mesh || !mesh.positions || mesh.positions.length < 6) return null;
+    var lines = buildEdgeLinesFor(mesh, 'objsel-edges');
+    lines.material.color.set(isActive ? OBJSEL_COLOR.active : OBJSEL_COLOR.other);
+    lines.material.transparent = false;
+    lines.material.depthTest = true;
+    lines.userData.mdPart = 'objsel';
+    lines.userData.mdActive = isActive;
+    lines.renderOrder = isActive ? 3 : 2;
+    return lines;
+  }
+
   function paintObjectSelection() {
     disposeObjectSelection();
     if (!THREE || !st.doc || st.selMode !== 'object') return;
+    /* 单选靠变换手柄表示；金 / 灰线框只在多选时有意义 */
+    if ((st.nodeIds || []).length < 2) return;
     var active = st.node ? st.node.id : '';
     var out = [];
     (st.nodeIds || []).forEach(function (id) {
       var pv = st.pivots[id];
       if (!pv || !pv.visible) return;
-      if (id === active) return;      /* 激活对象由手柄表示，不再套盒线 */
-      var b = localBoxOf(pv);
-      if (!b) return;
-      var buf = [];
-      BOX_EDGES.forEach(function (e) {
-        var a = boxCorner(b, e[0]), c = boxCorner(b, e[1]);
-        buf.push(a.x, a.y, a.z, c.x, c.y, c.z);
-      });
-      var geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(buf, 3));
-      geo.computeBoundingSphere();
-      var lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
-        color: 0x2b7cd3,
-        transparent: true,
-        opacity: 0.85,
-        depthTest: false,
-        depthWrite: false
-      }));
-      lines.renderOrder = 8;
-      lines.frustumCulled = false;
-      lines.userData.mdPart = 'objsel';
-      pv.add(lines);
+      var isActive = id === active;
+      /* 和单选同一套画法：按网格拓扑取边（不按三角化取对角线），
+       * 不透明 + 深度测试 + 不写深度。金 / 灰只换颜色，不做穿透高亮。 */
+      var lines = objWireframeFor(id, isActive);
+      if (!lines) return;
+      (solidOf(pv) || pv).add(lines);
       out.push(lines);
     });
     st.objSelGroup = out.length ? out : null;
@@ -3558,6 +3857,68 @@
     }
   }
 
+  /* ---------------- 工作区预设 ----------------
+   * 专业编辑器的「工作区」= 面板布局 + 编辑器模式 + 相关页签的一键组合。
+   * 这里只管套用组合，尺寸与显隐仍交给工作台持久化；手动拖过分割条就标记「自定义」。 */
+  var WORKSPACE_PRESETS = {
+    model: { label: '建模', editor: 'model', outline: true, right: true, shelf: true, dock: false, uv: false,
+      sizes: { outline: 210, right: 300, dock: 198 } },
+    uv: { label: 'UV', editor: 'model', outline: false, right: false, shelf: false, dock: false, uv: true },
+    paint: { label: '绘制', editor: 'paint', outline: false, right: true, shelf: false, dock: false, uv: false,
+      sizes: { right: 300 } },
+    wide: { label: '宽视口', editor: 'model', outline: false, right: false, shelf: true, dock: false, uv: false }
+  };
+
+  function updateWorkspaceLabel(name) {
+    st.workspace = name || '建模';
+    var el = $('mdWorkspaceName');
+    if (el) el.textContent = st.workspace;
+  }
+
+  function setWbPanel(wb, id, vis) {
+    var d = wb.describe().panels[id];
+    if (d && d.visible === !!vis) return;
+    wb.setVisible(id, !!vis);
+  }
+
+  function applyWorkspace(key) {
+    var p = WORKSPACE_PRESETS[key];
+    if (!p) return false;
+    var wb = bootWorkbench();
+    if (!wb) return false;
+    st.wsApplying = true;
+    try {
+      setEditor(p.editor);
+      setWbPanel(wb, 'outline', p.outline);
+      setWbPanel(wb, 'right', p.right);
+      setWbPanel(wb, 'shelf', p.shelf);
+      setWbPanel(wb, 'dock', p.dock);
+      if (p.sizes) Object.keys(p.sizes).forEach(function (id) { wb.setSize(id, p.sizes[id]); });
+      if (p.uv) {
+        if (!st.uv || !st.uv.open) openUVEditor();
+      } else if (st.uv && st.uv.open) {
+        closeUVEditor();
+      }
+      updateWorkspaceLabel(p.label);
+      setStatus('工作区：' + p.label + ' · Ctrl+Shift+P 搜索全部命令');
+    } finally {
+      st.wsApplying = false;
+    }
+    return true;
+  }
+
+  /* 启动时按恢复出来的布局反推工作区名：存档是隐藏两侧就显示「宽视口」，别硬写建模 */
+  function detectWorkspace(wb) {
+    if (!wb) return '自定义';
+    var d = wb.describe().panels;
+    var o = d.outline && d.outline.visible, r = d.right && d.right.visible;
+    var s = d.shelf && d.shelf.visible, k = d.dock && d.dock.visible;
+    if (o && r && s && !k) return '建模';
+    if (!o && !r && s && !k) return '宽视口';
+    if (!o && r && !s && !k) return '自定义';
+    return '自定义';
+  }
+
   /* 模式只有左上角一个入口：右侧栏标题跟着模式走，页签只在「工具箱 ↔ 属性」之间切换。 */
   function tbModeLabel() {
     if (st.tbKind === 'paint') return '';   /* 标题已是「绘画工具箱」，不再重复口径 */
@@ -4465,6 +4826,8 @@
   }
 
   function resize() {
+    /* 窗口变窄时把面板尺寸重新夹到可用范围（内联 flex-basis 会盖掉 CSS 媒体查询） */
+    if (st.workbench) st.workbench.sync();
     if (!st.renderer || !st.stage) return;
     var w = st.stage.clientWidth, h = st.stage.clientHeight;
     if (!w || !h) return;
@@ -4627,7 +4990,6 @@
     var mats = st.doc.materials || {};
     var names = mats.slotNames || [];
     var colors = mats.slotColors || [];
-    var maps = mats.slotMaps || [];
     /* ⚠ 槽数必须按「这份网格自己用到的」算，不是激活节点。
      * buildExportRoot 会给每个可见节点各建一份材质 —— 以前一律按 st.mesh
      * （激活节点）算，非激活对象的面引用了更后面的槽就拿到 undefined 材质：
@@ -4650,13 +5012,15 @@
         side: vfOn('backface') ? THREE.DoubleSide : THREE.FrontSide,
         name: names[i] || (i === 0 ? '默认材质' : '插槽 ' + (i + 1))
       });
-      /* 有合成纹理就优先用它：重建材质（撤销 / 修改器）后混合层不能「消失」；
-       * 没有才回到导入时抽出来的基础色贴图。 */
+      /* 只挂「图层栈合成出来的图」。这个材质槽没有任何图层 / 笔迹 / 烘焙时，
+       * 视口按契约显示白模：白底 + 无贴图，而不是导入时抽出来的基础色贴图。
+       * 导出路径由 prepareExportMaps 逐槽递归合成后再挂，不依赖这里。 */
+      var hasContent = !!(MIX && MIX.hasContent && MIX.hasContent(i));
       var mixTex = (MIX && MIX.texFor(i)) || null;
       if (mixTex) mat.map = mixTex;
-      else if (maps[i]) mat.map = sharedTexture(maps[i]);
       /* 显示开关要能还原：材质本色 / 原始贴图在这里留底（见 applyViewFlags） */
-      mat.userData.mdBaseColor = colors[i] || '#c9ccd4';
+      if (!hasContent) mat.color.set('#ffffff');
+      mat.userData.mdBaseColor = hasContent ? (colors[i] || '#c9ccd4') : '#ffffff';
       mat.userData.mdBaseMap = mat.map || null;
       list.push(mat);
     }
@@ -4788,7 +5152,7 @@
    * 关键：建模 App 的网格顶点是「资产 − center」，而 GLSL 里的绝对 z 阈值是资产系的数 ——
    * 注入时用 l3Org 把顶点抬回资产系变形、算完减回来，GLSL 一个字不动。
    * uniform 引用存在 mat.userData.mdShapeU：材质重编译时复用同一引用（与 gaze 同一套理由）。 */
-  function applyShapeShader(node, mats, groups) {
+  function applyShapeShader(node, mats, groups, existingU, forOverlay) {
     if (!node || !node.comp || !node.comp.id || !mats || !mats.length) return null;
     var def = componentDefById(node.comp.id);
     if (!def || typeof def.shapeGlsl !== 'function') return null;
@@ -4796,8 +5160,11 @@
     var origin = def.shapeOrigin();
     var bounds = def.shapeBounds();
     if (!glsl || !glsl.vert || !origin || !bounds) return null;
-    /* 全部材质共用一份 uniform bundle（流明也这么做）：App 写一处，所有材质同步。 */
-    var U = {
+    /* 全部材质共用一份 uniform bundle（流明也这么做）：App 写一处，所有材质同步。
+     * existingU：叠加层（线框 / 顶点）必须复用 solid 那一份 —— syncShapeOf 每帧
+     * 只写 solid 的 obj.userData.mdShape.uni，叠加层若自建 bundle 就永远停在
+     * 默认值，形变照样对不上（同「网格和模型不一致」，只是换了种死法）。 */
+    var U = existingU || {
       l3Shape: { value: [0, 1, 2, 3, 4].map(function () { return new THREE.Vector4(); }) },
       l3CoilU: { value: null },
       l3Bounds: { value: new THREE.Vector3(bounds[0], bounds[1], 1 / Math.max(bounds[1] - bounds[0], 1e-6)) },
@@ -4847,11 +5214,23 @@
            *   捏脸形变整体失效。checkShaderErrors=false 时**零报错**，唯一线索是
            *   GLSL 编译器报「'#' : invalid character」。 */
           shader.vertexShader = 'uniform vec3 l3Org;\n' + glsl.vert + '\n' + shader.vertexShader;
-          shader.vertexShader = shader.vertexShader
-            .replace('#include <begin_vertex>',
-              '#include <begin_vertex>\n  vec3 l3Rest = position + l3Org;\n  vL3Rest = l3Rest;')
-            .replace('#include <skinning_vertex>',
-              '#include <skinning_vertex>\n  transformed = l3Deform( transformed + l3Org, l3Rest ) - l3Org;');
+          if (forOverlay) {
+            /* 叠加层（LineSegments / Points）：没有蒙皮链，形变直接挂在 begin_vertex
+             * —— transformed 此刻 == position（底模局部系），与 solid 在骨骼静止时
+             * 逐值相同；眼球关节转动时眼周有几毫米理论偏差（换整脸严格一致的代价）。 */
+            shader.vertexShader = shader.vertexShader
+              .replace('#include <begin_vertex>',
+                '#include <begin_vertex>\n' +
+                '  vec3 l3Rest = position + l3Org;\n' +
+                '  vL3Rest = l3Rest;\n' +
+                '  transformed = l3Deform( transformed + l3Org, l3Rest ) - l3Org;');
+          } else {
+            shader.vertexShader = shader.vertexShader
+              .replace('#include <begin_vertex>',
+                '#include <begin_vertex>\n  vec3 l3Rest = position + l3Org;\n  vL3Rest = l3Rest;')
+              .replace('#include <skinning_vertex>',
+                '#include <skinning_vertex>\n  transformed = l3Deform( transformed + l3Org, l3Rest ) - l3Org;');
+          }
           shader.fragmentShader = glsl.frag + '\n' + shader.fragmentShader
             .replace('#include <dithering_fragment>',
               '#include <dithering_fragment>\n' +
@@ -5426,12 +5805,12 @@
    * ⚠ mdBaseColor / mdBaseMap 必须一起写：视口的「纹理 / 材质」开关靠它们还原，
    *   只改 map 的话，用户切一次显示模式再切回来，脸就白了。 */
   function applyComponentSurface(child, node) {
-    if (!child || !node || !node.comp || !node.comp.id) return;
+    if (!child || !node || !node.comp || !node.comp.id) return false;
     var def = componentDefById(node.comp.id);
-    if (!def || typeof def.surface !== 'function') return;
+    if (!def || typeof def.surface !== 'function') return false;
     var list = null;
     try { list = def.surface(node); } catch (e) { list = null; }
-    if (!list || !list.length) return;
+    if (!list || !list.length) return false;
     var mats = Array.isArray(child.material) ? child.material : [child.material];
     /* 组件只报一份表面（同一张脸皮贴图），而几何可能分成多个材质组
      * （皮肤 + 眼睛透明层）。只有一份时广播到所有组 —— 否则眼睛那组没有 map，
@@ -5447,6 +5826,7 @@
       m.userData.mdBaseMap = m.map || null;
       m.needsUpdate = true;
     }
+    return true;
   }
 
   /* 节点级表面覆盖（AI 生成材质的落点）：盖过组件表面与文档槽贴图。
@@ -5456,7 +5836,7 @@
    * 不碰透明度（流明头模自己的 surface 就是这么铺的，实证过不会画成白板）。
    * 必须排在 applyComponentSurface **之后**：后写的赢。 */
   function applyNodeSurface(child, node) {
-    if (!child || !node || !node.surface || !node.surface.map) return;
+    if (!child || !node || !node.surface || !node.surface.map) return false;
     var tex = STORE.sharedTexture(node.surface.map);
     var mats = Array.isArray(child.material) ? child.material : [child.material];
     for (var i = 0; i < mats.length; i++) {
@@ -5468,6 +5848,7 @@
       m.userData.mdBaseMap = tex || null;
       m.needsUpdate = true;
     }
+    return true;
   }
 
   /* 按节点建 pivot：一个对象一个 Group（几何来自它自己的网格，缓存按 mesh.version 复用）
@@ -5499,8 +5880,25 @@
       child.userData.mdSkin = skin;
     }
     attachMorphs(child, geo);
-    applyComponentSurface(child, node);
-    applyNodeSurface(child, node);
+    /* 组件资产还没读进来时，makeMaterials 给的是**文档级材质槽**的贴图/底色 ——
+     * 文档里若有别的模型，那张图就会被当成头模的表面。先清掉，等资产就绪后
+     * （openAsset 已预载）的重建再挂回它自己的脸；读失败宁可灰壳，也不串图。 */
+    if (componentSurfacePending(node)) {
+      mats.forEach(function (m) {
+        m.map = null;
+        m.color.set('#ffffff');
+        if (m.userData) { m.userData.mdBaseMap = null; m.userData.mdBaseColor = '#ffffff'; }
+        m.needsUpdate = true;
+      });
+    }
+    var ownComp = applyComponentSurface(child, node);
+    var ownNode = applyNodeSurface(child, node);
+    /* 组件 / 节点自带表面不吃材质槽的「无图层 → 白模」口径：
+     * 它们不是用户图层，而是资产自报的表面。标记后，白模回退会跳过它们，
+     * 否则头模会被刷成白壳（脸贴图是组件 surface，不在图层栈里）。 */
+    if (ownComp || ownNode) {
+      mats.forEach(function (m) { if (m && m.userData) m.userData.mdOwnSurface = true; });
+    }
     child.name = node.name;
     child.userData.mdPart = 'solid';
     /* applyLook 要靠这份索引找到「写哪几个 uniform」：材质可能被重建，
@@ -5608,6 +6006,29 @@
     if (!pivot || !st.mesh) return;
     st.edgeLines = buildEdgeLines();
     st.vertPoints = buildVertexPoints();
+    /* 捏脸形变住在 GPU（材质注入）：solid 吃了 l3Deform，而叠加层 buffer 直接
+     * 拷底模 positions、材质是普通 Line/Points 材质 —— 不吃同一份注入就会画回
+     * **未变形的底模**（2026-11-22 solid 静默零像素修好后，差异立刻暴露成
+     * 「网格和模型不一致」）。这里把 solid 的同一份 uniform bundle（同一个 U
+     * 引用）挂给叠加层材质：syncShapeOf 每帧写一处，solid / 线框 / 顶点三方同步。
+     * 眼片取 part=0 的默认椭圆（叠加层单材质分不出 FaceEyes 组）；蒙皮与 gaze
+     * 不进叠加层 —— 眼球关节转动时眼周存在几毫米理论偏差，换的是整个脸部
+     * 区域在骨骼静止时与 solid 逐值一致。 */
+    if (st.node && st.node.comp && st.node.comp.id) {
+      var su = null;
+      for (var i = 0; i < pivot.children.length; i++) {
+        var cc = pivot.children[i];
+        if (cc.userData && cc.userData.mdShape && cc.userData.mdShape.uni) { su = cc.userData.mdShape.uni; break; }
+      }
+      if (su) {
+        var om = [st.edgeLines.material];
+        for (var j = 0; j < st.vertPoints.children.length; j++) {
+          var pc = st.vertPoints.children[j];
+          if (pc && pc.material) om.push(pc.material);
+        }
+        applyShapeShader(st.node, om, null, su, true);
+      }
+    }
     pivot.add(st.edgeLines);
     pivot.add(st.vertPoints);
     applyShading();
@@ -5703,6 +6124,23 @@
     '#46f0f0', '#f032e6', '#bcf60c', '#008080', '#e6beff', '#9a6324'
   ];
 
+  /* 给「新生成的」solid 材质补齐材质级 shader（眼片位移 / 捏脸变形）。
+   * 平涂与法线都是新建材质：网格本身没被改过，形变只活在材质的 onBeforeCompile 里，
+   * 不补这一段就会出现「一切换着色，脸回到捏脸前」。
+   * uniform bundle 复用 solid 那一份（o.userData.mdShape.uni），
+   * syncShapeOf 每帧仍然只写一处，金/灰线框、平涂、实体全部同步。 */
+  function attachSolidLookShaders(o, mats) {
+    if (!o || !mats || !mats.length) return;
+    var pv = o.parent;
+    var nodeId = pv && pv.userData && pv.userData.mdNode;
+    var node = (nodeId && st.doc) ? SeedModel.Scene.nodeById(st.doc, nodeId) : null;
+    if (!node || !node.comp || !node.comp.id) return;
+    var gaze = o.userData && o.userData.mdGaze;
+    var shape = o.userData && o.userData.mdShape;
+    applyGazeShader(mats, (gaze && gaze.sheet) || componentEyeSheet(node));
+    applyShapeShader(node, mats, componentGroupMats(node), shape && shape.uni, false);
+  }
+
   /* 实体在「受光 / 平涂 / 法线」之间切换：原材质记在 mdLitMats，
    * unlit 与法线版本各按需生成一份，切回来不会丢贴图与颜色。
    * look：null = 受光（原材质）、'flat' = 平涂、'normals' = 法线。 */
@@ -5720,9 +6158,13 @@
           });
           n.userData.mdBaseColor = (m.userData && m.userData.mdBaseColor) || CLAY;
           n.userData.mdBaseMap = (m.userData && m.userData.mdBaseMap) || null;
+          /* 自带表面标记是「表面属性」，不是「当前材质属性」：
+           * 换着色后 MIX 的白模回退仍会按它决定跳不跳，必须跟着材质集一起走。 */
+          n.userData.mdOwnSurface = !!(m.userData && m.userData.mdOwnSurface);
           return n;
         });
         o.userData.mdNormalMats = Array.isArray(lit) ? madeN : madeN[0];
+        attachSolidLookShaders(o, madeN);
       }
       if (o.material !== o.userData.mdNormalMats) o.material = o.userData.mdNormalMats;
       return;
@@ -5742,9 +6184,12 @@
         });
         f.userData.mdBaseColor = (m.userData && m.userData.mdBaseColor) || CLAY;
         f.userData.mdBaseMap = (m.userData && m.userData.mdBaseMap) || null;
+        /* 同 normal：自带表面（脸贴图）不是图层，白模回退必须继续跳过它 */
+        f.userData.mdOwnSurface = !!(m.userData && m.userData.mdOwnSurface);
         return f;
       });
       o.userData.mdFlatMats = Array.isArray(lit) ? made : made[0];
+      attachSolidLookShaders(o, made);
     }
     if (o.material !== o.userData.mdFlatMats) o.material = o.userData.mdFlatMats;
   }
@@ -7294,6 +7739,11 @@
       paintOutline();
       return;
     }
+    if (el.id === 'mdDockSearch') {
+      st.dockQuery = String(el.value || '');
+      paintDock();
+      return;
+    }
     if (el.id === 'mdSoftSize') {
       var sv = Number(el.value);
       if (isFinite(sv)) {
@@ -7474,6 +7924,13 @@
     var k = String(e.key || '').toLowerCase();
 
     if (e.ctrlKey || e.metaKey) {
+      /* Ctrl+Shift+P：命令面板（专业编辑器通用入口），先于其它 Ctrl 快捷键 */
+      if (e.shiftKey && k === 'p') {
+        e.preventDefault();
+        var wbKey = bootWorkbench();
+        if (wbKey) wbKey.openPalette();
+        return;
+      }
       var hit = true;
       if (k === 'z') { if (!undo()) setStatus('没有可撤销的操作'); }
       else if (k === 'y') { if (!redo()) setStatus('没有可重做的操作'); }
@@ -8141,6 +8598,9 @@
       { t: '新建场景', c: 'new', s: 'Ctrl+N' },
       { t: '打开资产…', c: 'open', s: 'Ctrl+O' },
       { t: '保存 GLB', c: 'save', s: 'Ctrl+S' },
+      /* 保存关卡 = Save Level：只把目标关（关卡面板里选中 / 激活对象所属）入库。
+       * 目标为主关卡时主关卡就是整个场景，直接走场景保存。 */
+      { t: '保存关卡', c: 'saveLevel', off: function () { return !st.doc; } },
       { t: '导出到电脑…', c: 'exportPc' },
       { sep: 1 },
       { t: '关闭建模窗口', c: 'closeWin' }
@@ -8199,6 +8659,9 @@
       { t: '材质槽（3D 查看器）', c: 'tex' }
     ] },
     { k: '窗口', items: [
+      { t: '命令面板…', c: 'palette', s: 'Ctrl+Shift+P' },
+      { t: '重置界面布局', c: 'layoutReset' },
+      { sep: 1 },
       { t: 'UV 编辑器', c: 'uv' },
       { t: '投射烘焙…', c: 'projbake' },
       { t: '材质槽', c: 'tex' },
@@ -8207,7 +8670,21 @@
       { t: '右侧：属性面板', c: 'tabProps' },
       { t: '右侧：通道盒', c: 'tabChannels' },
       { sep: 1 },
+      { t: '面板：大纲视图', c: 'panel:outline' },
+      { t: '面板：右侧工具箱', c: 'panel:right' },
+      { t: '面板：工具架', c: 'panel:shelf' },
+      { sep: 1 },
       { t: '关闭 UV 编辑器', c: 'uvClose' }
+    ] },
+    /* 工作区预设：一键切换「面板布局 + 编辑器模式 + 右侧页签」，
+     * 结果仍由工作台持久化；手动改布局后标记为「自定义」。 */
+    { k: '工作区', items: [
+      { t: '建模（标准布局）', c: 'ws:model' },
+      { t: 'UV 编辑', c: 'ws:uv' },
+      { t: '绘制', c: 'ws:paint' },
+      { t: '宽视口（隐藏两侧）', c: 'ws:wide' },
+      { sep: 1 },
+      { t: '恢复当前布局默认尺寸', c: 'layoutReset' }
     ] },
     { k: '帮助', items: [
       { t: '快捷键与操作说明', c: 'help' },
@@ -8264,6 +8741,129 @@
     if (o) o.hidden = !st.panels.outline;
     if (r) r.hidden = !st.panels.right;
     if (s) s.hidden = !st.panels.shelf;
+    /* 其它入口（面板下拉 / 菜单 / 命令面板）改了显隐后，让工作台把尺寸与
+     * 持久化对齐：不重复写 hidden，只做同步。 */
+    if (st.workbench) {
+      st.workbench.note('outline');
+      st.workbench.note('right');
+      st.workbench.note('shelf');
+    }
+  }
+
+  /* ---------------- 工作台内核（面板 / 分割 / 命令） ----------------
+   * 外壳能力的唯一安装点：
+   *   - 新增面板：wb.registerPanel({...}) + wb.addSplitter(id, {...})
+   *   - 新增命令：wb.registerCommand({...})，菜单 / 快捷键 / 命令面板同源
+   * 内核不读 model-desk 的状态，显隐与尺寸都通过注册时的读写口完成。 */
+  function bootWorkbench() {
+    if (st.workbench) return st.workbench;
+    var WB = global.MDWorkbench;
+    var app = document.querySelector('.md-app');
+    if (!WB || !app) return null;
+    var wb = WB.create({
+      root: app,
+      storageKey: 'openagi_modeldesk_layout_v1',
+      beforeOpen: function () { mdCloseMenu(); closePop(); closeCtxMenu(); },
+      onStatus: function (t, e) { setStatus(t, e); },
+      onChange: function () {
+        resize();
+        requestRender(0);
+        /* 手动拖分割条 / 切面板后，工作区名不再是某个预设 */
+        if (!st.wsApplying) updateWorkspaceLabel('自定义');
+      }
+    });
+    st.workbench = wb;
+    var outline = app.querySelector('.md-outline');
+    var right = app.querySelector('.md-right');
+    var dock = app.querySelector('.md-dock');
+    var shelf = app.querySelector('.md-shelf');
+
+    /* 左侧大纲：拖动右边界改宽，尺寸跨开窗保留 */
+    wb.registerPanel({
+      id: 'outline', title: '大纲视图', el: outline,
+      axis: 'x', side: 'start', size: 210, min: 150, max: 460, defVisible: true,
+      visible: function () { return !!st.panels.outline; },
+      setVisible: function (v) { st.panels.outline = !!v; syncPanels(); }
+    });
+    /* 右侧工具箱：分割条在它的左边，向右拖 = 变窄 */
+    wb.registerPanel({
+      id: 'right', title: '右侧工具箱', el: right,
+      axis: 'x', side: 'end', size: 300, min: 230, max: 560, defVisible: true,
+      visible: function () { return !!st.panels.right; },
+      setVisible: function (v) { st.panels.right = !!v; syncPanels(); }
+    });
+    /* 底部内容浏览器：收起时保持 26px 页签高度，展开后高度可拖 */
+    wb.registerPanel({
+      id: 'dock', title: '内容浏览器', el: dock,
+      axis: 'y', side: 'end', size: 198, min: 110, max: 460,
+      collapsedSize: 26, defVisible: false,
+      visible: function () { return !!st.dockOpen; },
+      setVisible: function (v) { setDock(!!v); }
+    });
+    /* 工具架高度由内容决定，不参与拖拽；注册它只是为了「显隐 / 命令面板」同源 */
+    wb.registerPanel({
+      id: 'shelf', title: '工具架', el: shelf, resizable: false, defVisible: true,
+      visible: function () { return !!st.panels.shelf; },
+      setVisible: function (v) { st.panels.shelf = !!v; syncPanels(); }
+    });
+
+    wb.addSplitter('outline', { after: outline });
+    wb.addSplitter('right', { before: right });
+    wb.addSplitter('dock', { before: dock });
+
+    registerWorkbenchCommands(wb);
+    wb.sync();
+    /* 恢复出来的布局可能不是标准建模布局：顶栏工作区名按实际显隐反推 */
+    updateWorkspaceLabel(detectWorkspace(wb));
+    return wb;
+  }
+
+  /* 命令表：面板类命令先注册，菜单项后注册（先到先得，菜单不会覆盖同 id 的定义）。
+   * 之后并入的新功能只要 registerCommand，就能同时出现在菜单 / 快捷键 / 命令面板。 */
+  function registerWorkbenchCommands(wb) {
+    if (wb.__mdCmdBound) return;
+    wb.__mdCmdBound = true;
+    var extra = [
+      ['palette', '命令面板', '窗口', 'Ctrl+Shift+P'],
+      ['layoutReset', '重置界面布局', '窗口', ''],
+      ['panel:outline', '显示 / 隐藏大纲视图', '窗口', ''],
+      ['panel:right', '显示 / 隐藏右侧面板', '窗口', ''],
+      ['panel:shelf', '显示 / 隐藏工具架', '窗口', '']
+    ];
+    /* 内容浏览器已有 dock 命令（窗口 → 内容浏览器），不再重复注册 panel:dock */
+    extra.forEach(function (row) {
+      wb.registerCommand({
+        id: row[0], label: row[1], group: row[2], shortcut: row[3],
+        run: function () {
+          if (row[0] === 'palette') { wb.openPalette(); return; }
+          if (row[0] === 'layoutReset') { wb.resetLayout(); setStatus('界面布局已重置'); return; }
+          toggleWorkbenchPanel(row[0].slice(6));
+        }
+      });
+    });
+    MD_MENUS.forEach(function (menu) {
+      menu.items.forEach(function (it) {
+        if (it.sep || !it.c) return;
+        wb.registerCommand({
+          id: it.c, label: it.t, group: menu.k, shortcut: it.s || '',
+          when: it.off ? function () { return !it.off(); } : null,
+          run: function () { mdRun(it.c); }
+        });
+      });
+    });
+  }
+
+  /* 面板显隐的统一入口：菜单 / 命令面板 / 标题栏按钮都走这里 */
+  function toggleWorkbenchPanel(kind) {
+    var wb = bootWorkbench();
+    if (!wb || !kind) return false;
+    if (kind === 'shelf') {
+      st.panels.shelf = !st.panels.shelf;
+      syncPanels();
+      wb.note('shelf');
+      return true;
+    }
+    return wb.togglePanel(kind);
   }
   function setShelfTab(key) {
     if (!key) return;
@@ -8417,6 +9017,7 @@
       case 'new': clickAct('new'); break;
       case 'open': clickAct('open'); break;
       case 'save': clickAct('save'); break;
+      case 'saveLevel': saveCurrentLevel(); break;
       case 'exportPc': openExportDialog(); break;
       case 'undo': clickAct('undo'); break;
       case 'redo': clickAct('redo'); break;
@@ -8451,6 +9052,31 @@
       case 'frameAll': frameCamera(); setStatus('已框显（F）'); break;
       case 'isolate': toggleIsolate(); break;
       case 'dock': setDock(!st.dockOpen); break;
+      /* 工作台命令：命令面板 / 布局复位 / 面板显隐，均走注册表 */
+      case 'palette': {
+        var wbPal = bootWorkbench();
+        if (wbPal) wbPal.openPalette();
+        break;
+      }
+      case 'layoutReset': {
+        var wbLay = bootWorkbench();
+        if (wbLay) {
+          st.wsApplying = true;
+          wbLay.resetLayout();
+          updateWorkspaceLabel('建模');
+          st.wsApplying = false;
+          setStatus('界面布局已重置');
+        }
+        break;
+      }
+      case 'panel:outline': toggleWorkbenchPanel('outline'); break;
+      case 'panel:right': toggleWorkbenchPanel('right'); break;
+      case 'panel:shelf': toggleWorkbenchPanel('shelf'); break;
+      case 'panel:dock': toggleWorkbenchPanel('dock'); break;
+      case 'ws:model': applyWorkspace('model'); break;
+      case 'ws:uv': applyWorkspace('uv'); break;
+      case 'ws:paint': applyWorkspace('paint'); break;
+      case 'ws:wide': applyWorkspace('wide'); break;
       /* 属性编辑器现在是右侧第三个页签：这两个命令还得把页签切过去，否则面板仍是隐藏的 */
       case 'tabProps': setTbKind('props'); st.rightTab = 'props'; paintParams(); updateChrome(); setStatus('右侧：属性面板'); break;
       case 'tabChannels': setTbKind('props'); st.rightTab = 'channels'; paintParams(); updateChrome(); setStatus('右侧：通道盒'); break;
@@ -8482,6 +9108,17 @@
      * 否则「点图标」永远点不到（竖条那六个工具按钮就踩过这个坑）。 */
     if (t && t.tagName !== 'BUTTON' && t.closest) t = t.closest('button');
     if (!t || t.tagName !== 'BUTTON') return;
+    /* 顶栏常驻命令搜索：与 Ctrl+Shift+P 同一个入口 */
+    if (t.dataset.mdCmdopen) {
+      var wbCmd = bootWorkbench();
+      if (wbCmd) wbCmd.openPalette();
+      return;
+    }
+    /* 工作台标题栏上的折叠按钮：统一交给面板注册表，避免每个面板各写一份显隐逻辑 */
+    if (t.dataset.mdPanel) {
+      toggleWorkbenchPanel(t.dataset.mdPanel);
+      return;
+    }
     if (t.id === 'mdPropsToggle') {
       setTbKind(st.tbKind === 'props' ? (st.editor === 'paint' ? 'paint' : 'model') : 'props');
       updateChrome();
@@ -8616,7 +9253,7 @@
     }
     if (t.dataset.mdComp) {
       /* 切组件类别：参数要跟着换成那个组件自己的默认值 */
-      var defC = global.MDComponents && global.MDComponents.get ? global.MDComponents.get(t.dataset.mdComp) : null;
+      var defC = COMP.byId(t.dataset.mdComp);
       if (defC) {
         st.comp.kind = defC.id;
         st.comp.preset = (defC.presets && defC.presets[0]) ? defC.presets[0].id : '';
@@ -8643,6 +9280,10 @@
       /* refresh 必须先展开：收起状态的按钮是隐藏的，这里只是兜底 */
       if (t.dataset.mdDock === 'refresh') { setDock(true); return; }
       setDock(!st.dockOpen);
+      return;
+    }
+    if (t.dataset.mdCbf) {
+      setDockFilter(t.dataset.mdCbf);
       return;
     }
     if (t.dataset.mdCbPlace) {
@@ -8680,6 +9321,10 @@
       case 'new': newDocument(); break;
       case 'open': showOpenDialog(); break;
       case 'save': save(); break;
+      /* 大纲选择条：全选 / 清空 / 导出所选（保存场景复用 save） */
+      case 'osel-all': selectAll(); break;
+      case 'osel-none': clearSelection(); break;
+      case 'osel-export': exportSelectedGLB(); break;
       case 'export-go': runExport(); break;
       case 'undo': undo(); break;
       case 'redo': redo(); break;
@@ -9209,7 +9854,7 @@
   function newDocument() {
     var id = genId();
     var geo = new THREE.BoxGeometry(1, 1, 1, 1, 1, 1);
-    var mesh = boxUnwrapUV(SeedModel.Mesh.fromBufferGeometry(geo, { slot: 0, weld: true }));
+    var mesh = boxUnwrapUV(SeedModel.Mesh.fromBufferGeometry(geo, { slot: 0, weld: true, groups: false }));
     geo.dispose();
 
     releaseView();
@@ -9300,18 +9945,25 @@
    *   桥的接缝只有一条「文件路径」，本文件不 require 任何 app id ——
    *   删掉桥文件，这里只会说「没有可用的组件源」，不会把流明拖下水。 */
   function componentDefs() {
-    var reg = global.MDComponents;
-    return (reg && reg.list && reg.list.length) ? reg.list : [];
+    return COMP.list();
   }
   function componentDef() {
-    var list = componentDefs();
-    for (var i = 0; i < list.length; i++) if (list[i].id === st.comp.kind) return list[i];
-    return list[0] || null;
+    return COMP.current(st.comp.kind);
   }
   function componentDefById(id) {
-    var list = componentDefs();
-    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
-    return null;
+    return COMP.byId(id);
+  }
+
+  function componentSurfacePending(node) {
+    return COMP.pending(node);
+  }
+
+  /* 打开文档前先把里面引用的异步组件资产读进来，再走 rebuildModel。 */
+  function loadComponentSources(doc) {
+    return COMP.ensure(doc);
+  }
+  function hasPendingComponentSources(doc) {
+    return COMP.hasPending(doc);
   }
 
   /* ---------------- 参数合并 / 编辑事务 / 控制器宿主 ----------------
@@ -10043,7 +10695,7 @@
     var geo = null;
     try {
       geo = global.Modeler.geometryOf(p.shape, p.size, p.seg);
-      mesh = SeedModel.Mesh.fromBufferGeometry(geo, { slot: 0, weld: true });
+      mesh = SeedModel.Mesh.fromBufferGeometry(geo, { slot: 0, weld: true, groups: false });
       /* 立方体走盒式展开：BoxGeometry 的面 UV 全重叠，绘制时分不清是哪一面 */
       if (String(p.shape).toLowerCase() === 'box') boxUnwrapUV(mesh);
     } catch (e) {
@@ -10341,7 +10993,7 @@
       var morphMeta = morphNamesOf(g.parts[0]);
       try {
         mesh = SeedModel.Mesh.fromBufferGeometry(geo, {
-          slot: g.slot, quadOpts: { tolDeg: 40, shapeTol: 80 },
+          slot: g.slot, groups: false, quadOpts: { tolDeg: 40, shapeTol: 80 },
           /* 形态键的名字和默认权重只在 three 的 Mesh 上有，几何里没有 —— 必须在这里交班 */
           morphNames: morphMeta ? morphMeta.names : null,
           morphWeights: morphMeta ? morphMeta.weights : null
@@ -10565,6 +11217,10 @@
     st.selected = 0;
     st.editBefore = null;
     st.txBefore = null;
+    /* 异步组件（流明头模）先把资产读进来再建场景：缓存为空时组件表面挂不上，
+     * 材质会退回文档级槽贴图，看起来就是「头被别的模型的贴图盖住」。 */
+    if (hasPendingComponentSources(doc)) setStatus('正在读取组件资产…');
+    await loadComponentSources(doc);
     if (!rebuildModel(false)) throw new Error('网格构建失败');
     clearHistory('reopen');
     paintAll();
@@ -10579,8 +11235,21 @@
   /* 「置于」= 追加：把资产的网格节点并入当前文档，不清空、一条历史。
    * 材质必须整体后移并重映射 faceSlots：材质库是文档级的，
    * 直接复用源的槽下标会让两个模型落到同一批槽上（就是「材质串通」）。
-   * 整份资产沿 X 错开，避免和已有对象完全重叠、看起来像没加成功。 */
-  async function appendAsset(id) {
+   * 整份资产沿 X 错开，避免和已有对象完全重叠、看起来像没加成功。
+   * opts.levelName：关卡资产置于时，把新对象归到同名关卡里（不改动已有分组）。 */
+  function uniqueLevelName(doc, base) {
+    var used = Object.create(null);
+    SeedModel.Scene.levelsOf(doc).forEach(function (lv) { used[lv.name] = 1; });
+    var nm = String(base || '关卡');
+    if (!used[nm]) return nm;
+    for (var i = 2; i < 999; i++) {
+      var cand = nm + ' ' + i;
+      if (!used[cand]) return cand;
+    }
+    return nm + ' ' + Date.now().toString(36);
+  }
+
+  async function appendAsset(id, opts) {
     if (!st.doc) throw new Error('还没有可编辑场景');
     var pack = await readAssetDoc(id);
     var src = pack.doc;
@@ -10592,11 +11261,13 @@
 
     var xOff = SeedModel.Scene.nodesOf(st.doc).length;
     var added = 0;
+    var lvName = '';
     var ok = slotEdit('置于：' + (src.name || pack.id), function () {
       /* 1) 源材质整体并入目标材质库：每个槽拿新 id，不和已有模型共享 */
       var merge = SeedModel.Scene.adoptMaterials(st.doc, src);
       var offset = merge.offset;
       var first = null;
+      var newIds = [];
       srcNodes.forEach(function (it) {
         var t = it.node.transform || {};
         var own = [];
@@ -10616,10 +11287,16 @@
         if (!node) return;
         node.visible = it.node.visible !== false;
         if (!first) first = node;
+        newIds.push(node.id);
         added++;
       });
       if (first) SeedModel.Scene.setActiveNode(st.doc, first.id);
-      /* 3) 源资产里每个材质的纹理栈也搬过来（按稳定 id → 旧槽名兜底） */
+      /* 3) 关卡资产：新对象单独归为一个同名关卡，主关卡不膨胀 */
+      if (opts && opts.levelName && newIds.length) {
+        var lv = SeedModel.Scene.levelCreate(st.doc, uniqueLevelName(st.doc, opts.levelName));
+        if (lv) { SeedModel.Scene.levelAssign(st.doc, lv.id, newIds.slice()); lvName = lv.name; }
+      }
+      /* 4) 源资产里每个材质的纹理栈也搬过来（按稳定 id → 旧槽名兜底） */
       if (MIX && MIX.adoptSlot) {
         for (var i = 0; i < merge.count; i++) {
           MIX.adoptSlot(st.doc, offset + i, merge.textureConfigKey,
@@ -10630,7 +11307,7 @@
     });
     if (!ok) throw new Error('追加失败');
     closeOverlay();
-    return { name: src.name || pack.id, nodes: added };
+    return { name: src.name || pack.id, nodes: added, level: lvName };
   }
 
   function openAssetById(id) {
@@ -10641,9 +11318,14 @@
 
   function placeAsset(id) {
     if (st.busy) { setStatus('正在保存中，稍后再置于', true); return; }
-    appendAsset(id).then(function (r) {
-      setStatus('已置于：' + r.name + '（' + r.nodes + ' 个对象，当前共 ' +
-        SeedModel.Scene.nodesOf(st.doc).length + ' 个，Ctrl+Z 可撤销）');
+    var a = null;
+    (st.dockAssets || []).forEach(function (it) { if (!a && it.id === id) a = it; });
+    var lvName = (a && isLevelAsset(a))
+      ? String(a.levelName || a.name || '').replace(/\.glb$/i, '') : '';
+    appendAsset(id, { levelName: lvName }).then(function (r) {
+      setStatus('已置于：' + r.name + '（' + r.nodes + ' 个对象' +
+        (r.level ? '，归入关卡「' + r.level + '」' : '') +
+        '，当前共 ' + SeedModel.Scene.nodesOf(st.doc).length + ' 个，Ctrl+Z 可撤销）');
     }).catch(function (e) {
       setStatus('置于失败：' + ((e && e.message) || e), true);
     });
@@ -10659,45 +11341,108 @@
     if (tab) tab.classList.toggle('on', st.dockOpen);
     if (st.dockOpen) refreshDockAssets();
     else { st.dockToken++; st.dockLoading = false; paintDock(); }
+    /* 页签是内容浏览器自己的开关，也要让工作台同步高度与持久化状态 */
+    if (st.workbench) st.workbench.note('dock');
+  }
+
+  /* 切换内容浏览器类型筛选：按钮态与 st.dockFilter 一处改，保存关卡后也要走这里。 */
+  function setDockFilter(f) {
+    var ok = ['all', 'model', 'level'].indexOf(f) >= 0 ? f : 'all';
+    st.dockFilter = ok;
+    var btns = document.querySelectorAll('[data-md-cbf]');
+    for (var i = 0; i < btns.length; i++) btns[i].classList.toggle('on', btns[i].dataset.mdCbf === ok);
+    paintDock();
+  }
+
+  /* 保存关卡后自动「给用户看结果」：展开内容浏览器 → 切到关卡筛 → 滚到新卡片。
+   * 否则资产确实进了库，但列表还停在「模型」页，看起来就像没保存成功。 */
+  function revealLevelAsset(assetId) {
+    st.dockQuery = '';
+    var si = $('mdDockSearch');
+    if (si) si.value = '';
+    setDockFilter('level');
+    setDock(true);
+    setTimeout(function () {
+      if (!st.dockBody || !assetId) return;
+      var el = st.dockBody.querySelector('[data-md-cb-id="' + assetId + '"]');
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+    }, 360);
   }
 
   /* 建模内核目前只读这四种；其它格式在模型库 App 里能预览，但进不了可编辑场景，
    * 卡片上直接标出来，别让用户点「打开」才看到失败。 */
   var CB_EXTS = { glb: 1, gltf: 1, obj: 1, fbx: 1 };
+  /* 关卡资产和模型资产共用 kind:'model'（GLB 文件格式一样），靠 meta.level 区分：
+   * 这样模型库 / 缩略图 / 打开链路都不用新增一种存储类型。 */
+  function isLevelAsset(a) {
+    return !!(a && (a.level === 1 || a.level === true || a.source === 'modeldesk-level'));
+  }
   function dockAssetHtml(a) {
     var th = st.dockThumbs[a.id];
     var ext = String(a.ext || '').toLowerCase();
     var editable = CB_EXTS[ext] === 1;
+    var lv = isLevelAsset(a);
     var meta = [];
+    if (lv) {
+      meta.push('关卡' + (a.nodeCount ? ' · ' + a.nodeCount + ' 个对象' : ''));
+    }
     if (a.updated) { try { meta.push(new Date(a.updated).toLocaleDateString()); } catch (e) {} }
     if (a.size) meta.push((a.size / 1024).toFixed(0) + ' KB');
     var acts = editable
       ? '<div class="md-cb-acts">' +
-        '<button type="button" class="md-cb-btn" data-md-cb-place="' + esc(a.id) + '" title="追加到当前场景">置于</button>' +
-        '<button type="button" class="md-cb-btn primary" data-md-cb-open="' + esc(a.id) + '" title="清空场景并载入这个模型">打开</button>' +
+        '<button type="button" class="md-cb-btn" data-md-cb-place="' + esc(a.id) + '" title="' +
+          (lv ? '把这一关追加到当前场景（保留关卡分组）' : '追加到当前场景') + '">置于</button>' +
+        '<button type="button" class="md-cb-btn primary" data-md-cb-open="' + esc(a.id) + '" title="' +
+          (lv ? '清空场景并打开这一关' : '清空场景并载入这个模型') + '">打开</button>' +
       '</div>'
       : '<div class="md-cb-acts"><span class="md-cb-tag" title="暂只支持 GLB / GLTF / OBJ">暂不支持 ' + esc(ext.toUpperCase() || '该格式') + '</span></div>';
-    return '<article class="md-cb-card" data-md-cb-id="' + esc(a.id) + '">' +
+    return '<article class="md-cb-card' + (lv ? ' md-cb-level' : '') + '" data-md-cb-id="' + esc(a.id) + '">' +
       '<div class="md-cb-thumb" data-md-cb-thumb="' + esc(a.id) + '">' +
-        (th ? '<img alt="" src="' + esc(th) + '">' : '<span>GLB</span>') + '</div>' +
+        (th ? '<img alt="" src="' + esc(th) + '">' : '<span>' + (lv ? '关卡' : 'GLB') + '</span>') + '</div>' +
       '<div class="md-cb-meta"><b title="' + esc(a.name) + '">' + esc(a.name) + '</b>' +
-        '<span>' + esc(meta.join(' · ')) + '</span></div>' + acts + '</article>';
+        '<span>' + (lv ? '<i class="md-cb-kind">关卡</i>' : '') + esc(meta.join(' · ')) + '</span></div>' + acts + '</article>';
+  }
+
+  /* 内容浏览器只做「列出 + 筛 + 开」：过滤是纯前端，不重新读资产库，
+   * 输入搜索时也不会把已加载的缩略图丢掉。 */
+  function dockVisibleAssets() {
+    var list = st.dockAssets || [];
+    var q = String(st.dockQuery || '').trim().toLowerCase();
+    return list.filter(function (a) {
+      var lv = isLevelAsset(a);
+      if (st.dockFilter === 'level' && !lv) return false;
+      if (st.dockFilter === 'model' && lv) return false;
+      if (q) {
+        var hay = (String(a.name || '') + ' ' + (lv ? (a.levelName || '') : '')).toLowerCase();
+        if (hay.indexOf(q) < 0) return false;
+      }
+      return true;
+    });
   }
 
   function paintDock() {
     if (!st.dockBody) return;
     var d = deskApi();
     var body;
+    var shown = dockVisibleAssets();
     if (!d) body = '<div class="md-cb-empty">网页版没有模型库。桌面端保存的模型会出现在这里。</div>';
     else if (st.dockLoading) body = '<div class="md-cb-empty">正在读取模型库…</div>';
     else if (st.dockErr) body = '<div class="md-cb-empty err">' + esc(st.dockErr) + '</div>';
     else if (!st.dockAssets) body = '<div class="md-cb-empty">展开「内容浏览器」以读取模型库。</div>';
     else if (!st.dockAssets.length) {
-      body = '<div class="md-cb-empty">模型库里还没有模型。先在视口里建一个，再「保存 GLB」。</div>';
-    } else body = '<div class="md-cb-grid">' + st.dockAssets.map(dockAssetHtml).join('') + '</div>';
+      body = '<div class="md-cb-empty">模型库里还没有模型。先在视口里建一个，再「保存 GLB」；<br>关卡面板里每一关都有「保存关卡」。</div>';
+    } else if (!shown.length) {
+      body = '<div class="md-cb-empty">没有匹配的资产。换个关键词，或切回「全部」。</div>';
+    } else body = '<div class="md-cb-grid">' + shown.map(dockAssetHtml).join('') + '</div>';
     st.dockBody.innerHTML = body;
     var sub = $('mdDockSub');
-    if (sub) sub.textContent = !d ? '不可用' : (st.dockAssets ? st.dockAssets.length + ' 个模型' : '模型库');
+    if (sub) {
+      if (!d) sub.textContent = '不可用';
+      else if (!st.dockAssets) sub.textContent = '模型库';
+      else sub.textContent = shown.length === st.dockAssets.length
+        ? st.dockAssets.length + ' 个资产'
+        : shown.length + ' / ' + st.dockAssets.length + ' 个资产';
+    }
   }
 
   function refreshDockAssets() {
@@ -10752,6 +11497,9 @@
   /* 单关导出的过滤开关（set/reset 成对出现在 exportLevelGLB / exportBytes 里）：
    * null = 全文档。开启时 buildExportRoot 只放行该关卡的节点。 */
   var EXPORT_LEVEL = null;
+  /* 只导出大纲里选中的对象：与单关导出同一套 allowlist，来源换成节点 id 表。
+   * set/reset 成对出现在 exportSelectedBytesImpl 里。 */
+  var EXPORT_NODES = null;
   function exportGLB(root) {
     if (!THREE.GLTFExporter) return Promise.reject(new Error('GLTFExporter 未加载（vendor/GLTFExporter.js）'));
     root.updateMatrixWorld(true);
@@ -10772,6 +11520,9 @@
       SeedModel.Scene.levelNodeIds(st.doc, EXPORT_LEVEL).forEach(function (id) { allowed[id] = 1; });
       var lv = SeedModel.Scene.levelById(st.doc, EXPORT_LEVEL);
       if (lv && lv.name) root.name = (st.doc.name || 'model') + '_' + lv.name;
+    } else if (EXPORT_NODES) {
+      allowed = EXPORT_NODES;
+      root.name = (st.doc.name || 'model') + '_所选';
     }
     var nodes = SeedModel.Scene.nodesOf(st.doc);
     nodes.forEach(function (n) {
@@ -10924,6 +11675,10 @@
     var n = Math.max(arr.length, (mats.slotNames || []).length, 1);
     var out = [];
     for (var i = 0; i < n; i++) {
+      /* 零图层 = 白模：没有用户内容就导出无贴图（材质底色为白），
+       * 不能回落到导入时抽出的 slotMaps —— 否则视口白模、导出却带旧贴图。 */
+      var hasContent = !!(MIX && MIX.hasContent && MIX.hasContent(i));
+      if (!hasContent) { out.push(null); continue; }
       /* 视口当前显示的这张才是最终视觉：纹理混合 / 绘画写回的合成图都挂在
        * material.map 上，slotMaps 只是它的底座。底座优先会导出「旧的」那张图 ——
        * 用户配好的混合层在 GLB 里看不到，就是这条顺序造成的。 */
@@ -11081,12 +11836,13 @@
    *   - 没叠过混合层 / 笔迹的槽，extras 不再存一份（GLB 的 baseColorTexture 就是它）；
    *   - 叠过的槽保留底座，并标记 slotPainted，重开时不会拿合成图当底座。
    * 这次导出一张图都没带上时不做任何瘦身 —— 宁可文件大，不能丢贴图。 */
-  function exportDocJson(buf, levelId) {
+  function exportDocJson(buf, levelId, nodeIds) {
     var docJson = SeedModel.Scene.toSeedModel(st.doc);
     /* 单关导出：seedModel 也按关裁剪 —— 只留该关节点、它引用的网格、它自己。
      * 不裁的话 GLB 网格只有一关，seedModel 却把别的关的数据全带上，
      * 导入回 App 会「半恢复」出幽灵对象（有节点有网格、不在 GLB 场景里）。 */
     if (levelId) docJson = filterDocJsonForLevel(docJson, levelId);
+    else if (nodeIds && nodeIds.length) docJson = filterDocJsonForNodes(docJson, nodeIds);
     try {
       var mats = docJson && docJson.materials;
       var maps = mats && mats.slotMaps;
@@ -11133,19 +11889,42 @@
     (docJson.levels || []).forEach(function (l) {
       if (l.id === levelId) lv = l;
     });
-    docJson.levels = lv ? [{ id: lv.id, name: lv.name, nodes: (lv.nodes || []).filter(function (id) { return keep[id]; }), visible: lv.visible !== false, locked: lv.locked === true }] : [];
+    docJson.levels = lv ? [{ id: lv.id, name: lv.name, nodes: (lv.nodes || []).filter(function (id) { return keep[id]; }), visible: lv.visible !== false, locked: lv.locked === true, assetId: lv.assetId || '' }] : [];
     docJson.activeNodeId = docJson.nodes[0] ? docJson.nodes[0].id : '';
     var lvName = lv ? lv.name : '关卡';
     docJson.name = String((st.doc.name || 'model')) + '_' + lvName;
     return docJson;
   }
 
-  async function save() {
+  /* 所选对象裁剪：和单关导出同一条规则（nodes / meshes / activeNodeId / name），
+   * 但不带关卡结构 —— 选出来的对象组成一份独立文件，重开时全部归主关卡。 */
+  function filterDocJsonForNodes(docJson, ids) {
+    var keep = Object.create(null);
+    (ids || []).forEach(function (id) { keep[String(id)] = 1; });
+    docJson.nodes = (docJson.nodes || []).filter(function (n) { return keep[n.id]; });
+    var used = Object.create(null);
+    docJson.nodes.forEach(function (n) { if (n.meshRef) used[n.meshRef] = 1; });
+    Object.keys(docJson.meshes || {}).forEach(function (id) {
+      if (!used[id]) delete docJson.meshes[id];
+    });
+    docJson.levels = [];
+    docJson.activeNodeId = docJson.nodes[0] ? docJson.nodes[0].id : '';
+    docJson.name = String((st.doc.name || 'model')) + '_所选';
+    return docJson;
+  }
+
+  /* opts.asLevel：把整份场景另存为「关卡」资产（文件-保存关卡）。
+   * 与普通保存共用同一条 GLB 导出链，只换资产 id / 名称 / meta：
+   * 关卡是「可打开的场景」，模型是「可置于的零件」，在内容浏览器里靠 meta.level 区分。 */
+  async function save(opts) {
     if (!st.doc || st.busy) return { ok: false, error: '正在保存中' };
+    var asLevel = !!(opts && opts.asLevel);
     st.busy = true;
-    setStatus('正在导出 GLB…');
+    setStatus(asLevel ? '正在保存关卡…' : '正在导出 GLB…');
     try {
       if (!st.doc.assetId) st.doc.assetId = genId();
+      /* 关卡另存用稳定 id：同一份场景重复保存覆盖同一份关卡资产 */
+      var levelAssetId = asLevel ? (st.doc.levelAssetId || (st.doc.assetId + '-lvl')) : '';
       if (!st.doc.materials.textureConfigKey) st.doc.materials.textureConfigKey = st.doc.assetId;
       /* 首次保存才拿到资产 id：把本会话攒下的纹理混合配置迁到这个 key，
        * 不然关掉页面就丢（模型库那边也靠同一个 key 读配置）。 */
@@ -11170,28 +11949,35 @@
       var dataURL = SeedGLB.toDataURL(withExtras);
       var d = deskApi();
       if (!d) {
-        Model3D.saveDataURL((st.doc.name || 'model') + '.glb', dataURL);
-        setStatus('网页版没有模型库，已改为下载 GLB');
+        Model3D.saveDataURL((st.doc.name || 'model') + (asLevel ? '_关卡' : '') + '.glb', dataURL);
+        setStatus('网页版没有模型库，已改为下载 ' + (asLevel ? '关卡' : '') + ' GLB');
         return { ok: true, dataURL: dataURL, downloaded: true };
       }
       var r = await d.assetPut({
-        id: st.doc.assetId,
+        id: asLevel ? levelAssetId : st.doc.assetId,
         kind: 'model',
         ext: 'glb',
-        name: (st.doc.name || 'model') + '.glb',
+        name: (st.doc.name || 'model') + (asLevel ? '_关卡' : '') + '.glb',
         data: dataURL,
-        source: 'modeldesk'
+        source: asLevel ? 'modeldesk-level' : 'modeldesk',
+        meta: asLevel ? {
+          level: 1, levelId: 'main', levelName: st.doc.name || '主关卡',
+          sceneId: st.doc.assetId, nodeCount: SeedModel.Scene.nodesOf(st.doc).length
+        } : undefined
       });
       if (!(r && r.ok && r.asset && r.asset.id)) throw new Error((r && r.message) || '入库失败');
-      if (r.asset.id !== st.doc.assetId) st.doc.assetId = r.asset.id;
-      try { global.localStorage.setItem(LAST_KEY, st.doc.assetId); } catch (e) {}
-      setStatus('已保存到模型库：' + r.asset.name + '（' + (withExtras.length / 1024).toFixed(0) + ' KB）');
-      if (st.dockOpen) refreshDockAssets();
+      if (asLevel) st.doc.levelAssetId = r.asset.id;
+      else if (r.asset.id !== st.doc.assetId) st.doc.assetId = r.asset.id;
+      if (!asLevel) { try { global.localStorage.setItem(LAST_KEY, st.doc.assetId); } catch (e) {} }
+      setStatus((asLevel ? '已保存关卡：' : '已保存到模型库：') + r.asset.name +
+        '（' + (withExtras.length / 1024).toFixed(0) + ' KB）');
+      if (asLevel) revealLevelAsset(r.asset.id);
+      else if (st.dockOpen) refreshDockAssets();
       /* 缩略图顺手补一张；失败不影响保存结果 */
       try {
         if (typeof d.assetThumbSave === 'function') {
           var th = await Model3D.renderThumb(dataURL, { size: 256 });
-          if (th && th.dataURL) await d.assetThumbSave(st.doc.assetId, th.dataURL);
+          if (th && th.dataURL) await d.assetThumbSave(r.asset.id, th.dataURL);
         }
       } catch (e2) {}
       return { ok: true, asset: r.asset, dataURL: dataURL, bytes: withExtras.length };
@@ -11927,6 +12713,34 @@
   global.modelDesk = {
     open: open,
     openAsset: openAsset,
+    /* ---- 工作台扩展口：后续并入的面板 / 命令从这里挂进来，不用改外壳 DOM ----
+     *   modelDesk.registerPanel({ id, title, el, axis, side, size, min, max,
+     *                            visible(), setVisible(v) })
+     *   modelDesk.registerCommand({ id, label, group, shortcut, when(), run() })
+     *   modelDesk.openCommandPalette('uv')      // 预填搜索词
+     *   modelDesk.layout()                      // 当前布局摘要（只读） */
+    workbench: function () { return bootWorkbench(); },
+    registerPanel: function (spec) {
+      var w = bootWorkbench();
+      return w ? w.registerPanel(spec) : null;
+    },
+    registerCommand: function (spec) {
+      var w = bootWorkbench();
+      return w ? w.registerCommand(spec) : null;
+    },
+    openCommandPalette: function (prefill) {
+      var w = bootWorkbench();
+      if (w) w.openPalette(prefill);
+      return !!w;
+    },
+    layout: function () { return st.workbench ? st.workbench.describe() : null; },
+    /* 工作区预设：model / uv / paint / wide。手动拖过布局后 getWorkspace() 返回「自定义」。 */
+    workspace: function (key) { return applyWorkspace(key); },
+    getWorkspace: function () { return st.workspace; },
+    /* 属性面板「渲染视图」：与视图工坊共用参数与渲染核。探针 / 外部脚本用。 */
+    renderViews: function () { return global.MDViewRender ? global.MDViewRender.render() : null; },
+    renderViewState: function () { return global.MDViewRender ? global.MDViewRender.state() : null; },
+    renderViewExport: function (pass) { return global.MDViewRender ? global.MDViewRender.exportPass(pass || 'color') : null; },
     newDocument: newDocument,
     save: save,
     /* 导出到电脑：对话框 + 各格式的原始数据（探针只取数据，不真写盘） */
@@ -12118,6 +12932,8 @@
         outlineTab: st.outlineTab,
         shelfTab: st.shelfTab,
         panels: { outline: !!st.panels.outline, right: !!st.panels.right, shelf: !!st.panels.shelf, dock: !!st.dockOpen },
+        /* 工作台布局摘要：面板尺寸 / 是否可调 / 命令数量，探针按它断言布局可持久化 */
+        layout: st.workbench ? st.workbench.describe() : null,
         texOpen: !!st.texOpen,
         edgeObjects: !!st.edgeLines,
         vertexObjects: !!st.vertPoints,
@@ -12266,6 +13082,23 @@
       if (!st.doc) throw new Error('没有文档');
       return exportLevelBytesImpl(levelId);
     },
+    /* 测试用：只把选中的对象导出（GLB bytes + 裁剪后的 seedModel），不弹保存框 */
+    exportSelectionBytes: async function (ids) {
+      if (!st.doc) throw new Error('没有文档');
+      return exportSelectedBytesImpl(ids || st.nodeIds || []);
+    },
+    /* 保存关卡到模型库（Save Level）：桌面端入库，网页端回落为下载。
+     * 返回 { ok, id?, downloaded?, dataURL? }，探针用它验证关卡资产结构。 */
+    saveLevel: async function (levelId) { return saveLevelAsset(levelId); },
+    /* 内容浏览器当前筛选结果（只读，供测试与外部面板复用同一套过滤） */
+    dockAssets: function () { return dockVisibleAssets(); },
+    /* 测试用：按 id 改对象名（右键菜单「重命名」走同一条 API） */
+    renameNode: function (id, name) {
+      if (!st.doc) return false;
+      var ok = SeedModel.Scene.renameNode(st.doc, id, name);
+      if (ok) { paintOutline(); updateChrome(); }
+      return ok;
+    },
     /* 测试用：产出 OBJ/FBX 压缩包结构（不落盘，只回文件名与文本头） */
     exportPackage: async function (format, name) {
       if (!st.doc) throw new Error('没有文档');
@@ -12312,6 +13145,7 @@
         quadCams: st.quadCams, quadCtl: st.quadCtl,
         quadActive: st.quadActive, quadMax: st.quadMax,
         edgeLines: st.edgeLines, vertPoints: st.vertPoints,
+        objSelGroup: st.objSelGroup,
         lights: st.lights,
         cube: st.cube,
         pivots: st.pivots,

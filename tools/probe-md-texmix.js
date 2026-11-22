@@ -224,18 +224,52 @@ function writePNG(file, w, h, rgb) {
         jsonOk = Array.isArray(j.meshes);
       } catch (e) { imgs = -1; }
       /* 烘焙缓存就是导出贴图：中心应仍是图层叠出来的红色 */
+      let layersKept = false, stored = 0, key = '';
       try {
-        const mix = window.modelDesk.__debug().mix;
+        const dbg = window.modelDesk.__debug();
+        const mix = dbg.mix;
+        layersKept = !!(mix && mix.hasLayers(0));
+        key = (dbg.doc.materials && dbg.doc.materials.textureConfigKey) || '';
+        const all = JSON.parse(localStorage.getItem('openagi_model_tex_v1') || '{}');
+        stored = ((all[key] || {}).layers || []).length;
         const cv = mix && mix.composedCanvas(0);
         if (cv && cv.getContext) {
           px = Array.from(cv.getContext('2d').getImageData(cv.width >> 1, cv.height >> 1, 1, 1).data);
         }
       } catch (e) { px = null; }
-      return { ok: !!(r && r.ok), bake: window.modelDesk.mixStats().bake, imgs, jsonOk, px };
+      return { ok: !!(r && r.ok), bake: window.modelDesk.mixStats().bake, imgs, jsonOk, px, layersKept, stored, key,
+        /* 网页版（无桌面桥）里上传的层拿不到资产 id，按设计只本次会话有效；
+         * 此时只能断言「保存不销毁图层」，落盘断言交给有资产库的 Electron 场景。 */
+        hasAsset: !!(window.openagiDesktop && typeof window.openagiDesktop.assetPut === 'function') };
     });
     check('保存时自动烘焙图层并导出贴图',
       saved.ok && saved.bake >= 1 && saved.jsonOk && saved.imgs >= 1 &&
       !!saved.px && saved.px[0] > 250 && saved.px[1] < 10, JSON.stringify(saved));
+    /* 存资产库不销毁图层：配置按资产 key 落盘，重开仍能继续调层 */
+    check('保存到资产库后图层仍在（配置随资产 key 落盘，不被烘焙清空）',
+      saved.layersKept && !!saved.key && (!saved.hasAsset || saved.stored >= 1),
+      JSON.stringify({ layersKept: saved.layersKept, stored: saved.stored, key: saved.key, hasAsset: saved.hasAsset }));
+
+    /* UV 底图必须与视口同源：有图层时铺 MDTexMix 的合成画布，
+     * 而不是导入时抽出的 slotMaps（那张已经不参与渲染）。 */
+    const uvBase = await page.evaluate(async () => {
+      const btn = document.querySelector('[data-md-act="uv"]');
+      if (!btn) return { open: false };
+      btn.click();
+      await new Promise((r) => setTimeout(r, 480));
+      const s = window.modelDesk.getState();
+      const mix = window.modelDesk.__debug().mix;
+      const cv = mix && mix.composedCanvas(0);
+      let px = null;
+      if (cv && cv.getContext) {
+        px = Array.from(cv.getContext('2d').getImageData(cv.width >> 1, cv.height >> 1, 1, 1).data);
+      }
+      const close = document.querySelector('#mdUvWin [data-uvact="close"]');
+      if (close) close.click();
+      return { open: s.uvOpen, map: s.uvMap, name: s.uvMapName, px };
+    });
+    check(uvBase.open && uvBase.map && !!uvBase.name && !!uvBase.px && uvBase.px[0] > 250,
+      'UV 底图 = 视口合成结果（有图层时铺合成图，不铺导入贴图）', JSON.stringify(uvBase));
 
     /* 模型 + 贴图压缩包：OBJ 用 MTL 指路，FBX 用 Texture/Video 节点指路 */
     const pkg = await page.evaluate(async () => {

@@ -1356,6 +1356,8 @@
 <script src="js/seed-mesh-core.js"></script>
 <script src="js/seed-modifiers.js"></script>
 <script src="js/seed-evaluator.js"></script>
+<!-- 材质槽服务：槽 id / 去重 / faceSlots 重排的唯一 owner，必须先于场景文档 -->
+<script src="js/md-material-slots.js"></script>
 <script src="js/seed-model-scene.js"></script>
 <script src="js/seed-selection.js"></script>
 <script src="js/seed-commands.js"></script>
@@ -1392,7 +1394,13 @@
      不认识模型 App 的节点 / 历史 / UI，流明也不知道它存在） -->
 <!-- GLSL 微型求值器：导出烘焙直接执行 SHAPE_VERT_HEAD 的 l3Deform 源码（GLSL 唯一真源） -->
 <script src="js/md-glsl-eval.js"></script>
+<!-- 组件注册中心：包装 window.MDComponents，统一异步资产的就绪判断与预载，
+     必须排在组件桥与 model-desk.js 之前 -->
+<script src="js/md-component-registry.js"></script>
 <script src="js/md-lumen-bridge.js"></script>
+<!-- 工作台内核：面板注册表 / 可调分割条 / 布局持久化 / 命令注册表 / 命令面板。
+     不依赖建模 App 状态，必须排在 model-desk.js 之前（外壳启动时创建）。 -->
+<script src="js/md-workbench.js"></script>
 <script src="js/model-desk.js"></script>
 <script src="js/silhouette.js"></script>
 <script src="js/svgshapes.js"></script>
@@ -1472,6 +1480,8 @@
 <script src="js/player.js"></script>
 <script src="js/dev-card.js"></script>
 <!-- 多视图 App：按依赖顺序加载（详见 js/multiview.js 顶部模块表） -->
+<!-- 参数内核：视图工坊与建模 App 属性面板的「渲染视图」共用同一套参数 -->
+<script src="js/view-settings.js"></script>
 <script src="js/mv-core.js"></script>
 <script src="js/mv-layers.js"></script>
 <script src="js/mv-state.js"></script>
@@ -1482,6 +1492,8 @@
 <script src="js/mv-bind.js"></script>
 <script src="js/mv-project.js"></script>
 <script src="js/multiview.js"></script>
+<!-- 建模 App · 属性面板的渲染视图（依赖 view-settings / model3d，不依赖 MV 的 UI 与 state） -->
+<script src="js/md-view-render.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/blueprint-runtime.js"></script>
 <script src="js/tool-loop.js"></script>

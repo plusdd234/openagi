@@ -41,6 +41,7 @@
     "test:mdparity": "node tools/probe-md-parity.js",
     "test:mdsculpt": "node tools/probe-md-sculpt.js",
     "test:mdshape": "node tools/probe-md-shape.js",
+    "test:mdwire": "node tools/probe-md-wire.js",
     "test:mdbake": "node tools/probe-md-bake.js",
     "test:mdlevels": "node tools/probe-md-levels.js"
   },

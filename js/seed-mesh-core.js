@@ -474,8 +474,12 @@
      * 不这么做的话整块都会落到 opts.slot（通常是 0），组信息当场丢失 ——
      * 头模的眼睛是独立一层（FaceEyes，透明叠在皮肤上），丢组就等于丢眼睛：
      * 转眼球骨骼时皮肤上的眼睛纹丝不动，看起来是「眼球完全没动」。
-     * 只有一个 group 时仍按 opts.slot，保持老行为。 */
-    var gs = (geo.groups && geo.groups.length > 1) ? geo.groups : null;
+     * 只有一个 group 时仍按 opts.slot，保持老行为。
+     * ⚠ 基础体工厂 / 导入分块必须传 groups:false：BoxGeometry 永远带 6 个 group
+     *   （materialIndex 0–5），Cylinder / Cone 也带 2–3 个 —— 那是 three 的建模
+     *   惯例，不是文档里的材质槽。照搬到 faceSlots 会得到「一个默认槽 + 面槽 0–5」，
+     *   之后置入别的模型时这些面就指向别人的贴图（默认立方体被串图的根因）。 */
+    var gs = (opts.groups === false) ? null : ((geo.groups && geo.groups.length > 1) ? geo.groups : null);
     for (var t = 0; t < triTotal; t++) {
       var i0 = index ? index.getX(t * 3) : t * 3;
       var i1 = index ? index.getX(t * 3 + 1) : t * 3 + 1;

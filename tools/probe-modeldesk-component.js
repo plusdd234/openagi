@@ -409,6 +409,110 @@ const check = (ok, name, extra) => {
   check(applied.ctlChips >= 3, '属性面板的控制器跟着变（组件属性是活的，不是一次性快照）',
     applied.ctlChips + ' 个叠加键 · ' + applied.summary.trim().slice(0, 40));
 
+  /* 切换着色不得把捏脸丢掉：平涂 / 法线是新建材质，必须补上同一份形变 shader 与 uniform */
+  const shadeShape = await page.evaluate(async () => {
+    const sel = document.getElementById('mdShadeSel');
+    const apply = async (v) => {
+      sel.value = v;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((r) => requestAnimationFrame(r));
+    };
+    /* 取头模这一 pivot 的 solid（场景里还有默认立方体） */
+    const solid = () => {
+      const doc = window.modelDesk.getDocument();
+      let out = null;
+      const d = window.modelDesk.__debug();
+      Object.keys(d.pivots || {}).forEach((k) => {
+        const n = window.SeedModel.Scene.nodeById(doc, k);
+        if (!n || !n.comp || !n.comp.id) return;
+        d.pivots[k].traverse((o) => {
+          if (!out && o.userData && o.userData.mdPart === 'solid') out = o;
+        });
+      });
+      return out;
+    };
+    const firstMat = (o) => (o ? (Array.isArray(o.material) ? o.material[0] : o.material) : null);
+    const out = {};
+    const o0 = solid();
+    const litArr = o0 && o0.material;
+    const litM = firstMat(o0);
+    const litU = litM && litM.userData && litM.userData.mdShapeU;
+    out.litU = !!litU;
+    await apply('flat');
+    const fm = firstMat(solid());
+    out.flat = {
+      type: fm && fm.type,
+      hook: !!(fm && typeof fm.onBeforeCompile === 'function'),
+      sameU: !!(fm && fm.userData && fm.userData.mdShapeU && fm.userData.mdShapeU === litU),
+      shapeN: fm && fm.userData && fm.userData.mdShapeU ? fm.userData.mdShapeU.l3Shape.value.length : 0
+    };
+    await apply('normals');
+    const nm = firstMat(solid());
+    out.normals = {
+      type: nm && nm.type,
+      hook: !!(nm && typeof nm.onBeforeCompile === 'function'),
+      sameU: !!(nm && nm.userData && nm.userData.mdShapeU && nm.userData.mdShapeU === litU)
+    };
+    await apply('shaded');
+    const back = solid();
+    out.back = { type: firstMat(back) && firstMat(back).type, sameMats: !!(back && back.material === litArr) };
+    return out;
+  });
+  check(shadeShape.litU && shadeShape.flat.type === 'MeshBasicMaterial' &&
+    shadeShape.flat.hook && shadeShape.flat.sameU && shadeShape.flat.shapeN === 5,
+    '切到平涂仍保留捏脸形变（补 shader + 复用 solid 的 uniform）', JSON.stringify(shadeShape.flat));
+  check(shadeShape.normals.type === 'MeshNormalMaterial' &&
+    shadeShape.normals.hook && shadeShape.normals.sameU,
+    '切到法线仍保留捏脸形变', JSON.stringify(shadeShape.normals));
+  check(shadeShape.back.type === 'MeshStandardMaterial' && shadeShape.back.sameMats,
+    '切回实体：原受光材质原样回来', JSON.stringify(shadeShape.back));
+
+  /* 平涂下切换选择：重建后组件表面不能被白模回退刷掉（mdOwnSurface 要跟着材质集走） */
+  const flatSel = await page.evaluate(async () => {
+    const raf = () => new Promise((r) => requestAnimationFrame(r));
+    const sel = document.getElementById('mdShadeSel');
+    const apply = async (v) => {
+      sel.value = v;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await raf();
+    };
+    const doc = window.modelDesk.getDocument();
+    const head = window.SeedModel.Scene.nodesOf(doc).filter((n) => n.comp && n.comp.id === 'lumen-head')[0];
+    const cube = window.SeedModel.Scene.nodesOf(doc).filter((n) => !(n.comp && n.comp.id))[0];
+    const solidOf = (nodeId) => {
+      let out = null;
+      const pv = window.modelDesk.__debug().pivots[nodeId];
+      if (pv) pv.traverse((o) => { if (!out && o.userData && o.userData.mdPart === 'solid') out = o; });
+      return out;
+    };
+    const firstMat = (o) => (o ? (Array.isArray(o.material) ? o.material[0] : o.material) : null);
+    await apply('flat');
+    const beforeMat = firstMat(solidOf(head.id));
+    const before = {
+      map: !!beforeMat.map, color: beforeMat.color.getHexString(),
+      own: !!beforeMat.userData.mdOwnSurface, type: beforeMat.type
+    };
+    window.modelDesk.selectNodeById(cube.id, 'replace');
+    await raf();
+    await raf();
+    await new Promise((r) => setTimeout(r, 120));
+    const afterMat = firstMat(solidOf(head.id));
+    const after = {
+      map: !!(afterMat && afterMat.map), color: afterMat && afterMat.color.getHexString(),
+      own: !!(afterMat && afterMat.userData.mdOwnSurface), type: afterMat && afterMat.type,
+      active: window.modelDesk.getState().activeNodeId
+    };
+    /* 恢复激活对象，后面的撤销 / 序列化测试仍以头模为落点 */
+    window.modelDesk.selectNodeById(head.id, 'replace');
+    await raf();
+    await apply('shaded');
+    return { before, after, cubeId: cube.id };
+  });
+  check(flatSel.before.map && flatSel.before.own && flatSel.before.type === 'MeshBasicMaterial' &&
+    flatSel.after.active === flatSel.cubeId &&
+    flatSel.after.map && flatSel.after.own && flatSel.after.color === flatSel.before.color,
+    '平涂下切换选择：头模组件表面不被白模回退刷白（脸贴图与底色保留）', JSON.stringify(flatSel));
+
   /* 存盘重开之后还得知道自己是什么：node.comp 必须过一遍序列化 + 归一化 */
   const round = await page.evaluate(() => {
     const doc = window.modelDesk.getDocument();
@@ -465,6 +569,66 @@ const check = (ok, name, extra) => {
   check(undone === before, 'Ctrl+Z 能把这次添加整体退回', before + ' ← ' + undone);
   await page.evaluate(() => window.modelDesk.redo());
   await page.waitForTimeout(500);
+
+  /* ---------- ⑧ 存盘重开：头模必须先挂回自己的脸 ----------
+   * 重开页面时流明桥的缓存是空的。若不等资产读进来就建场景，makeMaterials 会先用
+   * **文档级材质槽**的贴图铺脸 —— 文档里有别的模型时，看起来就是「头被别人贴图盖住」。
+   * 这里存一份含头模的 GLB，重开页面走同一条「打开上次资产」的路，断言缓存已就绪。 */
+  const saved = await page.evaluate(async () => {
+    window.openagiDesktop = {
+      assetPut: async (a) => ({ ok: true, asset: { id: a.id, name: a.name } }),
+      assetRead: async () => ({ ok: false }),
+      assetThumbSave: async () => ({ ok: true })
+    };
+    const r = await window.modelDesk.save();
+    return r && r.ok ? { id: r.asset.id, dataURL: r.dataURL } : { error: (r && r.error) || 'save failed' };
+  });
+  check(!!saved.dataURL, '存盘拿到 GLB（重开测试的输入）', saved.error || String(saved.dataURL || '').slice(0, 30));
+
+  await page.goto(pathToFileURL(path.join(ROOT, 'index.html')).href + '?nostore=1', { waitUntil: 'load' });
+  await page.waitForTimeout(600);
+  await page.evaluate((p) => {
+    window.openagiDesktop = {
+      assetPut: async (a) => ({ ok: true, asset: { id: a.id, name: a.name } }),
+      assetRead: async (want) => ({ ok: want === p.id, dataURL: p.dataURL }),
+      assetThumbSave: async () => ({ ok: true })
+    };
+    window.openDeskApp('modeldesk');
+  }, saved);
+  await page.waitForFunction(() => {
+    const d = window.modelDesk && window.modelDesk.getDocument && window.modelDesk.getDocument();
+    return !!(d && d.nodes && d.nodes.some((n) => n.comp && n.comp.id === 'lumen-head'));
+  }, null, { timeout: 120000 });
+  await page.waitForTimeout(300);
+  const reopened = await page.evaluate(async () => {
+    const doc = window.modelDesk.getDocument();
+    if (!doc) return { error: '打开后没有文档' };
+    const head = doc.nodes.find((n) => n.comp && n.comp.id === 'lumen-head');
+    if (!head) return { error: '重开后没有头模节点', nodes: doc.nodes.length };
+    const g = window.modelDesk.__debug();
+    let skin = null;
+    if (g.pivots[head.id]) {
+      g.pivots[head.id].traverse((o) => {
+        if (skin || !o.isMesh || !o.userData || o.userData.mdPart !== 'solid') return;
+        const m = Array.isArray(o.material) ? o.material[0] : o.material;
+        const img = m && m.map && m.map.image;
+        skin = {
+          has: !!(m && m.map),
+          size: img ? [img.width, img.height] : null,
+          base: !!(m && m.userData && m.userData.mdBaseMap)
+        };
+      });
+    }
+    return { ready: window.MDComponents.list[0].ready(), head: true, skin };
+  });
+  check(!reopened.error && reopened.head, '重开页面后头模还在（走「打开上次资产」同一条路）',
+    reopened.error || '1 个节点');
+  check(reopened.ready === true, '建场景前已把组件资产读进来（缓存就绪）');
+  check(!!reopened.skin && reopened.skin.has && reopened.skin.base &&
+    reopened.skin.size && reopened.skin.size[0] > 64,
+    '重开后头模挂的还是它自己的脸贴图（不是文档里别的模型的槽贴图）',
+    JSON.stringify(reopened.skin));
+  await RUN.shot(page, 'reopen.png');
 
   /* ---------- 页面错误 ---------- */
   const realErrs = errors.filter((e) => !/favicon|ResizeObserver/i.test(e));
