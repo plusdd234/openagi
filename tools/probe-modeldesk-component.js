@@ -130,6 +130,45 @@ const check = (ok, name, extra) => {
 
   await RUN.shot(page, 'panel.png');
 
+  /* ---------- ③b 弹窗不被窗口裁切 ----------
+   * .md-ov 自带 overflow:hidden，曾有版本 .md-ov 设 flex:0 0 auto（不许收缩）→
+   * 窗口矮时底部（滑杆 / 主按钮）被整块剪掉且无滚动。守卫：压矮视口量真实几何。 */
+  await page.setViewportSize({ width: 1440, height: 620 });
+  await page.waitForTimeout(200);
+  const fit = await page.evaluate(() => {
+    const ov = document.querySelector('.md-overlay.comp');
+    const box = ov && ov.querySelector('.md-ov');
+    if (!ov || !box) return null;
+    const ob = ov.getBoundingClientRect(), bb = box.getBoundingClientRect();
+    const body = box.querySelector('.md-ov-body');
+    const scroll = body ? body.scrollHeight - body.clientHeight : -1;
+    let scrolled = -1;
+    if (body) { body.scrollTop = 99999; scrolled = body.scrollTop; body.scrollTop = 0; }
+    return {
+      clip: Math.round(bb.bottom - ob.bottom),
+      overflowY: body ? getComputedStyle(body).overflowY : '',
+      scroll, scrolled,
+      goVisible: (() => {
+        const go = box.querySelector('[data-md-act="comp-add"]');
+        if (!go) return false;
+        /* 折叠线以下的主按钮本来就不在首屏——先把它滚进视口，再验证指得到（可达，不是常驻） */
+        go.scrollIntoView({ block: 'center' });
+        const r = go.getBoundingClientRect();
+        const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return !!el && !!el.closest && !!el.closest('[data-md-act="comp-add"]');
+      })()
+    };
+  });
+  check(!!fit && fit.clip <= 1, '弹窗底部没超出窗口（不被 overflow:hidden 剪掉）',
+    fit ? '超出 ' + fit.clip + 'px' : 'no dialog');
+  check(!!fit && fit.scroll > 0 && /auto|scroll/.test(fit.overflowY),
+    '窗口矮时弹窗体可滚动（内容收进滚动区而不是剪掉）',
+    fit ? 'scrollΔ=' + fit.scroll + ' overflowY=' + fit.overflowY : 'no dialog');
+  check(!!fit && fit.scrolled > 0, '滚动区真的滚得动（scrollTop 生效）', fit ? 'scrollTop=' + fit.scrolled : 'no dialog');
+  check(!!fit && fit.goVisible, '滚到主按钮后指得到（elementFromPoint，可达即可用）', fit ? String(fit.goVisible) : 'no dialog');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(200);
+
   /* 换形态键 → 剪影必须跟着变（参数真的作用在同一份几何上）。
    * ⚠ 必须比「正 + 侧」两条：vrc.v_aa / sp_cheek 这些表情动的多是 z 向（侧脸轮廓），
    *   正视图的行内极值往往一个都不变 —— 只比 front 会误判成「参数没生效」。 */

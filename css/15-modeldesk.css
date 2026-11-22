@@ -998,10 +998,10 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-prim .md-note { margin: 0; }
 .md-prim-go { margin-top: 2px; height: 24px; }
 
-/* 基础体面板是小表单，不该铺满整个视口：居中、限宽、上沿对齐 */
+/* 基础体面板是小表单，不该铺满整个视口：居中、限宽、上沿对齐（同 comp：内容超高要走滚动） */
 .md-overlay.prim { justify-content: center; align-items: flex-start; padding-top: 34px; }
-.md-overlay.prim .md-ov { flex: 0 0 auto; width: auto; min-width: 420px; max-width: 560px; }
-.md-overlay.prim .md-ov-body { flex: 0 0 auto; }
+.md-overlay.prim .md-ov { flex: 0 1 auto; width: auto; min-width: 420px; max-width: 560px; max-height: 100%; }
+.md-overlay.prim .md-ov-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .md-prim-go { height: 25px; font-size: 10.5px; }
 
 /* ---------- 10b. 添加组件（组件源驱动的零件生成器） ----------
@@ -1209,10 +1209,12 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 .md-md-sum i { font-style: normal; font-weight: 600; color: #8a5200; }
 .md-md-sum b { font-weight: 500; color: #35597d; }
 
-/* 组件面板是小表单：居中、限宽，别铺满视口 */
+/* 组件面板是小表单：居中、限宽，别铺满视口。
+ * ⚠ .md-ov 自带 overflow:hidden，内容一高（流明头模的自报 panel 很长）底部就被剪掉且无滚动——
+ * 必须 max-height 封顶 + body 弹性收缩走滚动，头部保持常驻。 */
 .md-overlay.comp { justify-content: center; align-items: flex-start; padding-top: 26px; }
-.md-overlay.comp .md-ov { flex: 0 0 auto; width: 468px; max-width: 96%; }
-.md-overlay.comp .md-ov-body { flex: 0 0 auto; }
+.md-overlay.comp .md-ov { flex: 0 1 auto; width: 468px; max-width: 96%; max-height: 100%; }
+.md-overlay.comp .md-ov-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 
 /* ---------- 10. 左侧工具条（Maya 那一列的还原） ---------- */
 .md-strip { gap: 1px; padding: 4px 0; }
