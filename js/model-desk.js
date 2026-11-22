@@ -3902,7 +3902,10 @@
   function ensureViewport() {
     if (st.renderer || !THREE) return;
     st.renderer = new THREE.WebGLRenderer({ canvas: st.canvas, antialias: true, alpha: false });
-    st.renderer.debug.checkShaderErrors = false;
+    /* shader 编译错误必须报（three 只在程序创建时查一次，开销可忽略）。
+     * 曾设 false：捏脸注入的 fragment 拼接少个换行，编译静默失败 →
+     * 「solid 永远不画、只剩线框、拖动无反应」，排查了整整一天没有任何报错。 */
+    st.renderer.debug.checkShaderErrors = true;
     st.renderer.setPixelRatio(Math.min(global.devicePixelRatio || 1, 2));
     if ('outputEncoding' in st.renderer) st.renderer.outputEncoding = THREE.sRGBEncoding;
 
@@ -4692,13 +4695,18 @@
            * 不能把声明塞进去。漏了这行就是「program not valid」刷屏、
            * shader 形变整个静默失效（实测：编译失败只报 INVALID_OPERATION，
            * 脸不变形、界面不报错 —— 探针不看 console 根本发现不了）。 */
-          shader.vertexShader = 'uniform vec3 l3Org;\n' + glsl.vert + shader.vertexShader;
+          /* ⚠ 拼接必须带尾部换行：SHAPE_SEL_FRAG 以 `}` 结尾（无 \n），直接拼上
+           *   three 的 `#define STANDARD` 会变成 `}#define` 同一行 → 预处理器语法错 →
+           *   fragment 编译失败 → 整个 program 无效 → solid 静默不画（只剩线框）、
+           *   捏脸形变整体失效。checkShaderErrors=false 时**零报错**，唯一线索是
+           *   GLSL 编译器报「'#' : invalid character」。 */
+          shader.vertexShader = 'uniform vec3 l3Org;\n' + glsl.vert + '\n' + shader.vertexShader;
           shader.vertexShader = shader.vertexShader
             .replace('#include <begin_vertex>',
               '#include <begin_vertex>\n  vec3 l3Rest = position + l3Org;\n  vL3Rest = l3Rest;')
             .replace('#include <skinning_vertex>',
               '#include <skinning_vertex>\n  transformed = l3Deform( transformed + l3Org, l3Rest ) - l3Org;');
-          shader.fragmentShader = glsl.frag + shader.fragmentShader
+          shader.fragmentShader = glsl.frag + '\n' + shader.fragmentShader
             .replace('#include <dithering_fragment>',
               '#include <dithering_fragment>\n' +
               '  if ( l3SelA > 0.002 && gl_FrontFacing ) {\n' +
