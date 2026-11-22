@@ -620,7 +620,7 @@
       '    </div>',
       '    <aside class="md-outline">',
       '      <div class="md-panel-h"><span>大纲视图</span><em id="mdOutlineCount">0 个对象</em></div>',
-      '      <div class="md-otabs"><button type="button" class="md-otab on" data-md-otab="all">显示</button><button type="button" class="md-otab" data-md-otab="hidden">隐藏</button><button type="button" class="md-otab" data-md-otab="help">帮助</button>' +
+      '      <div class="md-otabs"><button type="button" class="md-otab on" data-md-otab="all">显示</button><button type="button" class="md-otab" data-md-otab="hidden">隐藏</button><button type="button" class="md-otab" data-md-otab="levels">关卡</button><button type="button" class="md-otab" data-md-otab="help">帮助</button>' +
       '        <button type="button" class="md-otab md-otab-add" id="mdAddCompBtn" data-md-act="comp-open" title="添加组件：把现成零件（二次元头模等）并进当前场景">＋ 组件</button></div>',
       '      <div class="md-osearch"><input id="mdOutlineSearch" type="search" placeholder="按名称搜索节点" autocomplete="off" spellcheck="false"></div>',
       '      <div class="md-tree" id="mdOutlineList"></div>',
@@ -1030,7 +1030,11 @@
     var countEl = $('mdOutlineCount');
     if (countEl) countEl.textContent = st.doc.nodes.length + ' 个对象';
     if (tab === 'help') {
-      list.innerHTML = '<div class="md-note">显示：列出相机与全部对象<br>隐藏：只看隐藏对象<br>双击对象行可重命名；搜索框按名称过滤。</div>';
+      list.innerHTML = '<div class="md-note">显示：列出相机与全部对象<br>隐藏：只看隐藏对象<br>关卡：分组管理对象（显隐 / 锁定 / 单关导出）<br>双击对象行可重命名；搜索框按名称过滤。</div>';
+      return;
+    }
+    if (tab === 'levels') {
+      list.innerHTML = paintLevelsPanel();
       return;
     }
     var rows = tab === 'all' ? FAKE_OUTLINE.filter(function (f) {
@@ -1063,6 +1067,16 @@
       var cdef = cid ? componentDefById(cid) : null;
       var kindTxt = vis ? (cid ? '组件' : '网格') : '隐藏';
       var tip = cid ? '组件：' + (cdef ? cdef.name : cid + '（组件源未加载）') : '';
+      /* 关卡徽标：子关卡对象在对象行标出归属（主关卡不标，省视觉噪音） */
+      var lvId = SeedModel.Scene.nodeLevelId(st.doc, n.id);
+      var lvTag = '';
+      if (lvId && lvId !== 'main') {
+        var lv = SeedModel.Scene.levelById(st.doc, lvId);
+        if (lv) {
+          lvTag = '<b class="md-lvtag' + (lv.locked ? ' lock' : '') + '" title="所属关卡：' + esc(lv.name) + '">' +
+            esc(lv.name.slice(0, 4)) + (lv.locked ? ' 🔒' : '') + '</b>';
+        }
+      }
       return '<button type="button" class="md-part-row' + (cid ? ' comp' : '') +
         (isAct ? ' sel' : '') + (inMulti && !isAct ? ' multi' : '') + (vis ? '' : ' off') +
         '" data-md-node="' + esc(n.id) + '"' +
@@ -1071,10 +1085,173 @@
         '<i class="' + (cid ? 'md-cicon' : 'md-nicon') + '"></i>' +
         '<span class="md-part-id">' + esc(n.name) + '</span>' +
         '<span class="md-part-shape">' + esc(kindTxt) + '</span>' +
+        lvTag +
         '<em>' + faces + ' 面</em>' +
         '</button>';
     }).join('');
     list.innerHTML = rows || '<div class="md-note">' + (tab === 'hidden' ? '没有隐藏对象' : '没有匹配的节点') + '</div>';
+  }
+
+  /* ---------------- 关卡面板（对标 Unreal 的 Levels 窗口） ----------------
+   * 关卡 = 节点引用清单，只做三件事：显隐（批量 node.visible）、锁定（拾取过滤）、
+   * 单关导出 GLB。删关卡 = 对象回主关卡，任何操作都不丢网格数据。 */
+  function paintLevelsPanel() {
+    if (!st.doc) return '<div class="md-note">没有文档</div>';
+    var S = SeedModel.Scene;
+    var selCount = (st.nodeIds || []).length;
+    var rows = '<div class="md-lvrow main">' +
+      '<span class="md-lvname">主关卡</span>' +
+      '<span class="md-lvmeta">' + S.levelNodeIds(st.doc, 'main').length + ' 个未分配对象</span>' +
+      '</div>';
+    S.levelsOf(st.doc).forEach(function (lv) {
+      var cnt = (lv.nodes || []).length;
+      var isTgt = st.levelsTargetId === lv.id;
+      rows += '<div class="md-lvrow' + (lv.visible ? '' : ' off') + (lv.locked ? ' lock' : '') + (isTgt ? ' tgt' : '') + '">' +
+        '<button type="button" class="md-lvname" data-md-lv="rename" data-md-lvid="' + esc(lv.id) + '" title="点击重命名">' + esc(lv.name) + '</button>' +
+        '<span class="md-lvmeta">' + cnt + ' 对象</span>' +
+        '<button type="button" class="md-lvbtn' + (isTgt ? ' on' : '') + '" data-md-lv="pick" data-md-lvid="' + esc(lv.id) + '" title="设为「移入目标」">☑</button>' +
+        '<button type="button" class="md-lvbtn" data-md-lv="vis" data-md-lvid="' + esc(lv.id) + '" title="' + (lv.visible ? '隐藏整关' : '显示整关') + '">' + (lv.visible ? '👁' : '🚫') + '</button>' +
+        '<button type="button" class="md-lvbtn" data-md-lv="lock" data-md-lvid="' + esc(lv.id) + '" title="' + (lv.locked ? '解锁（恢复拾取编辑）' : '锁定（不可拾取/变换）') + '">' + (lv.locked ? '🔒' : '🔓') + '</button>' +
+        '<button type="button" class="md-lvbtn" data-md-lv="export" data-md-lvid="' + esc(lv.id) + '" title="只把这一关导出为 GLB">⬇</button>' +
+        '<button type="button" class="md-lvbtn del" data-md-lv="delete" data-md-lvid="' + esc(lv.id) + '" title="删除关卡（对象全部回主关卡，不删数据）">✕</button>' +
+        '</div>';
+    });
+    rows += '<div class="md-lvops">' +
+      '<button type="button" class="md-lvop" data-md-lv="create">＋ 新建关卡</button>' +
+      '<button type="button" class="md-lvop" data-md-lv="assign" ' + (selCount ? '' : 'disabled') + ' title="把选中的对象移入选中的关卡（点关卡名选中）">移入选中对象（' + selCount + '）</button>' +
+      '<button type="button" class="md-lvop" data-md-lv="unassign" ' + (selCount ? '' : 'disabled') + '>选中对象移回主关卡</button>' +
+      '</div>' +
+      '<div class="md-note">锁定 = 对象不可被视口拾取 / 变换（数据不动）。删除关卡只是解除分组，对象原样保留。</div>';
+    return rows;
+  }
+
+  /* 关卡显隐 / 删关后的轻量同步：node.visible → pivot.visible。
+   * 不走 rebuildModel（那是重量级全量重建）；关卡显隐只改每个 pivot 的开关。 */
+  function syncNodeVisibilities() {
+    if (!st.doc) return;
+    SeedModel.Scene.nodesOf(st.doc).forEach(function (n) {
+      var pv = st.pivots && st.pivots[n.id];
+      if (pv) pv.visible = n.visible !== false;
+    });
+    paintOutline();
+  }
+
+  /* 单关导出 GLB（Unreal 的 Save Level）：只带这一关的对象 + 按关裁剪的 seedModel。 */
+  async function exportLevelBytesImpl(levelId) {
+    var restoreTex = glbTexSwap();
+    var buf, docJson;
+    try {
+      EXPORT_LEVEL = levelId || null;
+      buf = await currentGLB();
+      docJson = exportDocJson(buf, levelId || null);
+    } finally {
+      EXPORT_LEVEL = null;
+      restoreTex();
+    }
+    var withExtras = SeedGLB.injectSeedModel(buf, docJson);
+    return { buffer: buf, docJson: docJson, dataURL: SeedGLB.toDataURL(withExtras) };
+  }
+
+  async function exportLevelGLB(lvid) {
+    if (!st.doc || st.busy) return { ok: false };
+    var S = SeedModel.Scene;
+    var lv = S.levelById(st.doc, lvid);
+    var ids = S.levelNodeIds(st.doc, lvid);
+    if (!lv) return { ok: false };
+    if (!ids.length) { setStatus('「' + lv.name + '」里没有对象可导出', true); return { ok: false }; }
+    st.busy = true;
+    var name = String(st.doc.name || 'model').replace(/[\\/:*?"<>|]/g, '_') +
+      '_' + String(lv.name).replace(/[\\/:*?"<>|]/g, '_');
+    setStatus('正在导出关卡「' + lv.name + '」…');
+    try {
+      var dataURL = (await exportLevelBytesImpl(lvid)).dataURL;
+      var d = global.openagiDesktop;
+      if (!d || typeof d.fileSave !== 'function') {
+        Model3D.saveDataURL(name + '.glb', dataURL);
+        setStatus('网页版没有磁盘写入权限，已改为下载关卡 GLB（' + ids.length + ' 个对象）');
+        return { ok: true, downloaded: true };
+      }
+      var r = await d.fileSave({ name: name + '.glb', ext: 'glb', dataURL: dataURL });
+      if (r && r.cancelled) { setStatus('已取消导出'); return { ok: false, cancelled: true }; }
+      if (!(r && r.ok)) throw new Error((r && r.message) || '写入失败');
+      setStatus('已导出关卡「' + lv.name + '」（' + ids.length + ' 个对象）到：' + r.path);
+      return { ok: true, path: r.path };
+    } catch (e) {
+      var msg = (e && e.message) || String(e);
+      setStatus('关卡导出失败：' + msg, true);
+      return { ok: false, error: msg };
+    } finally {
+      st.busy = false;
+    }
+  }
+
+  /* 关卡面板的当前「移入目标」（点关卡名选中，Assign 落到这里） */
+  function levelsPanelAction(act, lvid) {
+    if (!st.doc) return;
+    var S = SeedModel.Scene;
+    if (act === 'create') {
+      var lv = S.levelCreate(st.doc, '');
+      if (lv) { setStatus('已新建「' + lv.name + '」：选中对象后点「移入选中对象」'); }
+      paintOutline();
+      return;
+    }
+    if (act === 'rename') {
+      var target = S.levelById(st.doc, lvid);
+      if (!target) return;
+      var nm = window.prompt('关卡名称：', target.name);
+      if (nm != null && S.levelRename(st.doc, lvid, nm)) paintOutline();
+      return;
+    }
+    if (act === 'vis') {
+      var target2 = S.levelById(st.doc, lvid);
+      if (!target2) return;
+      S.levelSetVisible(st.doc, lvid, !target2.visible);
+      syncNodeVisibilities();
+      paintOutline();
+      return;
+    }
+    if (act === 'lock') {
+      var target3 = S.levelById(st.doc, lvid);
+      if (!target3) return;
+      target3.locked = !target3.locked;
+      paintOutline();
+      return;
+    }
+    if (act === 'delete') {
+      var target4 = S.levelById(st.doc, lvid);
+      if (!target4) return;
+      var back = S.levelDelete(st.doc, lvid);
+      setStatus('已删除「' + target4.name + '」，' + back + ' 个对象回到主关卡');
+      syncNodeVisibilities();
+      paintOutline();
+      return;
+    }
+    if (act === 'assign') {
+      var tgtId = st.levelsTargetId;
+      if (!tgtId || !S.levelById(st.doc, tgtId)) { setStatus('先点一个关卡名（选中它作为移入目标）', true); return; }
+      var moved = S.levelAssign(st.doc, tgtId, (st.nodeIds || []).slice());
+      if (moved) setStatus('已把 ' + (st.nodeIds || []).length + ' 个对象移入「' + S.levelById(st.doc, tgtId).name + '」');
+      paintOutline();
+      return;
+    }
+    if (act === 'unassign') {
+      S.levelUnassign(st.doc, (st.nodeIds || []).slice());
+      paintOutline();
+      return;
+    }
+    if (act === 'export') {
+      exportLevelGLB(lvid);
+      return;
+    }
+    if (act === 'pick') {
+      /* 「☑」= 设为「移入目标」：之后点「移入选中对象」就把当前选择落进这一关 */
+      var lv5 = S.levelById(st.doc, lvid);
+      if (!lv5) return;
+      st.levelsTargetId = lvid;
+      paintOutline();
+      setStatus('移入目标 = 「' + lv5.name + '」：选中对象后点「移入选中对象」');
+      return;
+    }
   }
 
   /* 大纲 / 视口共用的对象选择入口。
@@ -1101,6 +1278,26 @@
       id = String(id);
       if (alive[id] && list.indexOf(id) < 0) list.push(id);
     });
+    /* 锁定关卡的对象不可选中（Unreal 的 Level Lock 语义）：视口单点 / 框选 /
+     * 套索 / 大纲 / 全选全部走这里 —— 总闸一处过滤，锁定对象就摸不到变换手柄。 */
+    var locked = null;
+    try {
+      var lids = SeedModel.Scene.lockedNodeIds(st.doc);
+      if (lids && lids.length) {
+        locked = Object.create(null);
+        lids.forEach(function (id) { locked[id] = 1; });
+      }
+    } catch (e) { locked = null; }
+    if (locked) {
+      var blocked = 0;
+      var un = [];
+      list.forEach(function (id) {
+        if (locked[id]) { blocked++; return; }
+        un.push(id);
+      });
+      if (blocked && un.length !== list.length) setStatus('有 ' + blocked + ' 个对象在锁定关卡里，不可选中', true);
+      list = un;
+    }
     var cur = (st.nodeIds || []).filter(function (id) { return alive[id]; });
     var next;
     if (how === 'add') {
@@ -4277,12 +4474,16 @@
 
   /* 挂图 / 读图 / 解码状态见 js/md-material-store.js（STORE）。 */
 
-  function makeMaterials() {
+  function makeMaterials(forMesh) {
     var mats = st.doc.materials || {};
     var names = mats.slotNames || [];
     var colors = mats.slotColors || [];
     var maps = mats.slotMaps || [];
-    var count = Math.max(names.length, maxUsedSlot(st.mesh) + 1, 1);
+    /* ⚠ 槽数必须按「这份网格自己用到的」算，不是激活节点。
+     * buildExportRoot 会给每个可见节点各建一份材质 —— 以前一律按 st.mesh
+     * （激活节点）算，非激活对象的面引用了更后面的槽就拿到 undefined 材质：
+     * 视口里静默坏面，交给 GLTFExporter 直接崩（materials[idx] undefined）。 */
+    var count = Math.max(names.length, maxUsedSlot(forMesh || st.mesh) + 1, 1);
     var list = [];
     for (var i = 0; i < count; i++) {
       var mat = new THREE.MeshStandardMaterial({
@@ -4486,7 +4687,12 @@
           if (typeof prev === 'function') { try { prev.call(this, shader, renderer); } catch (e) {} }
           Object.keys(U).forEach(function (k) { shader.uniforms[k] = U[k]; });
           shader.uniforms.l3EyePart = part;
-          shader.vertexShader = glsl.vert + shader.vertexShader;
+          /* ⚠ l3Org 必须在这里声明：它是建模 App 的坐标系桥（网格局部 → 资产系），
+           * 不属于流明的 GLSL —— SHAPE_VERT_HEAD 与流明逐字节相同（探针守卫），
+           * 不能把声明塞进去。漏了这行就是「program not valid」刷屏、
+           * shader 形变整个静默失效（实测：编译失败只报 INVALID_OPERATION，
+           * 脸不变形、界面不报错 —— 探针不看 console 根本发现不了）。 */
+          shader.vertexShader = 'uniform vec3 l3Org;\n' + glsl.vert + shader.vertexShader;
           shader.vertexShader = shader.vertexShader
             .replace('#include <begin_vertex>',
               '#include <begin_vertex>\n  vec3 l3Rest = position + l3Org;\n  vL3Rest = l3Rest;')
@@ -5096,7 +5302,7 @@
     var geo = SeedModel.Mesh.buildGeometry(mesh, { cache: cache !== false });
     var skin = makeSkinFor(node, geo);
     var compGroups = componentGroupMats(node);
-    var mats = fitGroupMaterials(makeMaterials(), compGroups);
+    var mats = fitGroupMaterials(makeMaterials(mesh), compGroups);
     /* 眼片位移：只有声明了 eyeSheet() 的组件才挂（头模）。
      * 两组材质都挂 —— 皮肤上那块贴片是主体；被遮住的眼球几何一起挪，
      * 免得它在偏移后的皮肤下面顶出来（这是「转视角穿模」的一种来源）。 */
@@ -8137,6 +8343,12 @@
       updateChrome();
       return;
     }
+    if (t.dataset.mdLv) {
+      /* 关卡面板：按钮走对应动作；点关卡名本身 = 选中该关（移入目标 + 全选整关对象） */
+      if (t.dataset.mdLv === 'pick') levelsPanelAction('pick', t.dataset.mdLvid);
+      else levelsPanelAction(t.dataset.mdLv, t.dataset.mdLvid);
+      return;
+    }
     if (t.dataset.mdView) {
       viewFromPreset(t.dataset.mdView);
       return;
@@ -10343,6 +10555,9 @@
   }
 
   /* ---------------- 导出 / 保存 ---------------- */
+  /* 单关导出的过滤开关（set/reset 成对出现在 exportLevelGLB / exportBytes 里）：
+   * null = 全文档。开启时 buildExportRoot 只放行该关卡的节点。 */
+  var EXPORT_LEVEL = null;
   function exportGLB(root) {
     if (!THREE.GLTFExporter) return Promise.reject(new Error('GLTFExporter 未加载（vendor/GLTFExporter.js）'));
     root.updateMatrixWorld(true);
@@ -10356,9 +10571,18 @@
   function buildExportRoot() {
     var root = new THREE.Group();
     root.name = st.doc.name || 'model';
+    /* 单关导出：只放行该关卡的对象，文件名带上关卡名（Unreal 的 Save Level 语义） */
+    var allowed = null;
+    if (EXPORT_LEVEL) {
+      allowed = Object.create(null);
+      SeedModel.Scene.levelNodeIds(st.doc, EXPORT_LEVEL).forEach(function (id) { allowed[id] = 1; });
+      var lv = SeedModel.Scene.levelById(st.doc, EXPORT_LEVEL);
+      if (lv && lv.name) root.name = (st.doc.name || 'model') + '_' + lv.name;
+    }
     var nodes = SeedModel.Scene.nodesOf(st.doc);
     nodes.forEach(function (n) {
       if (n.visible === false) return;
+      if (allowed && !allowed[n.id]) return;
       var mesh = SeedModel.Scene.getMesh(st.doc, n);
       if (!mesh) return;
       root.add(makePivotFor(n, mesh, false));
@@ -10380,7 +10604,111 @@
         if (t) { m.map = t; m.needsUpdate = true; }
       });
     });
+    bakeShapeIntoExportRoot(root);
     return root;
+  }
+
+  /* ---------------- 捏脸烘焙（导出） ----------------
+   * 捏脸形变住在顶点着色器里 —— geometry.position 永远是原始脸。而 GLB / OBJ /
+   * STL / FBX 全都只读 position，不烘焙的话外部软件看到的永远是没捏过的脸。
+   * 烘焙口径（与视口一致）：bind pose 下蒙皮恒等（probe-md-parity 已证），
+   * shader 注入在 skinning_vertex 之后 ⇒ baked = l3Deform(rest, rest)。
+   * ① position = 烘焙后的顶点（「实际的捏脸后的顶点数据」，任何阅读器直接可见）；
+   * ② 通用形态键：每个改过的参数一条 `mdShape_<key>`（delta = 单参数效果 − 原始 rest，
+   *    Blender 形态键的标准语义），外加 `mdShape_Rest`（原始脸，拉 1 可回捏前）。
+   *    three 的 morphTargetsRelative=true ⇒ GLTFExporter 原样写 delta，
+   *    不做 absolute→relative 转换（base 是烘焙后 position，转换语义就错了）。
+   * ③ mesh.userData.mdShapeBaked 记参数与 targetNames（GLB extras），
+   *    自家 App 重导入时据此把形态键名对上、params 不再二次形变。
+   * ⚠ 只动导出 pivot：geometry 换成新副本（position/normal 新数组），其余 attribute
+   *   （uv / skinIndex / skinWeight / 色层）共享缓存几何的引用 —— 绝不污染视口缓存。 */
+  function bakeShapeIntoExportRoot(root) {
+    if (!st.doc) return;
+    var nodesById = {};
+    SeedModel.Scene.nodesOf(st.doc).forEach(function (n) { nodesById[n.id] = n; });
+    var warned = false;
+    root.children.forEach(function (pivot) {
+      var node = nodesById[pivot.userData.mdNode];
+      if (!node || !node.comp || !node.comp.id) return;
+      var def = componentDefById(node.comp.id);
+      if (!def || typeof def.shapeDeform !== 'function' || typeof def.shapeInfo !== 'function') return;
+      var shape = (node.comp.params && node.comp.params.shape) || {};
+      var active = (def.shapeInfo().defs || []).filter(function (d) {
+        var v = Number(shape[d.key]);
+        return isFinite(v) && v !== 50;
+      });
+      if (!active.length) return;   /* 全 50 = 原始脸：烘焙与形态键都不需要 */
+      pivot.traverse(function (o) {
+        if (!o.isMesh || !o.geometry || !o.userData || o.userData.mdPart !== 'solid') return;
+        if (o.userData.mdShapeBaked) return;
+        var geo = o.geometry;
+        var pos = geo.attributes.position;
+        if (!pos || !pos.count) return;
+        var rest = new Float32Array(pos.count * 3);
+        rest.set(pos.array.subarray(0, pos.count * 3));
+        var baked = def.shapeDeform(rest, shape);
+        if (!baked) {
+          if (!warned) { setStatus('捏脸烘焙求值不可用，导出的是原始脸（参数仍保存在文档里）', true); warned = true; }
+          return;
+        }
+        var g2 = new THREE.BufferGeometry();
+        g2.morphTargetsRelative = true;
+        g2.setAttribute('position', new THREE.BufferAttribute(baked, 3));
+        Object.keys(geo.attributes).forEach(function (k) {
+          if (k === 'position') return;
+          g2.setAttribute(k, geo.attributes[k]);   /* 共享引用，不复制 */
+        });
+        if (geo.index) g2.setIndex(geo.index);
+        if (geo.groups && geo.groups.length) {
+          g2.groups = geo.groups.map(function (gr) {
+            return { start: gr.start, count: gr.count, materialIndex: gr.materialIndex || 0 };
+          });
+        }
+        /* 法线跟着烘焙重算：先复制（不写共享 attribute），再按面遍历重算 */
+        if (geo.attributes.normal) {
+          g2.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(geo.attributes.normal.array), 3));
+          g2.computeVertexNormals();
+        }
+        /* 通用形态键 */
+        var names = [], infl = [], targets = [];
+        active.forEach(function (d) {
+          var t = def.shapeDeform(rest, (function () { var s = {}; s[d.key] = shape[d.key]; return s; })());
+          if (!t) return;
+          /* delta = 单参数效果 − 原始 rest（相对 rest 的标准形态键 delta） */
+          var delta = new Float32Array(t.length);
+          for (var i = 0; i < t.length; i++) delta[i] = t[i] - rest[i];
+          targets.push(new THREE.BufferAttribute(delta, 3));
+          names.push('mdShape_' + d.key);
+          infl.push(0);
+        });
+        {
+          /* mdShape_Rest：原始脸（delta = rest − baked）。参数怎么捏的都可逆。 */
+          var rd = new Float32Array(rest.length);
+          for (var r2 = 0; r2 < rest.length; r2++) rd[r2] = rest[r2] - baked[r2];
+          var rdMax = 0;
+          for (var r3 = 0; r3 < rest.length; r3++) rdMax = Math.max(rdMax, Math.abs(rd[r3]));
+          if (rdMax > 1e-6) {
+            targets.unshift(new THREE.BufferAttribute(rd, 3));
+            names.unshift('mdShape_Rest');
+            infl.unshift(0);
+          }
+        }
+        if (targets.length) {
+          g2.morphAttributes.position = targets;
+          o.morphTargetInfluences = infl;
+          var dict = {};
+          names.forEach(function (nm, ni) { dict[nm] = ni; });
+          o.morphTargetDictionary = dict;
+        }
+        o.geometry = g2;
+        /* ⚠ mdShapeBaked 必须放 geometry.userData（→ GLB 的 primitive.extras）：
+         * mesh.userData 带 mdSkin（骨骼引用，循环结构）无法 JSON.stringify，
+         * 而 meshDef.extras 被 GLTFExporter 独占给 targetNames。primitive.extras
+         * Blender 等外部工具读得到；自家导入不依赖它 —— targetNames 已携带
+         * 「这些形态键是捏脸键」的全部语义（权重 0 + 无组件 = 不会二次形变）。 */
+        g2.userData.mdShapeBaked = { version: 1, params: shape, targetNames: names };
+      });
+    });
   }
 
   /* ---------------- 导出贴图：标准 glTF baseColorTexture ----------------
@@ -10512,8 +10840,12 @@
    *   - 没叠过混合层 / 笔迹的槽，extras 不再存一份（GLB 的 baseColorTexture 就是它）；
    *   - 叠过的槽保留底座，并标记 slotPainted，重开时不会拿合成图当底座。
    * 这次导出一张图都没带上时不做任何瘦身 —— 宁可文件大，不能丢贴图。 */
-  function exportDocJson(buf) {
+  function exportDocJson(buf, levelId) {
     var docJson = SeedModel.Scene.toSeedModel(st.doc);
+    /* 单关导出：seedModel 也按关裁剪 —— 只留该关节点、它引用的网格、它自己。
+     * 不裁的话 GLB 网格只有一关，seedModel 却把别的关的数据全带上，
+     * 导入回 App 会「半恢复」出幽灵对象（有节点有网格、不在 GLB 场景里）。 */
+    if (levelId) docJson = filterDocJsonForLevel(docJson, levelId);
     try {
       var mats = docJson && docJson.materials;
       var maps = mats && mats.slotMaps;
@@ -10541,6 +10873,29 @@
       /* 有编辑层的槽：重开时不许从 GLB 的合成图补底座（会重复叠笔迹） */
       if (painted.length) mats.slotPainted = painted;
     } catch (e) { /* 元数据瘦身失败不影响导出本身 */ }
+    return docJson;
+  }
+
+  /* 单关 seedModel 裁剪：nodes / meshes / levels / activeNodeId / name 全部收到该关。
+   * 网格按「留下的节点还引用谁」回收 —— 没人用的网格不能跟着走（白白翻倍文件）。 */
+  function filterDocJsonForLevel(docJson, levelId) {
+    var S = SeedModel.Scene;
+    var keep = Object.create(null);
+    S.levelNodeIds(st.doc, levelId).forEach(function (id) { keep[id] = 1; });
+    docJson.nodes = (docJson.nodes || []).filter(function (n) { return keep[n.id]; });
+    var used = Object.create(null);
+    docJson.nodes.forEach(function (n) { if (n.meshRef) used[n.meshRef] = 1; });
+    Object.keys(docJson.meshes || {}).forEach(function (id) {
+      if (!used[id]) delete docJson.meshes[id];
+    });
+    var lv = null;
+    (docJson.levels || []).forEach(function (l) {
+      if (l.id === levelId) lv = l;
+    });
+    docJson.levels = lv ? [{ id: lv.id, name: lv.name, nodes: (lv.nodes || []).filter(function (id) { return keep[id]; }), visible: lv.visible !== false, locked: lv.locked === true }] : [];
+    docJson.activeNodeId = docJson.nodes[0] ? docJson.nodes[0].id : '';
+    var lvName = lv ? lv.name : '关卡';
+    docJson.name = String((st.doc.name || 'model')) + '_' + lvName;
     return docJson;
   }
 
@@ -11645,10 +12000,18 @@
       return st.prefs;
     },
     getPrefs: function () { return prefs(); },
-    /* 测试用：只导出当前文档，不落盘 */
-    exportBytes: async function () {
+    /* 测试用：只导出当前文档，不落盘。opts.levelId = 只导出该关卡（单关导出）。 */
+    exportBytes: async function (opts) {
       if (!st.doc) throw new Error('没有文档');
-      return currentGLB();
+      EXPORT_LEVEL = (opts && opts.levelId) || null;
+      try { return await currentGLB(); }
+      finally { EXPORT_LEVEL = null; }
+    },
+    /* 测试用：单关导出全产物（GLB bytes + 按关裁剪后的 seedModel）。
+     * exportLevelGLB 的保存走 fileSave 会弹框，探针从这里拿数据。 */
+    exportLevelBytes: async function (levelId) {
+      if (!st.doc) throw new Error('没有文档');
+      return exportLevelBytesImpl(levelId);
     },
     /* 测试用：产出 OBJ/FBX 压缩包结构（不落盘，只回文件名与文本头） */
     exportPackage: async function (format, name) {

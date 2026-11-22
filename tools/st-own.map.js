@@ -65,7 +65,9 @@ module.exports = {
       title: '面板 / 菜单 / 全局小状态（页签、浮层、忙锁、状态条计时器）',
       keys: ['rightTab', 'tbKind', 'menu', 'toolPanel', 'texOpen', 'prefs', 'uiReady', 'busy', 'statusTimer',
         /* 编辑器模式（建模/绘制）+ 视口条下拉 + 面板显隐 + 浮动菜单 */
-        'editor', 'paintTab', 'outlineTab', 'shelfTab', 'panels', 'pop', 'popItems', 'popAnchor', 'expFmt']
+        'editor', 'paintTab', 'outlineTab', 'shelfTab', 'panels', 'pop', 'popItems', 'popAnchor', 'expFmt',
+        /* 关卡面板的「移入目标」：第一次点 ☑ 才赋值（dyn） */
+        'levelsTargetId']
     },
     dock: {
       title: '内容浏览器（底部 dock）：token 用来作废旧请求',
@@ -121,6 +123,8 @@ module.exports = {
     'expFmt',
     /* 下拉菜单的锚点按钮：openPop() 时才第一次赋值 */
     'popAnchor',
+    /* 关卡面板的「移入目标」：第一次点 ☑ 才赋值 */
+    'levelsTargetId',
     /* P0 状态分区 st.view / st.edit / st.panel：定义块里没有，由 partitionState() 建；
      * 三者是同一批字段的**访问器**（defineProperty 指回原键），不是新状态。 */
     'view', 'edit', 'panel'],

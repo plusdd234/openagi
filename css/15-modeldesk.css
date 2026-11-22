@@ -4376,3 +4376,42 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
   pointer-events: none;
   filter: drop-shadow(0 0 1px rgba(255, 255, 255, .95));
 }
+
+/* ---------------- 关卡面板（大纲「关卡」页签，对标 Unreal Levels 窗口） ---------------- */
+.md-lvrow {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; margin: 0 6px 4px;
+  background: #f4f5f7; border: 1px solid #e3e6ea; border-radius: 6px;
+}
+.md-lvrow.main { background: #eef1f5; }
+.md-lvrow.off { opacity: .55; }
+.md-lvrow.lock { border-color: #d8b96a; }
+.md-lvrow.tgt { border-color: #3f6f9e; background: #eaf2fb; }
+.md-lvname {
+  flex: 1; min-width: 0; text-align: left;
+  background: none; border: none; padding: 0;
+  font: inherit; color: #1f2328; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.md-lvrow.main .md-lvname { cursor: default; }
+.md-lvmeta { color: #8a9099; font-size: 11px; white-space: nowrap; }
+.md-lvbtn {
+  background: none; border: 1px solid transparent; border-radius: 4px;
+  padding: 1px 4px; cursor: pointer; font-size: 12px; line-height: 1.4;
+}
+.md-lvbtn:hover { background: #fff; border-color: #d8dce1; }
+.md-lvbtn.on { background: #eaf2fb; border-color: #b7d2ee; }
+.md-lvbtn.del:hover { background: #fdeaea; border-color: #e5b3b3; }
+.md-lvops { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 6px 4px; }
+.md-lvop {
+  flex: 1 1 auto; background: #fbfbfc; border: 1px solid #e3e6ea; border-radius: 6px;
+  padding: 5px 8px; cursor: pointer; font: inherit; font-size: 12px; color: #1f2328;
+}
+.md-lvop:hover:not(:disabled) { background: #eaf2fb; border-color: #b7d2ee; }
+.md-lvop:disabled { opacity: .45; cursor: default; }
+.md-lvtag {
+  font-size: 10px; font-weight: 600; color: #4a6f9e;
+  background: #eaf2fb; border: 1px solid #c4d9ef; border-radius: 4px;
+  padding: 0 4px; margin-right: 4px; white-space: nowrap;
+}
+.md-lvtag.lock { color: #8a6d1a; background: #faf3dd; border-color: #e2d19a; }

@@ -1799,6 +1799,69 @@
     return 1 - shapeSstep(0.15, 1.10, du * du + dv * dv);
   }
 
+  /* ---- 捏脸：GLSL 求值器（导出烘焙用）----
+   * 直接执行 SHAPE_VERT_HEAD 的 l3Deform 源码（MDGlslEval，js/md-glsl-eval.js）。
+   * 为什么不手写 JS 版形变：那是第二份实现，转译错一个数字就是
+   * 「导出的脸 ≠ 看到的脸」且无报错。GLSL 源码在这里执行一次，语义同源。
+   * 失败返回 null —— 调用方（model-desk 导出）据此降级为「导出原始脸 + 提示」。 */
+  var SHAPE_EVAL = null;
+  /* 纯 JS 值的 uniform 表：与 applyShapeShader 同一套数字（中性区域变换 /
+   * 默认线圈 / 全 1 轮廓）。资产没就绪返回 null。 */
+  function shapeUniformsFor(params) {
+    var b = shapeBounds();
+    if (!b) return null;
+    var H = Math.max(b[1] - b[0], 1e-6);
+    return {
+      l3Shape: shapePack(params),
+      l3CoilU: SHAPE_DEFS.map(function (d) { return (DEFAULT_COILS[d.key] || [0, 0, 0, 0]).slice(); }),
+      l3Bounds: [b[0], b[1], 1 / H],
+      l3Hi: [0.5, 0.5, 0.5, 0.2],
+      l3EyeX: [0, 0, 0, 1],
+      l3MouthX: [0, 0, 0, 1],
+      l3EyeC: [0.42, 0, 0],
+      l3EyeR: [0.03, 0.02, 0.03],
+      l3MouthC: [0, 0, 0],
+      l3MouthR: [0.03, 0.02, 0.04],
+      l3EyePart: 0,
+      l3Out: [[1, 1, 1], [1, 1, 1], [1, 1, 0]]
+    };
+  }
+  function shapeEval() {
+    if (SHAPE_EVAL !== null) return SHAPE_EVAL.ok ? SHAPE_EVAL : null;
+    if (!window.MDGlslEval || typeof window.MDGlslEval.compile !== 'function') {
+      SHAPE_EVAL = { ok: false, err: 'MDGlslEval 未加载' };
+      return null;
+    }
+    var c = window.MDGlslEval.compile(SHAPE_VERT_HEAD);
+    if (!c || !c.ok) {
+      SHAPE_EVAL = { ok: false, err: (c && c.error) || '编译失败' };
+      try { console.error('[md-lumen-bridge] 捏脸求值器编译失败：' + SHAPE_EVAL.err); } catch (e) {}
+      return null;
+    }
+    /* 资产没就绪时不缓存失败（bounds/center 还没有，uniform 组不出来） */
+    if (!shapeBounds() || !shapeOrigin()) return null;
+    /* 求值前先自检一遍：l3Deform 在全 50 参数下必须恒等（±1e-6）。
+     * 求值器是「执行 GLSL」的通用件，自检失败 = GLSL 或求值器坏了，不能用于导出。 */
+    try {
+      var uni = shapeUniformsFor({});
+      var probes = [[0, 0, 0], [0.02, 0.1, 0.03], [-0.03, 0.15, -0.01], [0.01, 0.18, 0.005]];
+      for (var p = 0; p < probes.length; p++) {
+        var r = c.call('l3Deform', [probes[p], probes[p]], uni);
+        for (var q = 0; q < 3; q++) {
+          if (!isFinite(r[q]) || Math.abs(r[q] - probes[p][q]) > 1e-6) {
+            SHAPE_EVAL = { ok: false, err: '恒等自检失败' };
+            return null;
+          }
+        }
+      }
+    } catch (e) {
+      SHAPE_EVAL = { ok: false, err: (e && e.message) || String(e) };
+      return null;
+    }
+    SHAPE_EVAL = c;
+    return SHAPE_EVAL;
+  }
+
   /* 脸上的操控点：按 ANCHOR_SPECS 取「该高度的最前表面点」（照抄 buildAnchors.pick，
    * 没做射线投射 —— pick 出来的点已经在脸面上，够手柄落位）。 */
   var SHAPE_ANCHORS = null;
@@ -1940,6 +2003,42 @@
     shapePack: shapePack,
     shapeAnchors: shapeAnchors,
     shapeGain: shapeGain,
+    /* ---- 导出烘焙求值（GLSL 是唯一真源，不手写第二份形变实现） ----
+     * shapeUniforms(params)：纯 JS 值的 uniform 表，与 applyShapeShader 同一套数字
+     *   （中性区域变换 / 默认线圈 / 全 1 轮廓）。l3Hi 等覆层量求值用不到，仍给齐。
+     * shapeDeform(positions, params)：网格局部（资产 − center）逐顶点求 l3Deform，
+     *   返回 Float32Array 或 null（求值器不可用 / 出 NaN —— 宁可导出原始脸，
+     *   绝不把 NaN 网格写进文件）。烘焙口径 = bind pose 下蒙皮恒等
+     *   （probe-md-parity 已证）+ 注入在 skinning_vertex 之后 → baked = l3Deform(rest, rest)。
+     * shapeEvalOk()：求值器是否可用（编译失败时导出侧据此决定是否降级提示）。 */
+    shapeUniforms: shapeUniformsFor,
+    shapeDeform: function (positions, params) {
+      var uni = shapeUniformsFor(params);
+      var ev = shapeEval();
+      if (!uni || !ev || !positions) return null;
+      var org = shapeOrigin();
+      if (!org) return null;
+      var out = new Float32Array(positions.length);
+      try {
+        for (var i = 0; i < positions.length; i += 3) {
+          /* 网格局部 → 资产系：+ l3Org（center）。l3Deform 的 rest 锚点也用资产系。 */
+          var px = positions[i] + org[0];
+          var py = positions[i + 1] + org[1];
+          var pz = positions[i + 2] + org[2];
+          var r = ev.call('l3Deform', [[px, py, pz], [px, py, pz]], uni);
+          out[i] = r[0] - org[0];
+          out[i + 1] = r[1] - org[1];
+          out[i + 2] = r[2] - org[2];
+        }
+      } catch (e) {
+        return null;
+      }
+      for (var j = 0; j < out.length; j++) {
+        if (!isFinite(out[j])) return null;   /* ⚠ NaN 串进网格 = 整张脸消失 */
+      }
+      return out;
+    },
+    shapeEvalOk: function () { return !!shapeEval(); },
     /* 高亮覆层的线圈：key 是参数名（l3Hi = 该参数的线圈，l3SelKind = 0） */
     shapeCoilOf: function (key) { return DEFAULT_COILS[key] || null; },
     /* 当前在脸上显示哪一组操控点（组件的界面状态，App 只读） */

@@ -393,6 +393,9 @@
       var firstMesh = nodes.filter(function (n) { return n.type === 'mesh'; })[0];
       actId = firstMesh ? firstMesh.id : (nodes[0] ? nodes[0].id : '');
     }
+    /* 关卡（v2.3，对标 Unreal 的 World/Level）：老文档没有 levels = 全部对象都在主关卡。
+     * 悬空引用在这里清掉（节点删了关卡还挂着 id），一个节点只归属一个关卡。 */
+    var levels = levelsOfRaw(raw.levels, nodes);
 
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -407,6 +410,7 @@
       selection: selectionOf(raw.selection),
       materials: mats,
       meshSlots: meshSlots,
+      levels: levels,
       historyBoundary: {
         undoPersisted: false,
         loadedAtRevision: Math.max(0, Math.round(num(raw.historyBoundary && raw.historyBoundary.loadedAtRevision, rev.current))),
@@ -414,6 +418,199 @@
         historyResetReason: str(raw.historyBoundary && raw.historyBoundary.historyResetReason, 'reopen')
       }
     };
+  }
+
+  /* ---------------- 关卡（v2.3，对标 Unreal 的 World / Level） ----------------
+   * World = doc（不复制数据，关卡只是节点引用清单）；Persistent Level = 未列入
+   * 任何子关卡的对象，永远在场；Sub-Level = doc.levels[] 的一条。
+   * 铁律：关卡操作**绝不丢数据** —— 删关卡 = 节点回主关卡；隐藏 = node.visible
+   * 批量置 false，恢复 = 批量回 true（对象级隐藏状态被关卡开关覆盖，Unreal 同语义）；
+   * 锁定 = 拾取/变换过滤（数据不动）。节点删除后关卡里的悬空 id 由 levelsNormalize 清。 */
+  function levelsOfRaw(raw, nodes) {
+    var have = isObj(nodes) ? null : null;
+    var nodeSet = Object.create(null);
+    if (Array.isArray(nodes)) nodes.forEach(function (n) { nodeSet[n.id] = 1; });
+    var out = [];
+    var seenNode = Object.create(null);
+    if (Array.isArray(raw)) {
+      raw.forEach(function (lv, li) {
+        if (!isObj(lv)) return;
+        var rec = {
+          id: str(lv.id, 'lvl-' + (out.length + 1)).slice(0, 64),
+          name: str(lv.name, '关卡 ' + (out.length + 1)).slice(0, 60),
+          nodes: [],
+          visible: lv.visible !== false,
+          locked: lv.locked === true
+        };
+        if (Array.isArray(lv.nodes)) {
+          lv.nodes.forEach(function (nid) {
+            var s = str(nid, '');
+            if (!s || seenNode[s] || !nodeSet[s]) return;   /* 一个节点只归一关；悬空剔除 */
+            seenNode[s] = 1;
+            rec.nodes.push(s);
+          });
+        }
+        out.push(rec);
+      });
+    }
+    return out;
+  }
+
+  function levelsNormalize(doc) {
+    if (!doc) return [];
+    if (!Array.isArray(doc.levels)) doc.levels = [];
+    var nodeSet = Object.create(null);
+    if (Array.isArray(doc.nodes)) doc.nodes.forEach(function (n) { nodeSet[n.id] = 1; });
+    var seen = Object.create(null);
+    doc.levels.forEach(function (lv) {
+      var kept = [];
+      (lv.nodes || []).forEach(function (nid) {
+        if (!nodeSet[nid] || seen[nid]) return;
+        seen[nid] = 1;
+        kept.push(nid);
+      });
+      lv.nodes = kept;
+    });
+    return doc.levels;
+  }
+
+  function levelsOf(doc) {
+    if (!doc) return [];
+    if (!Array.isArray(doc.levels)) doc.levels = [];
+    return doc.levels;
+  }
+
+  function levelById(doc, id) {
+    var list = levelsOf(doc);
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+
+  /* 节点归属：'main'（主关卡 / 未分配）或关卡 id；节点不存在返回 null。 */
+  function nodeLevelId(doc, nodeId) {
+    if (!doc || !nodeById(doc, nodeId)) return null;
+    var list = levelsOf(doc);
+    for (var i = 0; i < list.length; i++) {
+      if ((list[i].nodes || []).indexOf(nodeId) >= 0) return list[i].id;
+    }
+    return 'main';
+  }
+
+  /* 关卡的对象清单：levelId 'main' = 未分配到任何子关卡的所有节点（按文档顺序）。 */
+  function levelNodeIds(doc, levelId) {
+    if (!doc) return [];
+    if (levelId === 'main') {
+      var assigned = Object.create(null);
+      levelsOf(doc).forEach(function (lv) { (lv.nodes || []).forEach(function (nid) { assigned[nid] = 1; }); });
+      var out = [];
+      if (Array.isArray(doc.nodes)) doc.nodes.forEach(function (n) { if (!assigned[n.id]) out.push(n.id); });
+      return out;
+    }
+    var lv = levelById(doc, levelId);
+    return lv ? (lv.nodes || []).slice() : [];
+  }
+
+  /* 关卡 id 的序号必须是**模块级递增**：同毫秒连建两关时 Date.now 相同，
+   * 而 n 是「重名顺延计数」—— 名字不同的两关 n 都是 1，id 就撞车了。
+   * 实测后果：levelSetVisible(lv2) 命中 lv1，对象被隐藏、单关导出变空场景。 */
+  var LEVEL_SEQ = 0;
+  function levelCreate(doc, name) {
+    if (!doc) return null;
+    var list = levelsOf(doc);
+    /* ⚠ 重名顺延必须在「基础名」上加序号，而不是在 while 里重算 nm ——
+     * 用户给了名字时 str(name) 永远非空，nm 不变，while 就是死循环
+     * （实测：页面 evaluate 直接挂死，整条命令超时被杀）。 */
+    var base = str(name, '').slice(0, 60);
+    if (!base) base = '关卡 ' + (list.length + 1);
+    var nm = base, n = 1;
+    while (list.some(function (lv) { return lv.name === nm; })) { n++; nm = base + ' ' + n; }
+    var lv = { id: 'lvl-' + Date.now().toString(36) + '-' + (++LEVEL_SEQ), name: nm, nodes: [], visible: true, locked: false };
+    list.push(lv);
+    return lv;
+  }
+
+  /* 删关卡：节点全部回主关卡（数据不动）。返回回主的节点数。 */
+  function levelDelete(doc, id) {
+    var list = levelsOf(doc);
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id !== id) continue;
+      var count = (list[i].nodes || []).length;
+      /* 隐藏过的关卡删掉前先把节点显回来（回主关卡=回到视野） */
+      if (list[i].visible === false) {
+        (list[i].nodes || []).forEach(function (nid) {
+          var n = nodeById(doc, nid);
+          if (n) n.visible = true;
+        });
+      }
+      list.splice(i, 1);
+      return count;
+    }
+    return -1;
+  }
+
+  function levelRename(doc, id, name) {
+    var lv = levelById(doc, id);
+    if (!lv) return false;
+    var s = str(name, '').slice(0, 60);
+    if (!s) return false;
+    lv.name = s;
+    return true;
+  }
+
+  /* 关卡显隐：直接批量写 node.visible（渲染判定只认它）。隐藏不丢数据 ——
+   * mesh / 参数 / 变换全在，恢复 = 显回来。 */
+  function levelSetVisible(doc, id, visible) {
+    var lv = levelById(doc, id);
+    if (!lv) return false;
+    lv.visible = visible !== false;
+    (lv.nodes || []).forEach(function (nid) {
+      var n = nodeById(doc, nid);
+      if (n) n.visible = lv.visible;
+    });
+    return true;
+  }
+
+  /* 移入关卡：从其它关卡自动摘除（一个节点只归一关）。 */
+  function levelAssign(doc, id, nodeIds) {
+    var lv = levelById(doc, id);
+    if (!lv || !Array.isArray(nodeIds) || !nodeIds.length) return false;
+    var ok = 0;
+    nodeIds.forEach(function (nid) {
+      if (!nodeById(doc, nid)) return;
+      levelsOf(doc).forEach(function (other) {
+        if (other === lv) return;
+        var at = (other.nodes || []).indexOf(nid);
+        if (at >= 0) other.nodes.splice(at, 1);
+      });
+      if (lv.nodes.indexOf(nid) < 0) lv.nodes.push(nid);
+      /* 目标关卡如果是隐藏的，节点跟着隐（与 visible 状态一致） */
+      var n = nodeById(doc, nid);
+      if (n && lv.visible === false) n.visible = false;
+      ok++;
+    });
+    return ok > 0;
+  }
+
+  /* 移回主关卡：从所属子关卡摘除。 */
+  function levelUnassign(doc, nodeIds) {
+    if (!Array.isArray(nodeIds) || !nodeIds.length) return false;
+    var ok = 0;
+    nodeIds.forEach(function (nid) {
+      levelsOf(doc).forEach(function (lv) {
+        var at = (lv.nodes || []).indexOf(nid);
+        if (at >= 0) { lv.nodes.splice(at, 1); ok++; }
+      });
+    });
+    return ok > 0;
+  }
+
+  /* 锁定关卡返回节点 id 集（拾取/变换过滤用）。 */
+  function lockedNodeIds(doc) {
+    var out = [];
+    levelsOf(doc).forEach(function (lv) {
+      if (lv.locked) (lv.nodes || []).forEach(function (nid) { out.push(nid); });
+    });
+    return out;
   }
 
   function validate(raw) {
@@ -691,6 +888,8 @@
       var next = nodesOf(doc)[0] || doc.nodes[0];
       doc.activeNodeId = next ? next.id : '';
     }
+    /* 关卡里别留悬空引用：节点删了，关卡清单跟着清（关卡不丢，只是少一条） */
+    levelsNormalize(doc);
     return true;
   }
 
@@ -980,6 +1179,19 @@
     renameSlot: renameSlot,
     removeSlot: removeSlot,
     assignSlot: assignSlot,
+    /* 关卡（World/Level）：只存节点引用清单，绝不复制网格数据；删关/隐藏/锁定都无损 */
+    levelsOf: levelsOf,
+    levelsNormalize: levelsNormalize,
+    levelById: levelById,
+    nodeLevelId: nodeLevelId,
+    levelNodeIds: levelNodeIds,
+    levelCreate: levelCreate,
+    levelDelete: levelDelete,
+    levelRename: levelRename,
+    levelSetVisible: levelSetVisible,
+    levelAssign: levelAssign,
+    levelUnassign: levelUnassign,
+    lockedNodeIds: lockedNodeIds,
     /* 材质归属：材质库是文档级，归属是网格级；追加资产靠 adoptMaterials + remapSlotIndices */
     slotIdsOf: slotIdsOf,
     slotsOf: slotsOf,

@@ -40,7 +40,9 @@
     "test:mdrestore": "node tools/probe-md-restore.js",
     "test:mdparity": "node tools/probe-md-parity.js",
     "test:mdsculpt": "node tools/probe-md-sculpt.js",
-    "test:mdshape": "node tools/probe-md-shape.js"
+    "test:mdshape": "node tools/probe-md-shape.js",
+    "test:mdbake": "node tools/probe-md-bake.js",
+    "test:mdlevels": "node tools/probe-md-levels.js"
   },
   "dependencies": {
     "playwright-core": "^1.64.1"
