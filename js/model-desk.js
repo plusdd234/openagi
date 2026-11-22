@@ -1739,6 +1739,7 @@
       '<button type="button" class="md-wide" data-md-act="tex">在 3D 查看器里设置贴图</button>',
       '</div>',
       '</div>',
+      aiTexSectionHtml(),
       '<div class="md-sec">',
       '<div class="md-h2">当前能力</div>',
       '<div class="md-sec-b">',
@@ -3042,6 +3043,151 @@
   function slotNameAt(i) {
     var names = (st.doc && st.doc.materials && st.doc.materials.slotNames) || [];
     return names[i] || ('插槽 ' + (i + 1));
+  }
+
+  /* ---------------- AI 材质（选中对象 → 生图 → 贴图） ----------------
+   * 流程照抄 tripostudio 的网页纹理链路（2026-11-22）：
+   *   截视口（可选参考）→ Tripo 网页生图（wfTripoWebImage → 8790/generate，
+   *   网页自动化）或当前图像引擎（wfImage：本地 ComfyUI / 云端 API）→
+   *   拉回像素（loadImageForCanvas 走 relay，防 canvas 跨域污染）→
+   *   写 node.surface（节点级覆盖）→ slotEdit 落一条历史。
+   * 为什么写 node.surface 不写 doc.materials.slotMaps：材质库是文档级的，
+   * 直接写槽会让共享同槽的其他对象一起换脸（见 applyComponentSurface 注释）；
+   * 节点级覆盖也天然兼容组件表面（头模的皮肤贴图不会被 AI 图洗掉 undo 不了的问题
+   * —— 覆盖走 applyNodeSurface，排在组件表面之后，后写的赢）。 */
+  function aiTexState() {
+    if (!st.aiTex) st.aiTex = { prompt: '', ref: false, src: 'tripo', busy: false };
+    return st.aiTex;
+  }
+
+  function aiTexSectionHtml() {
+    var s = aiTexState();
+    var node = st.node;
+    if (!node) return '';
+    var has = !!(node.surface && node.surface.map);
+    var uvOk = true;
+    try {
+      var mesh = SeedModel.Scene.getMesh(st.doc, node);
+      uvOk = !mesh || SeedModel.Mesh.hasUV(mesh);
+    } catch (e) { uvOk = true; }
+    return '<div class="md-sec">' +
+      '<div class="md-h2">AI 材质（当前对象）</div>' +
+      '<div class="md-sec-b">' +
+      (has ? '<div class="md-note">已按对象覆盖贴图（优先于材质槽底图与组件表面）。</div>' : '') +
+      (!uvOk ? '<div class="md-warn">该网格还没有 UV：贴图铺不开会整面拉花，先在 UV 编辑器里展开（盒投影）。</div>' : '') +
+      '<label class="md-row1"><span>描述</span><input type="text" data-md-aitex="prompt" value="' + esc(s.prompt) + '" placeholder="例：风化的青铜金属，划痕，绿锈"></label>' +
+      '<label class="md-row1"><span>来源</span><select data-md-aitex="src">' +
+      '<option value="tripo"' + (s.src === 'tripo' ? ' selected' : '') + '>Tripo 网页生图</option>' +
+      '<option value="engine"' + (s.src === 'engine' ? ' selected' : '') + '>当前图像引擎</option>' +
+      '</select></label>' +
+      '<label class="md-ai-ref" title="把当前视口画面作为参考图（图生图）">' +
+      '<input type="checkbox" data-md-aitex="ref"' + (s.ref ? ' checked' : '') + '>' +
+      '<span>以当前视口画面为参考</span></label>' +
+      '<button type="button" class="md-wide" data-md-act="ai-tex-gen"' + (s.busy ? ' disabled' : '') + '>' +
+      (s.busy ? '生成中…（约 1–3 分钟）' : '生成贴图并应用') + '</button>' +
+      (has ? '<button type="button" class="md-wide" data-md-act="ai-tex-clear">移除 AI 贴图（回到材质槽底图）</button>' : '') +
+      '<div class="md-note">Tripo 走网页账号：先在「浏览器」App 登录 Tripo 并停在生图页；图像引擎走设置里的图像模型。贴图只属于当前对象，随文档保存。</div>' +
+      '</div></div>';
+  }
+
+  /* 视口截图当参考图。必须在同一同步块里 render + toDataURL：
+   * 默认没有 preserveDrawingBuffer，跨帧取画布只会拿到空图。 */
+  function aiTexRefShot() {
+    if (!st.renderer || !st.scene || !st.camera) return '';
+    try {
+      st.renderer.render(st.scene, st.camera);
+      return st.renderer.domElement.toDataURL('image/png');
+    } catch (e) { return ''; }
+  }
+
+  /* 任何来源（远程 URL / dataURL）→ 长边 ≤1024 的 PNG dataURL。
+   * loadImageForCanvas（blueprint-runtime 全局）已经把远程图走 relay 拉成 blob，
+   * 画布不会被跨域污染 —— 直接 Image.src 塞远程地址的话 toDataURL 会抛安全错。 */
+  function aiTexNormalize(src) {
+    if (typeof loadImageForCanvas !== 'function') {
+      return Promise.reject(new Error('图像加载运行时未加载（blueprint-runtime.js）'));
+    }
+    return loadImageForCanvas(src).then(function (r) {
+      var img = r && r.img;
+      try { if (r && r.revoke) r.revoke(); } catch (e) {}
+      if (!img || !(img.naturalWidth || img.width)) throw new Error('贴图解码失败');
+      var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+      var k = Math.min(1, 1024 / Math.max(w, h));
+      var cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(w * k));
+      cv.height = Math.max(1, Math.round(h * k));
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      return cv.toDataURL('image/png');
+    });
+  }
+
+  function aiTexBusyUi(busy) {
+    var s = aiTexState();
+    s.busy = busy;
+    var btn = document.querySelector('[data-md-act="ai-tex-gen"]');
+    if (btn) {
+      btn.disabled = busy;
+      btn.textContent = busy ? '生成中…（约 1–3 分钟）' : '生成贴图并应用';
+    }
+  }
+
+  async function doGenMaterial() {
+    var s = aiTexState();
+    if (s.busy) return;
+    if (!st.doc || !st.node) { setStatus('先选中一个对象', true); return; }
+    var prompt = String(s.prompt || '').trim();
+    if (!prompt) { setStatus('先填一句贴图描述', true); return; }
+    if (s.src === 'tripo' && typeof wfTripoWebImage !== 'function') {
+      setStatus('生图运行时未加载（blueprint-runtime.js）', true); return;
+    }
+    aiTexBusyUi(true);
+    var t0 = Date.now();
+    var node = st.node;
+    try {
+      var refs = s.ref ? [aiTexRefShot()] : [];
+      if (s.ref && !refs[0]) throw new Error('拿不到视口画面');
+      var enriched = prompt + '，无缝贴图，四方连续，无接缝，均匀光照，无阴影，高细节';
+      var src = '';
+      if (s.src === 'tripo') {
+        setStatus('Tripo 网页生成中…（首次可能要 1–3 分钟）');
+        var r = await wfTripoWebImage(enriched, refs, {
+          ratio: '1:1',
+          mode: refs.length ? 'image' : 'text',
+          timeoutSec: 300
+        });
+        src = r && r.url;
+        if (!src) throw new Error('Tripo 没有返回图片地址');
+      } else {
+        setStatus('图像引擎生成中…');
+        src = await wfImage(enriched, refs[0] || '', { timeoutSec: 300 });
+        if (!src) throw new Error('图像引擎没有返回图片');
+      }
+      setStatus('贴图拉回中…');
+      var dataUrl = await aiTexNormalize(src);
+      var ok = slotEdit('AI 生成材质', function () {
+        node.surface = { map: dataUrl, color: (node.surface && node.surface.color) || '#ffffff' };
+        return true;
+      });
+      if (!ok) throw new Error('应用失败（材质槽编辑被拒）');
+      setStatus('AI 贴图已应用到「' + (node.name || '对象') + '」· ' + Math.round((Date.now() - t0) / 1000) + 's');
+    } catch (e) {
+      setStatus('AI 材质失败：' + ((e && e.message) || e), true);
+    } finally {
+      aiTexBusyUi(false);
+      paintParams(); /* 重铺：出现「移除」按钮 + 恢复生成按钮 */
+    }
+  }
+
+  function aiTexClear() {
+    if (!st.doc || !st.node) return;
+    var node = st.node;
+    var ok = slotEdit('移除 AI 贴图', function () {
+      if (!node.surface) return false;
+      node.surface = null;
+      return true;
+    });
+    paintParams();
+    setStatus(ok ? '已移除 AI 贴图，回到材质槽底图' : '当前对象没有 AI 贴图');
   }
 
   /* 绘画页签的「材质槽」下拉：自动 + 每个槽（槽名 / 当前对象用到的面数 / 有没有贴图）。
@@ -5303,6 +5449,27 @@
     }
   }
 
+  /* 节点级表面覆盖（AI 生成材质的落点）：盖过组件表面与文档槽贴图。
+   * 与 applyComponentSurface 同一套口径：map/color 一起写 + mdBaseColor/mdBaseMap
+   * 同步（显示开关「贴图」关再开才不会回退）；一份表面广播到所有材质组 ——
+   * 眼睛透明组的渲染开关由 fitGroupMaterials 按组设好，这里只动颜色与贴图、
+   * 不碰透明度（流明头模自己的 surface 就是这么铺的，实证过不会画成白板）。
+   * 必须排在 applyComponentSurface **之后**：后写的赢。 */
+  function applyNodeSurface(child, node) {
+    if (!child || !node || !node.surface || !node.surface.map) return;
+    var tex = STORE.sharedTexture(node.surface.map);
+    var mats = Array.isArray(child.material) ? child.material : [child.material];
+    for (var i = 0; i < mats.length; i++) {
+      var m = mats[i];
+      if (!m || !m.color) continue;
+      m.map = tex;
+      m.color.set(node.surface.color || '#ffffff');
+      m.userData.mdBaseColor = node.surface.color || '#ffffff';
+      m.userData.mdBaseMap = tex || null;
+      m.needsUpdate = true;
+    }
+  }
+
   /* 按节点建 pivot：一个对象一个 Group（几何来自它自己的网格，缓存按 mesh.version 复用）
    * 有蒙皮（组件声明了 skin()）就建成 SkinnedMesh —— 眼球是**真的绕关节转**，
    * 不能靠贴图平移（那颗头的虹膜几乎占满眼眶，偏一点就露眼睑）。 */
@@ -5333,6 +5500,7 @@
     }
     attachMorphs(child, geo);
     applyComponentSurface(child, node);
+    applyNodeSurface(child, node);
     child.name = node.name;
     child.userData.mdPart = 'solid';
     /* applyLook 要靠这份索引找到「写哪几个 uniform」：材质可能被重建，
@@ -7163,6 +7331,15 @@
       setComponentParam(el.dataset.mdCp, el.value, ctlHostOf(el));
       return;
     }
+    /* AI 材质：提示词 / 来源 / 参考开关都先记在会话状态，点「生成」才消费 */
+    if (el.dataset.mdAitex != null) {
+      var s = aiTexState();
+      var k = el.dataset.mdAitex;
+      if (k === 'ref') s.ref = !!el.checked;
+      else if (k === 'prompt') s.prompt = String(el.value || '');
+      else if (k === 'src') s.src = (el.value === 'engine') ? 'engine' : 'tripo';
+      return;
+    }
     /* 组件自画面板上的滑杆（流明头模的形态键强度）：拖动时只重画剪影，不重铺面板 */
     if (el.dataset.mdCev) {
       componentEvent('input', el, ctlHostOf(el));
@@ -7408,6 +7585,13 @@
   function onChange(e) {
     var el = e.target;
     if (!el) return;
+    /* AI 材质的「来源」是 select：change 才处理（onInput 只认 INPUT 标签）。
+     * 提示词 / 参考开关是 input / checkbox，已由 onInput 接住。 */
+    if (el.dataset && el.dataset.mdAitex != null && el.tagName === 'SELECT') {
+      var st0 = aiTexState();
+      st0.src = (el.value === 'engine') ? 'engine' : 'tripo';
+      return;
+    }
     /* 组件自己的下拉（流明头模的形态键 / 表情切换）：change 才处理，
      * 一次选择只重铺一次面板 */
     if (el.dataset.mdCev) {
@@ -8491,6 +8675,8 @@
       case 'slot-add': slotAdd(); break;
       case 'slot-del': slotDelete(Number(t.dataset.mdSlot) || 0); break;
       case 'slot-assign': slotAssignFaces(Number(t.dataset.mdSlot) || 0); break;
+      case 'ai-tex-gen': doGenMaterial(); break;
+      case 'ai-tex-clear': aiTexClear(); break;
       case 'new': newDocument(); break;
       case 'open': showOpenDialog(); break;
       case 'save': save(); break;
@@ -10605,10 +10791,15 @@
     var maps = GLB_MAPS || [];
     root.traverse(function (o) {
       if (!o.userData || o.userData.mdPart !== 'solid' || !o.material) return;
+      /* 节点级 AI 贴图优先：solid 的父 pivot 带着节点 id（makePivotFor 写的），
+       * 有覆盖就用节点那张，槽贴图只给没有覆盖的对象 —— 否则「生成完导出，
+       * 别的对象顶着这张脸 / 这张脸被槽底图洗掉」二选一都会发生。 */
+      var nid = o.parent && o.parent.userData ? o.parent.userData.mdNode : null;
+      var nodeTex = (nid && GLB_NODE_MAPS && GLB_NODE_MAPS[nid]) || null;
       (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m, mi) {
         if (!m) return;
         if (m.map) { disposeMap(m); m.map = null; m.needsUpdate = true; }
-        var t = maps[mi];
+        var t = nodeTex || maps[mi];
         if (t) { m.map = t; m.needsUpdate = true; }
       });
     });
@@ -10772,7 +10963,54 @@
         out.push(tex);
       } catch (e) { out.push(null); /* 单槽失败不影响整次导出 */ }
     }
+    await prepareExportNodeMaps();
     return out;
+  }
+
+  /* 节点级 AI 贴图（node.surface.map）的导出解码。
+   * buildExportRoot 的换图是**按槽下标**统一换（maps[mi]），会把它盖掉 ——
+   * 所以单独解码一份按节点 id 存，换图时节点覆盖优先于槽贴图。
+   * 与槽贴图同口径：CanvasTexture / sRGB / flipY=true（GLTFExporter 按它翻写 PNG）。 */
+  var GLB_NODE_MAPS = null;
+  async function prepareExportNodeMaps() {
+    GLB_NODE_MAPS = {};
+    var nodes = SeedModel.Scene.nodesOf(st.doc);
+    for (var i = 0; i < nodes.length; i++) {
+      var sf = nodes[i] ? nodes[i].surface : null;
+      if (!sf || !sf.map) continue;
+      try {
+        var im = await new Promise(function (res) {
+          var x = new Image();
+          x.onload = function () { res(x); };
+          x.onerror = function () { res(null); };
+          x.src = sf.map;
+        });
+        if (!im || !(im.naturalWidth || im.width)) continue;
+        var cv = document.createElement('canvas');
+        cv.width = im.naturalWidth || im.width;
+        cv.height = im.naturalHeight || im.height;
+        cv.getContext('2d').drawImage(im, 0, 0);
+        var tex = new THREE.CanvasTexture(cv);
+        if ('encoding' in tex && THREE.sRGBEncoding != null) tex.encoding = THREE.sRGBEncoding;
+        tex.flipY = true;
+        tex.userData.mdExport = true;
+        GLB_NODE_MAPS[nodes[i].id] = tex;
+      } catch (e) { /* 单节点失败不影响整次导出 */ }
+    }
+  }
+  /* currentGLB 与 exportBytes 共用同一对 GLB_MAPS / GLB_NODE_MAPS，
+   * 清理写成一份：少一份就漏一半 —— 节点贴图忘了释放是显存泄漏。 */
+  function disposeExportMaps() {
+    for (var i = 0; i < GLB_MAPS.length; i++) {
+      try { if (GLB_MAPS[i]) GLB_MAPS[i].dispose(); } catch (e) {}
+    }
+    GLB_MAPS = null;
+    if (GLB_NODE_MAPS) {
+      Object.keys(GLB_NODE_MAPS).forEach(function (k) {
+        try { if (GLB_NODE_MAPS[k]) GLB_NODE_MAPS[k].dispose(); } catch (e) {}
+      });
+      GLB_NODE_MAPS = null;
+    }
   }
 
   async function currentGLB() {
@@ -10791,12 +11029,7 @@
       return await exportGLB(root);
     } finally {
       disposeObject(root);
-      if (owns) {
-        for (var i = 0; i < GLB_MAPS.length; i++) {
-          try { if (GLB_MAPS[i]) GLB_MAPS[i].dispose(); } catch (e) {}
-        }
-        GLB_MAPS = null;
-      }
+      if (owns) disposeExportMaps();
     }
   }
 
@@ -11457,12 +11690,7 @@
       return { buffer: await exportGLB(root), mime: EXPORT_FORMATS.glb.mime };
     } finally {
       disposeObject(root);
-      if (owns) {
-        for (var i = 0; i < GLB_MAPS.length; i++) {
-          try { if (GLB_MAPS[i]) GLB_MAPS[i].dispose(); } catch (e) {}
-        }
-        GLB_MAPS = null;
-      }
+      if (owns) disposeExportMaps();
     }
   }
   /* 文本 → data URL（桌面主进程按同一个 data URL 直接落盘） */
@@ -11712,6 +11940,23 @@
     /* 把一张贴图挂到某一槽（探针 / 外部脚本用：模拟「贴图只在材质上、
      * 不在 slotMaps 里」的老资产）。真源仍是 slotMaps，这里只改材质。 */
     applySlotTexture: applySlotTexture,
+    /* 节点级 AI 贴图（node.surface）的写入口：探针 / 外部脚本用。
+     * 内部走 slotEdit —— 与 doGenMaterial 完全同一条落库路径（一条历史 + 重建），
+     * map 传 null = 移除覆盖。UI 在属性面板「AI 材质」分区。 */
+    setNodeSurface: function (nodeId, map, color) {
+      var node = st.doc
+        ? (nodeId ? SeedModel.Scene.nodeById(st.doc, nodeId) : SeedModel.Scene.nodeOf(st.doc))
+        : null;
+      if (!node) return false;
+      var ok = map != null;
+      return slotEdit(map ? 'AI 生成材质' : '移除 AI 贴图', function () {
+        node.surface = ok
+          ? { map: String(map),
+              color: /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(color || '')) ? color : '#ffffff' }
+          : null;
+        return true;
+      });
+    },
     /* 探针 / 外部脚本用：按「刚打开页面」的口径重新读取 v4 的编辑层栈。
      * 页面自己不需要它（ensureSlot 会自动灌一次），但「刷新后笔迹还在不在」
      * 只能靠这条显式路径验证。 */

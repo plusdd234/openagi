@@ -4417,3 +4417,16 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
   padding: 0 4px; margin-right: 4px; white-space: nowrap;
 }
 .md-lvtag.lock { color: #8a6d1a; background: #faf3dd; border-color: #e2d19a; }
+
+/* AI 材质（属性面板 · 选中对象生图贴图）：来源下拉与 row1 输入框同一套外观；
+ * 参考开关是独立一行 checkbox（借用 md-soft-ck 的行距，不挤进 34px 网格） */
+.md-app .md-row1 select {
+  width: 100%; box-sizing: border-box;
+  border: 1px solid #dfe3e8; border-radius: 4px;
+  background: #fff; padding: 2px 4px; font: inherit; font-size: 11px; color: #1f2328;
+}
+.md-ai-ref {
+  display: flex; align-items: center; gap: 6px;
+  margin: 2px 0 6px; font-size: 10px; color: #5a6068; cursor: pointer;
+}
+.md-ai-ref input { margin: 0; }

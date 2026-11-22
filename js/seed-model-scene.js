@@ -292,6 +292,21 @@
     return mesh;
   }
 
+  /* 节点级表面覆盖（可选）：{ map: dataURL, color: '#hex' }。
+   * 「AI 生成材质」把它写在**节点**上：材质库是文档级的，直接写 slotMaps
+   * 会串到共享同槽的其他对象（两个基础体都用槽 0，给一个贴青铜另一个也变青铜）。
+   * 只认 dataURL —— 重开文档不依赖网络，远程 URL 一律拒收（不存不可复现的引用）。
+   * 应用在视口的哪个环节见外壳 applyNodeSurface（盖过组件表面与槽贴图）。 */
+  function surfaceOf(raw) {
+    if (!isObj(raw)) return null;
+    var map = String(raw.map || '');
+    if (!/^data:image\/(png|jpeg|jpg|webp);base64,/.test(map)) return null;
+    return {
+      map: map,
+      color: /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(raw.color || '')) ? raw.color : '#ffffff'
+    };
+  }
+
   function nodeOfRaw(raw, index) {
     var n = isObj(raw) ? raw : {};
     return {
@@ -309,7 +324,10 @@
        * ⚠ 只存**纯数据**：组件的行为（怎么把参数变成形状）在组件源里，不在文档里。
        *   不保留这个字段的后果是「存盘重开 = 头模退化成一个普通网格」，
        *   表情、贴图、来源全都调不回来了 —— 那才是把特殊组件当成普通零件。 */
-      comp: (isObj(n.comp) && n.comp.id) ? clone(n.comp) : null
+      comp: (isObj(n.comp) && n.comp.id) ? clone(n.comp) : null,
+      /* 节点级表面覆盖（可选，AI 生成材质的落点）：白名单外会被 normalizeDoc 悄悄剥掉，
+       * 忘了加这行 = 「生成完存盘重开贴图凭空消失」，而且一条报错都没有。 */
+      surface: surfaceOf(n.surface)
     };
   }
 
