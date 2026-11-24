@@ -302,45 +302,12 @@ function writePNG(file, w, h, rgb) {
     /* 回归：已经有绘画工作副本时，隐藏图层必须仍然把颜色退掉。
      * 工作副本曾经把「合成图」当底座，图层像素被烙进去之后
      * composeAndApply 会把工作副本当最终像素，隐层失效（头发一直有色）。
-     * 吸管只读颜色、不产生笔迹，正好用来「只建工作副本、不改像素」。 */
+     * 旧版拿吸管顺手建工作副本；吸管改成只读后，这里显式建（不落笔、不记历史）。 */
     await page.evaluate(() => {
-      const b = document.querySelector('#mdPaintRail [data-md-ptool="picker"]');
-      if (b) b.click();
-    });
-    const pickPt = await page.evaluate(() => {
       const d = window.modelDesk.__debug();
-      const T = window.THREE, m = d.mesh, canvas = d.canvas;
-      const r = canvas.getBoundingClientRect();
-      const camPos = d.camera.getWorldPosition(new T.Vector3());
-      let bestDot = -Infinity, bestC = null;
-      for (let f = 0; f < m.faceIds.length; f++) {
-        const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
-        if (e - s < 3) continue;
-        const c = new T.Vector3();
-        for (let k = s; k < e; k++) {
-          const vi = m.faceIndices[k] * 3;
-          c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
-        }
-        c.multiplyScalar(1 / (e - s));
-        const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
-        const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
-        const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
-        const n = new T.Vector3().crossVectors(v1, v2).normalize();
-        const wc = d.pivot.localToWorld(c.clone());
-        const wn = n.clone().transformDirection(d.pivot.matrixWorld);
-        const dot = wn.dot(camPos.clone().sub(wc).normalize());
-        if (dot > bestDot) { bestDot = dot; bestC = wc; }
-      }
-      if (!bestC) return null;
-      const q = bestC.clone().project(d.camera);
-      return { x: r.left + (q.x * 0.5 + 0.5) * r.width, y: r.top + (-q.y * 0.5 + 0.5) * r.height };
+      if (d.paint && d.paint.ensureTarget) d.paint.ensureTarget(0);
     });
-    if (pickPt) {
-      await page.mouse.move(pickPt.x, pickPt.y);
-      await page.mouse.down();
-      await page.mouse.up();
-      await page.waitForTimeout(400);
-    }
+    await page.waitForTimeout(600);
     const beforeHide = await page.evaluate(() => {
       const d = window.modelDesk.__debug();
       let m = null;
@@ -523,9 +490,15 @@ function writePNG(file, w, h, rgb) {
     await page.waitForTimeout(200);
     await page.evaluate(() => {
       const b = document.getElementById('mdPropsToggle');
-      if (b) b.click();
+      if (b && !window.modelDesk.getState().showProps) b.click();
     });
     await page.waitForTimeout(300);
+    /* 材质槽在细节面板底部卡槽的「材质」页 */
+    await page.evaluate(() => {
+      const b = document.querySelector('.md-pdock-b[data-md-page="material"]');
+      if (b) b.click();
+    });
+    await page.waitForTimeout(200);
     const slot0 = await page.evaluate(() => {
       const doc = window.modelDesk.getDocument();
       return {
@@ -534,7 +507,7 @@ function writePNG(file, w, h, rgb) {
         assignDisabled: !!document.querySelector('.md-slot-a[disabled]')
       };
     });
-    check('属性编辑器列出材质槽（默认 1 个）', slot0.rows === 1 && slot0.names.length === 1, JSON.stringify(slot0));
+    check('细节面板「材质」页列出材质槽（默认 1 个）', slot0.rows === 1 && slot0.names.length === 1, JSON.stringify(slot0));
     check('未选面时「指派」按钮禁用', slot0.assignDisabled === true);
 
     await page.evaluate(() => document.querySelector('[data-md-act="slot-add"]').click());

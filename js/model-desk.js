@@ -32,7 +32,9 @@
      * frameSig = 上一帧的场景指纹，变了才画。 */
     holdUntil: 0, frameSig: '',
     mode: 'translate', space: 'world', snap: false,
-    rightTab: 'props', outlineQuery: '', showGrid: true, gridHelper: null,
+    /* 细节面板当前功能页：object / material / modifier / component / render。
+     * 页面在底部卡槽里切换，同一时刻只显示一页。 */
+    propPage: 'object', outlineQuery: '', showGrid: true, gridHelper: null,
     shading: 'shaded', quad: false, quadCams: null, viewName: '透视',
     /* 视口条上的下拉：灯光预设 / 大纲页签 / 工具架页签 / 面板显隐 */
     lightingPreset: 'default', outlineTab: 'all', shelfTab: 'poly',
@@ -42,7 +44,10 @@
     pop: null, popItems: null,
     /* 单独显示（隔离所选）：只影响视口，不写文档里的 node.visible */
     isolate: false,
-    /* 右侧工具箱两个页签：建模 / 绘画。绘画 = 把笔刷颜色直接画进当前材质槽的基础色贴图 */
+    /* 右侧栏两块内容（细节面板 / 工具箱）是两个独立开关，可以同时显示：
+     * 页头上的两颗页签分别对应一个开关，选中 = 显示，再点取消。 */
+    showProps: true, showToolbox: true,
+    /* 工具箱的形态：建模 / 绘画。绘画 = 笔刷颜色直接画进当前材质槽的基础色贴图 */
     tbKind: 'model',
     /* 绘画工具箱内部的两个页签：paint = 笔刷参数，layers = 材质图层列表 */
     paintTab: 'paint',
@@ -169,8 +174,9 @@
       'editBefore', 'txBefore', 'editor', 'tbKind', 'tool', 'gest'],
     panel: ['statusEl', 'hudEl', 'uiReady', 'busy', 'statusTimer', 'texOpen', 'menu', 'toolPanel',
       'prefs', 'dock', 'dockBody', 'dockOpen', 'dockLoading', 'dockAssets', 'dockErr',
-      'dockThumbs', 'dockToken', 'prim', 'autoName', 'rightTab', 'outlineQuery', 'outlineTab',
+      'dockThumbs', 'dockToken', 'prim', 'autoName', 'propPage', 'outlineQuery', 'outlineTab',
       'shelfTab', 'panels', 'pop', 'popItems', 'paintTab', 'hbOpen', 'hbHover', 'hbZones',
+      'showProps', 'showToolbox',
       'hbPanel', 'pointer']
   };
   (function partitionState() {
@@ -343,6 +349,34 @@
       '<circle cx="8" cy="12" r="1.15"/><circle cx="16" cy="12" r="1.15"/>' +
       '<circle cx="8" cy="16" r="1.15"/><circle cx="12" cy="16" r="1.15"/><circle cx="16" cy="16" r="1.15"/></g></svg>'
   };
+
+  /* 细节面板底部功能页卡槽：图标 + 小字，顺序固定（改顺序前先想用户肌肉记忆）。
+   * component / render 两页按对象能力显隐，见 syncPropDock。 */
+  var PROP_PAGE_ICONS = {
+    object: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 20 7.6v8.8L12 20.8 4 16.4V7.6z"/><path d="M4 7.6 12 12l8-4.4M12 12v8.8"/></svg>',
+    material: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="M8.5 8.3a5.3 5.3 0 0 1 3.4-1.5"/><circle cx="9.7" cy="13.4" r="1.1"/><circle cx="14.3" cy="13.4" r="1.1"/></svg>',
+    modifier: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h8M16 7h4M4 12h4M12 12h8M4 17h10M18 17h2"/><circle cx="14" cy="7" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="16" cy="17" r="2"/></svg>',
+    component: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3.4 8.6 4.3L12 12 3.4 7.7z"/><path d="m3.4 12 8.6 4.3 8.6-4.3"/><path d="m3.4 16.2 8.6 4.4 8.6-4.4"/></svg>',
+    render: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="4.4" width="17.6" height="15.2" rx="2"/><path d="M3.2 12.6h6.2v7H3.2zM9.4 4.4h6.2v8.2H9.4zM15.6 8.6h5.2v4.6h-5.2z"/></svg>'
+  };
+
+  function propDockHtml() {
+    return [
+      ['object', '对象', '对象：名称 / 统计 / 变换 / 能力'],
+      ['material', '材质', '材质：槽位 / 贴图 / AI 材质'],
+      ['modifier', '修改器', '修改器：细分 / 镜像 / 加厚'],
+      ['component', '组件', '组件：参数与控制器'],
+      ['render', '纹理生成', '纹理生成：① 渲染模型结构 → ② AI 生成上色 → ③ 生成纹理']
+    ].map(function (p) {
+      var on = p[0] === st.propPage;
+      /* component / render 默认隐藏，等 paintParams 按当前对象能力再放出来 */
+      var hide = (p[0] === 'component' || p[0] === 'render') ? ' hidden' : '';
+      return '<button type="button" class="md-pdock-b' + (on ? ' on' : '') + '" role="tab"' +
+        ' data-md-page="' + p[0] + '" aria-selected="' + (on ? 'true' : 'false') + '"' +
+        ' title="' + p[2] + '"' + hide + '>' + PROP_PAGE_ICONS[p[0]] +
+        '<span class="md-pdock-lb">' + p[1] + '</span></button>';
+    }).join('');
+  }
 
   /* 工具箱行图标：统一 18×18 线条风格，语义对齐工具（不抄 Blender 图标文件）。
    * currentColor + 少量强调色，深浅主题都能读。 */
@@ -602,6 +636,8 @@
       /* 绘制模式的左侧专业工具栏：只在绘制模式出现，替代建模模式的竖条。
        * 每个按钮都对应一条真实手势（见 md-paint.js 的 tool 分派），不是占位。 */
       '    <div class="md-paintrail" id="mdPaintRail" hidden role="toolbar" aria-label="绘制工具">',
+      '      <button type="button" class="md-prbtn" data-md-ptool="select" title="选取：点一下切换当前选中的对象（不落笔、不改贴图）">' +
+      '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M5.4 3.6l13.6 8.2-6.1 1.3-2.6 6.1z" fill="currentColor" stroke="none"/><path d="M12.6 13.5l4.6 5.6" stroke-linecap="round"/></svg><span class="md-prname">选取<kbd>V</kbd></span></button>',
       '      <button type="button" class="md-prbtn on" data-md-ptool="brush" title="画笔：按右侧笔刷设置上色">' +
       '        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15.2 3.6l5.2 5.2-8.4 8.4-5.2-5.2z" fill="currentColor" stroke="none"/><path d="M5.4 12.8l5.8 5.8c-1.2 2.2-3.1 3-6.2 3 .9-1 .9-2.3.9-3.6 0-1.9-.5-3.5-.5-5.2z"/></svg><span class="md-prname">画笔<kbd>B</kbd></span></button>',
       '      <button type="button" class="md-prbtn" data-md-ptool="pencil" title="铅笔：硬边笔尖，边缘不收窄">' +
@@ -703,7 +739,8 @@
       '    </div>',
       '    <aside class="md-right">',
       '      <div class="md-panel-h md-right-h"><span class="md-right-t" id="mdRightTitle">建模工具箱</span><em id="mdTbMode">对象</em>' +
-      '        <button type="button" class="md-otab md-propstog" id="mdPropsToggle" title="属性编辑器：变换 / 材质槽 / 操作历史">属性</button>' +
+      '        <button type="button" class="md-otab md-propstog on" id="mdPropsToggle" aria-pressed="true" title="取消显示细节面板">细节面板</button>' +
+      '        <button type="button" class="md-otab md-propstog on" id="mdToolboxToggle" aria-pressed="true" title="取消显示工具箱">工具箱</button>' +
       '        <button type="button" class="md-wb-phbtn" data-md-panel="right" title="折叠 / 展开右侧面板" aria-pressed="true">◨</button></div>',
       '      <section class="md-tb">',
       '        <div class="md-tb-tabs"><button type="button" class="md-otab md-tbtab on" data-md-tbtab="object">对象</button><button type="button" class="md-otab md-tbtab" data-md-tbtab="component">多组件</button></div>',
@@ -779,11 +816,12 @@
       '        </div>',
       '      </section>',
       '      <section class="md-props">',
-      '        <div class="md-ptabs">',
-      '          <button type="button" class="md-ptab on" data-md-tab="props">属性编辑器</button>',
-      '          <button type="button" class="md-ptab" data-md-tab="channels">通道盒</button>',
-      '        </div>',
       '        <div class="md-pbody" id="mdParams"></div>',
+      /* 底部功能页卡槽：图标 + 小字，固定不随内容滚动。
+       * 页面内容全部在 #mdParams 里，切页只换显示的那一页。 */
+      '        <nav class="md-pdock" id="mdPropDock" role="tablist" aria-label="细节面板功能页">',
+      propDockHtml(),
+      '        </nav>',
       '      </section>',
       '    </aside>',
       '  </div>',
@@ -822,6 +860,7 @@
     applyEditorChrome(st.editor);
     /* 重开窗口时把绘制条 / 右侧面板拉回当前笔刷状态（不是 HTML 里的默认值） */
     updatePaintUi();
+    applyRightPanels();
 
     st.stage = $('mdStage');
     st.canvas = $('mdCanvas');
@@ -844,6 +883,15 @@
     host.addEventListener('pointercancel', onSoftCurveUp);
     host.addEventListener('focusin', onFocusIn);
     host.addEventListener('keydown', onKeyDown);
+    document.addEventListener('paste', onPasteTripoTexRef);
+    /* 记住最后一次交互的参考图区域：纹理生成页里 ② AI 生成上色 与 ③ 纹理生成
+     * 都能粘贴参考图，靠这个把剪贴板图片送到用户刚点的那个区域。 */
+    document.addEventListener('pointerdown', function (e) {
+      var tg = e.target;
+      if (!tg || !tg.closest) return;
+      if (tg.closest('[data-md-tx-step="2"]')) refPasteZone = 'gen';
+      else if (tg.closest('[data-md-tx-step="3"]')) refPasteZone = 'tex';
+    }, true);
     global.addEventListener('keydown', onKeyLayer, false);
 
     /* 主菜单下拉 / 视口条下拉：点外面 / 按 Esc 收起。捕获阶段处理，先于工具层的 Esc。 */
@@ -1023,9 +1071,6 @@
     }
     document.querySelectorAll('.md-tbtab[data-md-tbtab]').forEach(function (b) {
       b.classList.toggle('on', (b.dataset.mdTbtab === 'object') === (st.selMode === 'object'));
-    });
-    document.querySelectorAll('.md-ptab[data-md-tab]').forEach(function (b) {
-      b.classList.toggle('on', b.dataset.mdTab === st.rightTab);
     });
     document.querySelectorAll('.md-op[data-md-op]').forEach(function (b) {
       b.classList.toggle('on', b.dataset.mdOp === 'knife' && st.tool === 'knife');
@@ -1878,18 +1923,20 @@
     return true;
   }
 
+  /* 细节面板 = 底部卡槽切页 + 上方单页内容。
+   * 所有页都写进 DOM（切页只换 hidden），这样切页不丢状态、探针也能直接读到；
+   * 只有当前页挂载纹理生成（渲染视图），避免隐藏容器里跑预览。 */
   function paintParams() {
     var box = $('mdParams');
     if (!box) return;
-    document.querySelectorAll('.md-ptab[data-md-tab]').forEach(function (b) {
-      b.classList.toggle('on', b.dataset.mdTab === st.rightTab);
-    });
     if (!st.doc) {
       box.innerHTML = '<div class="md-note">还没有打开文档。</div>';
+      syncPropDock();
       return;
     }
     if (!st.node) {
       box.innerHTML = '<div class="md-note">场景是空的：用「新建」加一个对象，或在内容浏览器里「置于」一个模型。</div>';
+      syncPropDock();
       return;
     }
     var s = statsNow();
@@ -1904,89 +1951,86 @@
     }
     var euler = THREE ? rot.join(', ') + '°' : '—';
 
-    /* 通道盒：Maya 里就是属性名 + 数值框的密集列表，适合核对 transform */
-    if (st.rightTab === 'channels') {
-      box.innerHTML = [
+    var pages = [
+      ['object', [
         '<div class="md-sec">',
-        '<div class="md-h2">变换</div>',
-        '<div class="md-sec-b md-ch-list">',
-        chRow('平移 X', fmt(t.position[0])),
-        chRow('平移 Y', fmt(t.position[1])),
-        chRow('平移 Z', fmt(t.position[2])),
-        chRow('旋转 X', rot[0] + '°'),
-        chRow('旋转 Y', rot[1] + '°'),
-        chRow('旋转 Z', rot[2] + '°'),
-        chRow('缩放 X', fmt(t.scale[0])),
-        chRow('缩放 Y', fmt(t.scale[1])),
-        chRow('缩放 Z', fmt(t.scale[2])),
-        chRow('可见性', '开'),
+        '<div class="md-h2">对象</div>',
+        '<div class="md-sec-b">',
+        '<label class="md-row1"><span>名称</span><input type="text" data-md-global="name" value="' + esc(st.doc.name) + '"></label>',
+        '<div class="md-note">类型：网格 · 文档 v' + (st.doc.schemaVersion || 2) + ' · 网格版本 ' + (st.doc.revision.mesh || 0) + '</div>',
+        '<div class="md-note">' + s.vertices + ' 点 · ' + s.faces + ' 面 · ' + s.edges + ' 边 · ' + s.triangles + ' 三角面</div>',
         '</div>',
         '</div>',
         '<div class="md-sec">',
-        '<div class="md-h2">节点</div>',
+        '<div class="md-h2">变换（手柄拖动）</div>',
         '<div class="md-sec-b md-ch-list">',
-        chRow('名称', st.node.name),
-        chRow('类型', st.node.type),
-        chRow('顶点', s.vertices),
-        chRow('面', s.faces),
-        chRow('边', s.edges),
-        chRow('三角面', s.triangles),
+        chRow('位置', t.position.map(fmt).join(', ')),
+        chRow('旋转', euler),
+        chRow('缩放', t.scale.map(fmt).join(', ')),
         '</div>',
         '</div>',
         '<div class="md-sec">',
-        '<div class="md-h2">文档</div>',
-        '<div class="md-sec-b md-ch-list">',
-        chRow('schema', 'v' + (st.doc.schemaVersion || 2)),
-        chRow('文档版本', st.doc.revision.current),
-        chRow('网格版本', st.doc.revision.mesh || 0),
-        chRow('历史', '撤销 ' + st.history.undo.length + ' / 重做 ' + st.history.redo.length),
+        '<div class="md-h2">当前能力</div>',
+        '<div class="md-sec-b">',
+        '<div class="md-note">对象级变换 + 点 / 边 / 面 / UV 岛拾取（F8–F12）：Shift 加选、Ctrl 切换（减选），' +
+        '拖出矩形 = 框选、按住画一圈 = 套索；对象模式同样支持框选与 Shift/Ctrl 多选，' +
+        '选中的对象在视口里画包围盒（激活对象亮蓝、其余淡蓝）。' +
+        '全选 / 反选 / 清除见「选择」菜单（Ctrl+A / Ctrl+I / Esc），选择集写进文档。</div>',
         '</div>',
         '</div>'
-      ].join('');
-      return;
-    }
+      ].join('')],
+      ['material', [
+        '<div class="md-sec">',
+        '<div class="md-h2">材质槽</div>',
+        '<div class="md-sec-b">',
+        slotHtml(),
+        '<div class="md-note">贴图配置 key：<b>' + esc(mats.textureConfigKey || st.doc.assetId || '—') + '</b>' +
+        (mats.textureConfigMissing ? '<span class="md-warn">配置缺失（复制资产未迁移）</span>' : '') + '</div>',
+        '<button type="button" class="md-wide" data-md-act="tex">在 3D 查看器里设置贴图</button>',
+        '</div>',
+        '</div>',
+        aiTexSectionHtml(),
+        '<div class="md-sec">',
+        '<div class="md-h2">UV</div>',
+        '<div class="md-sec-b">',
+        '<div class="md-uvrow">',
+        '<button type="button" class="md-uvbtn" data-md-act="uv">打开 UV 编辑器</button>',
+        '<button type="button" class="md-uvbtn' + (UV_CHECK.on ? ' on' : '') + '" data-md-act="uv-check">UV 对照贴图</button>',
+        '</div>',
+        '<div class="md-note">对照贴图只在视口里临时铺棋盘格，用来检查 UV 拉伸、朝向与接缝；不改材质、不进历史，关掉即还原。</div>',
+        '</div>',
+        '</div>',
+        tripoUvSectionHtml()
+      ].join('')],
+      ['modifier', modsHtml()],
+      ['component', componentSectionHtml()],
+      ['render', renderViewSectionHtml()]
+    ];
 
-    box.innerHTML = [
-      '<div class="md-sec">',
-      '<div class="md-h2">对象</div>',
-      '<div class="md-sec-b">',
-      '<label class="md-row1"><span>名称</span><input type="text" data-md-global="name" value="' + esc(st.doc.name) + '"></label>',
-      '<div class="md-note">类型：网格 · 文档 v' + (st.doc.schemaVersion || 2) + ' · 网格版本 ' + (st.doc.revision.mesh || 0) + '</div>',
-      '<div class="md-note">' + s.vertices + ' 点 · ' + s.faces + ' 面 · ' + s.edges + ' 边 · ' + s.triangles + ' 三角面</div>',
-      '</div>',
-      '</div>',
-      modsHtml(),
-      componentSectionHtml(),
-      renderViewSectionHtml(),
-      '<div class="md-sec">',
-      '<div class="md-h2">变换（手柄拖动）</div>',
-      '<div class="md-sec-b md-ch-list">',
-      chRow('位置', t.position.map(fmt).join(', ')),
-      chRow('旋转', euler),
-      chRow('缩放', t.scale.map(fmt).join(', ')),
-      '</div>',
-      '</div>',
-      '<div class="md-sec">',
-      '<div class="md-h2">材质槽</div>',
-      '<div class="md-sec-b">',
-      slotHtml(),
-      '<div class="md-note">贴图配置 key：<b>' + esc(mats.textureConfigKey || st.doc.assetId || '—') + '</b>' +
-      (mats.textureConfigMissing ? '<span class="md-warn">配置缺失（复制资产未迁移）</span>' : '') + '</div>',
-      '<button type="button" class="md-wide" data-md-act="tex">在 3D 查看器里设置贴图</button>',
-      '</div>',
-      '</div>',
-      aiTexSectionHtml(),
-      '<div class="md-sec">',
-      '<div class="md-h2">当前能力</div>',
-      '<div class="md-sec-b">',
-      '<div class="md-note">对象级变换 + 点 / 边 / 面 / UV 岛拾取（F8–F12）：Shift 加选、Ctrl 切换（减选），' +
-      '拖出矩形 = 框选、按住画一圈 = 套索；对象模式同样支持框选与 Shift/Ctrl 多选，' +
-      '选中的对象在视口里画包围盒（激活对象亮蓝、其余淡蓝）。' +
-      '全选 / 反选 / 清除见「选择」菜单（Ctrl+A / Ctrl+I / Esc），选择集写进文档。</div>',
-      '</div>',
-      '</div>'
-    ].join('');
-    mountRenderView();
+    /* 当前页不可用（换了对象 / 换页后节点没有这个能力）就退回「对象」 */
+    var pick = '';
+    pages.forEach(function (p) { if (p[0] === st.propPage && p[1]) pick = p[0]; });
+    if (!pick) pick = 'object';
+    st.propPage = pick;
+    box.innerHTML = pages.map(function (p) {
+      if (!p[1]) return '';
+      return '<div class="md-pane" data-md-page-pane="' + p[0] + '"' + (p[0] === pick ? '' : ' hidden') + '>' + p[1] + '</div>';
+    }).join('');
+    syncPropDock();
+    if (pick === 'render') mountRenderView();
+  }
+
+  /* 卡槽按钮只做显隐与选中态：component / render 跟对象能力走，其余常驻 */
+  function syncPropDock() {
+    var hasComp = !!(st.node && st.node.comp && st.node.comp.id);
+    var isMesh = !!(st.node && st.node.type === 'mesh');
+    document.querySelectorAll('.md-pdock-b[data-md-page]').forEach(function (b) {
+      var id = b.dataset.mdPage;
+      b.hidden = id === 'component' ? !hasComp : (id === 'render' ? !isMesh : false);
+      var on = id === st.propPage;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
   }
 
   /* 属性面板里的「组件」区：只有带 comp 身份的节点才有。
@@ -2026,22 +2070,67 @@
       '</div></div>';
   }
 
-  /* ---------------- 属性面板：渲染视图 ----------------
+  /* ---------------- 属性面板：纹理生成（三步流程） ----------------
+   * ① 渲染模型结构 + ② AI 生成上色 由 MDViewRender 画进 #mdRvHost；
+   * ③ 纹理生成由本文件画进 #mdTexHost。
    * 与「视图工坊」共用 js/view-settings.js + Model3D.viewGrid：
    * 参数表、默认值、导出布局、渲染结果完全一致，这里只是把入口放进对象属性面板。
    * 模型源与存图库都由本 App 注入，js/md-view-render.js 不读文档、不碰 MV.state。 */
+  /* 纹理生成（① 渲染 / ③ 上传）的目标对象：**以「选中的对象」为准**。
+   * 单选时它就是用户刚点的那一个；多选时退回激活对象（属性面板正在编的那个）。
+   * 这样「选中」与「激活」万一不一致（撤销 / 重开后激活失效等），
+   * 预览与上传也不会错位成别的对象（用户反馈过「选衣服却渲染头发」）。 */
+  function renderTargetNode() {
+    var doc = st.doc;
+    if (!doc) return null;
+    var ids = st.nodeIds || [];
+    if (ids.length === 1) {
+      var n = null;
+      try { n = SeedModel.Scene.nodeById(doc, ids[0]); } catch (e) { n = null; }
+      if (n && n.type === 'mesh') return n;
+    }
+    return st.node;
+  }
+
+  /* 进入「纹理生成」页前先对齐：只选了一个对象时，把它设成激活对象，
+   * 保证面板顶部 / ① 预览 / ③ 上传读的是同一个对象。 */
+  function syncRenderTarget() {
+    var doc = st.doc;
+    var ids = st.nodeIds || [];
+    if (!doc || ids.length !== 1 || doc.activeNodeId === ids[0]) return false;
+    var n = null;
+    try { n = SeedModel.Scene.nodeById(doc, ids[0]); } catch (e) { n = null; }
+    if (!n || n.type !== 'mesh') return false;
+    selectNodeById(ids[0], 'replace');
+    return true;
+  }
+
   function renderViewSectionHtml() {
-    var node = st.node;
+    var node = renderTargetNode();
     if (!node || node.type !== 'mesh') return '';
+    var sel = (st.nodeIds || []).length;
     return '<div class="md-sec md-rv-sec">' +
-      '<div class="md-h2">渲染视图<span class="md-rv-tag">配置与视图工坊共用</span></div>' +
       '<div class="md-sec-b"><div id="mdRvHost"></div></div>' +
+      '</div>' +
+      '<div class="md-sec md-tx-step" data-md-tx-step="3">' +
+        '<div class="md-tx-head"><span class="md-tx-no">3</span>' +
+          '<span class="md-tx-name">纹理生成</span>' +
+          '<span class="md-tx-hint">上传「' + esc(node.name || '对象') + '」· 保留原 UV' +
+            (sel > 1 ? '（已选 ' + sel + ' 个，用激活对象）' : '') + '</span></div>' +
+        '<div class="md-sec-b" id="mdTexHost"></div>' +
       '</div>';
+  }
+
+  /* 只重画纹理生成块（不重建整个属性面板，避免把①渲染模型结构的控件状态一起重置） */
+  function paintTripoTex() {
+    var host = $('mdTexHost');
+    if (!host) { paintParams(); return; }
+    host.innerHTML = tripoTexSectionHtml();
   }
 
   function mountRenderView() {
     var host = $('mdRvHost');
-    var node = st.node;
+    var node = renderTargetNode();
     if (!host || !node || node.type !== 'mesh') return;
     var MR = global.MDViewRender;
     if (!MR) return;
@@ -2051,6 +2140,7 @@
     MR.mount(host, {
       nodeId: nodeId,
       nodeName: node.name || '对象',
+      selCount: (st.nodeIds || []).length,
       rev: rev,
       getSource: function () {
         /* 只把当前对象导成一份临时 GLB：多视图核吃的是模型源，不是视口场景图 */
@@ -2059,6 +2149,7 @@
       saveToLib: saveRenderViewToLib,
       setStatus: setStatus
     });
+    paintTripoTex();
   }
 
   function saveRenderViewToLib(name, dataURL) {
@@ -3097,6 +3188,8 @@
     liveSlotImage: liveSlotImage,
     /* 这一槽的底图还在解码：绘画据此拒绝建平铺底工作副本（吸管吸白 / 抬笔洗白模型） */
     baseLoading: slotBaseLoading,
+    /* 没有贴图时模型显示的是材质底色；吸管要取的就是它 */
+    slotColor: STORE.slotColor,
     /* 老格式撤销补丁 / 落盘兜底：slotMaps 的读写也走仓储，模块不再自己拼数组 */
     slotMap: STORE.slotMap,
     setSlotMap: STORE.setSlotMap,
@@ -3104,6 +3197,10 @@
     onPaintInk: function (slot) { if (MIX) MIX.schedule(slot); },
     onPaintReset: function (slot) { if (MIX) MIX.schedule(slot); },
     onPaintSlot: function (slot) { if (MIX) MIX.selectSlot(slot); },
+    /* 笔迹并进哪一层由材质图层系统决定（当前绘制层），抬笔后它再记下新层 */
+    paintTarget: function (slot, meta) { return MIX ? MIX.paintTarget(slot, meta) : null; },
+    onPaintPushed: function (slot) { if (MIX) MIX.notePaintPushed(slot); },
+    onPaintMerged: function (slot, from, to) { if (MIX) MIX.notePaintMerged(slot, from, to); },
     /* 吸管 / 魔棒在绘制链内部改状态后回调，让顶部条与右侧面板立刻跟上 */
     setPaintColor: setPaintColor,
     updatePaintUi: updatePaintUi,
@@ -3121,6 +3218,13 @@
      * 命中别的对象就切过去再落笔。否则只会提示「没点到模型」，看起来就是没反应。 */
     nodeUnderPointer: function (x, y) { return pickVisibleNodeAt(x, y); },
     activateNode: function (id) { return selectNodeById(id, 'replace'); },
+    nodeName: function (id) {
+      var n = SeedModel.Scene.nodeById(st.doc, id);
+      return n ? (n.name || id) : id;
+    },
+    /* 吸管：指针下最近实体（跨对象，不切换选择）+ 该槽真正显示的图 / 显示色 */
+    pickTarget: pickTargetAt,
+    slotVisual: slotVisual,
     /* 纹理混合要读当前绘画工作区：正在画这一槽时，笔迹必须参与合成 */
     paintCanvasFor: function (slot) {
       var p = st.paint;
@@ -3264,7 +3368,11 @@
     st.paint.ink = null; st.paint.inkCtx = null; st.paint.inkDirty = false;
     st.paint.slot = -1; st.paint.doc = null;
     /* 同步重合成：撤销后不该等异步解码才看到结果 */
-    if (MIX) MIX.composeNow(patch.slot);
+    if (MIX) {
+      MIX.composeNow(patch.slot);
+      /* 图层列表里的绘制层行也要跟着换（撤销 / 重做可能删掉或换回一层） */
+      try { MIX.renderUi(); } catch (e) {}
+    }
   }
 
   function applyMatsPatch(patch, side) {
@@ -3389,6 +3497,508 @@
       '</div></div>';
   }
 
+  /* ---------------- Tripo 智能 UV（上传模型 → 自动展开） ----------------
+   * Tripo 网页的「智能 UV」只接受单部件模型，展开后会消耗积分 / 试用次数。
+   * 这里只负责三件事：读本地文件 → 交给本地 Tripo 助手（wfTripoWebUv → 8790/uv）
+   * → 把返回的 GLB 存进模型库并作为新对象置于当前文档。 */
+  function tripoUvState() {
+    if (!st.tripoUv) st.tripoUv = { busy: false, msg: '' };
+    return st.tripoUv;
+  }
+
+  function tripoUvSectionHtml() {
+    var s = tripoUvState();
+    return '<div class="md-sec">' +
+      '<div class="md-h2">Tripo 智能 UV（上传模型）</div>' +
+      '<div class="md-sec-b">' +
+      '<div class="md-note">上传一个<b>单部件</b>模型（GLB / GLTF / OBJ / STL / FBX，三角面 ≤ 8 万），用 Tripo 网页自动展开 UV，结果作为新对象导入当前文档。会消耗积分或试用次数。</div>' +
+      '<input type="file" accept=".glb,.gltf,.obj,.stl,.fbx" data-md-act="tripo-uv-file" hidden>' +
+      '<button type="button" class="md-wide" data-md-act="tripo-uv-pick"' + (s.busy ? ' disabled' : '') + '>' +
+      (s.busy ? 'Tripo 展开 UV 中…（约 1–3 分钟）' : '选择模型并展开 UV') + '</button>' +
+      (s.msg ? '<div class="md-note">' + esc(s.msg) + '</div>' : '') +
+      '<div class="md-note">先在「Tripo 工坊」里打开登录页并进入工作台；多部件模型会被 Tripo 拒绝，需要先合并成一个网格。</div>' +
+      '</div></div>';
+  }
+
+  function pickTripoUvFile() {
+    var s = tripoUvState();
+    if (s.busy) return;
+    var inp = document.querySelector('input[data-md-act="tripo-uv-file"]');
+    if (inp) inp.click();
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(String(fr.result || '')); };
+      fr.onerror = function () { reject(new Error('读取模型文件失败')); };
+      fr.readAsDataURL(file);
+    });
+  }
+
+  async function doTripoUv(file) {
+    var s = tripoUvState();
+    if (s.busy) return;
+    if (typeof wfTripoWebUv !== 'function') {
+      setStatus('Tripo 运行时未加载（blueprint-runtime.js）', true); return;
+    }
+    var name = String((file && file.name) || 'model.glb');
+    if (!/\.(glb|gltf|obj|stl|fbx)$/i.test(name)) {
+      setStatus('只支持 GLB / GLTF / OBJ / STL / FBX', true); return;
+    }
+    if (file.size > 150 * 1024 * 1024) { setStatus('模型超过 Tripo 的上传上限（150MB）', true); return; }
+    var d = deskApi();
+    if (!d || typeof d.assetPut !== 'function') { setStatus('当前环境没有资产库，无法接收结果', true); return; }
+
+    s.busy = true; s.msg = '';
+    paintParams();
+    var t0 = Date.now();
+    try {
+      setStatus('读取模型文件…');
+      var dataUrl = await fileToDataUrl(file);
+      setStatus('Tripo 网页上传并展开 UV 中…（约 1–3 分钟）');
+      var r = await wfTripoWebUv(dataUrl, { name: name, timeoutSec: 900 });
+      if (!r || !r.url) throw new Error('Tripo 没有返回模型地址');
+      setStatus('拉回带 UV 的模型…');
+      var resp = await fetch(r.url);
+      if (!resp.ok) throw new Error('下载结果失败 HTTP ' + resp.status);
+      var buf = await resp.arrayBuffer();
+      var outUrl = await new Promise(function (resolve, reject) {
+        var fr = new FileReader();
+        fr.onload = function () { resolve(String(fr.result || '')); };
+        fr.onerror = function () { reject(new Error('转换结果失败')); };
+        fr.readAsDataURL(new Blob([new Uint8Array(buf)], { type: 'model/gltf-binary' }));
+      });
+      var base = name.replace(/\.[^.]+$/, '');
+      var saved = await d.assetPut({
+        kind: 'model', ext: 'glb', name: base + '_UV.glb', data: outUrl,
+        source: 'tripo-smart-uv'
+      });
+      if (!(saved && saved.ok && saved.asset && saved.asset.id)) {
+        throw new Error((saved && saved.message) || '写入资产库失败');
+      }
+      await appendAsset(saved.asset.id, { levelName: base + ' · UV' });
+      s.msg = '已导入「' + base + '_UV」· ' + Math.round((Date.now() - t0) / 1000) + 's';
+      setStatus('Tripo 智能 UV 完成：' + s.msg);
+    } catch (e) {
+      var msg = (e && e.message) || String(e);
+      s.msg = '失败：' + msg;
+      setStatus('Tripo 智能 UV 失败：' + msg, true);
+    } finally {
+      s.busy = false;
+      paintParams();
+      paintDock();
+    }
+  }
+
+  /* ---------------- Tripo 生成纹理（上传模型 + 参考图 → 抓回贴图） ----------------
+   * Tripo 网页「纹理生成」需要 模型 + 参考图，生成完是带回贴图的 GLB；
+   * 本地助手会把 GLB 里的贴图图块取出来，这里只负责：导出当前对象 / 选文件
+   * → wfTripoWebTex → 贴图存进图片库并应用到当前对象。
+   * 保留原 UV 时按模型自带 UV 贴回；取消保留时 Tripo 可能重排 UV，
+   * 改为拉回带贴图的 GLB 并作为新对象导入（否则贴图会和原 UV 对不上）。
+   * 参考图支持多视图：最多 4 张，图1 为正面。 */
+  function tripoTexState() {
+    /* fxNode = 正在生成纹理的那个对象 id：滚动条带只挂到它身上，
+     * 场景里并排摆着的其它模型不受影响（生成期间切选对象也不会转移）。 */
+    if (!st.tripoTex) st.tripoTex = { busy: false, msg: '', res: '2k', refs: [], keepUv: true, modelName: '', modelFile: null, fxNode: '' };
+    if (!Array.isArray(st.tripoTex.refs)) st.tripoTex.refs = [];
+    return st.tripoTex;
+  }
+
+  /* 参考图槽位的缩略图：同一个 File 只建一次 objectURL，移除槽位时释放 */
+  var texThumbs = new WeakMap();
+  function texThumbUrl(file) {
+    if (!file) return '';
+    var u = texThumbs.get(file);
+    if (u === undefined) {
+      try { u = URL.createObjectURL(file); } catch (e) { u = ''; }
+      texThumbs.set(file, u);
+    }
+    return u;
+  }
+  function dropTexThumb(file) {
+    if (!file) return;
+    var u = texThumbs.get(file);
+    if (u) { try { URL.revokeObjectURL(u); } catch (e) {} }
+    texThumbs.delete(file);
+  }
+
+  /* 当前对象的 UV 覆盖遮罩：把对象（可限定某个材质槽）的面在 UV 空间铺成
+   * 「白色 = 对象采样区、透明 = 其它」的图，用作 Tripo 纹理层的遮罩，
+   * 让拉回的贴图只落在该对象自己的 UV 岛上（同场景 / 同 atlas 的其它对象不受影响）。
+   * 坐标按建模 App 画布约定（v=0 在画布底边），mask 存 flipY:true 直接参与合成。
+   * slot < 0 表示不按槽过滤；UV 明显超出 0–1（平铺 / atlas）时返回 null，
+   * 与画笔的岛遮罩同一兜底：宁可不裁，也不能把整张贴图裁空。 */
+  function uvMaskCanvas(mesh, slot, size) {
+    if (!mesh || !Array.isArray(mesh.uvs) || !Array.isArray(mesh.faceOffsets)) return null;
+    var off = mesh.faceOffsets, uvs = mesh.uvs, slots = mesh.faceSlots;
+    var nFace = off.length - 1;
+    if (nFace <= 0) return null;
+    var bySlot = (slot != null && slot >= 0 && Array.isArray(slots) && slots.length === nFace);
+    var S = Math.max(64, Math.round(size || 1024));
+    var cv = document.createElement('canvas');
+    cv.width = S; cv.height = S;
+    var ctx = cv.getContext('2d');
+    /* 整个对象的所有面**合成一条路径一次填充**。
+     * 逐面 fill 时，相邻三角形共享边的覆盖率各只有一半，source-over 叠起来仍不到 1
+     * （典型 0.75）——这张遮罩用 destination-in 裁贴图后，共享边就成了透出白底的
+     * 细线，视口里看着像「纹理上多了白色线框」。一次填充时共享边是内部边，不产生接缝。 */
+    ctx.beginPath();
+    var painted = 0;
+    for (var f = 0; f < nFace; f++) {
+      if (bySlot && slots[f] !== slot) continue;
+      var s = off[f], e = off[f + 1];
+      if (e - s < 3) continue;
+      /* 先验 UV 范围：越界就不做遮罩（多画一张整图没有意义，反而是错的） */
+      for (var q = s; q < e; q++) {
+        var qu = uvs[q * 2], qv = uvs[q * 2 + 1];
+        if (qu < -0.01 || qu > 1.01 || qv < -0.01 || qv > 1.01) return null;
+      }
+      for (var k = s; k < e; k++) {
+        var x = uvs[k * 2] * S, y = (1 - uvs[k * 2 + 1]) * S;
+        if (k === s) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      painted++;
+    }
+    if (!painted) return null;
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    /* 网格里共边的顶点偶尔有浮点差异，一次填充也会留下不足 1px 的缝；
+     * 用同色细描边补齐（遮罩外扩 1px 无影响，比露白线好）。 */
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(1, S / 1024);
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+    return cv;
+  }
+  function uvMaskDataUrl(mesh, slot, size) {
+    var cv = null;
+    try { cv = uvMaskCanvas(mesh, slot, size); } catch (e) { cv = null; }
+    if (!cv) return '';
+    try { return cv.toDataURL('image/png'); } catch (e) { return ''; }
+  }
+
+  /* Tripo 纹理生成中的「正在上纹理」效果：往实体材质里注入世界空间滚动条带。
+   * 只改材质 shader，不动网格 / 文档 / 历史；busy 结束把原 onBeforeCompile 接回去即可恢复。
+   * 时间由渲染循环推进（见 tick 的 texBusy 分支），所以在等待的 3–8 分钟里是活的。 */
+  var tripoWaveUni = { uTxTime: { value: 0 } };
+  function attachTripoBusyShader(m) {
+    if (!m || !m.isMeshStandardMaterial) return;
+    if (m.userData && m.userData.mdTxBusy) return;
+    if (!m.userData) m.userData = {};
+    /* 捏脸 / 眼睛的 shader 可能已经挂在材质上：记下它，注入时先链式调用，恢复时原样接回 */
+    var prev = m.onBeforeCompile;
+    m.userData.mdTxBusy = { prev: prev };
+    m.onBeforeCompile = function (shader, renderer) {
+      if (typeof prev === 'function') { try { prev.call(this, shader, renderer); } catch (e) {} }
+      shader.uniforms.uTxTime = tripoWaveUni.uTxTime;
+      shader.vertexShader = 'varying vec3 vTxW;\n' + shader.vertexShader.replace(
+        '#include <project_vertex>',
+        '#include <project_vertex>\n  vTxW = (modelMatrix * vec4(transformed, 1.0)).xyz;'
+      );
+      shader.fragmentShader = 'uniform float uTxTime;\nvarying vec3 vTxW;\n' + shader.fragmentShader.replace(
+        '#include <dithering_fragment>',
+        '#include <dithering_fragment>\n' +
+        '  float txS = 0.5 + 0.5 * sin((vTxW.y + vTxW.x * 0.35) * 9.0 - uTxTime * 7.0);\n' +
+        '  float txB = smoothstep(0.64, 0.96, txS);\n' +
+        '  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.20, 0.66, 1.0), txB * 0.55);'
+      );
+    };
+    m.needsUpdate = true;
+  }
+  /* nodeId 有值时只处理这一个对象；空值（如探针直接调用）才作用于全部实体。 */
+  function tripoBusyFx(on, nodeId) {
+    var want = nodeId ? String(nodeId) : '';
+    eachViewPivot(function (pv) {
+      if (want && String((pv.userData && pv.userData.mdNode) || '') !== want) return;
+      pv.traverse(function (o) {
+        if (!o.userData || o.userData.mdPart !== 'solid' || !o.material) return;
+        var mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach(function (m) {
+          if (!m || !m.isMeshStandardMaterial) return;
+          if (on) {
+            attachTripoBusyShader(m);
+          } else if (m.userData && m.userData.mdTxBusy) {
+            m.onBeforeCompile = m.userData.mdTxBusy.prev;
+            delete m.userData.mdTxBusy;
+            m.needsUpdate = true;
+          }
+        });
+      });
+    });
+    requestRender(2);
+  }
+
+  function tripoTexSectionHtml() {
+    var s = tripoTexState();
+    var node = renderTargetNode();
+    if (!node) return '';
+    var VIEWS = ['前', '左侧', '右侧', '后'];
+    /* 四个视图槽位固定显示：已填的给缩略图 + 文件名 + 移除按钮，空的给虚框占位，
+       这样「还差哪几张、下一张会填到哪个视图」一眼可见。 */
+    var slots = VIEWS.map(function (v, i) {
+      var r = s.refs[i];
+      var thumb = r ? texThumbUrl(r.file) : '';
+      return '<div class="md-tx-slot' + (r ? ' on' : '') + '">' +
+        '<div class="md-tx-slot-pic">' +
+          (thumb ? '<img src="' + thumb + '" alt="' + esc(v) + '参考图">' : '<span class="md-tx-slot-ph">+</span>') +
+          (r ? '<button type="button" class="md-tx-slot-del" data-md-act="tripo-tex-ref-del" data-md-ref="' + i + '"' +
+            (s.busy ? ' disabled' : '') + ' title="移除这张参考图">×</button>' : '') +
+        '</div>' +
+        '<div class="md-tx-slot-lb">' + v + '</div>' +
+        '<div class="md-tx-slot-nm" title="' + esc(r ? r.name : '未选择') + '">' + esc(r ? r.name : '未选择') + '</div>' +
+        '</div>';
+    }).join('');
+    return '<div class="md-tx-body">' +
+      /* 模型 */
+      '<div class="md-txc">' +
+        '<div class="md-txc-h"><span class="md-txc-t">模型</span>' +
+          '<span class="md-txc-s">' + (s.modelFile ? '本地文件' : '当前对象 · 自动导出 GLB') + '</span></div>' +
+        '<div class="md-tx-model">' +
+          '<span class="md-tx-model-nm" title="' + esc(s.modelName || (node.name || '当前对象')) + '">' +
+            esc(s.modelName || (node.name || '当前对象')) + '</span>' +
+          '<button type="button" class="md-tx-mini" data-md-act="tripo-tex-model-pick"' +
+            (s.busy ? ' disabled' : '') + '>更换…</button>' +
+        '</div>' +
+        '<input type="file" accept=".glb,.gltf,.obj,.stl,.fbx" data-md-act="tripo-tex-model-file" hidden>' +
+      '</div>' +
+      /* 参考图 */
+      '<div class="md-txc">' +
+        '<div class="md-txc-h"><span class="md-txc-t">参考图</span>' +
+          '<span class="md-txc-s">' + s.refs.length + '/4 · 可 Ctrl+V 粘贴</span></div>' +
+        '<div class="md-tx-slots">' + slots + '</div>' +
+        '<div class="md-tx-slot-act">' +
+          '<button type="button" class="md-tx-mini wide" data-md-act="tripo-tex-ref-pick"' +
+            (s.busy || s.refs.length >= 4 ? ' disabled' : '') + '>+ 添加参考图</button>' +
+          '<span class="md-tx-slot-tip">' +
+            esc(s.refs.length ? '按 前 → 左侧 → 右侧 → 后 依次填入' : '不填时用当前视口截图作「前」') +
+          '</span>' +
+        '</div>' +
+        '<input type="file" accept="image/png,image/jpeg,image/webp" multiple data-md-act="tripo-tex-ref-file" hidden>' +
+      '</div>' +
+      /* 生成设置 */
+      '<div class="md-txc">' +
+        '<div class="md-txc-h"><span class="md-txc-t">生成设置</span>' +
+          '<span class="md-txc-s">' + (s.keepUv !== false ? '贴回当前对象' : '拉回新模型') + '</span></div>' +
+        '<label class="md-tx-set"><input type="checkbox" data-md-tripo-tex="keepuv"' +
+          (s.keepUv !== false ? ' checked' : '') + '><span>保留原 UV</span>' +
+          '<em>贴图按原 UV 贴回</em></label>' +
+        '<label class="md-tx-set"><span>分辨率</span>' +
+          '<select data-md-tripo-tex="res">' +
+            '<option value="2k"' + (s.res === '2k' ? ' selected' : '') + '>2K</option>' +
+            '<option value="4k"' + (s.res === '4k' ? ' selected' : '') + '>4K</option>' +
+          '</select></label>' +
+      '</div>' +
+      '<button type="button" class="md-tx-go" data-md-act="tripo-tex-go"' + (s.busy ? ' disabled' : '') + '>' +
+        (s.busy ? '<span class="md-tx-spin"></span>Tripo 生成纹理中…（约 3–8 分钟）' : '上传模型并生成纹理') +
+      '</button>' +
+      (s.msg ? '<div class="md-tx-log">' + esc(s.msg) + '</div>' : '') +
+      '<div class="md-note">先在「Tripo 工坊」登录并进入工作台；单部件模型，三角面 ≤ 8 万，会消耗积分。保留原 UV 需要模型已有 UV，否则会提示先展开或取消保留。</div>' +
+      '</div>';
+  }
+
+  function pickTripoTexFile(which) {
+    var s = tripoTexState();
+    if (s.busy) return;
+    var inp = document.querySelector('input[data-md-act="tripo-tex-' + which + '-file"]');
+    if (inp) inp.click();
+  }
+
+  /* 剪贴板里的图片：② AI 生成上色 / ③ 纹理生成 两处参考图都支持 Ctrl+V。
+   * 两个区域挨在一起，靠「最后一次点在哪」判目标；纯文字粘贴一律不拦，
+   * 输入框里的文字照常粘贴。配合预览图 / 生图结果图 / 贴图的「右键复制」使用。 */
+  var refPasteZone = 'tex';
+  function pasteImageFiles(e) {
+    var cd = e && e.clipboardData;
+    if (!cd || !cd.items) return [];
+    var out = [];
+    for (var i = 0; i < cd.items.length; i++) {
+      var it = cd.items[i];
+      if (!it || it.kind !== 'file' || !/^image\//i.test(it.type || '')) continue;
+      var f = it.getAsFile();
+      if (f) out.push(f);
+    }
+    return out;
+  }
+  function onPasteTripoTexRef(e) {
+    if (!st.doc || !st.host || !st.host.getClientRects().length) return;
+    if (st.propPage !== 'render') return;
+    var files = pasteImageFiles(e);
+    if (!files.length) return;
+    var t = e.target;
+    var zone = '';
+    if (t && t.closest) {
+      if (t.closest('[data-md-tx-step="2"]')) zone = 'gen';
+      else if (t.closest('[data-md-tx-step="3"]')) zone = 'tex';
+    }
+    if (!zone) zone = refPasteZone;
+
+    /* ② AI 生成上色：走和「＋ 参考图」文件框同一条链路（含图1 合计最多 3 张） */
+    if (zone === 'gen') {
+      var MR = global.MDViewRender;
+      if (!MR || typeof MR.addRefs !== 'function') return;
+      e.preventDefault();
+      var n = MR.addRefs(files) || 0;
+      setStatus(n ? '已粘贴 ' + n + ' 张参考图到「AI 生成上色」（含图1 合计最多 3 张）'
+        : '参考图已满 2 张（含图1 合计最多 3 张）', !n);
+      return;
+    }
+
+    var s = tripoTexState();
+    e.preventDefault();
+    if (s.busy) { setStatus('纹理生成中，先等这次跑完再加参考图', true); return; }
+    var added = 0;
+    files.forEach(function (f) {
+      if (s.refs.length >= 4) return;
+      if (!/^image\/(png|jpe?g|webp)$/i.test(f.type || '')) return;
+      /* 剪贴板图片一般没有真实文件名（image.png），按槽位起个可读名字 */
+      var name = f.name && f.name !== 'image.png' ? f.name : ('粘贴图' + (s.refs.length + 1) + '.png');
+      var dup = s.refs.some(function (r) { return r.name === name && r.file.size === f.size; });
+      if (dup) return;
+      s.refs.push({ file: f, name: name });
+      added++;
+    });
+    if (!added) {
+      setStatus(s.refs.length >= 4 ? '参考图已满 4 张（顺序：前 / 左侧 / 右侧 / 后）' : '剪贴板里的图片格式不支持（PNG / JPG / WEBP）', true);
+      return;
+    }
+    paintTripoTex();
+    setStatus('已粘贴 ' + added + ' 张参考图（顺序：前 / 左侧 / 右侧 / 后，共 ' + s.refs.length + '/4）');
+  }
+
+  async function doTripoTex() {
+    var s = tripoTexState();
+    if (s.busy) return;
+    if (!st.doc || !renderTargetNode()) { setStatus('先选中一个对象', true); return; }
+    if (typeof wfTripoWebTex !== 'function') {
+      setStatus('Tripo 运行时未加载（blueprint-runtime.js）', true); return;
+    }
+    var d = deskApi();
+    if (!d || typeof d.assetPut !== 'function') { setStatus('当前环境没有资产库，无法接收结果', true); return; }
+
+    var node = renderTargetNode();
+    var base = String((st.doc && st.doc.name) || 'model').replace(/[\\/:*?"<>|]/g, '_');
+    var name = s.modelName || (base + (node.name ? '_' + String(node.name).replace(/[\\/:*?"<>|]/g, '_') : '') + '.glb');
+    /* 保留原 UV 时，当前对象必须已经有 UV：没有就先拦下来，
+      否则 Tripo 会重新展开，贴图贴回原模型必然错位。 */
+    if (s.keepUv !== false && !s.modelFile) {
+      var uvOk = true;
+      try {
+        var mesh = SeedModel.Scene.getMesh(st.doc, node);
+        uvOk = !mesh || SeedModel.Mesh.hasUV(mesh);
+      } catch (e) { uvOk = true; }
+      if (!uvOk) { setStatus('当前对象没有 UV，无法保留原 UV：先在 UV 编辑器展开，或取消「保留原 UV」', true); return; }
+    }
+    var t0 = Date.now();
+    s.busy = true; s.msg = '';
+    s.fxNode = String(node.id || '');
+    paintTripoTex();
+    /* 视口里给「这一个对象」加纹理生成中的世界空间滚动条带（其它对象不受影响） */
+    tripoBusyFx(true, s.fxNode);
+    try {
+      var modelDataUrl;
+      if (s.modelFile) {
+        setStatus('读取本地模型…');
+        modelDataUrl = await fileToDataUrl(s.modelFile);
+      } else {
+        setStatus('导出当前对象 GLB…');
+        var ex = await exportSelectedBytesImpl([node.id]);
+        modelDataUrl = ex && ex.dataURL;
+      }
+      if (!modelDataUrl) throw new Error('没有拿到可上传的模型');
+      /* 参考图：多视图（按 前 / 左侧 / 右侧 / 后 顺序交给助手，各自写入对应槽位）；
+       * 没选图时用当前视口截图当「前」。 */
+      var refDataUrls = [];
+      for (var ri = 0; ri < s.refs.length; ri++) {
+        refDataUrls.push(await fileToDataUrl(s.refs[ri].file));
+      }
+      if (!refDataUrls.length) {
+        var shot = aiTexRefShot();
+        if (!shot) throw new Error('拿不到参考图（视口还没就绪，或请手动选择参考图）');
+        refDataUrls.push(shot);
+      }
+
+      setStatus('Tripo 网页上传模型并生成纹理中…（约 3–8 分钟）');
+      var r = await wfTripoWebTex(modelDataUrl, refDataUrls,
+        { name: name, resolution: s.res, keepUv: s.keepUv !== false, timeoutSec: 900 });
+      if (!r || !r.url) throw new Error('Tripo 没有返回贴图地址');
+      setStatus('拉回贴图…');
+      var dataUrl = await aiTexNormalize(r.url, 2048);
+
+      var stem = String(name).replace(/\.[^.]+$/, '');
+      var saved = await d.assetPut({
+        kind: 'image', ext: 'png', name: stem + '_Tripo纹理.png', data: dataUrl,
+        source: 'tripo-texture'
+      });
+      if (!(saved && saved.ok)) setStatus('贴图已抓回，但写入图片库失败', true);
+
+      if (s.keepUv !== false) {
+        /* UV 没变：把拉回的贴图叠到当前对象所用材质槽的「纹理图层」最上层。
+         * 合成结果由 MIX 自动挂回视口材质 → 模型表面立即更新；
+         * 材质页里也能继续隐藏 / 调不透明度 / 烘焙这一层。
+         * Tripo 贴图是 glTF 原生朝向（v=0 在图片顶部），层按 flipY:false 存。
+         * 同时按当前对象现算一张 UV 覆盖遮罩挂到这一层：贴图只落在该对象的 UV 岛上，
+         * 同一 atlas 里的其它对象 / 区域不会被这层覆盖。 */
+        if (!MIX || typeof MIX.addLayer !== 'function') throw new Error('材质图层系统未加载');
+        var ownSlots = [];
+        try { ownSlots = SeedModel.Scene.slotsOf(st.doc, node) || []; } catch (eSlot) { ownSlots = []; }
+        if (!ownSlots.length) ownSlots = [0];
+        var maskMesh = null;
+        try { maskMesh = SeedModel.Scene.getMesh(st.doc, node); } catch (eMask) { maskMesh = null; }
+        var layerName = stem + ' · Tripo纹理';
+        var masked = 0;
+        for (var si = 0; si < ownSlots.length; si++) {
+          var opts = { flipY: false };
+          var maskUrl = maskMesh ? uvMaskDataUrl(maskMesh, ownSlots[si], 1024) : '';
+          if (maskUrl) { opts.mask = maskUrl; opts.maskName = layerName + ' 遮罩'; masked++; }
+          var added = await MIX.addLayer(ownSlots[si], dataUrl, layerName, opts);
+          if (added === false) throw new Error('写入纹理图层失败（材质槽 ' + (ownSlots[si] + 1) + '）');
+        }
+        /* 旧的对象级覆盖（node.surface）会盖住图层栈、让后续编辑失效，改由图层承载 */
+        node.surface = null;
+        s.msg = '贴图已拉回并应用到「' + (node.name || '对象') + '」的纹理图层（保留原 UV' +
+          (masked ? '，已按当前对象生成遮罩' : '，该对象 UV 不规整未加遮罩') + '）· ' +
+          Math.round((Date.now() - t0) / 1000) + 's';
+      } else {
+        /* 没保留 UV：Tripo 重排过 UV，贴图只能配它自己的模型 → 拉回带贴图 GLB 导入。 */
+        if (!r.model) throw new Error('没拿到带贴图的模型（无法按新 UV 拉回）');
+        setStatus('拉回带贴图模型…');
+        var resp = await fetch(r.model);
+        if (!resp.ok) throw new Error('下载带贴图模型失败 HTTP ' + resp.status);
+        var buf = await resp.arrayBuffer();
+        var glbUrl = await new Promise(function (resolve, reject) {
+          var fr = new FileReader();
+          fr.onload = function () { resolve(String(fr.result || '')); };
+          fr.onerror = function () { reject(new Error('转换模型失败')); };
+          fr.readAsDataURL(new Blob([new Uint8Array(buf)], { type: 'model/gltf-binary' }));
+        });
+        var savedModel = await d.assetPut({
+          kind: 'model', ext: 'glb', name: stem + '_Tripo纹理.glb', data: glbUrl,
+          source: 'tripo-texture'
+        });
+        if (!(savedModel && savedModel.ok && savedModel.asset && savedModel.asset.id)) {
+          throw new Error((savedModel && savedModel.message) || '写入资产库失败');
+        }
+        await appendAsset(savedModel.asset.id, { levelName: stem + ' · Tripo纹理' });
+        s.msg = '已拉回带贴图模型「' + stem + '_Tripo纹理」· ' + Math.round((Date.now() - t0) / 1000) + 's';
+      }
+      setStatus('Tripo 生成纹理完成：' + s.msg);
+    } catch (e) {
+      var msg = (e && e.message) || String(e);
+      s.msg = '失败：' + msg;
+      setStatus('Tripo 生成纹理失败：' + msg, true);
+    } finally {
+      s.busy = false;
+      tripoBusyFx(false, s.fxNode);
+      s.fxNode = '';
+      paintTripoTex();
+      paintDock();
+    }
+  }
+
+
   /* 视口截图当参考图。必须在同一同步块里 render + toDataURL：
    * 默认没有 preserveDrawingBuffer，跨帧取画布只会拿到空图。 */
   function aiTexRefShot() {
@@ -3402,16 +4012,17 @@
   /* 任何来源（远程 URL / dataURL）→ 长边 ≤1024 的 PNG dataURL。
    * loadImageForCanvas（blueprint-runtime 全局）已经把远程图走 relay 拉成 blob，
    * 画布不会被跨域污染 —— 直接 Image.src 塞远程地址的话 toDataURL 会抛安全错。 */
-  function aiTexNormalize(src) {
+  function aiTexNormalize(src, maxSize) {
     if (typeof loadImageForCanvas !== 'function') {
       return Promise.reject(new Error('图像加载运行时未加载（blueprint-runtime.js）'));
     }
+    var cap = Math.max(256, Number(maxSize) || 1024);
     return loadImageForCanvas(src).then(function (r) {
       var img = r && r.img;
       try { if (r && r.revoke) r.revoke(); } catch (e) {}
       if (!img || !(img.naturalWidth || img.width)) throw new Error('贴图解码失败');
       var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
-      var k = Math.min(1, 1024 / Math.max(w, h));
+      var k = Math.min(1, cap / Math.max(w, h));
       var cv = document.createElement('canvas');
       cv.width = Math.max(1, Math.round(w * k));
       cv.height = Math.max(1, Math.round(h * k));
@@ -3540,13 +4151,13 @@
   }
   var PAINT_BRUSH_NAME = { soft: '软边', hard: '硬边', erase: '橡皮擦' };
   var PAINT_TOOL_NAME = {
-    brush: '画笔', pencil: '铅笔', eraser: '橡皮',
+    select: '选取', brush: '画笔', pencil: '铅笔', eraser: '橡皮',
     blur: '模糊工具', smudge: '涂抹工具', picker: '吸管', wand: '魔棒'
   };
-  /* 绘制工具快捷键：键位对齐主流绘画软件（B 画笔 / P 铅笔 / E 橡皮 / I 吸管 /
-   * W 魔棒 / G 填充）。W / E / R 在建模模式是变换手柄，所以只在绘制模式下接管。 */
+  /* 绘制工具快捷键：键位对齐主流绘画软件（V 选取 / B 画笔 / P 铅笔 / E 橡皮 /
+   * I 吸管 / W 魔棒 / G 填充）。W / E / R 在建模模式是变换手柄，所以只在绘制模式下接管。 */
   var PAINT_KEYS = {
-    b: 'brush', p: 'pencil', e: 'eraser', r: 'blur', t: 'smudge', i: 'picker', w: 'wand'
+    v: 'select', b: 'brush', p: 'pencil', e: 'eraser', r: 'blur', t: 'smudge', i: 'picker', w: 'wand'
   };
   function setPaintTool(tool) {
     var v = Object.prototype.hasOwnProperty.call(PAINT_TOOL_NAME, tool) ? tool : 'brush';
@@ -3558,7 +4169,8 @@
     else if (st.paint.brush === 'erase') st.paint.brush = 'soft';
     updatePaintUi();
     setStatus('绘制工具：' + PAINT_TOOL_NAME[v] +
-      (v === 'wand' ? '（点模型锁定 UV 岛；再点同一岛解除）' : ''));
+      (v === 'wand' ? '（点模型锁定 UV 岛；再点同一岛解除）'
+        : v === 'select' ? '（点模型切换当前选中的对象）' : ''));
   }
 
   /* 笔刷状态的**唯一写入点**：右侧面板、顶部绘制条、色板、快捷键都走这几个函数，
@@ -3804,9 +4416,16 @@
   /* 指针下面的视口对象（尊重隔离 / 隐藏）：绘画落笔前用它确认「该画哪个对象」。
    * 导入的多材质模型往往拆成多个节点，激活对象不是鼠标下那个时，射线只会打空。 */
   function pickVisibleNodeAt(px, py) {
-    if (!st.camera || !st.canvas) return '';
+    var t = pickTargetAt(px, py);
+    return t ? t.nodeId : '';
+  }
+
+  /* 指针下最近的可见实体：对象 + 它所属 pivot 的世界矩阵 + 可拾取网格。
+   * 吸管用它实现「吸取别的对象的颜色，但不切换当前选中的对象」。 */
+  function pickTargetAt(px, py) {
+    if (!st.camera || !st.canvas) return null;
     var r = st.canvas.getBoundingClientRect();
-    if (!r.width || !r.height) return '';
+    if (!r.width || !r.height) return null;
     var rc = new THREE.Raycaster();
     rc.setFromCamera(new THREE.Vector2((px / r.width) * 2 - 1, -((py / r.height) * 2 - 1)), st.camera);
     var best = null;
@@ -3816,11 +4435,44 @@
         if (!o.visible || !o.userData || o.userData.mdPart !== 'solid') return;
         var hits = rc.intersectObject(o, false);
         if (hits.length && (!best || hits[0].distance < best.t)) {
-          best = { t: hits[0].distance, id: pv.userData.mdNode };
+          best = { t: hits[0].distance, id: pv.userData.mdNode, object: o, pivot: pv };
         }
       });
     });
-    return best ? best.id : '';
+    if (!best) return null;
+    /* 拾取 / 绘制共用同一份可见网格：面级隔离时就是视口里那份替身网格 */
+    var mesh = ISO.visibleMesh(best.id);
+    if (!mesh) return null;
+    return { mesh: mesh, matrixWorld: best.pivot.matrixWorld, object: best.object, nodeId: best.id };
+  }
+
+  /* 某一槽在视口里「真正显示」的东西（吸管用）：
+   *   image   = 当前材质挂的贴图（纹理颜色，不是渲染结果）
+   *   color   = 没有贴图时显示的颜色（平涂 unlit 下就是屏幕上的颜色）
+   *   loading = 贴图还在解码
+   * object 为空时退回全局口径（任一实体的同槽材质）。 */
+  function slotVisual(slot, object) {
+    var o = (object && object.material) ? object : null;
+    if (!o) {
+      eachViewPivot(function (pv) {
+        if (o) return;
+        pv.traverse(function (x) {
+          if (o || !x.userData || x.userData.mdPart !== 'solid' || !x.material) return;
+          o = x;
+        });
+      });
+    }
+    if (!o) return null;
+    var arr = Array.isArray(o.material) ? o.material : [o.material];
+    var m = arr[slot] || null;
+    if (!m) return null;
+    /* 几何没有 uv 时渲染器根本不采样贴图：屏幕显示的是材质底色 */
+    var geo = o.geometry;
+    var samplesMap = !(geo && geo.getAttribute && !geo.getAttribute('uv'));
+    var img = samplesMap && m.map && m.map.image;
+    var ready = !!(img && (img.width || img.naturalWidth));
+    var color = (m.color && typeof m.color.getHexString === 'function') ? ('#' + m.color.getHexString()) : '';
+    return { image: ready ? img : null, color: color, loading: !!(samplesMap && m.map && !ready) };
   }
 
   /* ---------------- 编辑器模式（建模 / 绘制） ----------------
@@ -3925,22 +4577,55 @@
     return SEL_NOUN[st.selMode] || '对象';
   }
 
+  /* 右侧栏两块内容（细节面板 / 工具箱）各自有开关，可同时显示。
+   * 绘制模式下没有细节面板（变换手柄 / 网格统计都不在），只在建模上下文里可见。 */
+  function propsShown() { return !!st.showProps && st.editor !== 'paint'; }
+
   function syncRightChrome() {
     var title = $('mdRightTitle');
     if (title) {
-      title.textContent = st.tbKind === 'props' ? '属性编辑器'
-        : st.tbKind === 'paint' ? '绘画工具箱' : '建模工具箱';
+      title.textContent = st.editor === 'paint' ? '绘画工具箱'
+        : (propsShown() && !st.showToolbox) ? '细节面板' : '建模工具箱';
     }
-    var tog = $('mdPropsToggle');
-    if (tog) {
-      tog.textContent = st.tbKind === 'props' ? '工具箱' : '属性';
-      tog.classList.toggle('on', st.tbKind === 'props');
-      tog.title = st.tbKind === 'props'
-        ? '返回' + (st.editor === 'paint' ? '绘画' : '建模') + '工具箱'
-        : '属性编辑器：变换 / 材质槽 / 操作历史';
+    var pt = $('mdPropsToggle');
+    if (pt) {
+      var pv = propsShown();
+      pt.classList.toggle('on', pv);
+      pt.setAttribute('aria-pressed', pv ? 'true' : 'false');
+      pt.title = pv ? '取消显示细节面板' : '显示细节面板：对象 / 材质 / 修改器 / 纹理生成';
+    }
+    var tt = $('mdToolboxToggle');
+    if (tt) {
+      tt.classList.toggle('on', !!st.showToolbox);
+      tt.setAttribute('aria-pressed', st.showToolbox ? 'true' : 'false');
+      tt.title = st.showToolbox ? '取消显示工具箱' : '显示工具箱';
     }
     var tb = $('mdTbMode');
     if (tb) tb.textContent = tbModeLabel();
+  }
+
+  /* 两块内容的显隐只挂 .md-right 上的 hide-* 类：
+   * .md-tb / .md-props 自己带 display:flex，直接写 hidden 会被作者样式盖掉。 */
+  function applyRightPanels() {
+    var right = document.querySelector('.md-right');
+    var sec = document.querySelector('.md-tb');
+    if (right) {
+      right.classList.toggle('hide-props', !propsShown());
+      right.classList.toggle('hide-tb', !st.showToolbox);
+    }
+    if (sec) sec.classList.toggle('is-paint', st.tbKind === 'paint');
+    syncRightChrome();
+  }
+
+  /* 需要「让用户看到细节面板」的地方（组件加完 / 命令面板）统一走这里，
+   * 不再把 tbKind 当成显隐开关。 */
+  function revealProps() {
+    if (st.editor === 'paint') return false;
+    st.showProps = true;
+    applyRightPanels();
+    paintParams();
+    requestRender(0);
+    return true;
   }
 
   /* 绘画工具箱内部只有两个页签：笔刷参数 / 材质图层。
@@ -3964,18 +4649,13 @@
   }
 
   function setTbKind(kind) {
-    /* 属性编辑器只属于建模上下文：绘制模式没有变换手柄 / 网格统计，
-     * 材质槽与笔刷参数都在绘画工具箱里，所以绘制模式下拒绝切到属性。 */
-    if (kind === 'props' && st.editor === 'paint') kind = 'paint';
-    st.tbKind = (kind === 'paint' || kind === 'props') ? kind : 'model';
+    /* kind 只表示工具箱的形态（建模 / 绘画）。细节面板是独立开关，
+     * 绘制模式下不可用（没有变换手柄 / 网格统计），由 propsShown() 兜住。 */
+    st.tbKind = kind === 'paint' ? 'paint' : 'model';
     applyEditorChrome(st.tbKind === 'paint' ? 'paint' : 'model');
-    var right = document.querySelector('.md-right');
-    if (right) right.classList.toggle('is-props', st.tbKind === 'props');
-    var sec = document.querySelector('.md-tb');
-    if (sec) sec.classList.toggle('is-paint', st.tbKind === 'paint');
+    applyRightPanels();
     var box = $('mdPaintBox');
     if (box) box.hidden = st.tbKind !== 'paint';
-    syncRightChrome();
     if (st.canvas) st.canvas.style.cursor = st.tbKind === 'paint' ? 'crosshair' : '';
     if (st.tbKind === 'paint') { syncPaintSlots(); updatePaintUi(); }
     syncGizmo();
@@ -3989,9 +4669,7 @@
     }
     setStatus(st.tbKind === 'paint'
       ? '绘画工具箱：按住左键在模型上画，颜色写进当前材质槽的基础色贴图'
-      : st.tbKind === 'props'
-        ? '属性编辑器：变换 / 材质槽 / 操作历史（点左上页签切回工具箱）'
-        : '已切回建模工具箱');
+      : '已切回建模工具箱（细节面板与工具箱可同时显示，页头页签分别开关）');
   }
 
   function onPickDown(e) {
@@ -4931,7 +5609,10 @@
     if (PAINT && PAINT.flushPreview) PAINT.flushPreview();
     var interacting = !!(st.gest || st.pickDown || st.paint.stroke ||
       (st.gizmo && st.gizmo.drag) || (st.ctrlLayer && st.ctrlLayer.isDragging()) ||
-      st.quadDown || EXGZ.drag || st.busy);
+      st.quadDown || EXGZ.drag || st.busy ||
+      /* Tripo 纹理生成中：材质里的世界空间条带要一直滚，按需渲染放行每一帧 */
+      (st.tripoTex && st.tripoTex.busy));
+    if (st.tripoTex && st.tripoTex.busy) tripoWaveUni.uTxTime.value = now * 0.0012;
     var sig = frameSig();
     /* 场景没变、没有输入、没有待上传像素 → 这一帧什么也不用做。
      * 静止时 GPU / CPU 都归零，拖动时照旧每帧渲染。 */
@@ -6089,9 +6770,58 @@
       l.intensity = lit ? base : (l.isAmbientLight ? base : 0);
     });
   }
+  /* ---------------- UV 对照贴图（视图级） ----------------
+   * 材质页的「UV 对照贴图」= 把生成的棋盘格临时铺到所有实体材质上，
+   * 用来在 3D 里检查 UV 拉伸 / 朝向 / 接缝。
+   * 只改当前视口的 map，不动文档里的 slotMaps，也不进历史；关掉即按 mdBaseMap 还原。
+   * 纹理是单例：重复开关不重复建 CanvasTexture。 */
+  var UV_CHECK = { on: false, tex: null };
+
+  function uvCheckerTex() {
+    if (UV_CHECK.tex) return UV_CHECK.tex;
+    var cv = document.createElement('canvas');
+    cv.width = cv.height = 512;
+    var g = cv.getContext('2d');
+    var N = 8, c = 512 / N, x, y;
+    for (y = 0; y < N; y++) {
+      for (x = 0; x < N; x++) {
+        g.fillStyle = ((x + y) & 1) ? '#cfdae8' : '#eef3f9';
+        g.fillRect(x * c, y * c, c, c);
+      }
+    }
+    g.strokeStyle = 'rgba(90, 108, 128, .35)';
+    g.lineWidth = 2;
+    g.strokeRect(1, 1, 510, 510);
+    /* 方向标：U 向右、V 向上，方便看 UV 有没有翻转 */
+    g.font = '600 28px "Segoe UI", "Microsoft YaHei UI", sans-serif';
+    g.fillStyle = '#2b7cd3';
+    g.fillText('U →', 14, 34);
+    g.fillStyle = '#c97a00';
+    g.fillText('V ↑', 396, 486);
+    var tex = new THREE.CanvasTexture(cv);
+    if ('encoding' in tex && THREE.sRGBEncoding != null) tex.encoding = THREE.sRGBEncoding;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.anisotropy = 4;
+    tex.userData.mdTexState = 'ready';
+    UV_CHECK.tex = tex;
+    return tex;
+  }
+
+  /* 切 UV 对照贴图：只重建当前视口的材质贴图，不写文档、不进历史 */
+  function setUvChecker(on) {
+    UV_CHECK.on = !!on;
+    applyViewFlags();
+    requestRender(0);
+    setStatus(UV_CHECK.on
+      ? 'UV 对照贴图：棋盘格已铺到模型上（只改显示，不改材质贴图）'
+      : 'UV 对照贴图：已关闭，恢复原贴图');
+    paintParams();
+  }
+
   function applyViewFlags() {
     var side = vfOn('backface') ? THREE.DoubleSide : THREE.FrontSide;
     var useMat = vfOn('material'), useTex = vfOn('texture'), lit = vfOn('lighting');
+    var check = UV_CHECK.on ? uvCheckerTex() : null;
     eachViewPivot(function (pv) {
       pv.traverse(function (o) {
         if (!o.userData || o.userData.mdPart !== 'solid' || !o.material) return;
@@ -6102,9 +6832,13 @@
           /* 法线材质没有 color / map：法线色本身就是数据，别被材质 / 纹理开关改写 */
           if (!m.color || typeof m.color.set !== 'function') return;
           var want = useMat ? (m.userData.mdBaseColor || CLAY) : CLAY;
-          m.color.set(want);
           var baseMap = m.userData.mdBaseMap;
-          var nextMap = useTex ? (baseMap === undefined ? null : baseMap) : null;
+          /* 对照贴图是显式的检查模式：优先于「纹理」开关，并把底色压白 */
+          var nextMap = check || (useTex ? (baseMap === undefined ? null : baseMap) : null);
+          if (check) want = '#ffffff';
+          /* 平涂是 unlit：有贴图时底色压白，屏幕颜色才等于纹理颜色（吸管同口径） */
+          else if (useMat && m.isMeshBasicMaterial && nextMap) want = '#ffffff';
+          m.color.set(want);
           if (m.map !== nextMap) { m.map = nextMap; m.needsUpdate = true; }
         });
       });
@@ -6176,9 +6910,12 @@
     if (!o.userData.mdFlatMats) {
       var src = Array.isArray(lit) ? lit : [lit];
       var made = src.map(function (m) {
+        var baseMap = UV_CHECK.on ? uvCheckerTex() : ((m.userData && m.userData.mdBaseMap) || null);
         var f = new THREE.MeshBasicMaterial({
-          color: (m.userData && m.userData.mdBaseColor) || CLAY,
-          map: (m.userData && m.userData.mdBaseMap) || null,
+          /* 平涂是 unlit：有贴图时底色必须是白 —— 否则显示会被槽色染暗，
+           * 与「平涂显示颜色 = 纹理颜色 = 吸管颜色」的约定不一致。 */
+          color: baseMap ? '#ffffff' : ((m.userData && m.userData.mdBaseColor) || CLAY),
+          map: baseMap,
           side: m.side,
           toneMapped: false   /* 平涂要的是原色，不要再被 ACES 压一道 */
         });
@@ -6541,6 +7278,8 @@
         if (!keepCamera) frameCamera();
         if (st.quad) updateQuadCameras(false);
         if (MIX) MIX.refresh();
+        /* 生成中重建了材质：把「正在上纹理」的条带重新挂上（只挂生成中的那个对象） */
+        if (st.tripoTex && st.tripoTex.busy) tripoBusyFx(true, st.tripoTex.fxNode);
         return true;
       }
 
@@ -6556,6 +7295,8 @@
       if (st.quad) updateQuadCameras(false);
       /* 材质刚被重建过：把该槽的纹理混合重新挂回来（有配置才动，没有就什么都不做） */
       if (MIX) MIX.refresh();
+      /* 生成中重建了材质：把「正在上纹理」的条带重新挂上（只挂生成中的那个对象） */
+      if (st.tripoTex && st.tripoTex.busy) tripoBusyFx(true, st.tripoTex.fxNode);
       return true;
     } catch (e) {
       setStatus('网格构建失败：' + ((e && e.message) || e), true);
@@ -7959,7 +8700,7 @@
       return;
     }
 
-    /* 绘制模式：工具快捷键先于建模键位生效（B / P / E / R / T / I / W，G = 岛填充）。
+    /* 绘制模式：工具快捷键先于建模键位生效（V / B / P / E / R / T / I / W，G = 岛填充）。
      * 这些键在建模模式另有含义（W / E / R = 变换、F = 框显），只在这里接管，
      * 切回建模模式立刻恢复原语义，不存在两套同时生效的键位。 */
     if (st.editor === 'paint') {
@@ -8042,6 +8783,52 @@
   function onChange(e) {
     var el = e.target;
     if (!el) return;
+    /* Tripo 智能 UV 的文件输入：选完立刻清空 value，方便同一个文件再选一次 */
+    if (el.dataset && el.dataset.mdAct === 'tripo-uv-file') {
+      var uvFile = el.files && el.files[0];
+      el.value = '';
+      if (uvFile) doTripoUv(uvFile);
+      return;
+    }
+    /* Tripo 生成纹理：模型 / 参考图文件输入，选完立即清空 value。
+     * 参考图支持多选（多视图，最多 4 张，图1 为正面）。 */
+    if (el.dataset && (el.dataset.mdAct === 'tripo-tex-model-file' || el.dataset.mdAct === 'tripo-tex-ref-file')) {
+      var isRef = el.dataset.mdAct === 'tripo-tex-ref-file';
+      var picked = isRef ? Array.prototype.slice.call(el.files || []) : [el.files && el.files[0]];
+      el.value = '';
+      if (isRef) {
+        var ts = tripoTexState();
+        var bad = '';
+        picked.forEach(function (f) {
+          if (!f) return;
+          if (!/^image\//i.test(f.type || '') && !/\.(png|jpe?g|webp)$/i.test(f.name)) { bad = '参考图只支持 PNG / JPG / WEBP'; return; }
+          if (ts.refs.length >= 4) return;
+          var dup = ts.refs.some(function (r) { return r.name === f.name && r.file.size === f.size; });
+          if (!dup) ts.refs.push({ file: f, name: f.name });
+        });
+        if (bad) setStatus(bad, true);
+        if (ts.refs.length === 4 && picked.length > 0 && bad === '') setStatus('参考图已满 4 张（顺序：前 / 左侧 / 右侧 / 后）');
+        paintTripoTex();
+        return;
+      }
+      var tf = picked[0];
+      if (tf) {
+        if (!/\.(glb|gltf|obj|stl|fbx)$/i.test(tf.name)) { setStatus('只支持 GLB / GLTF / OBJ / STL / FBX', true); return; }
+        if (tf.size > 150 * 1024 * 1024) { setStatus('模型超过 Tripo 的上传上限（150MB）', true); return; }
+        var ts2 = tripoTexState();
+        ts2.modelFile = tf; ts2.modelName = tf.name;
+        paintTripoTex();
+      }
+      return;
+    }
+    if (el.dataset && el.dataset.mdTripoTex === 'keepuv') {
+      tripoTexState().keepUv = !!el.checked;
+      return;
+    }
+    if (el.dataset && el.dataset.mdTripoTex === 'res') {
+      tripoTexState().res = (el.value === '4k') ? '4k' : '2k';
+      return;
+    }
     /* AI 材质的「来源」是 select：change 才处理（onInput 只认 INPUT 标签）。
      * 提示词 / 参考开关是 input / checkbox，已由 onInput 接住。 */
     if (el.dataset && el.dataset.mdAitex != null && el.tagName === 'SELECT') {
@@ -8667,8 +9454,7 @@
       { t: '材质槽', c: 'tex' },
       { sep: 1 },
       { t: '内容浏览器', c: 'dock' },
-      { t: '右侧：属性面板', c: 'tabProps' },
-      { t: '右侧：通道盒', c: 'tabChannels' },
+      { t: '右侧：细节面板', c: 'tabProps' },
       { sep: 1 },
       { t: '面板：大纲视图', c: 'panel:outline' },
       { t: '面板：右侧工具箱', c: 'panel:right' },
@@ -9077,9 +9863,8 @@
       case 'ws:uv': applyWorkspace('uv'); break;
       case 'ws:paint': applyWorkspace('paint'); break;
       case 'ws:wide': applyWorkspace('wide'); break;
-      /* 属性编辑器现在是右侧第三个页签：这两个命令还得把页签切过去，否则面板仍是隐藏的 */
-      case 'tabProps': setTbKind('props'); st.rightTab = 'props'; paintParams(); updateChrome(); setStatus('右侧：属性面板'); break;
-      case 'tabChannels': setTbKind('props'); st.rightTab = 'channels'; paintParams(); updateChrome(); setStatus('右侧：通道盒'); break;
+      /* 细节面板与工具箱是两个独立开关：这两个命令只负责把细节面板打开 */
+      case 'tabProps': revealProps(); st.propPage = 'object'; paintParams(); updateChrome(); setStatus('右侧：细节面板'); break;
       case 'uvClose':
         if (!st.uv.open) { setStatus('UV 编辑器没有打开', true); break; }
         closeUVEditor(); setStatus('UV 编辑器已关闭');
@@ -9120,8 +9905,16 @@
       return;
     }
     if (t.id === 'mdPropsToggle') {
-      setTbKind(st.tbKind === 'props' ? (st.editor === 'paint' ? 'paint' : 'model') : 'props');
-      updateChrome();
+      st.showProps = !propsShown();
+      applyRightPanels();
+      paintParams();
+      requestRender(0);
+      return;
+    }
+    if (t.id === 'mdToolboxToggle') {
+      st.showToolbox = !st.showToolbox;
+      applyRightPanels();
+      requestRender(0);
       return;
     }
     /* 组件自画面板上的按钮（表情预设 / 移除某个形态键）：只认 data-md-cev，
@@ -9191,9 +9984,16 @@
       setPaintTab(t.dataset.mdPtab);
       return;
     }
-    if (t.dataset.mdTab) {
-      st.rightTab = t.dataset.mdTab === 'channels' ? 'channels' : 'props';
-      paintParams();
+    if (t.dataset.mdPage) {
+      /* 纹理生成只认「选中的对象」：进页前先把激活对象对齐，避免渲染 / 上传错位 */
+      if (t.dataset.mdPage === 'render') syncRenderTarget();
+      if (t.dataset.mdPage !== st.propPage) {
+        st.propPage = t.dataset.mdPage;
+        paintParams();
+      } else if (t.dataset.mdPage === 'render') {
+        /* 已经在本页再点一次 = 按当前选择重新渲染 */
+        paintParams();
+      }
       return;
     }
     if (t.dataset.mdMenu) {
@@ -9318,6 +10118,18 @@
       case 'slot-assign': slotAssignFaces(Number(t.dataset.mdSlot) || 0); break;
       case 'ai-tex-gen': doGenMaterial(); break;
       case 'ai-tex-clear': aiTexClear(); break;
+      case 'tripo-uv-pick': pickTripoUvFile(); break;
+      case 'tripo-tex-go': doTripoTex(); break;
+      case 'tripo-tex-ref-pick': pickTripoTexFile('ref'); break;
+      case 'tripo-tex-ref-del': {
+        var tsr = tripoTexState();
+        var refIdx = Number(t.dataset.mdRef) || 0;
+        if (tsr.refs[refIdx]) dropTexThumb(tsr.refs[refIdx].file);
+        tsr.refs.splice(refIdx, 1);
+        paintTripoTex();
+        break;
+      }
+      case 'tripo-tex-model-pick': pickTripoTexFile('model'); break;
       case 'new': newDocument(); break;
       case 'open': showOpenDialog(); break;
       case 'save': save(); break;
@@ -9359,6 +10171,7 @@
       case 'view-iso': viewFromPreset('iso'); break;
       case 'isolate': toggleIsolate(); break;
       case 'uv': openUVEditor(); break;
+      case 'uv-check': setUvChecker(!UV_CHECK.on); break;
       case 'projbake': openProjBake(); break;
       case 'tex': openTextureEditor(); break;
       case 'prim-create': createPrimitive(); break;
@@ -10562,7 +11375,7 @@
       });
       if (!ok) { restore(); setStatus('应用失败', true); return false; }
       closeOverlay();
-      setTbKind('props');
+      revealProps();
       setStatus('已更新' + d2.name + '的参数 · Ctrl+Z 可撤销');
       paintAll();
       return true;
@@ -10616,9 +11429,9 @@
       if (!ok) { restore(); setStatus('添加失败', true); return false; }
 
       closeOverlay();
-      /* 加完就把右栏切到属性：这个零件有自己的一套参数（表情 / 形态键），
-       * 停在工具箱上等于把「它还能继续调」这件事藏起来了。 */
-      setTbKind('props');
+      /* 加完就把细节面板打开：这个零件有自己的一套参数（表情 / 形态键），
+       * 不显示出来等于把「它还能继续调」这件事藏起来了。 */
+      revealProps();
       var box = meshBox(mesh);
       var st2 = SeedModel.Mesh.stats(mesh);
       /* 视点对准网格自己的中心（各组件原点位置不统一：头模是居中在原点，
@@ -11549,8 +12362,16 @@
       var nodeTex = (nid && GLB_NODE_MAPS && GLB_NODE_MAPS[nid]) || null;
       (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m, mi) {
         if (!m) return;
-        if (m.map) { disposeMap(m); m.map = null; m.needsUpdate = true; }
-        var t = nodeTex || maps[mi];
+        /* 组件表面（头模的脸）不是材质槽内容：applyComponentSurface 挂上来的图
+         * 一旦被下面的「按槽换图」清掉，导出包里整个头模就没有贴图。
+         * 有像素就留着它；没有像素才清（否则 GLTFExporter 会报 no valid image）。
+         * 「自带表面」的对象绝不回落到槽贴图 —— 那会把身体 / 头发的图贴到头模脸上。 */
+        var ownSurface = !!(m.userData && m.userData.mdOwnSurface);
+        var own = ownSurface && m.map && m.map.image &&
+          ((m.map.image.naturalWidth || m.map.image.width) > 0) ? m.map : null;
+        if (m.map && m.map !== own) { disposeMap(m); }
+        if (m.map) { m.map = null; m.needsUpdate = true; }
+        var t = nodeTex || own || (ownSurface ? null : maps[mi]);
         if (t) { m.map = t; m.needsUpdate = true; }
       });
     });
@@ -11608,6 +12429,13 @@
           if (k === 'position') return;
           g2.setAttribute(k, geo.attributes[k]);   /* 共享引用，不复制 */
         });
+        /* mdOrig 是「渲染顶点 → 原顶点」的映射（UV 缝拆点后才有的表）：
+         * OBJ 导出要靠它把文档里的四边面接回渲染顶点，漏拷就只能退回三角面。 */
+        if (geo.userData) {
+          ['mdOrig', 'mdMorphNames', 'mdMorphWeights'].forEach(function (k) {
+            if (geo.userData[k]) g2.userData[k] = geo.userData[k];
+          });
+        }
         if (geo.index) g2.setIndex(geo.index);
         if (geo.groups && geo.groups.length) {
           g2.groups = geo.groups.map(function (gr) {
@@ -12002,7 +12830,7 @@
     stl: { label: 'STL', ext: 'stl', mime: 'model/stl', desc: '打印常用格式（不带贴图）' },
     /* 压缩包：模型 + 贴图分开存。OBJ 用 MTL 指路，FBX 用 Texture/Video 节点指路，
      * 贴图统一放 textures/，解压后直接打开模型文件即可看到贴图。 */
-    objz: { label: 'OBJ 包', ext: 'zip', mime: 'application/zip', desc: 'OBJ + MTL + PNG 贴图压缩包' },
+    objz: { label: 'OBJ 包', ext: 'zip', mime: 'application/zip', desc: 'OBJ + MTL + PNG 贴图压缩包（保留四边形与对象分组；形态键另存 .shapes.json）' },
     fbxz: { label: 'FBX 包', ext: 'zip', mime: 'application/zip', desc: 'FBX + PNG 贴图压缩包（ASCII 7.4）' }
   };
   function expNum(n) {
@@ -12010,21 +12838,101 @@
     var r = Math.round(n * 1e6) / 1e6;
     return String(r);
   }
-  /* OBJ：默认只写几何；opt.usemtl 时按几何分组写 usemtl，配 MTL 就能带贴图。
-   * mtllibName 写进文件头，外部查看器 / Blender 打开时会自动找同名 .mtl。 */
+  /* OBJ / MTL / 贴图共用一份「导出材质清单」：按对象 × 材质槽读导出根上**实际挂着**的
+   * material.map，而不是 doc.materials.slotMaps。头模的脸是组件表面 / 节点 AI 贴图，
+   * 根本不在材质槽里；只按槽下标导出，压缩包里就永远只有身体和头发的图。
+   * 材质名带上对象名，同一个槽在身体和头模上是两张不同的图也不会互相覆盖。 */
+  function objSafeName(s, fallback) {
+    var t = String(s == null ? '' : s).replace(/[\s\\/:"'<>|]+/g, '_')
+      .replace(/[^\w\u4e00-\u9fff.\-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    return t || (fallback || 'object');
+  }
+  /* 贴图 → PNG 字节。材质上的 map 可能是 CanvasTexture（图层合成图）也可能是
+   * 图片 URL 解出来的 Texture（组件表面），统一画进 canvas 再编码。 */
+  function texturePNGBytes(tex) {
+    var img = tex && tex.image;
+    if (!img) return null;
+    try {
+      var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+      if (!w || !h) return null;
+      var cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0);
+      return dataURLBytes(cv.toDataURL('image/png'));
+    } catch (e) { return null; }
+  }
+  function collectExportMaterials(root, withTex) {
+    var meshes = [], files = [], byTex = Object.create(null), usedObj = Object.create(null);
+    var usedMat = Object.create(null);
+    root.traverse(function (o) {
+      if (!o.isMesh || !o.geometry || !o.userData || o.userData.mdPart !== 'solid') return;
+      /* 对象名：优先节点名，重名补序号 —— 同名 o 会在 Blender 里被并成一个对象 */
+      var base = objSafeName(o.name, 'object' + (meshes.length + 1));
+      var objName = base, k = 2;
+      while (usedObj[objName]) objName = base + '_' + (k++);
+      usedObj[objName] = 1;
+      var arr = Array.isArray(o.material) ? o.material : [o.material];
+      var rec = [];
+      for (var mi = 0; mi < arr.length; mi++) {
+        var mt = arr[mi];
+        if (!mt) { rec.push(null); continue; }
+        var mb = objName + '_' + objSafeName(mt.name, 'slot_' + mi);
+        var name = mb, j = 2;
+        while (usedMat[name]) name = mb + '_' + (j++);
+        usedMat[name] = 1;
+        var tex = '';
+        if (withTex && mt.map) {
+          var key = mt.map.uuid || ('t' + files.length);
+          if (byTex[key] == null) {
+            var png = texturePNGBytes(mt.map);
+            if (!png) byTex[key] = '';
+            else {
+              byTex[key] = 'textures/tex_' + files.length + '.png';
+              files.push({ name: byTex[key], bytes: png });
+            }
+          }
+          tex = byTex[key] || '';
+        }
+        rec.push({
+          name: name, tex: tex,
+          color: (mt.color && mt.color.getHexString) ? ('#' + mt.color.getHexString()) : '#c9ccd4'
+        });
+      }
+      meshes.push({ name: objName, mats: rec });
+    });
+    return { meshes: meshes, textures: files };
+  }
+  /* 文档网格的面角 → 导出几何里的渲染顶点。buildGeometry 会按 UV 缝把顶点拆开，
+   * 但拆分规则是确定的：原顶点下标 + 量化后的 UV。这里按同一口径反查，
+   * 面就还能按文档里的四边形 / n 边形写出来，而不是退回三角化。 */
+  function objCornerVertex(dm, corner, lookup) {
+    var ov = dm.faceIndices[corner];
+    if (!lookup || !dm.uvs || dm.uvs.length < (corner + 1) * 2) return ov;
+    var k = ov + '|' + Math.round(dm.uvs[corner * 2] * 8192) + '|' + Math.round(dm.uvs[corner * 2 + 1] * 8192);
+    var r = lookup[k];
+    return r == null ? ov : r;
+  }
+  /* OBJ：每个对象写一条 o，每个材质分组写一条 g / usemtl；面取自文档网格的原始多边形，
+   * 四边面保持四边面（不再从三角化后的渲染几何倒推）。 */
   function exportOBJText(root, opt) {
     opt = opt || {};
     root.updateMatrixWorld(true);
+    var plan = opt.plan || collectExportMaterials(root, false);
     var out = ['# modeldesk OBJ export'];
     if (opt.mtllibName) out.push('mtllib ' + opt.mtllibName);
-    out.push('o ' + String((st.doc && st.doc.name) || 'model').replace(/\s+/g, '_'));
     var vBase = 1, tBase = 1, nBase = 1;
     var v = new THREE.Vector3();
+    var nodesById = {};
+    SeedModel.Scene.nodesOf(st.doc).forEach(function (n) { nodesById[n.id] = n; });
+    var meshIdx = -1;
     root.traverse(function (o) {
       if (!o.isMesh || !o.geometry || !o.userData || o.userData.mdPart !== 'solid') return;
+      meshIdx++;
+      var pm = plan.meshes[meshIdx] || { name: objSafeName(o.name, 'object' + meshIdx), mats: [] };
       var g = o.geometry, pos = g.attributes.position, uv = g.attributes.uv, nor = g.attributes.normal;
       if (!pos) return;
       var m = o.matrixWorld, i;
+      out.push('o ' + pm.name);
       for (i = 0; i < pos.count; i++) {
         v.fromBufferAttribute(pos, i).applyMatrix4(m);
         out.push('v ' + expNum(v.x) + ' ' + expNum(v.y) + ' ' + expNum(v.z));
@@ -12037,30 +12945,64 @@
           out.push('vn ' + expNum(v.x) + ' ' + expNum(v.y) + ' ' + expNum(v.z));
         }
       }
-      var seq = g.index ? g.index.array : null;
-      var count = seq ? seq.length : pos.count;
-      function faceRange(start, end, mi) {
-        if (opt.usemtl) out.push('usemtl slot_' + (mi || 0));
-        for (var f = start; f + 2 < end; f += 3) {
+      var nodeId = (o.parent && o.parent.userData) ? o.parent.userData.mdNode : '';
+      var node = nodesById[nodeId];
+      var dm = node ? SeedModel.Scene.getMesh(st.doc, node) : null;
+      var lookup = null;
+      var orig = g.userData && g.userData.mdOrig;
+      if (dm && uv && orig && orig.length === uv.count) {
+        lookup = Object.create(null);
+        for (var r = 0; r < orig.length; r++) {
+          var lk = orig[r] + '|' + Math.round(uv.getX(r) * 8192) + '|' + Math.round(uv.getY(r) * 8192);
+          if (lookup[lk] == null) lookup[lk] = r;
+        }
+      }
+      function matNameOf(slot) {
+        var rec = pm.mats[slot] || pm.mats[0] || null;
+        return rec ? rec.name : ('slot_' + (slot || 0));
+      }
+      function groupLine(name) {
+        out.push('g ' + name);
+        if (opt.usemtl) out.push('usemtl ' + name);
+      }
+      if (dm && dm.faceOffsets && dm.faceOffsets.length > 1) {
+        var curSlot = -1, curName = '';
+        for (var f = 0; f + 1 < dm.faceOffsets.length; f++) {
+          var s0 = dm.faceOffsets[f], e0 = dm.faceOffsets[f + 1], n = e0 - s0;
+          if (n < 3) continue;
+          var slot = dm.faceSlots[f] || 0;
+          var name = matNameOf(slot);
+          if (slot !== curSlot || name !== curName) { curSlot = slot; curName = name; groupLine(name); }
           var face = [];
-          for (var k = 0; k < 3; k++) {
-            var b = f + k;
-            var vi = (seq ? seq[b] : b) + vBase;
-            var ti = (seq ? seq[b] : b) + tBase;
-            var ni = (seq ? seq[b] : b) + nBase;
+          for (var k = 0; k < n; k++) {
+            var rv = objCornerVertex(dm, s0 + k, lookup);
+            var vi = rv + vBase, ti = rv + tBase, ni = rv + nBase;
             face.push(uv && nor ? (vi + '/' + ti + '/' + ni) : uv ? (vi + '/' + ti) : nor ? (vi + '//' + ni) : String(vi));
           }
           out.push('f ' + face.join(' '));
         }
-      }
-      var groups = g.groups || [];
-      if (groups.length) {
-        for (var gi = 0; gi < groups.length; gi++) {
-          var gr = groups[gi];
-          faceRange(gr.start, Math.min(gr.start + gr.count, count), gr.materialIndex || 0);
-        }
       } else {
-        faceRange(0, count, 0);
+        /* 没有文档网格（旧数据 / 兜底 pivot）：退回渲染几何的三角面 */
+        var seq = g.index ? g.index.array : null;
+        var count = seq ? seq.length : pos.count;
+        var groups = g.groups || [];
+        var ranges = groups.length ? groups.map(function (gr) {
+          return { start: gr.start, end: Math.min(gr.start + gr.count, count), slot: gr.materialIndex || 0 };
+        }) : [{ start: 0, end: count, slot: 0 }];
+        ranges.forEach(function (rg) {
+          groupLine(matNameOf(rg.slot));
+          for (var ff = rg.start; ff + 2 < rg.end; ff += 3) {
+            var tri = [];
+            for (var kk = 0; kk < 3; kk++) {
+              var b = ff + kk;
+              var ri = (seq ? seq[b] : b) + vBase;
+              var tj = (seq ? seq[b] : b) + tBase;
+              var nj = (seq ? seq[b] : b) + nBase;
+              tri.push(uv && nor ? (ri + '/' + tj + '/' + nj) : uv ? (ri + '/' + tj) : nor ? (ri + '//' + nj) : String(ri));
+            }
+            out.push('f ' + tri.join(' '));
+          }
+        });
       }
       vBase += pos.count;
       if (uv) tBase += uv.count;
@@ -12069,30 +13011,72 @@
     return out.join('\n') + '\n';
   }
 
-  /* MTL：一个材质槽一条 newmtl，有贴图的槽用相对路径 textures/tex_<槽>.png。
-   * Kd 用槽颜色（贴图缺失时外部查看器仍能看到正确底色）。 */
-  function exportMTLText(hasTex) {
-    var mats = (st.doc && st.doc.materials) || {};
-    var names = mats.slotNames || [], colors = mats.slotColors || [];
-    var n = Math.max(names.length, colors.length, hasTex.length, 1);
+  /* MTL：与 OBJ 的 usemtl 一一对应（对象 × 材质槽），有贴图的用 textures/ 下的 PNG。
+   * Kd 用材质当前颜色（贴图缺失时外部查看器仍能看到正确底色）。 */
+  function exportMTLPlan(plan) {
     var out = ['# modeldesk MTL export'];
-    for (var i = 0; i < n; i++) {
-      out.push('newmtl slot_' + i);
-      var c = hexToRGB(colors[i] || '#c9ccd4');
-      out.push('Ka 0 0 0');
-      out.push('Kd ' + expNum(c[0]) + ' ' + expNum(c[1]) + ' ' + expNum(c[2]));
-      out.push('Ks 0 0 0');
-      out.push('d 1');
-      out.push('illum 2');
-      if (hasTex[i]) out.push('map_Kd textures/tex_' + i + '.png');
-      out.push('');
-    }
+    var seen = Object.create(null);
+    (plan ? plan.meshes : []).forEach(function (mesh) {
+      mesh.mats.forEach(function (mt) {
+        if (!mt || seen[mt.name]) return;
+        seen[mt.name] = 1;
+        var c = hexToRGB(mt.color);
+        out.push('newmtl ' + mt.name);
+        out.push('Ka 0 0 0');
+        out.push('Kd ' + expNum(c[0]) + ' ' + expNum(c[1]) + ' ' + expNum(c[2]));
+        out.push('Ks 0 0 0');
+        out.push('d 1');
+        out.push('illum 2');
+        if (mt.tex) out.push('map_Kd ' + mt.tex);
+        out.push('');
+      });
+    });
     return out.join('\n');
   }
   function hexToRGB(hex) {
     var m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
     var n = m ? parseInt(m[1], 16) : 0xc9ccd4;
     return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+  }
+
+  /* ---------------- 形态键 sidecar（OBJ 包） ----------------
+   * OBJ 没有形态键字段：名字 / 权重 / 位移只能另存一份。
+   * 对象名与 OBJ 的 o 语句一一对应（同一个遍历序）；deltas 是相对基形的
+   * Float32 位移（小端 base64）。需要能直接编辑的形态键请导出 GLB。 */
+  function f32Base64(arr) {
+    if (!arr || !arr.length) return '';
+    var u8 = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+    var bin = '';
+    for (var i = 0; i < u8.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+    }
+    return btoa(bin);
+  }
+  function exportShapesSidecar(root, plan) {
+    if (!st.doc) return null;
+    var nodesById = {};
+    SeedModel.Scene.nodesOf(st.doc).forEach(function (n) { nodesById[n.id] = n; });
+    var objects = [], meshIdx = -1;
+    root.traverse(function (o) {
+      if (!o.isMesh || !o.geometry || !o.userData || o.userData.mdPart !== 'solid') return;
+      meshIdx++;
+      var node = nodesById[(o.parent && o.parent.userData) ? o.parent.userData.mdNode : ''];
+      var dm = node ? SeedModel.Scene.getMesh(st.doc, node) : null;
+      if (!dm || !dm.morphs || !dm.morphs.length) return;
+      objects.push({
+        object: (plan && plan.meshes[meshIdx]) ? plan.meshes[meshIdx].name : objSafeName(o.name, 'object' + meshIdx),
+        vertexCount: Math.floor((dm.positions || []).length / 3),
+        keys: dm.morphs.map(function (m) {
+          return { name: String(m.name || ''), weight: Number(m.weight) || 0, deltas: f32Base64(m.deltas) };
+        })
+      });
+    });
+    if (!objects.length) return null;
+    return {
+      format: 'modeldesk-shapes/1',
+      note: 'OBJ 格式没有形态键；deltas 为相对基形的 Float32 位移（小端 base64），对象名对应 OBJ 的 o 语句，vertexCount 是文档网格顶点数（未按 UV 拆点）。捏脸形变已直接烘焙进顶点。要直接可编辑的形态键请导出 GLB。',
+      objects: objects
+    };
   }
 
   /* ---------------- FBX（ASCII 7.4）----------------
@@ -12452,15 +13436,20 @@
       if (format === 'stl') return { text: exportSTLText(root), mime: EXPORT_FORMATS.stl.mime };
       if (format === 'gltf') return { text: await exportGLTFText(root), mime: EXPORT_FORMATS.gltf.mime };
       if (format === 'objz') {
-        var ot = exportTextureFiles();
-        var objText = exportOBJText(root, { mtllibName: base + '.mtl', usemtl: true });
-        var mtlText = exportMTLText(ot.has);
+        /* 材质 / 贴图按「对象 × 槽」从导出根现取：节点 AI 贴图与组件表面（头模的脸）
+         * 不在 doc.materials.slotMaps 里，按槽下标导出会整块漏掉。 */
+        var plan = collectExportMaterials(root, true);
+        var objText = exportOBJText(root, { mtllibName: base + '.mtl', usemtl: true, plan: plan });
+        var mtlText = exportMTLPlan(plan);
         var objFiles = [{ name: base + '.obj', bytes: textBytes(objText) },
-          { name: base + '.mtl', bytes: textBytes(mtlText) }].concat(ot.files);
+          { name: base + '.mtl', bytes: textBytes(mtlText) }].concat(plan.textures);
+        var shapes = exportShapesSidecar(root, plan);
+        if (shapes) objFiles.push({ name: base + '.shapes.json', bytes: textBytes(JSON.stringify(shapes)) });
         return {
           bytes: makeZip(objFiles), mime: EXPORT_FORMATS.objz.mime,
           files: objFiles.map(function (f) { return f.name; }),
-          texts: { obj: objText, mtl: mtlText }
+          texts: { obj: objText, mtl: mtlText },
+          shapeKeys: shapes ? shapes.objects.length : 0
         };
       }
       if (format === 'fbxz') {
@@ -12505,7 +13494,7 @@
       '<input id="mdExpName" type="text" value="' + esc(st.doc.name || 'model') + '"></label>',
       '<button type="button" class="md-wide md-prim-go" data-md-act="export-go">导出到电脑</button>',
       '<div class="md-note" id="mdExpDesc">' + esc(EXPORT_FORMATS[st.expFmt].desc) +
-      '<br><b>GLB / GLTF</b> 带内嵌材质贴图；<b>OBJ 包 / FBX 包</b> 把模型和 textures/ 里的 PNG 一起打包，解压后直接打开模型文件；<b>OBJ / STL</b> 单文件只写几何。网页版会走浏览器下载。</div>',
+      '<br><b>GLB / GLTF</b> 带内嵌材质贴图；<b>OBJ 包 / FBX 包</b> 把模型和 textures/ 里的 PNG 一起打包，解压后直接打开模型文件；<b>OBJ / STL</b> 单文件只写几何。OBJ 包保留四边面与对象分组，节点 / 组件贴图也会一起导出；OBJ 格式没有形态键，会另存 .shapes.json。网页版会走浏览器下载。</div>',
       '</div></div>'
     ].join(''), 'export');
     return true;
@@ -12547,7 +13536,10 @@
       var r = await d.fileSave({ name: name, ext: meta.ext, dataURL: dataURL });
       if (r && r.cancelled) { setStatus('已取消导出'); return { ok: false, cancelled: true }; }
       if (!(r && r.ok)) throw new Error((r && r.message) || '写入失败');
-      setStatus('已导出到电脑：' + r.path);
+      /* OBJ 格式没有形态键字段：数据另存在 <name>.shapes.json 里，这里明说一句，
+       * 否则用户只会看到「形态键没了」。 */
+      setStatus('已导出到电脑：' + r.path + (data.shapeKeys
+        ? '（OBJ 不支持形态键，已写入 ' + name + '.shapes.json；要可编辑形态键请导出 GLB）' : ''));
       closeOverlay();
       return { ok: true, path: r.path, bytes: r.bytes };
     } catch (e) {
@@ -12590,10 +13582,10 @@
       '<div class="md-ov-head"><b>材质槽 · ' + esc(st.doc.name) + '</b>' +
       '<span class="md-ov-sub">贴图配置按 assetId 恢复（' + esc(st.doc.assetId) + '）</span>' +
       '<button type="button" class="md-ov-x" data-md-act="close-overlay">×</button></div>' +
-      '<div class="md-ov-body md-tex-host" id="mdTexHost"></div>',
+      '<div class="md-ov-body md-tex-host" id="mdTexViewerHost"></div>',
       'tex'
     );
-    var host = $('mdTexHost');
+    var host = $('mdTexViewerHost');
     try {
       st.texOpen = true;
       await Model3D.openPreview(saved.dataURL, {
@@ -12737,7 +13729,7 @@
     /* 工作区预设：model / uv / paint / wide。手动拖过布局后 getWorkspace() 返回「自定义」。 */
     workspace: function (key) { return applyWorkspace(key); },
     getWorkspace: function () { return st.workspace; },
-    /* 属性面板「渲染视图」：与视图工坊共用参数与渲染核。探针 / 外部脚本用。 */
+    /* 属性面板「纹理生成」：与视图工坊共用参数与渲染核。探针 / 外部脚本用。 */
     renderViews: function () { return global.MDViewRender ? global.MDViewRender.render() : null; },
     renderViewState: function () { return global.MDViewRender ? global.MDViewRender.state() : null; },
     renderViewExport: function (pass) { return global.MDViewRender ? global.MDViewRender.exportPass(pass || 'color') : null; },
@@ -12935,6 +13927,7 @@
         /* 工作台布局摘要：面板尺寸 / 是否可调 / 命令数量，探针按它断言布局可持久化 */
         layout: st.workbench ? st.workbench.describe() : null,
         texOpen: !!st.texOpen,
+        uvChecker: UV_CHECK.on,
         edgeObjects: !!st.edgeLines,
         vertexObjects: !!st.vertPoints,
         undo: st.history.undo.length,
@@ -13019,8 +14012,10 @@
         uvMapOn: !!(st.uv.open && st.uv.mapOn && st.uv.mapImg),
         uvScale: st.uv.open ? st.uv.scale : 0,
         uvView: { cu: st.uv.cu, cv: st.uv.cv, scale: st.uv.scale },
-        /* 右侧工具箱页签 + 绘画笔刷（探针用它断言状态，不点 UI 也能读） */
+        /* 右侧工具箱形态 + 两块内容的独立开关 + 绘画笔刷（探针用它断言状态，不点 UI 也能读） */
         tbKind: st.tbKind,
+        showProps: st.showProps,
+        showToolbox: st.showToolbox,
         editor: st.editor,
         brush: st.paint.brush,
         brushShape: st.paint.shape,
@@ -13108,6 +14103,8 @@
         return {
           mime: d.mime, size: d.bytes ? d.bytes.length : 0,
           files: d.files || [], texts: d.texts || null,
+          /* 压缩包里形态键 sidecar 的对象数（探针 / UI 提示用） */
+          shapeKeys: d.shapeKeys || 0,
           /* 探针解包用：zip 以 data URL 回传，避免把二进制塞进 JSON 数组 */
           zip: d.bytes ? bytesToDataURL(d.bytes, d.mime) : ''
         };
@@ -13163,7 +14160,11 @@
         paint: PAINT, upload: UPLOAD, paintState: st.paint, mix: MIX, renderStats: function () {
           var i = st.renderer && st.renderer.info;
           return { frame: i ? i.render.frame : 0, tris: i ? i.render.triangles : 0, calls: i ? i.render.calls : 0 };
-        }
+        },
+        /* 探针用：开关「纹理生成中」的世界空间条带（只挂 / 摘材质 shader，不改 busy 状态） */
+        texBusyFx: tripoBusyFx,
+        /* 探针用：当前对象 UV 覆盖遮罩的画布（Tripo 拉回贴图后自动挂到纹理层） */
+        uvMask: uvMaskCanvas
       };
     }
   };

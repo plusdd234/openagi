@@ -484,21 +484,21 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 }
 .md-hud b { color: #1f2328; font-weight: 600; }
 
-/* 4.4 右侧：一整列 + 顶部一行页签（建模工具箱 / 绘画工具箱 / 属性编辑器）。
- * 三者同时只显示一个：原来工具箱和属性编辑器上下分摊高度，两边都被挤成小窗口。 */
+/* 4.4 右侧：一整列 + 页头两颗独立页签（细节面板 / 工具箱）。
+ * 两块内容可以同时显示（上下分摊，各自内部滚动），也可以分别取消，只留一块时铺满整列。 */
 .md-right {
   flex: 0 0 300px; min-width: 0;
   display: flex; flex-direction: column;
   background: var(--md-panel); border-left: 1px solid var(--md-line);
 }
 .md-tb {
-  flex: 1 1 auto; min-height: 0;
+  flex: 1 1 52%; min-height: 0;
   display: flex; flex-direction: column;
   overflow: hidden;
 }
 /* 内容比一屏长：列表自己滚，页头 / 模式条始终可见 */
 .md-tb-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 3px 0 5px; }
-.md-right.is-props .md-tb { display: none; }
+.md-right.hide-tb .md-tb { display: none; }
 .md-tb-h {
   height: 18px; display: flex; align-items: center;
   padding: 0 8px; margin-top: 2px;
@@ -611,13 +611,16 @@ button.md-vpi:disabled { opacity: .35; cursor: default; }
 }
 .md-soft-reset:hover { background: #fbfbfc; color: #1f2328; }
 
-/* 属性编辑器是第三个页签：默认不占位，切到「属性编辑器」页签才显示 */
+/* 细节面板：与工具箱并存，两块各自内部滚动；只显示这一块时铺满整列 */
 .md-props {
-  flex: 1 1 auto; min-width: 0; min-height: 0;
-  display: none; flex-direction: column;
+  flex: 1 1 48%; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
   background: var(--md-panel);
+  border-top: 1px solid var(--md-line);
 }
-.md-right.is-props .md-props { display: flex; }
+.md-right.hide-props .md-props { display: none; }
+.md-right.hide-props .md-tb { flex: 1 1 auto; }
+.md-right.hide-tb .md-props { flex: 1 1 auto; border-top: 0; }
 .md-ptabs {
   flex: 0 0 23px; height: 23px;
   display: flex; align-items: flex-end; gap: 3px;
@@ -2610,14 +2613,18 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
 }
 .md-app .md-ctl:empty { display: none; }
 .md-app .md-ctl-miss { color: #8a6d3b; }
-/* 页签条：左边是当前栏目标题，右边是「对象」回显与属性开关 */
-.md-app .md-right-h { padding: 0 6px; gap: 8px; }
-.md-app .md-right-h .md-right-t { font-size: 11px; font-weight: 600; color: var(--md-txt); }
+/* 页签条：左边当前栏目标题，右边两颗「细节面板 / 工具箱」独立开关 */
+.md-app .md-right-h { padding: 0 6px; gap: 5px; }
+.md-app .md-right-h .md-right-t {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; font-weight: 600; color: var(--md-txt);
+}
 .md-app .md-right-h em:empty { display: none; }
-.md-app .md-propstog { margin-left: 2px; height: 19px; line-height: 18px; padding: 0 9px; }
+/* 选中 = 该块内容显示，再点取消；两块可以同时选中 */
+.md-app .md-propstog { margin-left: 1px; height: 18px; line-height: 17px; padding: 0 7px; font-size: 9.5px; }
 .md-app .md-propstog.on { background: var(--md-on); border-color: var(--md-on-line); color: #fff; }
-/* 属性编辑器是建模上下文的页签：绘制模式不显示入口，右栏只留绘画工具箱 */
-.md-app[data-md-editor="paint"] .md-propstog { display: none; }
+/* 细节面板只属于建模上下文：绘制模式隐藏它的开关，右栏只留绘画工具箱 */
+.md-app[data-md-editor="paint"] #mdPropsToggle { display: none; }
 /* 模式条：五个模式图标是这一栏最重要的东西，给它一条自己的底 */
 .md-app .md-modebar {
   gap: 6px; padding: 7px 7px 6px;
@@ -3860,6 +3867,14 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
   border-radius: 8px;
   box-shadow: 0 1px 2px rgba(28, 38, 60, .05);
 }
+/* 绘制层（笔迹 / 投射 / 模糊）：和贴图图层区分开——虚线边框 */
+.md-app .md-mix-row.md-mix-op { border-style: dashed; }
+/* 当前绘制层：笔迹只画进这一层（点行切换），描边与左侧色条同时提示 */
+.md-app .md-mix-row.md-mix-op.is-sel {
+  border-style: solid;
+  border-color: #d94f4f;
+  box-shadow: inset 3px 0 0 #d94f4f;
+}
 .md-app .md-paint-card-h span,
 .md-app .md-mix-head > span { color: #1f2328; }
 .md-app .md-paint-card-h i,
@@ -4727,18 +4742,10 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
 }
 
 /* ============================================================
- * 18. 属性面板 · 渲染视图（与视图工坊共用参数）
+ * 18. 属性面板 · 纹理生成（与视图工坊共用参数）
  * 目标：300px 宽的属性面板里放下完整的多视图参数，不挤压既有控件。
  * 所有选择器都带 .md-app 前缀，避免波及别的 App。
  * ============================================================ */
-.md-app .md-rv-sec .md-h2 { display: flex; align-items: center; gap: 6px; }
-.md-app .md-rv-tag {
-  font-size: 9px; font-weight: 400; letter-spacing: .02em;
-  color: var(--md-mute); padding: 1px 5px;
-  border: 1px solid var(--md-line); border-radius: 8px;
-  background: var(--md-panel-hi);
-}
-
 .md-app .md-rv { display: flex; flex-direction: column; gap: 7px; }
 
 /* ---------- 预览 ---------- */
@@ -4782,6 +4789,144 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
 }
 .md-app .md-rv-sec[open] > summary::before { transform: rotate(90deg); }
 .md-app .md-rv-sec > summary:hover { color: var(--md-txt); }
+
+/* ---------- 纹理生成三步流程 ----------
+ * ① 渲染模型结构 ② AI 生成上色 ③ 纹理生成：统一的编号标题，
+ * 参数折叠段默认收起，页面上先看到三步主线。 */
+.md-app .md-tx-step { display: block; }
+.md-app .md-tx-head {
+  display: flex; align-items: center; gap: 6px;
+  min-height: 22px; padding: 0 0 4px;
+}
+.md-app .md-tx-no {
+  flex: 0 0 auto; width: 15px; height: 15px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--md-accent); color: #fff;
+  font-size: 9px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.md-app .md-tx-name { font-size: 11px; font-weight: 600; color: var(--md-txt); white-space: nowrap; }
+.md-app .md-tx-hint {
+  flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+  text-align: right; font-size: 9.5px; color: var(--md-mute);
+}
+/* 第 3 步是一整块卡片：标题条与卡片内其他 .md-h2 对齐 */
+.md-app .md-sec > .md-tx-head {
+  padding: 5px 7px 4px;
+  background: var(--md-panel-hi);
+  border-bottom: 1px solid var(--md-line-soft);
+}
+/* 第 2 步的 details 摘要就是它的标题条 */
+.md-app .md-tx-step + .md-tx-gen { border-top: 1px solid var(--md-line-soft); }
+.md-app .md-rv-sec > summary .md-tx-hint { margin-left: auto; }
+
+/* ---------- 第 3 步：纹理生成内部 ----------
+ * 模型 / 参考图 / 生成设置 三张小卡 + 主按钮。
+ * 参考图固定四个视图槽位（前 / 左侧 / 右侧 / 后），已填的显示缩略图。 */
+.md-app .md-tx-body { display: flex; flex-direction: column; gap: 7px; }
+.md-app .md-txc {
+  border: 1px solid var(--md-line-soft);
+  border-radius: 6px;
+  background: #fbfcfd;
+  padding: 5px 6px 6px;
+}
+.md-app .md-txc-h {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 6px; margin-bottom: 5px;
+}
+.md-app .md-txc-t { font-size: 10px; font-weight: 600; color: var(--md-dim); letter-spacing: .02em; }
+.md-app .md-txc-s {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 9px; color: var(--md-mute);
+}
+
+/* 模型行 */
+.md-app .md-tx-model { display: flex; align-items: center; gap: 6px; }
+.md-app .md-tx-model-nm {
+  flex: 1 1 auto; min-width: 0;
+  padding: 4px 6px; border: 1px solid var(--md-line-soft); border-radius: 4px;
+  background: #fff; color: var(--md-txt); font-size: 10px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.md-app .md-tx-mini {
+  flex: 0 0 auto; height: 22px; padding: 0 8px;
+  border: 1px solid var(--md-line); border-radius: 4px;
+  background: #fff; color: var(--md-dim);
+  font-size: 9.5px; cursor: pointer;
+}
+.md-app .md-tx-mini:hover:not(:disabled) { border-color: var(--md-accent); color: var(--md-accent-line); }
+.md-app .md-tx-mini:disabled { opacity: .45; cursor: default; }
+.md-app .md-tx-mini.wide { width: 100%; }
+
+/* 参考图四视图槽位 */
+.md-app .md-tx-slots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.md-app .md-tx-slot { position: relative; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.md-app .md-tx-slot-pic {
+  position: relative; aspect-ratio: 1 / 1;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--md-line); border-radius: 4px;
+  background: #fff; overflow: hidden;
+}
+.md-app .md-tx-slot.on .md-tx-slot-pic { border-style: solid; }
+.md-app .md-tx-slot-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.md-app .md-tx-slot-ph { color: #c4cad2; font-size: 13px; line-height: 1; }
+.md-app .md-tx-slot-lb { text-align: center; font-size: 9px; color: var(--md-dim); }
+.md-app .md-tx-slot.on .md-tx-slot-lb { color: var(--md-accent-line); font-weight: 600; }
+.md-app .md-tx-slot-nm {
+  text-align: center; font-size: 8.5px; color: var(--md-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.md-app .md-tx-slot-del {
+  position: absolute; top: 2px; right: 2px;
+  width: 14px; height: 14px; padding: 0;
+  border: 0; border-radius: 50%;
+  background: rgba(24, 28, 34, .62); color: #fff;
+  font-size: 11px; line-height: 14px; text-align: center; cursor: pointer;
+}
+.md-app .md-tx-slot-del:hover:not(:disabled) { background: #d33; }
+.md-app .md-tx-slot-del:disabled { opacity: .4; cursor: default; }
+.md-app .md-tx-slot-act { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; }
+.md-app .md-tx-slot-tip { text-align: center; font-size: 8.5px; color: var(--md-mute); }
+
+/* 生成设置 */
+.md-app .md-tx-set {
+  display: flex; align-items: center; gap: 6px; min-height: 24px;
+  font-size: 10px; color: var(--md-txt);
+}
+.md-app .md-tx-set + .md-tx-set {
+  border-top: 1px dashed var(--md-line-soft); margin-top: 2px; padding-top: 2px;
+}
+.md-app .md-tx-set input[type="checkbox"] { width: 12px; height: 12px; accent-color: var(--md-accent); }
+.md-app .md-tx-set em {
+  margin-left: auto; font-style: normal; font-size: 8.5px; color: var(--md-mute);
+}
+.md-app .md-tx-set select {
+  margin-left: auto; height: 20px; padding: 0 4px;
+  border: 1px solid var(--md-line); border-radius: 4px;
+  background: #fff; color: var(--md-txt); font-size: 10px;
+}
+
+/* 主按钮 + 状态 */
+.md-app .md-tx-go {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; height: 30px;
+  border: 1px solid var(--md-accent-line); border-radius: 5px;
+  background: linear-gradient(180deg, #f6a933, var(--md-accent));
+  color: #fff; font-size: 11px; font-weight: 600; letter-spacing: .02em;
+  cursor: pointer;
+}
+.md-app .md-tx-go:hover:not(:disabled) { filter: brightness(1.06); }
+.md-app .md-tx-go:disabled { opacity: .55; cursor: default; }
+.md-app .md-tx-spin {
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .45); border-top-color: #fff;
+  animation: md-txspin .8s linear infinite;
+}
+@keyframes md-txspin { to { transform: rotate(360deg); } }
+.md-app .md-tx-log {
+  padding: 4px 6px; border-left: 2px solid var(--md-accent); border-radius: 3px;
+  background: #f2f5f8; color: var(--md-dim); font-size: 9.5px; line-height: 1.45;
+}
 
 /* ---------- 视图组 ---------- */
 .md-app .md-rv-chips { display: flex; flex-wrap: wrap; gap: 3px; }
@@ -4947,3 +5092,330 @@ label.md-pb-tbtn:focus-visible { outline: 1px solid #b9d6f2; outline-offset: 1px
 }
 .md-app .md-rv-xl-foot > span { flex: 1 1 auto; font-variant-numeric: tabular-nums; }
 .md-app .md-rv-xl-foot .md-rv-btn { flex: 0 0 auto; }
+
+/* ============================================================
+ * 26. 视觉精修（2026-11）
+ * ------------------------------------------------------------
+ * 只在 §20 浅色皮肤之上做观感与一致性，不动 DOM、不改结构尺寸：
+ *   ① 顶部 chrome（菜单 / 状态行 / 工具架 / 绘制条）并成一条连续的白色工作条；
+ *   ② 左侧两条工具轨（建模 / 绘制）同底、同选中态，切模式不跳色；
+ *   ③ 圆角与投影统一到 3 / 4 / 8 / 10 四级，卡片投影压到"看得见但不发黑"；
+ *   ④ 可点控件补同一条过渡，悬停不再硬跳；
+ *   ⑤ 焦点环保留键盘导航，但颜色与选中态同源（蓝），HUD 收薄。
+ * 选择器全部带 .md-app 且位于文件末尾，压过前面同名规则。
+ * ============================================================ */
+
+/* ---------- 26.1 尺度变量：圆角升级 + 两级轻投影 ---------- */
+.md-app {
+  --md-r-sm: 3px;
+  --md-r: 4px;
+  --md-r-lg: 8px;
+  --md-r-pop: 10px;
+  --md-focus: #7db3e6;
+  --md-shadow-1: 0 1px 2px rgba(28, 38, 60, .05);
+  --md-shadow-2: 0 4px 12px -2px rgba(28, 38, 60, .14), 0 1px 3px rgba(28, 38, 60, .06);
+}
+
+/* ---------- 26.2 顶部 chrome：一条连续的白色工作条 ---------- */
+.md-app .md-menu {
+  flex: 0 0 28px; height: 28px;
+  background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+  border-bottom: 1px solid #e1e5ea;
+  box-shadow: 0 1px 0 rgba(28, 38, 60, .03);
+}
+.md-app .md-menu-brand b { color: #17202a; font-size: 12px; letter-spacing: 0; }
+.md-app .md-mitem { height: 20px; padding: 0 8px; }
+.md-app .md-toolbar {
+  flex: 0 0 30px; height: 30px;
+  background: #fafbfc;
+  border-bottom: 1px solid #e1e5ea;
+}
+.md-app .md-shelf {
+  background: linear-gradient(180deg, #ffffff 0%, #f7f9fb 100%);
+  border-bottom: 1px solid #e1e5ea;
+}
+/* 绘制模式那条笔刷条跟随 chrome，不再是一块孤立深灰 */
+.md-app .md-paintbar {
+  background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+  border-bottom: 1px solid #e1e5ea;
+  box-shadow: none;
+}
+
+/* ---------- 26.3 左侧工具轨：建模 / 绘制同底、同选中态 ---------- */
+.md-app .md-strip,
+.md-app .md-paintrail {
+  background: #fbfbfc;
+  border-right: 1px solid #e1e5ea;
+}
+.md-app .md-tool,
+.md-app .md-prbtn {
+  transition: background-color .14s ease, border-color .14s ease,
+              color .14s ease, box-shadow .14s ease;
+}
+.md-app .md-tool:hover,
+.md-app .md-prbtn:hover { border-color: #dfe3e8; }
+.md-app .md-tool.on,
+.md-app .md-prbtn.on {
+  box-shadow: 0 1px 3px rgba(28, 60, 100, .20), inset 0 1px 0 rgba(255, 255, 255, .18);
+}
+
+/* ---------- 26.4 工具架 / 图标按钮：悬停浮起 1px 投影 ---------- */
+.md-app .md-sico,
+.md-app .md-smic,
+.md-app .md-mode,
+.md-app .md-vpi {
+  transition: background-color .14s ease, border-color .14s ease,
+              color .14s ease, box-shadow .14s ease;
+}
+.md-app .md-sico:hover,
+.md-app .md-smic:hover,
+.md-app .md-mode:hover,
+.md-app .md-vpi:hover { box-shadow: var(--md-shadow-1); }
+.md-app .md-mode.on { box-shadow: inset 0 0 0 1px rgba(43, 124, 211, .22); }
+
+/* ---------- 26.5 页签：选中项统一为"抬起的白卡" ---------- */
+.md-app .md-otab,
+.md-app .md-dock-tab,
+.md-app .md-stab { border-radius: 5px; }
+.md-app .md-otab.on,
+.md-app .md-dock-tab.on,
+.md-app .md-stab.on { box-shadow: var(--md-shadow-1); }
+/* 绘制工具箱页签的下划线用主色：橙色留给"主操作"，选中态一律蓝 */
+.md-app .md-paint-tab { line-height: 29px; }
+.md-app .md-paint-tab.on { border-bottom-color: var(--md-on); }
+.md-app .md-paint-tabs { background: #f7f8fa; border-bottom: 1px solid #e1e5ea; }
+.md-app .md-ptab { border-radius: 6px 6px 0 0; }
+
+/* ---------- 26.6 卡片 / 分区：轻投影 + 更柔的标题条 ---------- */
+.md-app .md-sec2,
+.md-app .md-sec { box-shadow: var(--md-shadow-1); }
+.md-app .md-sec2-h,
+.md-app .md-h2 {
+  background: linear-gradient(180deg, #ffffff 0%, #f7f8fa 100%);
+}
+.md-app .md-sec2-h em,
+.md-app .md-tb-h em { background: #f4f6f8; border-color: #e1e5ea; }
+.md-app .md-paint-card,
+.md-app .md-paint-mix,
+.md-app .md-paint-prev { box-shadow: var(--md-shadow-1); }
+.md-app .md-cb-card:hover { box-shadow: var(--md-shadow-2); }
+
+/* ---------- 26.7 按钮 / 顶栏小控件：统一过渡与按下高光 ---------- */
+.md-app .md-chip,
+.md-app .md-act,
+.md-app .md-tbtn,
+.md-app .md-op,
+.md-app .md-cb-btn,
+.md-app .md-dock-mini,
+.md-app .md-cmdsearch,
+.md-app .md-menu-right .md-wsbtn {
+  transition: background-color .14s ease, border-color .14s ease,
+              color .14s ease, box-shadow .14s ease;
+}
+.md-app .md-chip.on,
+.md-app .md-act.on,
+.md-app .md-op.on,
+.md-app button.md-vpi.on {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16);
+}
+.md-app .md-cmdsearch,
+.md-app .md-menu-right .md-wsbtn {
+  border-radius: 5px;
+  box-shadow: var(--md-shadow-1);
+}
+.md-app .md-cmdsearch:hover,
+.md-app .md-menu-right .md-wsbtn:hover { box-shadow: 0 2px 6px rgba(28, 38, 60, .10); }
+
+/* ---------- 26.8 输入框：蓝调焦点环（与选中态同源） ---------- */
+.md-app .md-osearch input,
+.md-app .md-row1 input,
+.md-app .md-cmd,
+.md-app .md-soft-sel,
+.md-app .md-soft-num,
+.md-app .md-mod-f select,
+.md-app .md-mod-f input,
+.md-app .md-slot-n,
+.md-app .md-pf input,
+.md-app .md-hbp-row input { border-radius: 4px; }
+.md-app .md-osearch input:focus,
+.md-app .md-row1 input:focus,
+.md-app .md-cmd:focus,
+.md-app .md-soft-sel:focus,
+.md-app .md-soft-num:focus,
+.md-app .md-mod-f select:focus,
+.md-app .md-mod-f input:focus,
+.md-app .md-hbp-row input:focus {
+  border-color: #7db3e6;
+  box-shadow: 0 0 0 3px rgba(125, 179, 230, .20);
+}
+
+/* ---------- 26.9 视口读数 / 底栏：更薄、更安静 ---------- */
+.md-app .md-hud {
+  padding: 4px 9px;
+  border-radius: 6px;
+  letter-spacing: .015em;
+}
+.md-app .md-cmdrow,
+.md-app .md-keybar,
+.md-app .md-dock-tabs { background: #fbfbfc; }
+.md-app .md-status,
+.md-app .md-panel-h em,
+.md-app .md-right-h em { font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+ * 27. 细节面板：底部功能页卡槽（2026-11）
+ * ------------------------------------------------------------
+ * 属性编辑器更名「细节面板」后，内容按功能拆页：
+ * 对象 / 材质 / 修改器 / 组件 / 渲染视图 / 通道，由底部卡槽切换。
+ * 卡槽固定在面板底部（不随内容滚动），图标 + 小字，选中项浮起并带主色指示条；
+ * 页面内容做成独立白卡，和右侧其他面板的浅色层级保持一致。
+ * ============================================================ */
+
+/* ---------- 27.1 面板与页面容器 ---------- */
+.md-app .md-props { background: #f4f6f8; }
+.md-app .md-pbody { padding: 8px 8px 10px; }
+.md-app .md-pane { animation: md-pane-in .16s ease; }
+@keyframes md-pane-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------- 27.2 底部卡槽 ---------- */
+.md-app .md-pdock {
+  flex: 0 0 58px; height: 58px;
+  display: flex; align-items: stretch; gap: 2px;
+  padding: 4px 6px 5px;
+  background: linear-gradient(180deg, #fbfbfc 0%, #f2f4f7 100%);
+  border-top: 1px solid #e1e5ea;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9);
+}
+.md-app .md-pdock-b {
+  position: relative;
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  padding: 3px 1px 2px;
+  border: 1px solid transparent; border-radius: 7px;
+  background: transparent; color: #5a6068;
+  font: inherit; cursor: pointer;
+  transition: background-color .14s ease, border-color .14s ease,
+              color .14s ease, box-shadow .14s ease;
+}
+.md-app .md-pdock-b[hidden] { display: none; }
+.md-app .md-pdock-b svg { width: 17px; height: 17px; display: block; }
+.md-app .md-pdock-lb {
+  font-size: 9px; line-height: 1; letter-spacing: 0;
+  white-space: nowrap;
+}
+.md-app .md-pdock-b:hover { background: #eaf2fb; color: #1d5fa5; }
+.md-app .md-pdock-b.on {
+  background: #ffffff; border-color: #c9ddf4; color: #1d5fa5;
+  box-shadow: 0 1px 3px rgba(28, 60, 100, .16);
+}
+.md-app .md-pdock-b.on::before {
+  content: ''; position: absolute; left: 9px; right: 9px; top: -4px; height: 2px;
+  border-radius: 2px; background: var(--md-on);
+}
+.md-app .md-pdock-b:focus-visible {
+  outline: 2px solid var(--md-focus); outline-offset: 1px;
+}
+
+/* ---------- 27.3 细节面板里的分区卡：白卡 + 蓝箭头 ---------- */
+.md-app .md-props .md-sec {
+  margin: 0 0 8px;
+  background: #ffffff; border-color: #e1e5ea; border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(28, 38, 60, .05);
+}
+.md-app .md-props .md-h2 {
+  height: 24px; padding: 0 9px;
+  font-size: 10.5px; letter-spacing: .02em; color: #2a2f36;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f8fa 100%);
+  border-bottom: 1px solid #eceef2;
+}
+.md-app .md-props .md-h2::before { color: var(--md-on); }
+.md-app .md-props .md-sec-b { padding: 7px 9px 8px; }
+.md-app .md-props .md-ch { height: 22px; }
+
+/* ---------- 27.4 材质页 UV 区：两个半宽入口 ---------- */
+.md-app .md-uvrow { display: flex; gap: 6px; }
+.md-app .md-uvbtn {
+  flex: 1 1 0; min-width: 0;
+  height: 24px; padding: 0 6px;
+  border: 1px solid #d9dde3; border-radius: 5px;
+  background: #ffffff; color: #3b4147;
+  font: inherit; font-size: 10px; cursor: pointer; white-space: nowrap;
+  transition: background-color .14s ease, border-color .14s ease,
+              color .14s ease, box-shadow .14s ease;
+}
+.md-app .md-uvbtn:hover { background: #f2f7fd; border-color: #7db3e6; color: #1d5fa5; }
+.md-app .md-uvbtn.on {
+  background: var(--md-on); border-color: var(--md-on-line); color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16);
+}
+.md-app .md-uvrow + .md-note { margin-top: 7px; }
+
+/* ============================================================
+ * 28. 渲染视图 · Tripo 生图（着色效果）
+ * 图1 = 当前渲染视图输出；另可补 2 张参考图；固定 1:1、1 张。
+ * 结果只在面板里预览，可存入图库 / 下载，不写进模型文档。
+ * ============================================================ */
+.md-app .md-gen { padding: 7px 10px 10px; display: flex; flex-direction: column; gap: 7px; }
+.md-app .md-gen-src { position: relative; border: 1px solid #e2e6ec; border-radius: 6px; overflow: hidden; background: #eef2f7; }
+.md-app .md-gen-src img { display: block; width: 100%; max-height: 150px; object-fit: contain; background: #ffffff; }
+.md-app .md-gen-src-t { font-size: 9.5px; color: #6b7785; padding: 4px 7px; background: rgba(255, 255, 255, .9); border-top: 1px solid #e6eaf0; }
+.md-app .md-gen-empty { display: block; padding: 20px 0; text-align: center; font-size: 10px; color: #8a95a3; }
+.md-app .md-gen-p { display: flex; flex-direction: column; gap: 3px; font-size: 10px; color: #59636f; }
+.md-app .md-gen-p textarea {
+  width: 100%; min-height: 44px; resize: vertical; box-sizing: border-box;
+  border: 1px solid #d9dde3; border-radius: 5px; padding: 5px 7px;
+  font: inherit; font-size: 11px; color: #2f353b; background: #ffffff;
+}
+.md-app .md-gen-p textarea:focus { outline: none; border-color: #7db3e6; box-shadow: 0 0 0 2px rgba(125, 179, 230, .18); }
+.md-app .md-gen-refs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.md-app .md-gen-ref { position: relative; width: 52px; height: 52px; border: 1px solid #d9dde3; border-radius: 5px; overflow: hidden; background: #ffffff; }
+.md-app .md-gen-ref img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.md-app .md-gen-ref button {
+  position: absolute; top: 0; right: 0; width: 16px; height: 16px; padding: 0;
+  line-height: 14px; border: 0; border-radius: 0 0 0 4px;
+  background: rgba(30, 36, 44, .66); color: #ffffff; font-size: 11px; cursor: pointer;
+}
+.md-app .md-gen-add {
+  width: 52px; height: 52px; display: flex; align-items: center; justify-content: center;
+  border: 1px dashed #c3cbd6; border-radius: 5px; background: #ffffff;
+  font-size: 9px; color: #6b7785; cursor: pointer; text-align: center;
+}
+.md-app .md-gen-add:hover { border-color: #7db3e6; color: #1d5fa5; }
+.md-app .md-gen-add input { display: none; }
+.md-app .md-gen-fix { display: flex; flex-wrap: wrap; gap: 5px; font-size: 9px; color: #6b7785; }
+.md-app .md-gen-fix span { padding: 1px 7px; border-radius: 9px; background: #eef2f7; }
+.md-app .md-gen-fix .md-gen-sel {
+  display: flex; align-items: center; gap: 3px;
+  padding: 1px 4px 1px 7px; border-radius: 9px; background: #eef2f7; color: #59636f;
+}
+.md-app .md-gen-sel select {
+  border: 0; background: transparent; outline: none; cursor: pointer;
+  font: inherit; font-size: 9px; color: #2f353b; padding: 0 1px;
+}
+.md-app .md-gen-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.md-app .md-gen-outs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.md-app .md-gen-outs .md-gen-out:only-child { grid-column: span 2; }
+.md-app .md-gen-outs .md-gen-out:last-child:nth-child(odd) { grid-column: span 2; }
+.md-app .md-gen-out { border: 1px solid #d9dde3; border-radius: 6px; overflow: hidden; background: #ffffff; }
+.md-app .md-gen-out img { display: block; width: 100%; height: auto; }
+.md-app .md-rv-note.bad { color: #c0392b; }
+/* 国际站连接状态：一行小字 + 一个按钮；绿点 = 生图页就绪，黄点 = 等登录 */
+.md-app .md-gen-conn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 7px; border: 1px solid #e3e8ef; border-radius: 5px;
+  background: #f7f9fc; font-size: 9.5px; color: #6b7785;
+}
+.md-app .md-gen-conn-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-app .md-gen-conn button {
+  flex: 0 0 auto; height: 18px; padding: 0 7px; border: 1px solid #d9dde3; border-radius: 4px;
+  background: #ffffff; color: #3c4653; font-size: 9.5px; cursor: pointer;
+}
+.md-app .md-gen-conn button:hover { border-color: #7db3e6; color: #1d5fa5; }
+.md-app .md-gen-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: #b9c2cd; }
+.md-app .md-gen-conn.ok { border-color: #cbe6d2; background: #f2fbf5; color: #2c6b45; }
+.md-app .md-gen-conn.ok .md-gen-dot { background: #34a853; }
+.md-app .md-gen-conn.warn { border-color: #f0e2c2; background: #fdf9ef; color: #8a6a1f; }
+.md-app .md-gen-conn.warn .md-gen-dot { background: #e0a825; }

@@ -55,6 +55,9 @@
     /* 上一笔落在哪张面：拖动时先原地试，命中就省掉整份网格的线性扫描 */
     var _stickyM = null, _stickyFace = -1;
 
+    /* 吸管取色用的 1×1 画布：只读像素，不参与绘画工作区 */
+    var _pickCv = null;
+
     /* 面是否朝向射线：只看首三角的法线。续笔快路径必须先过这一关，
      * 否则拖过轮廓线时光线会穿过模型、从背面命中上一张面，画到看不见的地方。
      * 只在视口本身要剔背面时才用（见 cullBackfaces）。 */
@@ -97,17 +100,17 @@
     }
 
     /* 屏幕点 → 网格局部射线 → 最近三角形，返回面的材质槽 + 重心插值出来的 UV。
-     * 网格取自视口可见性：面级隔离时只剩替身网格里的面，画不到被藏起来的部分。 */
-    function paintRayHit(px, py) {
-      if (!view.mesh || !view.pivot || !view.camera) return null;
-      var m = visibleMesh(view.node ? view.node.id : '');
-      if (!m) return null;
+     * 网格与它的世界矩阵都由调用方给：画笔用激活对象，吸管要取指针下
+     * **任意对象**的贴图，不能写死 view.mesh。网格取自 visibleMesh，
+     * 面级隔离时只剩替身网格里的面，画不到被藏起来的部分。 */
+    function paintRayHitOn(m, mw, px, py) {
+      if (!m || !mw || !view.camera) return null;
       var r = view.canvas.getBoundingClientRect();
       if (!r.width || !r.height) return null;
       var ndc = _ndc.set((px / r.width) * 2 - 1, -((py / r.height) * 2 - 1));
       var rc = _rc || (_rc = new THREE.Raycaster());
       rc.setFromCamera(ndc, view.camera);
-      var inv = _inv.copy(view.pivot.matrixWorld).invert();
+      var inv = _inv.copy(mw).invert();
       var o = _org.copy(rc.ray.origin).applyMatrix4(inv);
       var d = _dir.copy(rc.ray.direction).transformDirection(inv);
       var pos = m.positions, off = m.faceOffsets, idx = m.faceIndices;
@@ -146,6 +149,12 @@
       /* face 是可见网格里的下标，faceId 才是能回到整份网格的稳定标识：
        * 岛遮罩（paintClipBegin）要在整份网格上查岛，必须用 faceId。 */
       return { face: bestF, faceId: m.faceIds[bestF], slot: slot, u: uu, v: vv };
+    }
+
+    /* 激活对象的落点：画笔 / 魔棒 / 涂抹的默认口径 */
+    function paintRayHit(px, py) {
+      var m = visibleMesh(view.node ? view.node.id : '');
+      return m ? paintRayHitOn(m, view.pivot && view.pivot.matrixWorld, px, py) : null;
     }
 
     /* UV 岛遮罩：把「落笔那张面所在的岛」的 UV 多边形换算到画布像素空间。
@@ -431,12 +440,47 @@
       p.slot = -1; p.doc = null;
     }
 
-    /* 抬笔：把这一笔作为**一个 stroke 层**推进栈，不再写 slotMaps。
-     *
-     * 三个直接好处（都是原来「写整图」的病灶）：
-     *   ① 底座不动 → 混合层不会被烙进基础图（不会被叠两次）
-     *   ② 底座为空也能画 → 不会把贴图洗成「槽位灰 + 几个岛」
-     *   ③ 历史里存的是一张增量图，不是前后两张 2048² PNG
+    /* 把这一笔并进已有绘制层（PS 口径：笔迹画进当前层，而不是每笔新建一层）。
+     * 必须换一张新 canvas：老 canvas 还挂在撤销历史里，原地画会让「撤销」失效。
+     * 老层的尺寸可能和这一笔不同（层来自别的分辨率），按 UV 空间等比缩放到这一笔的画布。 */
+    function paintMergeInto(op, bbox) {
+      var p = P, ink = p.ink;
+      if (!op || !ink || !ink.width || !ink.height) return null;
+      var w = ink.width, h = ink.height;
+      var cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      var g = cv.getContext('2d');
+      var old = op.canvas;
+      if (old && old.width && old.height) {
+        if (old.width !== w || old.height !== h) g.drawImage(old, 0, 0, w, h);
+        else g.drawImage(old, 0, 0);
+      }
+      /* 新的这一笔永远 source-over 叠上去：橡皮层 / 模糊层存的是「作用强度」，
+       * 两笔重叠 = 强度累加（合成时统一按 destination-out / 遮罩解释）。 */
+      g.drawImage(ink, 0, 0);
+      var nb = bbox ? { x: bbox.x, y: bbox.y, w: bbox.w, h: bbox.h } : null;
+      var ob = op.bbox;
+      if (ob && ob.w > 0 && ob.h > 0) {
+        if (old && old.width && old.width !== w) {
+          var k = w / old.width;
+          ob = { x: ob.x * k, y: ob.y * k, w: ob.w * k, h: ob.h * k };
+        }
+        if (!nb) nb = ob;
+        else {
+          var x0 = Math.min(nb.x, ob.x), y0 = Math.min(nb.y, ob.y);
+          var x1 = Math.max(nb.x + nb.w, ob.x + ob.w), y1 = Math.max(nb.y + nb.h, ob.y + ob.h);
+          nb = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+        }
+      }
+      var next = {};
+      for (var key in op) if (Object.prototype.hasOwnProperty.call(op, key)) next[key] = op[key];
+      next.canvas = cv; next.w = w; next.h = h;
+      next.src = ''; next.__thumb = null;
+      next.bbox = nb ? { x: Math.round(nb.x), y: Math.round(nb.y), w: Math.ceil(nb.w), h: Math.ceil(nb.h) } : null;
+      return next;
+    }
+
+    /* 抬笔：把这一笔并进「当前绘制层」，没有可并入的层才新建一层（不再一笔一层）。
      * 只有没有 TexStack（老页面 / 脚本单测）时才退回老的写回路径。 */
     function paintCommit(title) {
       var p = P;
@@ -456,14 +500,38 @@
       var smudge = !!p.inkSmudge;
       /* 调用方可以给这一层起名（例如岛填充），历史面板里就能区分「画的一笔」与「填的一岛」 */
       var label = title || (blur ? '模糊' : smudge ? '涂抹' : '画笔');
-      TStack.push(doc, slot, {
-        type: blur ? 'blur' : 'stroke', label: label,
-        canvas: p.ink, w: inkW, h: inkH,
-        op: 1, mode: p.inkErase ? 'erase' : 'normal',
-        radius: blur ? Math.max(1, p.blurRad || 1) : 0,
-        /* 这一笔实际动过的像素范围：合成 / 落盘只需要看这里，不用扫整张画布 */
-        bbox: p.inkBox ? { x: p.inkBox.x, y: p.inkBox.y, w: p.inkBox.w, h: p.inkBox.h } : null
-      });
+      /* 抬笔先问外壳：这一笔该并进哪一层？返回 null 才新建。
+       * 普通笔迹并进当前绘制层；橡皮 / 模糊并进各自最上面同参数的效果层。 */
+      var meta = {
+        type: blur ? 'blur' : 'stroke',
+        mode: p.inkErase ? 'erase' : 'normal',
+        radius: blur ? Math.max(1, p.blurRad || 1) : 0
+      };
+      var target = ctx.paintTarget ? ctx.paintTarget(slot, meta) : null;
+      var merged = null;
+      if (target) {
+        var at = TStack.ops(doc, slot).indexOf(target);
+        if (at >= 0) merged = paintMergeInto(target, p.inkBox);
+        if (merged) {
+          var list = TStack.ops(doc, slot).slice();
+          list[at] = merged;
+          TStack.setOps(doc, slot, list);
+          /* 合并换了一个新对象：让「当前绘制层」跟着换，否则下一笔会以为没选层 */
+          if (ctx.onPaintMerged) ctx.onPaintMerged(slot, target, merged);
+        }
+      }
+      if (!merged) {
+        TStack.push(doc, slot, {
+          type: blur ? 'blur' : 'stroke', label: label,
+          canvas: p.ink, w: inkW, h: inkH,
+          op: 1, mode: p.inkErase ? 'erase' : 'normal',
+          radius: blur ? Math.max(1, p.blurRad || 1) : 0,
+          /* 这一笔实际动过的像素范围：合成 / 落盘只需要看这里，不用扫整张画布 */
+          bbox: p.inkBox ? { x: p.inkBox.x, y: p.inkBox.y, w: p.inkBox.w, h: p.inkBox.h } : null
+        });
+        /* 新层如果是可绘制笔迹层，自动成为当前绘制层（下一笔并进它） */
+        if (ctx.onPaintPushed) ctx.onPaintPushed(slot);
+      }
       var after = TStack.ops(doc, slot).slice();
       /* 这一笔的增量图已经归栈所有：立刻松手，下一笔重新分一张（见 paintEnsureInk） */
       p.ink = null; p.inkCtx = null;
@@ -916,16 +984,43 @@
       paintStampAt(u * p.canvas.width, (1 - v) * p.canvas.height);
     }
 
-    /* 吸管：按落笔点读工作副本里的贴图颜色（v 轴与画布方向对齐，和落笔同一套换算） */
-    function paintPickColorAt(u, v) {
-      var p = P;
-      if (!p.canvas || !p.ctx) return;
-      var w = p.canvas.width, h = p.canvas.height;
-      var x = Math.max(0, Math.min(w - 1, Math.round((u - Math.floor(u)) * w)));
-      var y = Math.max(0, Math.min(h - 1, Math.round((1 - (v - Math.floor(v))) * h)));
+    /* 吸管：按落笔点读「指针下这个对象当前显示的那张贴图」的像素。
+     * 必须只读：不能先建绘画工作副本 —— 工作副本初始是白底，一旦 applySlotTexture
+     * 挂上去，整片模型立刻变白，吸到的也永远是白色（旧实现的两个症状）。
+     * object = 指针下命中的实体；有它才能读到**那个对象**当前材质上的图（可能是
+     * 组件自报的表面贴图），而不是别的对象同槽的图。没有 object 时退回全局口径。
+     * 取的是纹理像素，不是渲染结果：平涂（unlit、不压色调）下显示=纹理=吸管。 */
+    function paintPickColorAt(u, v, slot, object) {
+      u = u - Math.floor(u);
+      v = v - Math.floor(v);
+      var vis = ctx.slotVisual ? ctx.slotVisual(slot, object) : null;
+      if ((vis && vis.loading) || (!vis && ctx.baseLoading && ctx.baseLoading(slot))) {
+        setStatus('吸管：这一槽的贴图还在解码，稍后再取色');
+        return;
+      }
+      var img = vis ? vis.image : (ctx.liveSlotImage ? ctx.liveSlotImage(slot) : null);
+      if (!img) {
+        var base = (vis && vis.color) || (ctx.slotColor ? ctx.slotColor(slot) : '');
+        if (!base) { setStatus('吸管：这一槽没有可取的贴图或底色', true); return; }
+        if (ctx.setPaintColor) ctx.setPaintColor(base);
+        else P.color = base;
+        setStatus('吸管：这一槽没有贴图，已取显示底色 ' + String(base).toUpperCase());
+        return;
+      }
+      var w = img.width || img.naturalWidth || 0;
+      var h = img.height || img.naturalHeight || 0;
+      if (!w || !h) { setStatus('吸管：这一槽的贴图还没解码完'); return; }
+      var sx = Math.max(0, Math.min(w - 1, Math.floor(u * w)));
+      /* v 轴向上：UV v=0 对应图像底边（与 CanvasTexture 的 flipY 一致） */
+      var sy = Math.max(0, Math.min(h - 1, Math.floor((1 - v) * h)));
+      var cv = _pickCv || (_pickCv = document.createElement('canvas'));
+      cv.width = 1; cv.height = 1;
+      var c2 = cv.getContext('2d');
       var d;
       try {
-        d = p.ctx.getImageData(x, y, 1, 1).data;
+        c2.clearRect(0, 0, 1, 1);
+        c2.drawImage(img, sx, sy, 1, 1, 0, 0, 1, 1);
+        d = c2.getImageData(0, 0, 1, 1).data;
       } catch (err) {
         setStatus('吸管：这张贴图不允许读取像素（跨域纹理）', true);
         return;
@@ -936,11 +1031,56 @@
       }).join('');
       if (ctx.setPaintColor) ctx.setPaintColor(hex);
       else P.color = hex;
-      setStatus('吸管：已取色 ' + hex.toUpperCase());
+      setStatus('吸管：已取纹理色 ' + hex.toUpperCase());
+    }
+
+    /* 吸管取色的目标选择：优先指针下最近的那个可见实体（不必是激活对象）。
+     * 命中别的对象只读它的贴图，**不调用 activateNode** —— 选择集保持不变。
+     * 指针下没有对象时退回激活对象，保证「点在空白处」仍能给出提示而不是误吸。 */
+    function pickColorUnderPointer(px, py) {
+      var target = ctx.pickTarget ? ctx.pickTarget(px, py) : null;
+      var m, mw, obj = null;
+      if (target) { m = target.mesh; mw = target.matrixWorld; obj = target.object; }
+      else {
+        m = visibleMesh(view.node ? view.node.id : '');
+        mw = view.pivot && view.pivot.matrixWorld;
+      }
+      if (!m) { setStatus('吸管：这里没点到模型', true); return; }
+      var hit = paintRayHitOn(m, mw, px, py);
+      if (!hit) { setStatus('吸管：这里没点到模型', true); return; }
+      paintPickColorAt(hit.u, hit.v, hit.slot, obj);
     }
 
     function begin(e) {
       if (!view.mesh || !view.pivot || !view.doc) return false;
+      var r = view.canvas.getBoundingClientRect();
+      var px = e.clientX - r.left, py = e.clientY - r.top;
+      var p = P;
+      var tool = p.tool || 'brush';
+      /* 吸管：只读像素，必须在任何「建工作副本 / 补 UV / 切对象」之前结束。
+       * 它取指针下那个对象的纹理像素，允许吸别的对象，且**不切换当前选择**。 */
+      if (tool === 'picker') {
+        pickColorUnderPointer(px, py);
+        edit.pickDown = { x: e.clientX, y: e.clientY, paint: true };
+        return true;
+      }
+      /* 选取：点一下切换当前对象。只改选择集：不落笔、不建工作副本、不补 UV，
+       * 当前对象被单独显示藏起来时也能切走。与吸管分工明确（吸管取色、选取切对象）。 */
+      if (tool === 'select') {
+        var tsel = ctx.pickTarget ? ctx.pickTarget(px, py) : null;
+        var sid = (tsel && tsel.nodeId) || '';
+        if (!sid && ctx.nodeUnderPointer) sid = ctx.nodeUnderPointer(px, py);
+        if (!sid) {
+          setStatus('选取：这里没有对象');
+        } else if (!view.node || sid !== view.node.id) {
+          if (ctx.activateNode) ctx.activateNode(sid);
+          setStatus('选取：已切换到「' + (ctx.nodeName ? ctx.nodeName(sid) : sid) + '」');
+        } else {
+          setStatus('选取：当前就是「' + (ctx.nodeName ? ctx.nodeName(sid) : sid) + '」');
+        }
+        edit.pickDown = { x: e.clientX, y: e.clientY, paint: true };
+        return true;
+      }
       /* 视口里看不见的对象不许落笔：否则会画到被「单独显示」藏起来的部分 */
       if (!visibleMesh(view.node ? view.node.id : '')) {
         setStatus('绘画：当前对象在视口里不可见，先退出单独显示', true);
@@ -959,8 +1099,6 @@
         uvRefreshSolidGeometry();
         setStatus('绘画：当前网格没有 UV，已自动生成默认展开');
       }
-      var r = view.canvas.getBoundingClientRect();
-      var px = e.clientX - r.left, py = e.clientY - r.top;
       var hit = paintRayHit(px, py);
       /* 导入的多材质模型通常拆成多个节点，激活对象往往不是鼠标下那个：
        * 这时射线只会打空、只提示「没点到模型」，看起来就是「有贴图模型上画了没反应」。
@@ -994,8 +1132,6 @@
         ? Math.min(forced, slotN - 1)
         : Math.max(0, Math.min(slotN - 1, hit.slot | 0));
       var u0 = hit.u - Math.floor(hit.u), v0 = hit.v - Math.floor(hit.v);
-      var p = P;
-      var tool = p.tool || 'brush';
       /* 魔棒：点一下锁定「这一面所在的 UV 岛」，之后所有笔画都只裁在这一岛里；
        * 再点同一岛解除。它不产生像素，所以不建笔画、也不进历史。 */
       if (tool === 'wand') {
@@ -1014,12 +1150,6 @@
       }
       var tex = paintEnsureTarget(slot);
       if (!tex) return false;
-      /* 吸管：直接从工作副本读落笔处的贴图颜色，写完就结束，不产生笔画 */
-      if (tool === 'picker') {
-        paintPickColorAt(u0, v0);
-        edit.pickDown = { x: e.clientX, y: e.clientY, paint: true };
-        return true;
-      }
       /* 每一笔的增量图都是全新的：上一笔那张已经进栈了，不能复用 */
       paintEnsureInk(p.canvas.width, p.canvas.height);
       p.previewBox = null;
@@ -1228,6 +1358,9 @@
 
     return {
       begin: begin, move: move, end: end, cancel: cancel, applyPatch: applyPaintPatch,
+      /* 只建工作副本（按设计挂白底），不落笔、不记历史。回归探针用它复现
+       * 「已有工作副本」的场景；产品路径不调它。 */
+      ensureTarget: paintEnsureTarget,
       /* 换文档 / 换网格：丢工作副本 + 清掉属于旧文档的槽位与岛锁定 */
       dropDoc: dropDoc,
       /* 整岛纯色填充：读当前选择（F12 UV 岛模式），按材质槽分组写入 */

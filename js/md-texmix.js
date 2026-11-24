@@ -244,13 +244,13 @@
     }
 
     function cfgSig(cfg) {
-      /* 不能 JSON.stringify(cfg)：ops 里是整张 PNG 的 data URL，
-       * 拖滑杆时每帧 stringify 一遍会直接卡死（这是同步路径）。 */
-      var o = cfg.ops || [], key = '';
-      for (var i = 0; i < o.length; i++) {
-        key += (o[i] && o[i].type || '') + ':' + (o[i] && o[i].src ? String(o[i].src).length : 0) + ':';
-      }
-      return JSON.stringify({ v: cfg.v, layers: cfg.layers, baked: cfg.baked }) + '#' + o.length + '#' + key;
+      /* 只覆盖「需要重新解码贴图」的部分：图层 / 烘焙图 / 版本。
+       * 不能 JSON.stringify(cfg)：ops 里是整张 PNG 的 data URL，同步路径上会卡死。
+       * 也**不能**把 ops 算进签名：抬一次笔 ops 就变一次，签名跟着变会让每一笔之后
+       * 都重跑 ensureSlot —— rec.layers 被换成新对象，下一帧 sameCompose 立刻失配，
+       * 于是下一笔的第一帧又整图重算（橡皮 / 模糊拖动开头的顿感即来源于此）。
+       * ops 由 TexStack 自己维护，外部改写走 rehydrate()，不靠这个签名。 */
+      return JSON.stringify({ v: cfg.v, layers: cfg.layers, baked: cfg.baked });
     }
 
     function memOf(doc) {
@@ -430,6 +430,19 @@
         };
       }
       return r;
+    }
+
+    /* 可见的绘制层（TexStack ops 里 on !== false 的那些）。
+     * 图层列表的眼睛只切这个开关：层还在栈里，只是不参与合成。
+     * 判断「这一槽有没有东西可画」时一律用它，别用 has() —— has() 把
+     * 隐藏层也算在内，会让「全部隐藏」的槽仍然去合成一张透明贴图。 */
+    function visibleOps(doc, slot) {
+      if (!global.TexStack) return [];
+      var list = global.TexStack.ops(doc, slot) || [], out = [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].on !== false) out.push(list[i]);
+      }
+      return out;
     }
 
     /* 把配置里的 id 全部解码成运行时层。中途配置又变了（token++）就放弃这次结果，
@@ -616,7 +629,7 @@
      * 缓存键带上「底座的来源 + 地址 + 尺寸」—— 换图 / 撤销画笔之后底座变了，
      * 继续用旧合成图会把上一次的像素留在视口里。 */
     function editsFor(slot, doc, rec, kinds) {
-      if (!global.TexStack || !global.TexStack.has(doc, slot)) return null;
+      if (!global.TexStack || !visibleOps(doc, slot).length) return null;
       /* 编辑层栈的底座同样只认烘焙图：导入贴图不进图层口径。 */
       var base = (rec && rec.baked && rec.baked.img) || null;
       var key = base ? 'baked' : 'white';
@@ -640,7 +653,7 @@
       if (!global.TexStack) return false;
       var list = global.TexStack.ops(doc, slot) || [];
       for (var i = 0; i < list.length; i++) {
-        if (list[i] && list[i].type === 'blur') return true;
+        if (list[i] && list[i].on !== false && list[i].type === 'blur') return true;
       }
       return false;
     }
@@ -679,6 +692,104 @@
      * 增量合成不计入 —— 它的成本是笔刷包围盒，与整图不是一个量级。 */
     var composeN = 0;
     var bakeN = 0;      /* 保存时自动烘焙的次数（探针 / 基准用） */
+    var liveN = 0;      /* 只重算笔刷脏块的增量合成次数（性能基准对照 composeN） */
+
+    /* 底座 + 混合层的缓存（不含任何笔迹）。
+     * TB.compose 会把所有图层按混合模式重混一遍，2048² 下每帧一次就是拖动卡顿的主因；
+     * 擦除 / 模糊笔每帧只需要从这张缓存里抠出脏块重贴，图层与底座都不用再动。 */
+    function underlayFor(rec, sz, baseImg, eff) {
+      eff = eff || [];
+      var same = !!rec.underCv && rec.underCv.width === sz.w && rec.underCv.height === sz.h &&
+        rec.underBase === (baseImg || null) &&
+        !!rec.underLayers && rec.underLayers.length === eff.length;
+      if (same) {
+        for (var i = 0; i < eff.length; i++) {
+          if (rec.underLayers[i] !== eff[i] || rec.underOpacs[i] !== eff[i].opacity) {
+            same = false;
+            break;
+          }
+        }
+      }
+      if (!same) {
+        if (!rec.underCv) rec.underCv = document.createElement('canvas');
+        rec.underCv = TB.compose({
+          w: sz.w, h: sz.h, baseImg: baseImg, layers: eff,
+          canvas: rec.underCv, baseFlipY: true, baseColor: '#ffffff'
+        });
+        rec.underBase = baseImg || null;
+        rec.underLayers = eff.slice();
+        rec.underOpacs = eff.map(function (l) { return l.opacity; });
+      }
+      return rec.underCv;
+    }
+
+    function committedBlurOps(doc, slot) {
+      if (!global.TexStack) return [];
+      var list = global.TexStack.ops(doc, slot) || [], out = [];
+      for (var i = 0; i < list.length; i++) {
+        var o = list[i];
+        if (o && o.on !== false && o.type === 'blur') out.push(o);
+      }
+      return out;
+    }
+
+    /* 擦除 / 模糊笔的增量合成：只重算笔刷脏块。
+     * 顺序与整图重算保持一致：
+     *   底座 + 混合层（缓存） → 笔迹层（含这一笔） → 已提交的模糊层 → 这一笔的模糊
+     * 橡皮必须打在单独的笔迹层上（直接 destination-out 合成图会把底座擦出透明洞），
+     * 这也是原来整图重算的做法，只是这里把「整张」换成了脏块。 */
+    function composeLiveBox(doc, slot, rec, inkBox, ink, hasStrokes) {
+      var cv = rec.canvas;
+      if (!cv || !rec.underCv || !cv.width) return null;
+      var bx = scaleBox(inkBox, ink.canvas.width, ink.canvas.height, cv.width, cv.height);
+      if (!bx || !(bx.w > 0 && bx.h > 0)) return null;
+      var g = cv.getContext('2d');
+      g.save();
+      g.beginPath();
+      g.rect(bx.x, bx.y, bx.w, bx.h);
+      g.clip();
+      g.globalAlpha = 1;
+      g.globalCompositeOperation = 'source-over';
+      g.clearRect(bx.x, bx.y, bx.w, bx.h);
+      g.drawImage(rec.underCv, bx.x, bx.y, bx.w, bx.h, bx.x, bx.y, bx.w, bx.h);
+
+      if (hasStrokes || ink.type === 'stroke') {
+        var lc = rec.inkCv;
+        if (!lc) lc = rec.inkCv = document.createElement('canvas');
+        if (lc.width !== cv.width) lc.width = cv.width;
+        if (lc.height !== cv.height) lc.height = cv.height;
+        var l2 = lc.getContext('2d');
+        l2.save();
+        l2.beginPath();
+        l2.rect(bx.x, bx.y, bx.w, bx.h);
+        l2.clip();
+        l2.globalAlpha = 1;
+        l2.globalCompositeOperation = 'source-over';
+        l2.clearRect(bx.x, bx.y, bx.w, bx.h);
+        if (hasStrokes) global.TexStack.overlay(lc, doc, slot, ['stroke']);
+        if (ink.type === 'stroke') {
+          /* 正在画的这一笔整笔重贴一次：脏块之外没有新像素，脏块之内要的是
+           * 「提交层 + 这一笔」的完整结果，只贴增量会让半透明笔叠加两次。 */
+          l2.globalCompositeOperation = ink.mode === 'erase' ? 'destination-out' : 'source-over';
+          l2.drawImage(ink.canvas, 0, 0, lc.width, lc.height);
+          l2.globalCompositeOperation = 'source-over';
+        }
+        l2.restore();
+        g.drawImage(lc, bx.x, bx.y, bx.w, bx.h, bx.x, bx.y, bx.w, bx.h);
+      }
+      g.restore();
+
+      /* 模糊层在笔迹之后作用在合成结果上（与整图重算同序），只写回脏块 */
+      if (hasStrokes) {
+        var blurs = committedBlurOps(doc, slot);
+        for (var bi = 0; bi < blurs.length; bi++) {
+          global.TexStack.blurMasked(cv, blurs[bi].canvas, blurs[bi].radius || 0, bx);
+        }
+      }
+      if (ink.type === 'blur') global.TexStack.blurMasked(cv, ink.canvas, ink.radius || 0, bx);
+      return bx;
+    }
+
     function composeOnto(doc, slot, rec, baseImg, eff, ink) {
       var sz = TB.mixSize({ baseImg: baseImg, layers: eff || [] }, MAX_SIDE);
       /* 只有笔迹、没有底座/混合层时，尺寸要跟笔迹画布一致（工作副本 2048），
@@ -710,6 +821,7 @@
         var cvI = rec.canvas;
         var bx = scaleBox(inkBox, ink.canvas.width, ink.canvas.height, cvI.width, cvI.height);
         if (bx) {
+          liveN++;
           var gi = cvI.getContext('2d');
           var kx = ink.canvas.width / cvI.width, ky = ink.canvas.height / cvI.height;
           gi.globalAlpha = 1;
@@ -722,16 +834,34 @@
         }
       }
 
-      var cv = TB.compose({
-        w: sz.w, h: sz.h, baseImg: baseImg, layers: eff || [], canvas: rec.canvas,
-        /* 建模 App 的画布是 v=0 在下（贴图 flipY=true），层也都按这个约定画。
-         * 配置里若有按 glTF 约定（flipY=false）存的层，TB.compose 会先翻一次再叠。 */
-        baseFlipY: true,
-        /* 白底：槽的可见内容只来自图层栈 / 笔迹，导入贴图不作为底座。
-         * 零图层时这里会走 applyBase，结果同样是白模。 */
-        baseColor: '#ffffff'
-      });
-      rec.canvas = cv;
+      /* 擦除 / 模糊笔：只重算笔刷脏块。
+       * 这两种笔都不能像普通笔那样直接往上一帧的结果上盖 ——
+       * 橡皮要从笔迹层里抠洞，模糊要重新糊「底座 + 笔迹」，所以脏块内的像素
+       * 必须按完整顺序重建；块外没有变化，保持上一帧即可。
+       * 之前的实现是每帧整图重算（2048² 的图层混合 + 全图 filter），这就是卡顿来源。 */
+      if (inkBox && (erase || blurInk) && rec.canvas.width === sz.w && rec.canvas.height === sz.h &&
+          sameCompose(rec.composeState, sz, baseImg, eff, rev)) {
+        var bxB = composeLiveBox(doc, slot, rec, inkBox, ink, hasStrokes);
+        if (bxB) {
+          liveN++;
+          rec.slotName = slotKeyOf(doc, slot);
+          applySlotTexture(slot, ensureTex(rec, rec.canvas, bxB));
+          return;
+        }
+      }
+
+      /* 整图重算：底座 + 混合层用缓存（underlayFor），只补一次笔迹 / 模糊层。
+       * 不带正在画的这一笔时，这一趟只在「状态变了」时发生，不在拖动中发生。 */
+      var under = underlayFor(rec, sz, baseImg, eff);
+      var cv = rec.canvas;
+      if (cv.width !== sz.w) cv.width = sz.w;
+      if (cv.height !== sz.h) cv.height = sz.h;
+      var gc = cv.getContext('2d');
+      gc.setTransform(1, 0, 0, 1, 0, 0);
+      gc.globalAlpha = 1;
+      gc.globalCompositeOperation = 'source-over';
+      gc.clearRect(0, 0, cv.width, cv.height);
+      gc.drawImage(under, 0, 0, cv.width, cv.height);
       composeN++;
       if (hasStrokes || hasInk) {
         if (erase) {
@@ -840,7 +970,7 @@
       var rec = recOf(doc, slot);
       var pc = paintCanvasFor ? paintCanvasFor(slot) : null;
       var eff = effectiveLayers(rec);
-      var hasOps = !!(global.TexStack && global.TexStack.has(doc, slot));
+      var hasOps = visibleOps(doc, slot).length > 0;
       var ink = paintInkFor ? paintInkFor(slot) : null;
       var blur = !!(ink && ink.type === 'blur') || opsHaveBlur(doc, slot);
       /* 边画边看：没有混合层时，材质上直接挂绘画工作副本就够了 ——
@@ -888,6 +1018,9 @@
       }
       rec.opsRev = rv;
       writeCfg(doc, slot, readCfg(doc, slot));
+      /* 图层列表里新增 / 删除绘制层后要跟着变；列表没显示时跳过，
+       * 切回「图层」页签时 setPaintTab 会再画一次。 */
+      if (uiReady && box && box.offsetHeight > 0) renderUi();
     }
 
     function pump(slot) {
@@ -931,14 +1064,17 @@
       if (!doc) return Promise.resolve(0);
       var cfg = readCfg(doc, slot);
       var rec = recOf(doc, slot);
-      /* 编辑层栈也算「有东西要合成」：没有混合层时它是唯一让视口更新的路径 */
-      var hasEdits = !!(global.TexStack && global.TexStack.has(doc, slot));
+      /* 编辑层栈也算「有东西要合成」：没有混合层时它是唯一让视口更新的路径。
+       * 全部被眼睛关掉的绘制层不算。 */
+      var hasEdits = visibleOps(doc, slot).length > 0;
       var idle = !(cfg.layers.length || cfg.baked || hasEdits);
       if (idle) {
         /* 零图层口径：白模。不要等 rec.texValid —— 打开一个带导入贴图的模型，
          * 视口也必须直接是白底，而不是先显示资产贴图再等第一次操作。 */
         applyBase(slot);
-        rec.ready = true; rec.sig = JSON.stringify(cfg);
+        /* 签名口径必须和 ensureSlot 一致：这里曾经用 JSON.stringify(cfg)，
+         * 格式不同 → 下一次 pump 必然失配，白模槽每次落笔都白跑一趟解码。 */
+        rec.ready = true; rec.sig = cfgSig(cfg);
         return Promise.resolve(0);
       }
       return ensureSlot(slot, force).then(function (r) {
@@ -975,7 +1111,7 @@
       if (!doc) return false;
       var cfg = readCfg(doc, slot);
       if (cfg.baked) return true;
-      if (global.TexStack && global.TexStack.has(doc, slot)) return true;
+      if (visibleOps(doc, slot).length) return true;
       var ls = cfg.layers || [];
       for (var i = 0; i < ls.length; i++) {
         var l = ls[i];
@@ -1084,22 +1220,39 @@
       schedule(slot);
     }
 
-    function addLayerAsset(slot, dataURL, name) {
+    /* opts.flipY === false 表示这张图按 glTF 原生朝向（v=0 在图片顶部）存，
+     * 合成时会先翻一次再叠；建模 App 拉回 Tripo 贴图走的就是这条。
+     * opts.mask = 遮罩图 dataURL：一并入资产库并挂到这一层（白=显示、黑/透明=隐藏），
+     * 落盘时只存遮罩 id，重开仍能还原。 */
+    function addLayerAsset(slot, dataURL, name, opts) {
       var doc = docOf();
-      if (!doc) return;
+      if (!doc) return Promise.resolve(false);
       var cfg = readCfg(doc, slot);
-      if (cfg.layers.length >= LIMIT) { setStatus('材质图层：一个材质槽最多 ' + LIMIT + ' 层', true); return; }
+      if (cfg.layers.length >= LIMIT) { setStatus('材质图层：一个材质槽最多 ' + LIMIT + ' 层', true); return Promise.resolve(false); }
       var before = snapCfg(slot);
+      var maskUrl = (opts && typeof opts.mask === 'string') ? opts.mask : '';
+      var maskName = (opts && opts.maskName) || ((name || '贴图') + ' 遮罩');
       return putImageAsset(dataURL, name).then(function (id) {
-        cfg.layers.push({
-          id: id, name: name || '贴图', flipY: true, visible: true, opacity: 1, blend: 'normal',
-          src: id ? '' : dataURL
+        var maskP = maskUrl ? putImageAsset(maskUrl, maskName) : Promise.resolve('');
+        return maskP.then(function (mid) {
+          var layer = {
+            id: id, name: name || '贴图', flipY: !(opts && opts.flipY === false),
+            visible: true, opacity: 1, blend: 'normal',
+            src: id ? '' : dataURL
+          };
+          /* 遮罩和手绘遮罩同一套约定（画布 y=0 在上，flipY:true） */
+          if (maskUrl) {
+            layer.mask = { id: mid || '', name: maskName, flipY: true, invert: false };
+            if (!mid) layer.mask.src = maskUrl;
+          }
+          cfg.layers.push(layer);
+          writeCfg(doc, slot, cfg);
+          rebuildSlot(slot, before, '添加混合层');
+          if (uiReady) renderUi();
+          setStatus('材质图层：已叠加「' + (name || '贴图') + '」' + (maskUrl ? '（带遮罩）' : '') +
+            (id ? '' : '（网页版：本次会话内有效）'));
+          return true;
         });
-        writeCfg(doc, slot, cfg);
-        rebuildSlot(slot, before, '添加混合层');
-        if (uiReady) renderUi();
-        setStatus('材质图层：已叠加「' + (name || '贴图') + '」' +
-          (id ? '' : '（网页版：本次会话内有效）'));
       });
     }
 
@@ -1958,6 +2111,308 @@
       setStatus('材质图层：已删除「' + (name || '图层') + '」');
     }
 
+    /* ---------------- 绘制层（TexStack ops）管理 ----------------
+     * 笔迹 / 投射 / 模糊层也是用户内容，但以前只活在编辑层栈里，
+     * 图层列表上看不到、关不掉、删不掉。这里把它们按「层」暴露出来：
+     * 眼睛 = 是否参与合成（层仍留在栈里），双击改名，↑/↓ 调顺序，× 删除。
+     * 合成顺序：投射层属于底座（在混合层之下），笔迹 / 模糊叠在混合层之上，
+     * 所以列表里笔迹显示在最上、投射显示在混合层与底层之间。 */
+    function opClassOf(op) { return (op && op.type === 'project') ? 'project' : 'ink'; }
+    function opTypeName(op) {
+      if (!op) return '笔迹';
+      if (op.type === 'project') return '投射';
+      if (op.type === 'blur') return '模糊';
+      return op.mode === 'erase' ? '橡皮' : '笔迹';
+    }
+    function opName(op, idx) {
+      if (op && op.label) return op.label;
+      return opTypeName(op) + ' ' + (idx + 1);
+    }
+    /* 历史里存栈 diff：浅拷贝一层字段，op 的 canvas / src 继续共享。
+     * 不能直接把活对象塞进历史 —— 后面再改 on / op 会连历史一起改掉。 */
+    function cloneOps(list) {
+      return (list || []).map(function (o) { return Object.assign({}, o); });
+    }
+    function opsOf(slot) {
+      return (global.TexStack && global.TexStack.ops(docOf(), slot).slice()) || [];
+    }
+    /* 同一类层里找相邻的那一个：投射与笔迹是两轮合成，跨类换序没有视觉意义。 */
+    function neighborOp(list, idx, dir) {
+      var cls = opClassOf(list[idx]);
+      for (var j = idx + dir; j >= 0 && j < list.length; j += dir) {
+        if (opClassOf(list[j]) === cls) return j;
+      }
+      return -1;
+    }
+
+    /* ---------------- 当前绘制层（PS 口径） ----------------
+     * 以前每一笔都是一层：画十笔 = 十层，列表无限膨胀，也没法「在选中的层上改」。
+     * 现在笔迹画进**当前绘制层**：第一次落笔自动建一层，之后并进同一张 canvas；
+     * 点列表里的笔迹行可以换层，「＋ 绘制层」显式新建一层。
+     * 只按对象引用记（不记下标）：删层 / 调序 / 撤销后引用自然失效，
+     * 渲染时回落到最上面的笔迹层，不会把笔迹写进别的层。
+     * 只允许普通笔迹层当目标：投射层属于底座，橡皮 / 模糊层按遮罩语义工作，
+     * 把彩色像素并进去会改变它们的含义。 */
+    var paintSel = { slot: null, op: null };
+
+    function paintableOp(op) {
+      return !!op && op.on !== false && (op.type || 'stroke') === 'stroke' && op.mode !== 'erase';
+    }
+    function selPaintOp(slot) {
+      var op = paintSel.op;
+      if (!op || paintSel.slot !== slot) return null;
+      return opsOf(slot).indexOf(op) >= 0 ? op : null;
+    }
+    function selectPaintOp(slot, op) {
+      paintSel.slot = slot;
+      paintSel.op = op || null;
+      if (uiReady) renderUi();
+      if (!op) { setStatus('材质图层：已取消绘制层选择'); return; }
+      setStatus('材质图层：当前绘制层「' + opName(op, opsOf(slot).indexOf(op)) +
+        '」——之后的笔迹都画进这一层');
+    }
+    /* md-paint 抬笔时问它：这一笔并进哪一层？null = 新建一层。
+     *   普通笔迹 → 选中的笔迹层，没选就用最上面一层笔迹
+     *   橡皮 / 模糊 → 各自最上面同参数的效果层（连续擦 / 连续糊不会再一层一笔） */
+    function paintTarget(slot, meta) {
+      var list = opsOf(slot), i, it;
+      if (!meta) return null;
+      if (meta.type === 'blur') {
+        for (i = list.length - 1; i >= 0; i--) {
+          it = list[i];
+          if (it && it.on !== false && it.type === 'blur' &&
+              Math.round(it.radius || 1) === Math.round(meta.radius || 1)) return it;
+        }
+        return null;
+      }
+      if (meta.mode === 'erase') {
+        for (i = list.length - 1; i >= 0; i--) {
+          it = list[i];
+          if (it && it.on !== false && it.type === 'stroke' && it.mode === 'erase') return it;
+        }
+        return null;
+      }
+      var sel = selPaintOp(slot);
+      if (sel) return sel;
+      for (i = list.length - 1; i >= 0; i--) if (paintableOp(list[i])) return list[i];
+      return null;
+    }
+    /* 新入栈的层如果是可绘制笔迹层，自动成为当前绘制层（抬笔即选中） */
+    function notePaintPushed(slot) {
+      var list = opsOf(slot);
+      var op = list[list.length - 1];
+      if (!paintableOp(op)) return;
+      paintSel.slot = slot;
+      paintSel.op = op;
+      if (uiReady) renderUi();
+    }
+    /* 合并会换一个新 op 对象（旧 canvas 留给撤销），当前绘制层要跟着指向新对象 */
+    function notePaintMerged(slot, from, to) {
+      if (paintSel.slot === slot && paintSel.op === from) paintSel.op = to;
+      if (uiReady) renderUi();
+    }
+    /* 「＋ 绘制层」：建一张空层（canvas 为空，落笔时才分配）。
+     * 空层不进 toDesc（没有像素），重开页面不会留下一个永远空着的层。 */
+    function addPaintLayer(slot) {
+      var doc = docOf();
+      if (!doc) return;
+      var list = opsOf(slot);
+      var before = cloneOps(list);
+      var n = 0;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && (list[i].type || 'stroke') === 'stroke' && list[i].mode !== 'erase') n++;
+      }
+      var op = {
+        type: 'stroke', mode: 'normal', op: 1, label: '绘制层 ' + (n + 1),
+        canvas: null, w: 0, h: 0, bbox: null
+      };
+      global.TexStack.push(doc, slot, op);
+      paintSel.slot = slot;
+      paintSel.op = op;
+      commitOps(slot, '新建绘制层', before,
+        '材质图层：已新建「' + op.label + '」，之后的笔迹会画进这一层');
+    }
+
+    /* 和画笔历史同构：tex 补丁 = 两个 ops 数组，撤销时整体换回。
+     * bytes 按增量图面积估（与 md-paint.paintPushHistory 同一口径）。 */
+    function pushOpsHistory(slot, before, after, label) {
+      var est = 0;
+      for (var i = 0; i < after.length; i++) {
+        var c = after[i] && after[i].canvas;
+        if (c && c.width) est += Math.round(c.width * c.height * 4 / 16);
+      }
+      st.history.undo.push({
+        tex: { slot: slot, before: before, after: after },
+        label: label || '绘制层', bytes: est
+      });
+      st.history.redo = [];
+      while (st.history.undo.length > 1 && totalBytes() > HISTORY_BUDGET) st.history.undo.shift();
+      syncBytes();
+      updateChrome();
+    }
+
+    function commitOps(slot, label, before, msg) {
+      var doc = docOf();
+      /* 栈已经改完（setOps 已 bump rev）：下一帧重合成并落盘 */
+      schedule(slot);
+      persistOps(doc, slot);
+      pushOpsHistory(slot, before, cloneOps(opsOf(slot)), label);
+      if (uiReady) renderUi();
+      if (msg) setStatus(msg);
+    }
+
+    function toggleOpVisible(slot, idx) {
+      var doc = docOf();
+      var list = opsOf(slot);
+      var op = list[idx];
+      if (!doc || !op) return;
+      var before = cloneOps(list);
+      op.on = op.on === false;
+      /* 藏起来的层不能当绘制目标：否则笔迹会写进看不见的地方 */
+      if (op.on === false && paintSel.op === op) paintSel.op = null;
+      global.TexStack.setOps(doc, slot, list);
+      commitOps(slot, op.on === false ? '隐藏绘制层' : '显示绘制层', before,
+        '材质图层：已' + (op.on === false ? '隐藏' : '显示') + '「' + opName(op, idx) + '」');
+    }
+
+    /* 改名：不用 window.prompt —— Electron 里没有实现，会直接抛错。
+     * 双击名字就地变成可编辑文本，Enter / 失焦提交，Esc 取消。 */
+    function setOpLabel(slot, idx, name) {
+      var doc = docOf();
+      var list = opsOf(slot);
+      var op = list[idx];
+      if (!doc || !op) return;
+      var before = cloneOps(list);
+      op.label = name;
+      global.TexStack.setOps(doc, slot, list);
+      commitOps(slot, '重命名绘制层', before,
+        '材质图层：图层已改名为「' + op.label + '」');
+    }
+
+    function moveOp(slot, from, to) {
+      var doc = docOf();
+      var list = opsOf(slot);
+      if (!doc || !list[from] || !list[to] || from === to) return;
+      var before = cloneOps(list);
+      var it = list.splice(from, 1)[0];
+      list.splice(to, 0, it);
+      global.TexStack.setOps(doc, slot, list);
+      commitOps(slot, '调整绘制层顺序', before,
+        '材质图层：已调整「' + opName(it, to) + '」的顺序');
+    }
+
+    function removeOp(slot, idx) {
+      var doc = docOf();
+      var list = opsOf(slot);
+      var op = list[idx];
+      if (!doc || !op) return;
+      var before = cloneOps(list);
+      var name = opName(op, idx);
+      list.splice(idx, 1);
+      global.TexStack.setOps(doc, slot, list);
+      commitOps(slot, '删除绘制层', before, '材质图层：已删除绘制层「' + name + '」');
+    }
+
+    /* 绘制层缩略图：透明底的增量图铺在深色底上才能看清。
+     * 层像素入栈后不再变，缓存一张小图，切页签 / 拖动滑杆时不重复缩放 2048²。 */
+    function opThumb(op, size) {
+      if (!op || !op.canvas || !op.canvas.width) return null;
+      var k = 't' + size;
+      if (op.__thumb && op.__thumb.k === k) return op.__thumb.cv;
+      var cv = document.createElement('canvas');
+      cv.width = size; cv.height = size;
+      var c2 = cv.getContext('2d');
+      c2.fillStyle = '#20242b';
+      c2.fillRect(0, 0, size, size);
+      var sc = Math.max(size / op.canvas.width, size / op.canvas.height);
+      var w = op.canvas.width * sc, h = op.canvas.height * sc;
+      c2.drawImage(op.canvas, (size - w) / 2, (size - h) / 2, w, h);
+      op.__thumb = { k: k, cv: cv };
+      return cv;
+    }
+
+    function renderOpRow(slot, idx) {
+      var list = opsOf(slot);
+      var op = list[idx];
+      var paintable = paintableOp(op);
+      var row = document.createElement('div');
+      row.className = 'md-mix-row md-mix-op' + (op && op.on === false ? ' is-off' : '') +
+        (paintable && selPaintOp(slot) === op ? ' is-sel' : '');
+      if (!op) return row;
+      if (paintable) {
+        row.title = '点击设为当前绘制层；之后的笔迹都画进这一层';
+        row.onclick = function (ev) {
+          var t = ev && ev.target;
+          if (t && t.isContentEditable) return;
+          if (t && t.closest && t.closest('button')) return;
+          selectPaintOp(slot, op);
+        };
+      }
+
+      var line1 = document.createElement('div');
+      line1.className = 'md-mix-line';
+      line1.appendChild(mkBtn(op.on === false ? '○' : '◉',
+        op.on === false ? '显示这一层' : '隐藏这一层',
+        function () { toggleOpVisible(slot, idx); }, 'md-mix-eye'));
+      var thBox = document.createElement('div');
+      thBox.className = 'md-mix-thumb';
+      var th = opThumb(op, 38);
+      if (th) thBox.appendChild(th);
+      line1.appendChild(thBox);
+
+      var nm = document.createElement('div');
+      nm.className = 'md-mix-name';
+      nm.textContent = opName(op, idx);
+      nm.title = nm.textContent + '（双击改名）';
+      nm.ondblclick = function () {
+        if (nm.contentEditable === 'true') return;
+        nm.contentEditable = 'true';
+        nm.focus();
+        var rg = document.createRange();
+        rg.selectNodeContents(nm);
+        var sel = global.getSelection();
+        if (sel) { sel.removeAllRanges(); sel.addRange(rg); }
+      };
+      nm.onkeydown = function (e) {
+        if (nm.contentEditable !== 'true') return;
+        if (e.key === 'Enter') { e.preventDefault(); nm.blur(); }
+        else if (e.key === 'Escape') {
+          nm.textContent = opName(op, idx);
+          nm.blur();
+        }
+      };
+      nm.onblur = function () {
+        if (nm.contentEditable !== 'true') return;
+        nm.contentEditable = 'false';
+        var name = String(nm.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+        if (!name || name === opName(op, idx)) {
+          nm.textContent = opName(op, idx);
+          return;
+        }
+        setOpLabel(slot, idx, name);
+      };
+      line1.appendChild(nm);
+
+      /* 列表倒序显示：屏幕上的「上移」= 数组里往后挪一位 */
+      var up = neighborOp(list, idx, 1);
+      var down = neighborOp(list, idx, -1);
+      if (up >= 0) line1.appendChild(mkBtn('↑', '上移一层', function () { moveOp(slot, idx, up); }));
+      if (down >= 0) line1.appendChild(mkBtn('↓', '下移一层', function () { moveOp(slot, idx, down); }));
+      line1.appendChild(mkBtn('×', '删除这一层', function () { removeOp(slot, idx); }, 'is-del'));
+      row.appendChild(line1);
+
+      var line2 = document.createElement('div');
+      line2.className = 'md-mix-line';
+      var tag = document.createElement('span');
+      tag.className = 'md-mix-mask';
+      tag.textContent = opTypeName(op) + (opClassOf(op) === 'project' ? ' · 底座（混合层之下）' : ' · 合成在最上层') +
+        (paintable && selPaintOp(slot) === op ? ' · 当前绘制层' : '');
+      tag.title = tag.textContent;
+      line2.appendChild(tag);
+      row.appendChild(line2);
+      return row;
+    }
+
     function shortName(s, n) {
       s = String(s == null ? '' : s);
       return s.length > n ? s.slice(0, n - 1) + '…' : s;
@@ -1992,9 +2447,12 @@
       if (slot == null) slot = Math.min(curSlot, n - 1);
       curSlot = slot;
       var cfg = readCfg(doc, slot);
+      /* 绘制层（笔迹 / 投射 / 模糊）也算「层」：用户画完必须能在列表里找到它 */
+      var opList = (global.TexStack && global.TexStack.ops(doc, slot)) || [];
       var count = document.createElement('em');
       count.className = 'md-mix-count';
-      count.textContent = cfg.layers.length + ' 层';
+      count.textContent = cfg.layers.length + ' 层' +
+        (opList.length ? ' + ' + opList.length + ' 绘制' : '');
       head.appendChild(count);
       wrap.appendChild(head);
 
@@ -2024,16 +2482,25 @@
 
       listEl = document.createElement('div');
       listEl.className = 'md-mix-list';
-      if (!cfg.layers.length) {
+      if (!cfg.layers.length && !opList.length) {
         var zero = document.createElement('div');
         zero.className = 'md-mix-empty';
         zero.innerHTML = '<b>＋</b><span>这个材质槽还没有图层</span>' +
           '<em>点下方「＋ 图层」叠加贴图；每层可调显隐、顺序、混合模式、不透明度与遮罩。' +
+          '在视口里画的笔迹会进「当前绘制层」（首次落笔自动建一层，不会一笔一层），可以单独显隐 / 删除。' +
           '没有图层时为白模；保存到资产库保留图层与遮罩，导出到电脑时按槽合成一张贴图。</em>';
         listEl.appendChild(zero);
       }
+      /* 笔迹 / 模糊层合成在贴图图层之上：列表里放最上（数组倒序） */
+      for (var oi = opList.length - 1; oi >= 0; oi--) {
+        if (opClassOf(opList[oi]) === 'ink') listEl.appendChild(renderOpRow(slot, oi));
+      }
       for (var li = cfg.layers.length - 1; li >= 0; li--) {
         listEl.appendChild(renderRow(slot, cfg, li, cfg.layers.length));
+      }
+      /* 投射层属于底座：显示在混合层之下、底层之上 */
+      for (var pi = opList.length - 1; pi >= 0; pi--) {
+        if (opClassOf(opList[pi]) === 'project') listEl.appendChild(renderOpRow(slot, pi));
       }
       wrap.appendChild(listEl);
 
@@ -2050,6 +2517,11 @@
 
       var acts = document.createElement('div');
       acts.className = 'md-mix-acts';
+      var addPaint = mkBtn('＋ 绘制层', '新建一个空绘制层；笔迹只画进当前绘制层', function () {
+        addPaintLayer(slot);
+      });
+      addPaint.classList.add('md-mix-addpaint');
+      acts.appendChild(addPaint);
       var addBtn = mkBtn('＋ 图层', '叠加一张贴图作为新图层（图片会存入资产库）', function () {
         pickFiles(true, function (url, name) { return addLayerAsset(slot, url, name); });
       });
@@ -2074,7 +2546,9 @@
 
       var hint = document.createElement('div');
       hint.className = 'md-mix-hint';
-      hint.textContent = '眼睛切显隐，双击图层名改名，拖动标题行排序；保存时自动把「底座 + 图层 + 笔迹」烘焙成该槽贴图。';
+      hint.textContent = '眼睛切显隐，双击图层名改名，拖动标题行排序；笔迹只画进「当前绘制层」，' +
+        '点笔迹行切换、点「＋ 绘制层」新建（不会一笔一层）；' +
+        '保存时自动把「底座 + 图层 + 笔迹」烘焙成该槽贴图。';
       wrap.appendChild(hint);
 
       if (doc.materials.textureConfigMissing) {
@@ -2184,11 +2658,18 @@
         return !!(c.layers.length || c.baked);
       },
       rekey: rekey, selectSlot: selectSlot, adoptSlot: adoptSlot, listSlots: listSlots,
+      /* 当前绘制层：md-paint 落笔时问「并进哪一层」，抬笔后由建模 App 通知新层已入栈。
+       * addPaintLayer 供面板「＋ 绘制层」直接调用。 */
+      paintTarget: paintTarget, notePaintPushed: notePaintPushed, notePaintMerged: notePaintMerged,
+      selectPaintOp: selectPaintOp, addPaintLayer: addPaintLayer,
+      /* 建模 App 生成贴图后直接叠到某一材质槽（opts.flipY === false 表示 glTF 原生朝向）。
+       * 与工具箱「添加贴图」同一条链路：入资产库 → 写层 → 重合成 → 视口更新。 */
+      addLayer: addLayerAsset,
       migrateLegacy: migrateLegacy,
       /* 保存 / 导出：先把所有槽合成到最新，再让导出贴图直接取这张 canvas */
       bakeForSave: bakeForSave, composedCanvas: composedCanvas,
-      /* 性能基准：整图重算次数（增量合成不计） */
-      stats: function () { return { compose: composeN, bake: bakeN }; }
+      /* 性能基准：整图重算次数（增量合成不计，见 live） */
+      stats: function () { return { compose: composeN, bake: bakeN, live: liveN }; }
     };
   }
 

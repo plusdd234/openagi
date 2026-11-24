@@ -71,6 +71,145 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
   check(stateShape.store && stateShape.modStore,
     '材质槽贴图读写收口到 MDMaterialStore（sharedTexture / applySlotTexture / baseLoading）', '');
 
+  /* Tripo 拉回贴图直接落到「纹理图层」：图层系统必须对外暴露 addLayer（入资产库 → 写层 → 重合成 → 视口更新） */
+  const texApi = await page.evaluate(() => {
+    const m = window.modelDesk.__debug().mix;
+    return { addLayer: typeof (m && m.addLayer), slots: m && m.listSlots ? m.listSlots().length : -1 };
+  });
+  check(texApi.addLayer === 'function' && texApi.slots > 0,
+    '材质图层系统暴露 addLayer（Tripo 贴图可自动叠到纹理图层并更新视口）', JSON.stringify(texApi));
+
+  /* Tripo 拉回贴图后按当前对象自动生成 UV 覆盖遮罩：遮罩画布必须有白色采样区、
+   * 能编码成 PNG；图层归一化也必须原样保留 mask（落盘 / 重开可还原）。 */
+  const uvMask = await page.evaluate(() => {
+    const d = window.modelDesk.__debug();
+    if (typeof d.uvMask !== 'function' || !d.mesh) return { err: '没有 uvMask / 网格' };
+    let hasUv = false;
+    try { hasUv = !!(window.SeedModel && window.SeedModel.Mesh && window.SeedModel.Mesh.hasUV(d.mesh)); } catch (e) { hasUv = false; }
+    const cv = d.uvMask(d.mesh, -1, 256);
+    if (!hasUv) return { hasUv: false, noMask: !cv };
+    if (!cv) return { hasUv: true, err: '有 UV 却生成不了遮罩' };
+    const px = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let solid = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 0) solid++;
+    /* 相邻面共享的 UV 边必须整条不透明：逐面填充时共享边覆盖率各半，
+     * destination-in 裁贴图后会透出白底，视口里就是「纹理上的白色线框」。 */
+    let seamN = 0, seamBad = 0, seamMin = 255;
+    const m = d.mesh;
+    if (m && m.uvs && m.faceOffsets) {
+      const rk = (u, v) => Math.round(u * 1e5) + ',' + Math.round(v * 1e5);
+      const edges = Object.create(null);
+      const off2 = m.faceOffsets;
+      for (let f = 0; f + 1 < off2.length; f++) {
+        const s = off2[f], e = off2[f + 1], n = e - s;
+        for (let k = 0; k < n; k++) {
+          const a = s + k, b = s + ((k + 1) % n);
+          const ua = m.uvs[a * 2], va = m.uvs[a * 2 + 1];
+          const ub = m.uvs[b * 2], vb = m.uvs[b * 2 + 1];
+          const ka = rk(ua, va), kb = rk(ub, vb);
+          const kk = ka < kb ? ka + '|' + kb : kb + '|' + ka;
+          const rec = edges[kk];
+          if (rec) { rec.mid = [(ua + ub) / 2, (va + vb) / 2]; }
+          else edges[kk] = { mid: null };
+        }
+      }
+      Object.keys(edges).forEach(kk => {
+        const r = edges[kk];
+        if (!r.mid) return;
+        const u = r.mid[0], v = r.mid[1];
+        if (u < 0 || u > 1 || v < 0 || v > 1) return;
+        const x = Math.min(cv.width - 1, Math.max(0, Math.round(u * cv.width)));
+        const y = Math.min(cv.height - 1, Math.max(0, Math.round((1 - v) * cv.height)));
+        const a = px[(y * cv.width + x) * 4 + 3];
+        seamN++;
+        if (a < 250) seamBad++;
+        if (a < seamMin) seamMin = a;
+      });
+    }
+    return {
+      hasUv: true, w: cv.width, h: cv.height,
+      ratio: solid / (cv.width * cv.height),
+      url: cv.toDataURL('image/png').slice(0, 22),
+      seamN, seamBad, seamMin
+    };
+  });
+  check(uvMask && (uvMask.hasUv === false
+    ? uvMask.noMask === true
+    : (uvMask.w === 256 && uvMask.ratio > 0.01 && uvMask.url.indexOf('data:image/png') === 0 &&
+       uvMask.seamBad === 0)),
+    'Tripo 拉回后按当前对象生成 UV 覆盖遮罩（白色采样区 + PNG，共享边不露缝）', JSON.stringify(uvMask));
+
+  /* 遮罩必须「一次填充整张并集」：逐面 fill 时共享边的覆盖率各半（约 0.75），
+   * 用 destination-in 裁贴图后共享边会透出白底，看起来就是纹理上多了白色线框。 */
+  const maskSeam = await page.evaluate(() => {
+    const d = window.modelDesk.__debug();
+    if (typeof d.uvMask !== 'function') return { err: '没有 uvMask' };
+    const A = [0.2, 0.2], B = [0.8, 0.2], C = [0.8, 0.8], D = [0.2, 0.8];
+    /* 四边形沿 A–C 对角线拆成两个三角形：共享边就是 A–C */
+    const mesh = { uvs: [].concat(A, B, C, A, C, D), faceOffsets: [0, 3, 6], faceSlots: [0, 0] };
+    const cv = d.uvMask(mesh, -1, 512);
+    if (!cv) return { err: '合成不出遮罩' };
+    const px = cv.getContext('2d').getImageData(0, 0, 512, 512).data;
+    const at = (u, v) => {
+      const x = Math.min(511, Math.max(0, Math.round(u * 512)));
+      const y = Math.min(511, Math.max(0, Math.round((1 - v) * 512)));
+      return px[(y * 512 + x) * 4 + 3];
+    };
+    return { seam: at(0.5, 0.5), tri1: at(0.6, 0.4), tri2: at(0.4, 0.6), outside: at(0.05, 0.05) };
+  });
+  check(maskSeam.seam === 255 && maskSeam.tri1 === 255 && maskSeam.tri2 === 255 && maskSeam.outside === 0,
+    'UV 遮罩共享边不留缝（贴图不会透出白色线框）', JSON.stringify(maskSeam));
+
+  const maskKeep = await page.evaluate(() => {
+    const n = window.MDTexMix.normLayer({ id: 'x', mask: { id: 'm', flipY: true } });
+    return !!(n && n.mask && n.mask.id === 'm' && n.mask.flipY === true);
+  });
+  check(maskKeep, '纹理图层归一化保留 mask（自动遮罩可落盘 / 还原）', '');
+
+  /* 「纹理生成中」的世界空间滚动条带：注入材质 shader 后必须能编译（抓 console.error 里的 GLSL 报错），
+   * 结束后把 onBeforeCompile 原样接回，不在材质上留下标记；
+   * 带 nodeId 调用时只作用于该对象，场景里其它对象的材质不许被挂上。 */
+  const busyFx = await page.evaluate(async () => {
+    const d = window.modelDesk.__debug();
+    if (!d.pivot || typeof d.texBusyFx !== 'function') return { err: '没有视口 / 没有 texBusyFx' };
+    const nodeId = String((d.pivot.userData && d.pivot.userData.mdNode) || '');
+    const std = (o, out) => {
+      if (!o.material) return;
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => {
+        if (m && m.isMeshStandardMaterial && out.indexOf(m) < 0) out.push(m);
+      });
+    };
+    const mats = [];
+    d.pivot.traverse(o => std(o, mats));
+    const others = [];
+    d.scene.traverse(o => {
+      let p = o;
+      while (p && p !== d.scene) { if (p === d.pivot) return; p = p.parent; }
+      std(o, others);
+    });
+    const logs = [];
+    const orig = console.error;
+    console.error = function () { logs.push(Array.from(arguments).map(String).join(' ')); };
+    d.texBusyFx(true, nodeId);
+    try { d.renderer.compile(d.scene, d.camera); } catch (e) { logs.push(String(e && e.message)); }
+    try { d.renderer.render(d.scene, d.camera); } catch (e) { logs.push(String(e && e.message)); }
+    await new Promise(r => setTimeout(r, 120));
+    const hooked = mats.filter(m => m.userData && m.userData.mdTxBusy).length;
+    const otherHooked = others.filter(m => m.userData && m.userData.mdTxBusy).length;
+    d.texBusyFx(false, nodeId);
+    const left = mats.filter(m => m.userData && m.userData.mdTxBusy).length;
+    const otherLeft = others.filter(m => m.userData && m.userData.mdTxBusy).length;
+    console.error = orig;
+    return {
+      nodeId: !!nodeId, mats: mats.length, hooked, left,
+      others: others.length, otherHooked, otherLeft,
+      errs: logs.filter(x => /Shader Error|WebGLProgram|ERROR/i.test(x)).slice(0, 2)
+    };
+  });
+  check(busyFx.mats > 0 && busyFx.hooked === busyFx.mats && busyFx.left === 0 &&
+    busyFx.otherHooked === 0 && busyFx.otherLeft === 0 && busyFx.errs.length === 0,
+    '纹理生成中的世界空间条带只挂在目标对象上，可编译且结束后原样还原', JSON.stringify(busyFx));
+
   /* 2. 视口是否真在渲染（拿 renderer.info，不信截图） */
   const gpu = await page.evaluate(() => {
     const d = window.modelDesk.__debug();
@@ -205,7 +344,7 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
       hostNodes: host.querySelectorAll('*').length,
       acts: acts.map(b => b.dataset.mdAct),
       modes: q('[data-md-mode]').length,
-      tabs: q('[data-md-tab]').map(b => b.dataset.mdTab),
+      pages: q('[data-md-page]').map(b => b.dataset.mdPage),
       menuBtns: q('[data-md-menu]').length,
       buttons: buttons.length,
       disabled: disabledBtns.length,
@@ -667,7 +806,7 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
     '只多存一版网格（未改网格的历史不复制）', mv.statesBefore + ' → ' + mv.statesAfter + ' 版');
   check(mv.bytesAfter > mv.bytesBefore, '字节数按真实副本增长', mv.bytesBefore + ' → ' + mv.bytesAfter + ' B');
 
-  /* 9. 属性编辑器改名 + 撤销 */  const ren = await page.evaluate(async () => {
+  /* 9. 细节面板改名 + 撤销 */  const ren = await page.evaluate(async () => {
     const el = document.querySelector('[data-md-global="name"]');
     if (!el) return { ok: false };
     el.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
@@ -680,7 +819,7 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
     await new Promise(r => setTimeout(r, 60));
     return { ok: true, named, afterUndo: window.modelDesk.getDocument().name, undoN };
   });
-  check(ren.named === '探针改名', '属性编辑器改名写进文档', JSON.stringify(ren));
+  check(ren.named === '探针改名', '细节面板改名写进文档', JSON.stringify(ren));
   check(ren.afterUndo === '立方体', '撤销能还原名称', String(ren.afterUndo));
 
   /* 10. 大纲搜索 */
@@ -1600,6 +1739,29 @@ const info = (name, extra) => console.log(' ·· ' + name + (extra ? ' · ' + ex
     '创建球体 = 追加第二个对象（' + m5.s.faces + ' 面 + 自动改名）',
     JSON.stringify(m5.s.docNodes) + ' / 激活 ' + m5.s.faces + ' 面');
   check(m5.s.undo === beforeM5.undo + 1, '新建基础体只记一条历史', beforeM5.undo + ' → ' + m5.s.undo);
+
+  /* 纹理生成的目标对象 = 选中的对象（不是残留的激活对象）：
+   * 人为把 activeNodeId 错位成球体，选中立方体后点开「纹理生成」，
+   * ① 预览标题与 ③ 上传标题都必须立刻指向立方体，激活对象也被对齐回来。 */
+  const rvTarget = await page.evaluate(async () => {
+    const desk = window.modelDesk;
+    const doc = desk.getDocument();
+    const cube = doc.nodes[0], ball = doc.nodes[1];
+    desk.selectNodeById(cube.id, 'replace');
+    doc.activeNodeId = ball.id;                       /* 造出「选中立方体、激活球体」 */
+    document.querySelector('.md-pdock-b[data-md-page="render"]').click();
+    await new Promise(r => setTimeout(r, 500));
+    const h1 = (document.querySelector('[data-md-tx-step="1"] .md-tx-hint') || {}).textContent || '';
+    const h3 = (document.querySelector('[data-md-tx-step="3"] .md-tx-hint') || {}).textContent || '';
+    return { h1: h1.trim(), h3: h3.trim(), active: desk.getDocument().activeNodeId, cubeId: cube.id };
+  });
+  check(/立方体/.test(rvTarget.h1) && /立方体/.test(rvTarget.h3) && rvTarget.active === rvTarget.cubeId,
+    '纹理生成只认选中的对象（①/③ 标题指向立方体，激活对象被对齐）', JSON.stringify(rvTarget));
+  await page.evaluate(() => {
+    const b = document.querySelector('.md-pdock-b[data-md-page="object"]');
+    if (b) b.click();
+  });
+  await page.waitForTimeout(150);
 
   await page.keyboard.press('Control+z');
   await page.waitForTimeout(220);
@@ -3585,42 +3747,43 @@ Connections:  {
       };
     });
     const picks = [];
-    for (const t of ['pencil', 'blur', 'smudge', 'picker', 'wand', 'eraser', 'brush']) {
+    for (const t of ['select', 'pencil', 'blur', 'smudge', 'picker', 'wand', 'eraser', 'brush']) {
       const b = document.querySelector('#mdPaintRail [data-md-ptool="' + t + '"]');
       if (b) b.click();
       picks.push({ t, tool: window.modelDesk.getState().paintTool, on: !!(b && b.classList.contains('on')) });
     }
     return { shown: !!(rail && !rail.hidden && rb && rb.width > 0 && rb.height > 0), ids, picks, labels };
   });
-  check(paintRail.shown && paintRail.ids.length === 7 &&
-    ['brush', 'pencil', 'eraser', 'blur', 'smudge', 'picker', 'wand'].every(t => paintRail.ids.indexOf(t) >= 0),
-    '绘制模式：左侧工具栏含画笔 / 铅笔 / 橡皮 / 模糊 / 涂抹 / 吸管 / 魔棒 7 个工具',
+  check(paintRail.shown && paintRail.ids.length === 8 &&
+    ['select', 'brush', 'pencil', 'eraser', 'blur', 'smudge', 'picker', 'wand'].every(t => paintRail.ids.indexOf(t) >= 0),
+    '绘制模式：左侧工具栏含选取 / 画笔 / 铅笔 / 橡皮 / 模糊 / 涂抹 / 吸管 / 魔棒 8 个工具',
     paintRail.ids.join(','));
   check(paintRail.picks.every(x => x.t === x.tool && x.on),
     '点选左侧工具：paintTool 与选中态同步',
     paintRail.picks.map(x => x.t + '=' + x.tool + (x.on ? '✓' : '✗')).join(' '));
 
   /* 工具名 + 快捷键必须常显在每个按钮下方（含动作型「岛填充」） */
-  const wantKeys = { '画笔': 'B', '铅笔': 'P', '橡皮': 'E', '模糊': 'R', '涂抹': 'T', '吸管': 'I', '魔棒': 'W', '岛填充': 'G' };
+  const wantKeys = { '选取': 'V', '画笔': 'B', '铅笔': 'P', '橡皮': 'E', '模糊': 'R', '涂抹': 'T', '吸管': 'I', '魔棒': 'W', '岛填充': 'G' };
   const labelBad = paintRail.labels.filter(x => !x.visible || wantKeys[x.name] !== x.key);
   check(paintRail.labels.length === Object.keys(wantKeys).length && labelBad.length === 0,
     '绘制工具下方常显功能名称 + 快捷键',
     paintRail.labels.map(x => x.name + (x.key ? ' ' + x.key : '')).join(' / '));
 
-  /* 快捷键必须真的切工具：B/P/E/R/T/I/W。最后按 B 回到画笔，后续用例沿用原状态。 */
-  const keyWant = { P: 'pencil', E: 'eraser', R: 'blur', T: 'smudge', I: 'picker', W: 'wand', B: 'brush' };
+  /* 快捷键必须真的切工具：V/B/P/E/R/T/I/W。最后按 B 回到画笔，后续用例沿用原状态。 */
+  const keyWant = { V: 'select', P: 'pencil', E: 'eraser', R: 'blur', T: 'smudge', I: 'picker', W: 'wand', B: 'brush' };
   const keyPicks = [];
   for (const key of Object.keys(keyWant)) {
     await page.keyboard.press(key);
     keyPicks.push({ key, want: keyWant[key], now: await page.evaluate(() => window.modelDesk.getState().paintTool) });
   }
   check(keyPicks.every(x => x.want === x.now),
-    '绘制快捷键 B/P/E/R/T/I/W 切换对应工具',
+    '绘制快捷键 V/B/P/E/R/T/I/W 切换对应工具',
     keyPicks.map(x => x.key + '=' + x.now + (x.now === x.want ? '✓' : '✗')).join(' '));
 
   /* 零图层 = 白模：起笔不从导入贴图 / 槽底色起工作副本，而是从白底开始。
-   * 这里用一张没有像素的 Texture 冒充「导入底图还在解码」，断言它不再阻塞绘画：
-   * 吸管读到白色（白模），落笔照样生成工作副本与 stroke 层。 */
+   * 这里用一张没有像素的 Texture 冒充「导入底图还在解码」：
+   * 吸管此时只提示、不改颜色（更不能建白底工作副本把整片模型刷白），
+   * 落笔照样从白底生成工作副本与 stroke 层。 */
   const loadingBase = await page.evaluate(async () => {
     const API = window.modelDesk, T = window.THREE;
     const raf = () => new Promise(r => requestAnimationFrame(r));
@@ -3692,10 +3855,11 @@ Connections:  {
     pickTool('brush');
     return { status: st, colorBefore, colorAfter: afterPick.color, seed, tex: hadTex, ops, undoOps };
   });
-  check(!loadingBase.skip && loadingBase.colorAfter === '#ffffff' &&
+  check(!loadingBase.skip && loadingBase.colorAfter === loadingBase.colorBefore &&
+    /解码/.test(loadingBase.status) &&
     loadingBase.seed === '2048×2048' && loadingBase.tex && loadingBase.ops === 1 &&
     loadingBase.undoOps === 0,
-    '零图层起笔从白底开始：吸管读白、落笔生成工作副本与 stroke 层，撤销后清空',
+    '底图解码中：吸管只提示不改色；落笔仍从白底建工作副本与 stroke 层，撤销后清空',
     JSON.stringify(loadingBase));
 
   const paintOpts = await page.evaluate(() => {
@@ -4023,10 +4187,9 @@ Connections:  {
       bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
       pointerId: 77, clientX: cx, clientY: cy
     }));
-    /* 先打开 UV 岛遮罩，验证落笔时上下文真的加了岛剪裁，抬笔后剪裁被释放 */
-    const maskEl = document.getElementById('mdPaintMask');
-    maskEl.checked = true;
-    maskEl.dispatchEvent(new Event('change', { bubbles: true }));
+    /* 先打开 UV 岛遮罩，验证落笔时上下文真的加了岛剪裁，抬笔后剪裁被释放。
+     * 用工具架上的按钮切：复选框不在事件宿主里，直接 dispatch 改不到状态。 */
+    if (!API.getState().paintMask) document.querySelector('[data-md-pmask]').click();
     const before = (API.getDocument().materials.slotMaps || [])[0] || '';
     send('pointerdown', x, y);
     const mid = API.getState();
@@ -4192,6 +4355,191 @@ Connections:  {
     '画笔笔画可撤销 / 重做（栈里少一层再回来，贴图始终在）',
     JSON.stringify({ undoOk: paintUndo.undoOk, ops: paintUndo.n0 + '→' + paintUndo.nMid + '→' + paintUndo.nBack, mapSame: paintUndo.mapSame, gizmoHidden: paintUndo.gizmoHidden }));
 
+  /* 11.24 绘制的笔迹也是「图层」：必须出现在材质图层列表里，能单独显隐 / 删除，
+   * 且隐藏层仍按 on:false 落盘（否则重开页面就丢层）。 */
+  const drawnLayer = await page.evaluate(async () => {
+    const API = window.modelDesk, doc = API.getDocument();
+    const tab = document.querySelector('[data-md-ptab="layers"]');
+    if (tab) tab.click();
+    const box = document.getElementById('mdMixBox');
+    /* 找正在画的这一槽：这是唯一有栈内容的槽（列表默认可能停在别的槽） */
+    const sel = box && box.querySelector('.md-mix-slot');
+    let slot = sel ? Number(sel.value) : 0;
+    if (sel) {
+      for (const opt of sel.options) {
+        if (window.TexStack.ops(doc, Number(opt.value)).length) { slot = Number(opt.value); break; }
+      }
+      if (sel.value !== String(slot)) {
+        sel.value = String(slot);
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+    const rows = () => Array.from(box.querySelectorAll('.md-mix-op'));
+    const r0 = rows();
+    const count = (box.querySelector('.md-mix-count') || {}).textContent || '';
+    const name0 = r0[0] && r0[0].querySelector('.md-mix-name')
+      ? r0[0].querySelector('.md-mix-name').textContent : '';
+    /* 眼睛：隐藏唯一的一层 */
+    const eye = r0[0] && r0[0].querySelector('.md-mix-eye');
+    if (eye) eye.click();
+    const ops1 = window.TexStack.ops(doc, slot);
+    const hidden = ops1.length === 1 && ops1[0].on === false;
+    /* 落盘口径要等像素编完（异步编码是设计如此，不是失败） */
+    await window.TexStack.ensureSrc(doc, slot);
+    const desc = window.TexStack.toDesc(doc, slot);
+    const descOn = desc.length === 1 ? desc[0].on : null;
+    const back = desc.length === 1 ? window.TexStack.fromDesc(desc[0], ops1[0].canvas) : null;
+    /* 全部隐藏 = 没有可回放的像素（不能拿透明画布当贴图） */
+    const editedHidden = window.TexStack.edited(doc, slot, {});
+    /* 再点回来：显示 */
+    const r1 = rows();
+    const eye2 = r1[0] && r1[0].querySelector('.md-mix-eye');
+    if (eye2) eye2.click();
+    const shown = window.TexStack.ops(doc, slot).every(o => o.on !== false);
+    /* 双击名字就地改名（不用 prompt：Electron 里没有实现） */
+    const nmEl = rows()[0] && rows()[0].querySelector('.md-mix-name');
+    let renamed = '';
+    if (nmEl) {
+      nmEl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      nmEl.textContent = '标记笔';
+      nmEl.dispatchEvent(new FocusEvent('blur'));
+      renamed = (window.TexStack.ops(doc, slot)[0] || {}).label || '';
+    }
+    /* 删除这一层：列表与栈同步减少，撤销能恢复 */
+    const r2 = rows();
+    const del = r2[0] && Array.from(r2[0].querySelectorAll('button')).find(b => b.textContent === '×');
+    if (del) del.click();
+    const nAfterDel = window.TexStack.ops(doc, slot).length;
+    const rowsAfterDel = rows().length;
+    const undoOk = API.undo();
+    const nRestored = window.TexStack.ops(doc, slot).length;
+    return {
+      rows0: r0.length, count, name0, hidden, descOn,
+      restoredOn: !!(back && back.on === false), editedHidden: editedHidden === null,
+      shown, renamed, nAfterDel, rowsAfterDel, undoOk, nRestored
+    };
+  });
+  check(drawnLayer.rows0 === 1 && drawnLayer.count.indexOf('绘制') >= 0 && !!drawnLayer.name0,
+    '绘制层显式出现在材质图层列表（标题层数含绘制层）',
+    JSON.stringify({ rows: drawnLayer.rows0, count: drawnLayer.count, name: drawnLayer.name0 }));
+  check(drawnLayer.hidden === true && drawnLayer.descOn === false && drawnLayer.restoredOn === true &&
+    drawnLayer.editedHidden === true,
+    '绘制层可单独显隐，隐藏层按 on:false 落盘并可还原',
+    JSON.stringify({ hidden: drawnLayer.hidden, descOn: drawnLayer.descOn,
+      restoredOn: drawnLayer.restoredOn, editedHidden: drawnLayer.editedHidden }));
+  check(drawnLayer.renamed === '标记笔',
+    '绘制层可双击就地改名（失焦提交）',
+    JSON.stringify({ renamed: drawnLayer.renamed }));
+  check(drawnLayer.shown === true && drawnLayer.nAfterDel === 0 && drawnLayer.rowsAfterDel === 0 &&
+    drawnLayer.undoOk === true && drawnLayer.nRestored === 1,
+    '绘制层可从列表删除，撤销后恢复',
+    JSON.stringify({ shown: drawnLayer.shown, afterDel: drawnLayer.nAfterDel,
+      rowsAfterDel: drawnLayer.rowsAfterDel, undoOk: drawnLayer.undoOk, restored: drawnLayer.nRestored }));
+
+  /* PS 口径：笔迹画进「当前绘制层」，不再一笔一层。
+   * 连续两笔 → 层数不变、像素变多；「＋ 绘制层」才新增一层并成为当前层；
+   * 点回旧层再画 → 笔迹回到旧层，新层像素不再变化。 */
+  const layerFlow = await page.evaluate(async () => {
+    const API = window.modelDesk, d = API.__debug(), mix = d.mix, T = window.THREE;
+    if (!mix || typeof mix.paintTarget !== 'function') return { skip: 'no-mix' };
+    const box = document.getElementById('mdMixBox');
+    if (!box) return { skip: 'no-box' };
+    const doc = API.getDocument(), canvas = d.canvas, r = canvas.getBoundingClientRect();
+    const m = d.mesh, camPos = d.camera.getWorldPosition(new T.Vector3());
+    let bestDot = -Infinity, bestC = null;
+    for (let f = 0; f < m.faceIds.length; f++) {
+      const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+      if (e - s < 3) continue;
+      const c = new T.Vector3();
+      for (let k = s; k < e; k++) {
+        const vi = m.faceIndices[k] * 3;
+        c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
+      }
+      c.multiplyScalar(1 / (e - s));
+      const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
+      const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+      const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+      const n = new T.Vector3().crossVectors(v1, v2).normalize();
+      const wc = d.pivot.localToWorld(c.clone());
+      const dot = n.clone().transformDirection(d.pivot.matrixWorld).dot(camPos.clone().sub(wc).normalize());
+      if (dot > bestDot) { bestDot = dot; bestC = wc; }
+    }
+    if (!bestC) return { skip: 'no-face' };
+    const pr = bestC.clone().project(d.camera);
+    const cx = r.left + (pr.x * 0.5 + 0.5) * r.width, cy = r.top + (-pr.y * 0.5 + 0.5) * r.height;
+    const send = (type, x, y) => canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      pointerId: 94, clientX: x, clientY: y
+    }));
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
+    const slot = Number((box.querySelector('.md-mix-slot') || {}).value || 0);
+    const ops = () => window.TexStack.ops(doc, slot);
+    const rows = () => Array.from(box.querySelectorAll('.md-mix-op'));
+    const alphaPx = (op) => {
+      if (!op || !op.canvas) return 0;
+      const c = op.canvas;
+      const dd = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 3; i < dd.length; i += 4) if (dd[i] > 8) n++;
+      return n;
+    };
+    const paint = async () => {
+      send('pointerdown', cx, cy);
+      send('pointermove', cx + 14, cy + 6);
+      send('pointermove', cx + 28, cy + 12);
+      send('pointerup', cx + 28, cy + 12);
+      await sleep(260);
+    };
+    const tgtA = mix.paintTarget(slot, { type: 'stroke', mode: 'normal' });
+    const n0 = ops().length, r0 = rows().length;
+    const pxA0 = alphaPx(tgtA);
+    await paint();
+    const tgtA2 = mix.paintTarget(slot, { type: 'stroke', mode: 'normal' });
+    /* 合并会换一个新 op 对象（旧 canvas 留给撤销），身份本来就该变：
+     * 断言「目标仍在栈里、层数不变」而不是「还是同一对象」。 */
+    const stillListed = !!tgtA2 && ops().indexOf(tgtA2) >= 0;
+    const pxA1 = alphaPx(tgtA2);
+    const n1 = ops().length, r1 = rows().length;
+    /* 「＋ 绘制层」：显式新建一层，并自动成为当前绘制层 */
+    const add = box.querySelector('.md-mix-addpaint');
+    if (add) add.click();
+    await sleep(140);
+    const tgtB = mix.paintTarget(slot, { type: 'stroke', mode: 'normal' });
+    const n2 = ops().length, r2 = rows().length;
+    const pxB0 = alphaPx(tgtB);
+    await paint();
+    const tgtB2 = mix.paintTarget(slot, { type: 'stroke', mode: 'normal' });
+    const pxB1 = alphaPx(tgtB2);
+    /* 点回旧层：再画一笔必须回到旧层（新层的像素不能再变） */
+    const rev = ops().slice().reverse();
+    const riA = rev.indexOf(tgtA2);
+    const rr = rows();
+    let clicked = false;
+    if (riA >= 0 && rr[riA]) { rr[riA].click(); clicked = true; }
+    await sleep(100);
+    const rr2 = rows();
+    const selBack = !!(rr2[riA] && rr2[riA].classList.contains('is-sel'));
+    const pxA2 = alphaPx(mix.paintTarget(slot, { type: 'stroke', mode: 'normal' }));
+    const pxB2 = alphaPx(tgtB2);
+    await paint();
+    const pxA3 = alphaPx(mix.paintTarget(slot, { type: 'stroke', mode: 'normal' }));
+    const pxB3 = alphaPx(tgtB2);
+    return {
+      skip: false, slot, n0, n1, n2, r0, r1, r2,
+      stillListed, pxGrew: pxA1 > pxA0,
+      newSel: !!tgtB && tgtB !== tgtA2, newGrew: pxB1 > pxB0,
+      clicked, selBack, oldGrew: pxA3 > pxA2, newStill: pxB3 === pxB2
+    };
+  });
+  check(!layerFlow.skip && layerFlow.stillListed === true && layerFlow.pxGrew === true &&
+    layerFlow.n1 === layerFlow.n0 && layerFlow.r1 === layerFlow.r0 &&
+    layerFlow.n2 === layerFlow.n1 + 1 && layerFlow.r2 === layerFlow.r1 + 1 &&
+    layerFlow.newSel === true && layerFlow.newGrew === true &&
+    layerFlow.clicked === true && layerFlow.selBack === true &&
+    layerFlow.oldGrew === true && layerFlow.newStill === true,
+    'PS 口径：笔迹并进当前绘制层（不再一笔一层），＋绘制层新建、点行切换',
+    JSON.stringify(layerFlow));
+
   /* 左侧工具栏的工具要真的改行为，而不只是换图标：
    * 吸管取色 / 魔棒锁岛 / 涂抹改像素并可撤销。三条都用同一个落笔点，
    * 结束后把工具复位成画笔，后续用例的栈与手势状态保持不变。 */
@@ -4236,11 +4584,14 @@ Connections:  {
     const set = (id, v) => { const el = document.getElementById(id); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
     const snap = () => {
       let img = null;
-      d.scene.traverse(o => {
+      const take = o => {
         if (img || !o.material) return;
         const ms = Array.isArray(o.material) ? o.material : [o.material];
         ms.forEach(mm => { if (!img && mm && mm.map && mm.map.image && mm.map.image.width) img = mm.map.image; });
-      });
+      };
+      /* 场景里可能有多个对象：必须取**当前对象**的贴图，否则测的是别人 */
+      if (d.pivot) d.pivot.traverse(o => { if (!img) take(o); });
+      if (!img) d.scene.traverse(o => { if (!img) take(o); });
       if (!img) return null;
       const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
       cv.getContext('2d').drawImage(img, 0, 0);
@@ -4304,9 +4655,9 @@ Connections:  {
   check(railTools.wand.lock >= 0 && railTools.wand.mask === true && railTools.wand.unlock === -1,
     '魔棒：点一下锁定 UV 岛（并开遮罩），再点同一岛解除',
     JSON.stringify(railTools.wand));
-  check(railTools.smudge.tool === 'smudge' && railTools.smudge.label === '涂抹' &&
+  check(railTools.smudge.tool === 'smudge' && !!railTools.smudge.label &&
     railTools.smudge.changed > 0 && railTools.smudge.undoOk === true && railTools.smudge.restored === 0,
-    '涂抹工具：拖动改变贴图，抬笔入栈「涂抹」层且可撤销还原',
+    '涂抹工具：拖动改变贴图，抬笔并入当前绘制层且可撤销还原',
     JSON.stringify(railTools.smudge));
 
   /* 上一条只能证明「预览画布加了 clip」。真正决定成品的是抬笔进栈的增量层：
@@ -4550,17 +4901,34 @@ Connections:  {
     const px3d = Math.hypot(spp.x - sm.x, spp.y - sm.y) / (elen * 0.2);
     if (!(px3d > 1e-6)) return { skip: 'degenerate' };
     const step3d = 9 / px3d;                 /* 屏幕上离接缝约 9px */
-    const sa = toScreen(mid.clone().add(uA.clone().multiplyScalar(step3d)));
-    const sb = toScreen(mid.clone().add(B3.clone().sub(mid).normalize().multiplyScalar(step3d)));
+    /* 接缝两侧的点必须真的落在模型上：面在屏幕上可能很窄，固定 9px 会落到轮廓外，
+     * 那样「点两下」根本没落笔，测出来的 0 变化是假失败。逐步缩小步长直到两边都能拾取。 */
+    const hittable = (x, y) => {
+      const ndc = new T.Vector2(((x - r.left) / r.width) * 2 - 1, -(((y - r.top) / r.height) * 2 - 1));
+      const rc = new T.Raycaster();
+      rc.setFromCamera(ndc, d.camera);
+      return rc.intersectObject(d.pivot, true).length > 0;
+    };
+    let st3 = step3d, sa = null, sb = null;
+    for (let k = 0; k < 6; k++) {
+      sa = toScreen(mid.clone().add(uA.clone().multiplyScalar(st3)));
+      sb = toScreen(mid.clone().add(B3.clone().sub(mid).normalize().multiplyScalar(st3)));
+      if (hittable(sa.x, sa.y) && hittable(sb.x, sb.y)) break;
+      st3 *= 0.72;
+    }
+    if (!hittable(sa.x, sa.y) || !hittable(sb.x, sb.y)) return { skip: 'both-sides-not-on-model' };
     const dpx = Math.hypot(sa.x - sb.x, sa.y - sb.y);
     if (dpx >= 30) return { skip: 'too-far:' + Math.round(dpx) };
     const snap = () => {
       let img = null;
-      d.scene.traverse(o => {
+      const take = o => {
         if (img || !o.material) return;
         const ms = Array.isArray(o.material) ? o.material : [o.material];
         ms.forEach(mm => { if (!img && mm && mm.map && mm.map.image && mm.map.image.width) img = mm.map.image; });
-      });
+      };
+      /* 场景里可能有多个对象：必须取**当前对象**的贴图，否则测的是别人 */
+      if (d.pivot) d.pivot.traverse(o => { if (!img) take(o); });
+      if (!img) d.scene.traverse(o => { if (!img) take(o); });
       if (!img) return null;
       const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
       cv.getContext('2d').drawImage(img, 0, 0);
@@ -4579,16 +4947,24 @@ Connections:  {
       bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
       pointerId: 71, clientX: cx, clientY: cy
     }));
-    const maskEl = document.getElementById('mdPaintMask');
-    const maskBefore = !!maskEl.checked;
-    if (maskBefore) { maskEl.checked = false; maskEl.dispatchEvent(new Event('change', { bubbles: true })); }
+    const maskBefore = !!API.getState().paintMask;
+    if (maskBefore) document.querySelector('[data-md-pmask]').click();
     const sizeBefore = ps.size;
     ps.size = 18;                              /* 小笔刷：一个图章 ≈ 250px，长线会差一个数量级 */
     document.querySelector('#mdPaintRail [data-md-ptool="brush"]').click();
+    /* 前一个用例的吸管会把颜色取成接近白的贴图色，落在白底上像素差 < 阈值，
+     * 看起来像「没落笔」。这里换成高对比的蓝，肉眼/像素都能确定这一笔。 */
+    const colBefore = API.getState().paintColor || API.getState().brushColor;
+    const setColor = v => {
+      const el = document.getElementById('mdBrushColor');
+      if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); }
+    };
+    setColor('#0000ff');
     send('pointerdown', sa.x, sa.y);
     await new Promise(res => requestAnimationFrame(res));
     const before = snap();
     send('pointermove', sb.x, sb.y);
+    await new Promise(res => requestAnimationFrame(res));
     send('pointerup', sb.x, sb.y);
     await new Promise(res => setTimeout(res, 420));
     const changed = diff(before, snap());
@@ -4603,8 +4979,9 @@ Connections:  {
     const single = diff(before2, snap());
     const undoOk2 = API.undo();
     ps.size = sizeBefore;
+    if (colBefore) setColor(colBefore);
     if (maskBefore) {
-      maskEl.checked = true; maskEl.dispatchEvent(new Event('change', { bubbles: true }));
+      if (!API.getState().paintMask) document.querySelector('[data-md-pmask]').click();
     }
     return {
       dpx: Math.round(dpx), changed, single, undoOk, undoOk2,
@@ -4639,7 +5016,9 @@ Connections:  {
   const fc = await fcWait;
   if (fc) await fc.setFiles({ name: 'mix.png', mimeType: 'image/png', buffer: Buffer.from(mixB64, 'base64') });
   await page.waitForTimeout(600);
-  const mixRow = await page.evaluate(() => document.querySelectorAll('.md-mix-list .md-mix-row').length);
+  /* 只数贴图图层行：绘制层（.md-mix-op）也在同一个列表里，不算进这条断言 */
+  const mixRow = await page.evaluate(() =>
+    document.querySelectorAll('.md-mix-list .md-mix-row:not(.md-mix-op)').length);
 
   const paintOverLayer = await page.evaluate(() => {
     const API = window.modelDesk, d = API.__debug(), T = window.THREE;
@@ -4774,6 +5153,147 @@ Connections:  {
     'Shift + 拖动 = 模糊笔（推 blur 遮罩层且笔迹色仍在）',
     JSON.stringify({ blurStroke, blurKeep, before: blurStroke.before }));
 
+  /* 11.24 性能债务：橡皮 / 模糊笔拖动时只重算笔刷脏块。
+   * 这两类笔以前每帧整图重合成（图层重混 + 全图 blur），是拖动手感最差的两支工具。
+   * 断言口径：拖动期间 mixStats().compose 不增长（整图重算次数），
+   * 且橡皮在拖动中已经把红色笔迹擦掉（说明增量结果真的上了视口）。 */
+  const livePerf = await page.evaluate(async () => {
+    const API = window.modelDesk, d = API.__debug(), T = window.THREE;
+    const raf = () => new Promise(r => requestAnimationFrame(r));
+    const canvas = d.canvas, r = canvas.getBoundingClientRect();
+    /* 落点取「最朝向相机的面」的中心投影：画布正中不一定压在模型上
+     * （视口有边距、模型偏置），用面中心才能保证每一笔都真落在 UV 上。 */
+    const m = d.mesh, camPos = d.camera.getWorldPosition(new T.Vector3());
+    let bestDot = -Infinity, bestC = null;
+    for (let f = 0; f < m.faceIds.length; f++) {
+      const s = m.faceOffsets[f], e = m.faceOffsets[f + 1];
+      if (e - s < 3) continue;
+      const c = new T.Vector3();
+      for (let k = s; k < e; k++) {
+        const vi = m.faceIndices[k] * 3;
+        c.x += m.positions[vi]; c.y += m.positions[vi + 1]; c.z += m.positions[vi + 2];
+      }
+      c.multiplyScalar(1 / (e - s));
+      const a0 = m.faceIndices[s] * 3, a1 = m.faceIndices[s + 1] * 3, a2 = m.faceIndices[s + 2] * 3;
+      const v1 = new T.Vector3(m.positions[a1] - m.positions[a0], m.positions[a1 + 1] - m.positions[a0 + 1], m.positions[a1 + 2] - m.positions[a0 + 2]);
+      const v2 = new T.Vector3(m.positions[a2] - m.positions[a0], m.positions[a2 + 1] - m.positions[a0 + 1], m.positions[a2 + 2] - m.positions[a0 + 2]);
+      const n = new T.Vector3().crossVectors(v1, v2).normalize();
+      const wc = d.pivot.localToWorld(c.clone());
+      const wn = n.clone().transformDirection(d.pivot.matrixWorld);
+      const dot = wn.dot(camPos.clone().sub(wc).normalize());
+      if (dot > bestDot) { bestDot = dot; bestC = wc; }
+    }
+    if (!bestC) return { skip: true };
+    const pr = bestC.clone().project(d.camera);
+    const cx = r.left + (pr.x * 0.5 + 0.5) * r.width;
+    const cy = r.top + (-pr.y * 0.5 + 0.5) * r.height;
+    const send = (type, x, y, shift) => canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      pointerId: 93, shiftKey: !!shift, clientX: x, clientY: y
+    }));
+    const pick = (t) => {
+      const b = document.querySelector('#mdPaintRail [data-md-ptool="' + t + '"]');
+      if (b) b.click();
+    };
+    const mix = () => (API.mixStats() || {}).compose || 0;
+    const live = () => (API.mixStats() || {}).live || 0;
+    const redCount = () => {
+      let best = null;
+      const take = o => {
+        if (best || !o.material) return;
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        ms.forEach(mm => { if (!best && mm.map && mm.map.image && mm.map.image.width) best = mm.map.image; });
+      };
+      /* 只认当前对象的贴图：场景里可能还有别的对象 */
+      if (d.pivot) d.pivot.traverse(o => { if (!best) take(o); });
+      if (!best) d.scene.traverse(o => { if (!best) take(o); });
+      if (!best) return -1;
+      const c = document.createElement('canvas'); c.width = best.width; c.height = best.height;
+      const g = c.getContext('2d'); g.drawImage(best, 0, 0);
+      const dd = g.getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < dd.length; i += 4) {
+        if (dd[i] > 200 && dd[i + 1] < 70 && dd[i + 2] < 70 && dd[i + 3] > 10) n++;
+      }
+      return n;
+    };
+    /* 先画一笔红：给橡皮准备可擦的像素。redPre / red0 证明这一笔真的落上了。
+     * 前面的吸管用例会把笔刷颜色取成贴图色，这里显式设回红，才数得到红色像素。 */
+    const setColor = v => {
+      const el = document.getElementById('mdBrushColor');
+      if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); }
+    };
+    /* 这一笔有没有落进层栈：用像素签名比对，不依赖颜色是否「够红」
+     * （红色阈值是给橡皮效果用的；#d94f4f 的 g=79 本来就够不上）。 */
+    const inkSig = () => {
+      let h = 0;
+      window.TexStack.ops(API.getDocument(), 0).forEach(o => {
+        const c = o && o.canvas;
+        if (!c || !c.width) return;
+        const dd = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        for (let i = 0; i < dd.length; i += 16) h = (h * 33 + dd[i] + dd[i + 1] * 7 + dd[i + 2] * 13 + dd[i + 3] * 17) | 0;
+      });
+      return h;
+    };
+    pick('brush');
+    setColor('#d94f4f');
+    const sigPre = inkSig();
+    const redPre = redCount();
+    /* 从面中心起笔：落点必须压在模型上；面中心往左 40px 可能已经出了轮廓。 */
+    send('pointerdown', cx, cy);
+    send('pointermove', cx + 20, cy);
+    send('pointermove', cx + 40, cy);
+    send('pointerup', cx + 40, cy);
+    await raf(); await raf();
+    await new Promise(res => setTimeout(res, 120));
+    const red0 = redCount();
+    const sig0 = inkSig();
+
+    /* 橡皮：拖动期间不许有整图重算 */
+    pick('eraser');
+    const toolE = API.getState().paintTool;
+    const slotE = d.paintState ? d.paintState.slot : -1;
+    const ops0 = window.TexStack ? window.TexStack.ops(API.getDocument(), slotE < 0 ? 0 : slotE).length : -1;
+    const e0 = mix(), l0 = live();
+    send('pointerdown', cx, cy);
+    send('pointermove', cx + 10, cy + 4);
+    const inkE = d.paintState ? {
+      ink: !!d.paintState.ink, erase: !!(d.paintState.stroke && d.paintState.stroke.erase),
+      frame: !!d.paintState.inkFrameBox, slot: d.paintState.slot
+    } : null;
+    await raf();
+    send('pointermove', cx + 24, cy + 6); await raf();
+    send('pointermove', cx + 38, cy + 8); await raf(); await raf();
+    const e1 = mix(), l1 = live();
+    const redE = redCount();
+    send('pointerup', cx + 38, cy + 8);
+    await raf(); await raf();
+    await new Promise(res => setTimeout(res, 120));
+    const ops1 = window.TexStack ? window.TexStack.ops(API.getDocument(), slotE < 0 ? 0 : slotE).length : -1;
+
+    /* 模糊笔：同样只重算脏块 */
+    pick('blur');
+    const b0 = mix(), lb0 = live();
+    send('pointerdown', cx, cy - 4, true);
+    send('pointermove', cx + 12, cy - 3, true); await raf();
+    send('pointermove', cx + 24, cy - 2, true); await raf();
+    send('pointermove', cx + 38, cy, true); await raf(); await raf();
+    const b1 = mix(), lb1 = live();
+    send('pointerup', cx + 38, cy, true);
+    await raf(); await raf();
+    pick('brush');
+    return { skip: false, redPre, red0, redE, sigPre, sig0,
+      eraserCompose: e1 - e0, blurCompose: b1 - b0,
+      eraserLive: l1 - l0, blurLive: lb1 - lb0,
+      toolE, slotE, ops0, ops1, inkE };
+  });
+  check(!livePerf.skip && livePerf.eraserCompose === 0 && livePerf.blurCompose === 0 &&
+    livePerf.eraserLive > 0 && livePerf.blurLive > 0 &&
+    livePerf.sig0 !== livePerf.sigPre && livePerf.redE < livePerf.red0 &&
+    livePerf.inkE && livePerf.inkE.ink && livePerf.inkE.erase,
+    '橡皮 / 模糊笔拖动只重算脏块（不整图重合成），增量结果直接上视口',
+    JSON.stringify(livePerf));
+
   /* 收回混合层：后面的断言按「干净文档」继续 */
   await page.evaluate(() => {
     const b = Array.from(document.querySelectorAll('.md-mix-acts button'))
@@ -4820,25 +5340,35 @@ Connections:  {
         bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
         pointerId: 78, clientX: cx, clientY: cy
       }));
+      const opsOf = (s) => (window.TexStack ? window.TexStack.ops(API.getDocument(), s) : []);
+      const alphaPx = (op) => {
+        if (!op || !op.canvas) return 0;
+        const c = op.canvas;
+        const dd = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 3; i < dd.length; i += 4) if (dd[i] > 8) n++;
+        return n;
+      };
+      const mix = API.__debug().mix;
       const slot = API.getState().paintSlot;
-      const n0 = window.TexStack ? window.TexStack.ops(API.getDocument(), slot).length : -1;
+      const tgt0 = mix && mix.paintTarget ? mix.paintTarget(slot, { type: 'stroke', mode: 'normal' }) : null;
+      const px0 = alphaPx(tgt0);
+      const n0 = opsOf(slot).length;
       send('pointerdown', x, y);
       const mid = API.getState();
       /* 命中面的槽可能与上一笔不同（多槽资产）：基线必须按这一笔真正落到的槽取 */
       const paintSlot = mid.paintSlot;
-      const nMid = window.TexStack ? window.TexStack.ops(API.getDocument(), paintSlot).length : -1;
+      const nMid = opsOf(paintSlot).length;
       for (let i = 1; i <= 5; i++) send('pointermove', x + i * 8, y + i * 5);
       send('pointerup', x + 40, y + 25);
       const end = API.getState();
-      const stack = window.TexStack ? window.TexStack.ops(API.getDocument(), end.paintSlot) : [];
-      let inkPx = 0;
-      if (stack.length) {
-        const ic = stack[stack.length - 1].canvas;
-        const dd = ic.getContext('2d').getImageData(0, 0, ic.width, ic.height).data;
-        for (let i = 3; i < dd.length; i += 4) if (dd[i] > 8) inkPx++;
-      }
+      const stack = opsOf(end.paintSlot);
+      const tgt1 = mix && mix.paintTarget ? mix.paintTarget(end.paintSlot, { type: 'stroke', mode: 'normal' }) : null;
+      const inkPx = alphaPx(tgt1);
+      /* 并进已有绘制层时层数不变，但目标层像素必须变多；新建层时新层必须有像素 */
+      const grew = tgt0 === tgt1 ? inkPx > px0 : inkPx > 0;
       return {
-        n0, paintSlot, nMid, n1: stack.length, inkPx,
+        n0, paintSlot, nMid, n1: stack.length, inkPx, px0, grew,
         clipped: mid.paintClipped, clipPolys: mid.paintClipPolys,
         status: (document.getElementById('mdStatus') || {}).textContent || ''
       };
@@ -4846,7 +5376,8 @@ Connections:  {
       for (let i = 0; i < orig.length; i++) m.uvs[i] = orig[i];
     }
   });
-  check(paintTiled.skip !== true && paintTiled.n1 === paintTiled.nMid + 1 && paintTiled.nMid >= 0 &&
+  check(paintTiled.skip !== true && paintTiled.grew === true &&
+    paintTiled.n1 >= paintTiled.nMid && paintTiled.n1 <= paintTiled.nMid + 1 &&
     paintTiled.inkPx > 0 && paintTiled.clipped === false && /已写入贴图/.test(paintTiled.status),
     '平铺 / 越界 UV 的模型仍能画上（越界时不做岛裁剪，也不落画布外）',
     JSON.stringify(paintTiled));
@@ -4912,18 +5443,33 @@ Connections:  {
         bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
         pointerId: 79, clientX: cx, clientY: cy
       }));
+      const alphaPx = (op) => {
+        if (!op || !op.canvas) return 0;
+        const c = op.canvas;
+        const dd = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 3; i < dd.length; i += 4) if (dd[i] > 8) n++;
+        return n;
+      };
+      const mix = API.__debug().mix;
       const n0 = window.TexStack.ops(doc, 0).length;
       const n1 = window.TexStack.ops(doc, 1).length;
+      const tgt0 = mix && mix.paintTarget ? mix.paintTarget(1, { type: 'stroke', mode: 'normal' }) : null;
+      const px0 = alphaPx(tgt0);
       send('pointerdown', x, y);
       const mid = API.getState();
       send('pointermove', x + 12, y + 6);
       send('pointerup', x + 24, y + 12);
       const end = API.getState();
+      const tgt1 = mix && mix.paintTarget ? mix.paintTarget(1, { type: 'stroke', mode: 'normal' }) : null;
+      const px1 = alphaPx(tgt1);
       out.faceSlot = (m.faceSlots[bestFace] | 0);
       out.midSlot = mid.paintSlot;
       out.endSlot = end.paintSlot;
       out.delta0 = window.TexStack.ops(doc, 0).length - n0;
       out.delta1 = window.TexStack.ops(doc, 1).length - n1;
+      /* 并进已有绘制层时层数不变，但槽 1 的目标层像素必须变多 */
+      out.grew1 = tgt0 === tgt1 ? px1 > px0 : px1 > 0;
       out.status = (document.getElementById('mdStatus') || {}).textContent || '';
     } finally {
       /* 还原单槽，后面的隔离 / 导出用例不受影响。
@@ -4942,7 +5488,8 @@ Connections:  {
   check(paintSlotPick.opts.length === 3 && /自动/.test(paintSlotPick.opts[0]) &&
     /材质B/.test(paintSlotPick.opts[2]) && paintSlotPick.userSlot === 1 &&
     paintSlotPick.faceSlot === 0 && paintSlotPick.midSlot === 1 && paintSlotPick.endSlot === 1 &&
-    paintSlotPick.delta1 === 1 && paintSlotPick.delta0 === 0 && /已写入贴图/.test(paintSlotPick.status),
+    paintSlotPick.delta0 === 0 && paintSlotPick.delta1 <= 1 && paintSlotPick.grew1 === true &&
+    /已写入贴图/.test(paintSlotPick.status),
     '绘画材质槽：选定槽后落在别的槽的面也只写这一槽',
     JSON.stringify(paintSlotPick));
 
@@ -4994,21 +5541,36 @@ Connections:  {
       bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
       pointerId: 80, clientX: cx, clientY: cy
     }));
+    const alphaPx = (op) => {
+      if (!op || !op.canvas) return 0;
+      const c = op.canvas;
+      const dd = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 3; i < dd.length; i += 4) if (dd[i] > 8) n++;
+      return n;
+    };
+    const mix = API.__debug().mix;
     const n0 = window.TexStack.ops(doc, 0).length;
+    const tgt0 = mix && mix.paintTarget ? mix.paintTarget(API.getState().paintSlot, { type: 'stroke', mode: 'normal' }) : null;
+    const px0 = alphaPx(tgt0);
     const activeBefore = API.getState().activeNodeId;
     send('pointerdown', x, y);
     const mid = API.getState();
     send('pointerup', x, y);
     const end = API.getState();
+    const tgt1 = mix && mix.paintTarget ? mix.paintTarget(end.paintSlot, { type: 'stroke', mode: 'normal' }) : null;
+    const px1 = alphaPx(tgt1);
     return {
       skip: false, aId, sId, activeBefore,
       switched: mid.activeNodeId === sId && end.activeNodeId === sId,
       delta: window.TexStack.ops(doc, 0).length - n0,
+      /* 并进当前绘制层时层数不变，但目标层像素必须变多 */
+      grew: tgt0 === tgt1 ? px1 > px0 : px1 > 0,
       status: (document.getElementById('mdStatus') || {}).textContent || ''
     };
   });
   check(paintAutoNode.skip !== true && paintAutoNode.activeBefore === paintAutoNode.aId &&
-    paintAutoNode.switched === true && paintAutoNode.delta === 1,
+    paintAutoNode.switched === true && paintAutoNode.delta <= 1 && paintAutoNode.grew === true,
     '多对象绘画：点中非激活对象时自动切过去再落笔',
     JSON.stringify(paintAutoNode));
 
@@ -5178,29 +5740,106 @@ Connections:  {
     '拖面：渲染缓冲按 UV 拆点映射回写，模型不炸开',
     JSON.stringify(faceDrag));
 
-  /* 「属性」次级开关：切过去才显示，且整块吃满右栏高度；再点回到工具箱 */
+  /* 右侧页头两颗独立开关：细节面板与工具箱默认同时显示，各自可取消；
+   * 只留一块时铺满整列；底部卡槽固定在细节面板底部。 */
   const propsTab = await page.evaluate(() => {
-    document.getElementById('mdPropsToggle').click();
+    const mb = document.querySelector('[data-md-editor-btn="model"]');
+    if (mb && window.modelDesk.getState().editor !== 'model') mb.click();
+    const pt = document.getElementById('mdPropsToggle'), tt = document.getElementById('mdToolboxToggle');
     const right = document.querySelector('.md-right');
     const props = document.querySelector('.md-props'), tb = document.querySelector('.md-tb');
-    const pr = props.getBoundingClientRect();
+    if (!window.modelDesk.getState().showProps) pt.click();
+    if (!window.modelDesk.getState().showToolbox) tt.click();
+    const dock = document.getElementById('mdPropDock');
+    const pr0 = props.getBoundingClientRect(), tr0 = tb.getBoundingClientRect();
+    const dr = dock.getBoundingClientRect();
     const params = document.getElementById('mdParams').getBoundingClientRect();
+    const onBtn = dock.querySelector('.md-pdock-b.on[data-md-page]');
     const out = {
-      kind: window.modelDesk.getState().tbKind, isProps: right.classList.contains('is-props'),
-      propsShown: getComputedStyle(props).display !== 'none' && pr.height > 300,
-      toolboxHidden: getComputedStyle(tb).display === 'none',
-      paramsVisible: params.height > 100,
-      title: (document.getElementById('mdRightTitle') || {}).textContent || ''
+      both: getComputedStyle(props).display !== 'none' && getComputedStyle(tb).display !== 'none',
+      stacked: pr0.top >= tr0.bottom - 1,
+      chips: [pt.classList.contains('on'), tt.classList.contains('on')],
+      pressed: [pt.getAttribute('aria-pressed'), tt.getAttribute('aria-pressed')],
+      state: [window.modelDesk.getState().showProps, window.modelDesk.getState().showToolbox],
+      heights: [Math.round(tr0.height), Math.round(pr0.height)],
+      paramsVisible: params.height > 40,
+      pages: Array.from(dock.querySelectorAll('.md-pdock-b[data-md-page]')).map(b => b.dataset.mdPage),
+      dockWidths: Array.from(dock.querySelectorAll('.md-pdock-b[data-md-page]'))
+        .filter(b => !b.hidden).map(b => Math.round(b.getBoundingClientRect().width)),
+      activePage: onBtn ? onBtn.dataset.mdPage : '',
+      dockH: Math.round(dr.height),
+      dockBottomGap: Math.round(pr0.bottom - dr.bottom),
+      paramsAboveDock: params.bottom <= dr.top + 1,
+      hideClasses: [right.classList.contains('hide-tb'), right.classList.contains('hide-props')]
     };
-    document.getElementById('mdPropsToggle').click();
-    out.backToModel = window.modelDesk.getState().tbKind;
+    /* 取消工具箱：细节面板独占整列 */
+    tt.click();
+    out.onlyProps = {
+      tbGone: getComputedStyle(tb).display === 'none',
+      propsH: Math.round(props.getBoundingClientRect().height),
+      chipOn: tt.classList.contains('on')
+    };
+    /* 再取消细节面板：两块都收起，右栏只剩页头 */
+    pt.click();
+    out.none = {
+      propsGone: getComputedStyle(props).display === 'none',
+      state: [window.modelDesk.getState().showProps, window.modelDesk.getState().showToolbox]
+    };
+    /* 恢复同时显示，别把状态留给后面的用例 */
+    pt.click(); tt.click();
+    out.restored = getComputedStyle(props).display !== 'none' && getComputedStyle(tb).display !== 'none' &&
+      pt.classList.contains('on') && tt.classList.contains('on');
     return out;
   });
-  check(propsTab.kind === 'props' && propsTab.isProps && propsTab.propsShown &&
-    propsTab.toolboxHidden && propsTab.paramsVisible && propsTab.backToModel === 'model' &&
-    propsTab.title === '属性编辑器',
-    '属性开关可切换：占满右栏高度，再点回到工具箱',
+  check(propsTab.both && propsTab.stacked && propsTab.chips[0] && propsTab.chips[1] &&
+    propsTab.pressed[0] === 'true' && propsTab.pressed[1] === 'true' &&
+    propsTab.state[0] === true && propsTab.state[1] === true &&
+    propsTab.heights[0] > 110 && propsTab.heights[1] > 110 && propsTab.paramsVisible,
+    '细节面板与工具箱默认同时显示，页头两颗页签都可选中',
     JSON.stringify(propsTab));
+  check(propsTab.onlyProps.tbGone && !propsTab.onlyProps.chipOn &&
+    propsTab.onlyProps.propsH > propsTab.heights[1] && propsTab.none.propsGone &&
+    propsTab.none.state[0] === false && propsTab.restored,
+    '页签可分别取消：取消工具箱后细节面板铺满，两块都能收起再打开',
+    JSON.stringify({ onlyProps: propsTab.onlyProps, none: propsTab.none, restored: propsTab.restored }));
+  check(propsTab.dockH >= 50 && propsTab.dockBottomGap <= 1 && propsTab.paramsAboveDock,
+    '底部功能页卡槽固定在细节面板底部（内容区在其上方滚动）',
+    JSON.stringify({ h: propsTab.dockH, gap: propsTab.dockBottomGap, above: propsTab.paramsAboveDock }));
+  check(propsTab.pages.join(',') === 'object,material,modifier,component,render' &&
+    propsTab.activePage === 'object' &&
+    propsTab.dockWidths.length >= 4 && propsTab.dockWidths.every(w => w >= 34),
+    '卡槽含对象 / 材质 / 修改器 / 组件 / 纹理生成五页，默认对象且按钮等宽可读',
+    propsTab.pages.join(',') + ' · on=' + propsTab.activePage + ' · w=' + propsTab.dockWidths.join('/'));
+
+  /* 材质页 UV 区：UV 编辑器入口 + UV 对照贴图开关（视图级，不写文档、不进历史） */
+  const uvTools = await page.evaluate(() => {
+    const pt = document.getElementById('mdPropsToggle');
+    if (pt && !window.modelDesk.getState().showProps) pt.click();
+    const mb = document.querySelector('.md-pdock-b[data-md-page="material"]');
+    if (mb) mb.click();
+    const openBtn = document.querySelector('#mdParams [data-md-act="uv"]');
+    const checkBtn = document.querySelector('#mdParams [data-md-act="uv-check"]');
+    if (!checkBtn) return { ok: false };
+    const ob = openBtn.getBoundingClientRect(), cb = checkBtn.getBoundingClientRect();
+    const fit = ob.width > 100 && cb.width > 100 &&
+      openBtn.scrollWidth <= openBtn.clientWidth + 1 && checkBtn.scrollWidth <= checkBtn.clientWidth + 1;
+    const undo0 = window.modelDesk.getState().undo;
+    checkBtn.click();
+    const on = window.modelDesk.getState().uvChecker;
+    const onBtn = document.querySelector('#mdParams [data-md-act="uv-check"]');
+    const onClass = !!(onBtn && onBtn.classList.contains('on'));
+    const undo1 = window.modelDesk.getState().undo;
+    const again = document.querySelector('#mdParams [data-md-act="uv-check"]');
+    if (again) again.click();
+    const off = window.modelDesk.getState().uvChecker;
+    return { ok: true, hasOpen: !!openBtn, fit, w: [Math.round(ob.width), Math.round(cb.width)],
+      sw: [openBtn.scrollWidth, openBtn.clientWidth, checkBtn.scrollWidth, checkBtn.clientWidth],
+      on, onClass, off, undo: undo1 - undo0 };
+  });
+  check(uvTools.ok && uvTools.hasOpen && uvTools.fit && uvTools.on === true && uvTools.onClass &&
+    uvTools.off === false && uvTools.undo === 0,
+    '材质页 UV 区：UV 编辑器入口 + UV 对照贴图可开关（文字不截断、只改显示、不写历史）',
+    JSON.stringify(uvTools));
 
   /* 「占位控件落实」：视口条 5 个下拉 / 大纲三页签 / 视图行 / 工具架页签 / 命令行 */
   const uiCtrl = await page.evaluate(async () => {
@@ -5609,6 +6248,10 @@ Connections:  {
     return {
       objHead: obj.text.split('\n')[0],
       objFaces: (obj.text.match(/^f /gm) || []).length,
+      /* 文档里的立方体是 6 个四边面：OBJ 必须原样写四边形，不能从三角化几何倒推 */
+      objQuads: (obj.text.match(/^f (?:\S+ ){3}\S+$/gm) || []).length,
+      objNames: (obj.text.match(/^o .+$/gm) || []).length,
+      objMtlNames: (objz.texts && objz.texts.mtl ? (objz.texts.mtl.match(/^newmtl /gm) || []).length : 0),
       stlOk: /^solid /.test(stl.text) && /facet normal/.test(stl.text),
       gltfOk: !!(gltfJson && gltfJson.asset && gltfJson.asset.version && (gltfJson.meshes || []).length),
       glbBytes: glb.buffer ? glb.buffer.byteLength : 0,
@@ -5620,8 +6263,11 @@ Connections:  {
       glbDouble
     };
   });
-  check(exp.objHead.indexOf('# modeldesk OBJ export') === 0 && exp.objFaces >= 12,
-    '导出 OBJ：世界坐标几何（面数 = ' + exp.objFaces + '）', exp.objHead);
+  check(exp.objHead.indexOf('# modeldesk OBJ export') === 0 && exp.objFaces >= 6 && exp.objQuads >= 6,
+    '导出 OBJ：世界坐标几何 · 四边面不被三角化（面数 = ' + exp.objFaces + ' / 四边形 ' + exp.objQuads + '）', exp.objHead);
+  check(exp.objNames >= 2 && exp.objMtlNames >= 2,
+    '导出 OBJ：每个对象一条 o、材质按对象 × 槽区分（分组不丢）',
+    JSON.stringify({ names: exp.objNames, mats: exp.objMtlNames }));
   check(exp.stlOk === true, '导出 STL：solid / facet normal 结构正确', '');
   check(exp.gltfOk === true, '导出 GLTF：JSON 内含 asset 与 meshes（贴图内嵌）', '');
   check(exp.glbBytes > 500, '导出 GLB：二进制非空', exp.glbBytes + ' bytes');
@@ -5644,6 +6290,53 @@ Connections:  {
     exp.calls[2].ext === 'zip' && exp.r1.ok === true && exp.r2.ok === true && exp.r3.ok === true,
     '允许重名 + 多格式：同名连续导出 OBJ / STL / OBJ 包都成功',
     JSON.stringify({ calls: exp.calls, r1: exp.r1.ok, r2: exp.r2.ok, r3: exp.r3.ok }));
+
+  /* 节点 / 组件贴图也要进 OBJ 包：头模的脸不是材质槽内容，
+   * 以前只按 slotMaps 导出，压缩包里永远只有身体和头发两张图。 */
+  const nodeTexPkg = await page.evaluate(async () => {
+    const API = window.modelDesk, S = window.SeedModel.Scene;
+    const doc = API.getDocument(), node = S.nodeOf(doc);
+    const cv = document.createElement('canvas'); cv.width = 8; cv.height = 8;
+    const c = cv.getContext('2d'); c.fillStyle = '#ff0000'; c.fillRect(0, 0, 8, 8);
+    const prev = node.surface;
+    node.surface = { map: cv.toDataURL('image/png'), color: '#ffffff' };
+    const d = await API.exportPackage('objz', '节点贴图');
+    node.surface = prev;
+    const b64 = String(d.zip || '').split(',')[1] || '';
+    const bin = atob(b64), u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const files = Object.keys(window.fflate.unzipSync(u8, {}));
+    return { files, mtl: d.texts.mtl || '' };
+  });
+  check(nodeTexPkg.files.some(f => /^textures\/tex_\d+\.png$/.test(f)) &&
+    /map_Kd textures\/tex_\d+\.png/.test(nodeTexPkg.mtl),
+    'OBJ 包：节点 / 组件贴图也一起导出（不只材质槽里的身体和头发）', JSON.stringify(nodeTexPkg.files));
+
+  /* OBJ 没有形态键字段：名字 / 权重 / 位移必须随包进 sidecar，
+   * 不然用户在包里只能看到「形态键没了」。 */
+  const shapePkg = await page.evaluate(async () => {
+    const API = window.modelDesk, S = window.SeedModel.Scene;
+    const doc = API.getDocument(), mesh = S.getMesh(doc);
+    const deltas = new Float32Array(mesh.positions.length);
+    for (let i = 0; i < deltas.length; i += 3) deltas[i] = 0.002;
+    const prev = mesh.morphs;
+    mesh.morphs = [{ id: 0, name: '测试形态键', weight: 0, deltas: deltas }];
+    const d = await API.exportPackage('objz', '带形态键');
+    mesh.morphs = prev;
+    const b64 = String(d.zip || '').split(',')[1] || '';
+    const bin = atob(b64), u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const un = window.fflate.unzipSync(u8, {});
+    let shapes = null;
+    if (un['带形态键.shapes.json']) {
+      shapes = JSON.parse(new TextDecoder().decode(un['带形态键.shapes.json']));
+    }
+    return { files: Object.keys(un), shapeKeys: d.shapeKeys, shapes };
+  });
+  check(shapePkg.shapeKeys >= 1 && !!(shapePkg.shapes && shapePkg.shapes.objects.some(o =>
+    o.keys.some(k => k.name === '测试形态键' && k.deltas.length > 0))),
+    'OBJ 包附带形态键 sidecar（名字 / 权重 / 位移不丢）',
+    JSON.stringify({ files: shapePkg.files, objs: shapePkg.shapes && shapePkg.shapes.objects.length }));
 
   /* 盒式展开 + 隔离绘制：用一份全新的默认立方体测，避开前面测试挪过的对象 / 换过的网格。
    * 放在最后：newDocument() 会换掉整份文档，前面依赖「两只对象 + 已挪过的相机」的用例
@@ -6055,14 +6748,20 @@ Connections:  {
   const rvOpen = await page.evaluate(() => {
     const btn = document.querySelector('[data-md-editor-btn="model"]');
     if (btn) btn.click();
-    if (window.modelDesk.getState().tbKind !== 'props') {
-      const tg = document.getElementById('mdPropsToggle');
-      if (tg) tg.click();
-    }
-    return { kind: window.modelDesk.getState().tbKind, host: !!document.getElementById('mdRvHost') };
+    const tg = document.getElementById('mdPropsToggle');
+    if (tg && !window.modelDesk.getState().showProps) tg.click();
+    /* 渲染视图是细节面板底部卡槽的一页，先切过去 */
+    const page = document.querySelector('.md-pdock-b[data-md-page="render"]');
+    if (page) page.click();
+    const on = document.querySelector('.md-pdock-b.on[data-md-page]');
+    return {
+      props: window.modelDesk.getState().showProps,
+      host: !!document.getElementById('mdRvHost'),
+      page: on ? on.dataset.mdPage : ''
+    };
   });
-  check(rvOpen.kind === 'props' && rvOpen.host,
-    '网格对象属性面板出现「渲染视图」区域', JSON.stringify(rvOpen));
+  check(rvOpen.props === true && rvOpen.host && rvOpen.page === 'render',
+    '细节面板「渲染视图」页出现，卡槽切页生效', JSON.stringify(rvOpen));
 
   const rvReg = await page.evaluate(() => {
     const a = window.MV.FIELDS, b = window.ViewSettings.FIELDS;
@@ -6114,6 +6813,172 @@ Connections:  {
     '默认参数与视图工坊逐项一致（四视图 / 正交 / 纯色 / 线框 / 间距 0 / 留白 1.08 / 线宽 1.4）',
     JSON.stringify(rvPrev));
   check(rvPrev.ctrls > 20, '渲染视图面板控件齐全（' + rvPrev.ctrls + ' 个可交互点）', '');
+
+  /* 右键复制图片：预览图（以及 Tripo 结果图）右键直接复制成 PNG 进剪贴板，
+   * 便于拿去当参考图。无头里没有 Electron 桥，替换 navigator.clipboard.write
+   * 收走 ClipboardItem，断言事件被 preventDefault 且剪贴板里确实是一张 PNG。 */
+  const rvCopy = await page.evaluate(async () => {
+    const img = document.querySelector('#mdRvHost .md-rv-prev img');
+    if (!img) return { err: '没有预览图' };
+    const d0 = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    let got = null;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { write: async (items) => { got = items; } }
+    });
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 });
+    img.dispatchEvent(ev);
+    for (let i = 0; i < 40 && !got; i++) await new Promise(r => setTimeout(r, 50));
+    if (d0) Object.defineProperty(navigator, 'clipboard', d0);
+    else delete navigator.clipboard;
+    if (!got) return { err: '剪贴板写入未被调用', prevented: ev.defaultPrevented };
+    const item = got[0];
+    const blob = await item.getType('image/png');
+    return {
+      prevented: ev.defaultPrevented,
+      types: item && item.types ? item.types.join(',') : '',
+      size: blob ? blob.size : 0,
+      type: blob ? blob.type : ''
+    };
+  });
+  check(rvCopy.prevented && rvCopy.types === 'image/png' && rvCopy.size > 1000 && rvCopy.type === 'image/png',
+    '渲染视图预览图右键即复制为 PNG（剪贴板）', JSON.stringify(rvCopy));
+
+  /* 三步流程：① 渲染模型结构 ② AI 生成上色 ③ 纹理生成；
+   * 参数折叠段（视图组 / 画布与相机 / 显示 / 图层 / 导出）默认全部收起，主流程一眼可见。 */
+  const rvFlow = await page.evaluate(() => {
+    const host = document.getElementById('mdRvHost');
+    const names = Array.from(host.querySelectorAll('.md-tx-name')).map(n => n.textContent.trim());
+    const secs = Array.from(host.querySelectorAll('details[data-md-rv-sec]'));
+    const closed = secs.filter(d => d.dataset.mdRvSec !== 'gen')
+      .map(d => d.dataset.mdRvSec + ':' + (d.open ? 'open' : 'closed'));
+    const gen = host.querySelector('details[data-md-rv-sec="gen"]');
+    const texStep = document.querySelector('#mdParams .md-tx-step[data-md-tx-step="3"]');
+    const texName = texStep && texStep.querySelector('.md-tx-name');
+    const texBtn = document.querySelector('#mdParams [data-md-act="tripo-tex-go"]');
+    const dockLb = document.querySelector('.md-pdock-b[data-md-page="render"] .md-pdock-lb');
+    return {
+      names, closed, genOpen: !!(gen && gen.open),
+      step3: texName ? texName.textContent.trim() : '',
+      texInStep3: !!(texStep && texBtn && texStep.contains(texBtn)),
+      dock: dockLb ? dockLb.textContent.trim() : ''
+    };
+  });
+  check(rvFlow.names.join(',') === '渲染模型结构,AI 生成上色' && rvFlow.genOpen &&
+    rvFlow.closed.length === 5 && rvFlow.closed.every(x => x.endsWith(':closed')) &&
+    rvFlow.step3 === '纹理生成' && rvFlow.texInStep3 && rvFlow.dock === '纹理生成',
+    '纹理生成页按①渲染模型结构 → ②AI 生成上色 → ③纹理生成排列，参数折叠段默认收起',
+    JSON.stringify(rvFlow));
+
+  /* 纹理生成参考图支持 Ctrl+V 粘贴：右键复制出来的图片可直接粘到「前 / 左侧 / 右侧 / 后」。
+   * 无头里用 DataTransfer 造一张 1×1 PNG 的 paste 事件，验证槽位从 0/4 变 1/4。 */
+  const rvPaste = await page.evaluate(async () => {
+    const tex = () => document.querySelector('#mdParams .md-tx-step[data-md-tx-step="3"]');
+    if (!tex()) return { err: '没有纹理生成区块' };
+    const bin = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==');
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const f = new File([u8], 'image.png', { type: 'image/png' });
+    const dt = new DataTransfer();
+    dt.items.add(f);
+    const before = tex().querySelectorAll('.md-tx-slot.on').length;
+    const ev = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
+    document.body.dispatchEvent(ev);
+    await new Promise(r => setTimeout(r, 150));
+    const subs = Array.from(tex().querySelectorAll('.md-txc-s')).map(n => n.textContent);
+    const onSlot = tex().querySelector('.md-tx-slot.on');
+    return {
+      before,
+      rows: tex().querySelectorAll('.md-tx-slot.on').length,
+      prevented: ev.defaultPrevented,
+      refNote: subs.find(t => t.indexOf('1/4') >= 0) || '',
+      label: (onSlot && onSlot.querySelector('.md-tx-slot-lb') || {}).textContent || '',
+      hasThumb: !!(onSlot && onSlot.querySelector('img')),
+      hasDel: !!(onSlot && onSlot.querySelector('[data-md-act="tripo-tex-ref-del"]'))
+    };
+  });
+  check(rvPaste.prevented && rvPaste.rows === rvPaste.before + 1 &&
+    /1\/4/.test(rvPaste.refNote) && rvPaste.label.indexOf('前') === 0 &&
+    rvPaste.hasThumb && rvPaste.hasDel,
+    '纹理生成参考图支持 Ctrl+V 粘贴（剪贴板图片 → 前 / 左侧 / 右侧 / 后，槽位显示缩略图）', JSON.stringify(rvPaste));
+
+  /* 渲染视图 · Tripo 生图（着色效果）：图1 自动用当前渲染视图，可改提示词 / 补参考图，
+   * 比例固定 1:1，生图模型 / 数量可选。这里只验 UI 与状态，不真调 Tripo（真调用要登录账号，见 _tripo-live）。 */
+  const rvGen = await page.evaluate(() => {
+    const host = document.getElementById('mdRvHost');
+    const sec = host.querySelector('details[data-md-rv-sec="gen"]');
+    const src = sec && sec.querySelector('.md-gen-src img');
+    const ta = sec && sec.querySelector('textarea[data-md-gen="prompt"]');
+    const file = sec && sec.querySelector('input[type="file"][data-md-gen="file"]');
+    const run = sec && sec.querySelector('[data-md-gen="run"]');
+    const conn = sec && sec.querySelector('.md-gen-conn');
+    const login = conn && conn.querySelector('[data-md-gen="login"]');
+    const fix = sec && sec.querySelector('.md-gen-fix');
+    const modelSel = sec && sec.querySelector('select[data-md-gen="model"]');
+    const countSel = sec && sec.querySelector('select[data-md-gen="count"]');
+    const opts = el => el ? Array.from(el.options).map(o => o.value) : null;
+    const before = window.MDViewRender.genState();
+    if (ta) { ta.value = '改成青铜材质的着色效果'; ta.dispatchEvent(new Event('input', { bubbles: true })); }
+    if (modelSel) { modelSel.value = 'nano'; modelSel.dispatchEvent(new Event('change', { bubbles: true })); }
+    if (countSel) { countSel.value = '2'; countSel.dispatchEvent(new Event('change', { bubbles: true })); }
+    const after = window.MDViewRender.genState();
+    /* 还原默认值，避免影响后续用例 */
+    if (modelSel) { modelSel.value = ''; modelSel.dispatchEvent(new Event('change', { bubbles: true })); }
+    if (countSel) { countSel.value = '1'; countSel.dispatchEvent(new Event('change', { bubbles: true })); }
+    return {
+      open: !!(sec && sec.open), hasSrc: !!(src && (src.getAttribute('src') || '').indexOf('data:image/png') === 0),
+      textarea: !!ta, file: !!file, accept: file ? file.getAttribute('accept') : '',
+      run: !!run, disabled: !!(run && run.disabled),
+      conn: !!conn, login: !!login, connText: conn ? conn.textContent : '',
+      fix: (fix && fix.textContent) || '',
+      modelOptions: opts(modelSel), countOptions: opts(countSel),
+      before: { ratio: before.ratio, count: before.count, model: before.model, busy: before.busy, refs: before.refs },
+      after: { model: after.model, count: after.count },
+      restored: window.MDViewRender.genState(),
+      prompt: after.prompt, refs: after.refs
+    };
+  });
+  check(rvGen.open && rvGen.hasSrc && rvGen.textarea && rvGen.file && /image\/\*/.test(rvGen.accept) &&
+    rvGen.run && !rvGen.disabled && rvGen.conn && rvGen.login && /国际站/.test(rvGen.connText) &&
+    /1:1/.test(rvGen.fix) && !!rvGen.modelOptions && !!rvGen.countOptions,
+    '渲染视图有 Tripo 生图区：图1 = 当前渲染图，可传参考图，比例 1:1（国际站）',
+    JSON.stringify(rvGen));
+  check(rvGen.modelOptions && rvGen.modelOptions.join(',') === ',nano,gpt' && rvGen.countOptions.join(',') === '1,2,3,4',
+    '渲染视图生图：模型与数量可选', JSON.stringify({ model: rvGen.modelOptions, count: rvGen.countOptions }));
+  check(rvGen.before.ratio === '1:1' && rvGen.before.count === 1 && rvGen.before.model === '' &&
+    rvGen.before.busy === false && rvGen.before.refs === 0 &&
+    rvGen.prompt === '改成青铜材质的着色效果' &&
+    rvGen.after.model === 'nano' && rvGen.after.count === 2 && rvGen.restored.count === 1,
+    'Tripo 生图默认 1:1 / 1 张 / 页面默认模型，切换模型与数量写进状态',
+    JSON.stringify({ before: rvGen.before, after: rvGen.after, restored: rvGen.restored.count, prompt: rvGen.prompt }));
+
+  /* ② AI 生成上色 的「＋ 参考图」槽位同样支持 Ctrl+V（和 ③ 分开，不能串）：
+   * 先点 ② 区域的提示词框把粘贴目标指向它，再派发图片粘贴事件。 */
+  const rvGenPaste = await page.evaluate(async () => {
+    const gen = () => document.querySelector('#mdParams [data-md-tx-step="2"]');
+    const tex = () => document.querySelector('#mdParams [data-md-tx-step="3"]');
+    if (!gen()) return { err: '没有 AI 生成上色区块' };
+    const ta = gen().querySelector('textarea[data-md-gen="prompt"]');
+    if (ta) ta.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    const bin = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==');
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const dt = new DataTransfer();
+    dt.items.add(new File([u8], 'paste-gen.png', { type: 'image/png' }));
+    const beforeGen = gen().querySelectorAll('.md-gen-ref').length;
+    const beforeTex = tex().querySelectorAll('.md-tx-slot.on').length;
+    const ev = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
+    (ta || document.body).dispatchEvent(ev);
+    await new Promise(r => setTimeout(r, 350));
+    return {
+      prevented: ev.defaultPrevented,
+      beforeGen, gen: gen().querySelectorAll('.md-gen-ref').length,
+      beforeTex, tex: tex().querySelectorAll('.md-tx-slot.on').length
+    };
+  });
+  check(rvGenPaste.prevented && rvGenPaste.gen === rvGenPaste.beforeGen + 1 &&
+    rvGenPaste.tex === rvGenPaste.beforeTex,
+    '②「＋ 参考图」槽位支持 Ctrl+V 粘贴，且不会串到 ③ 的参考图里', JSON.stringify(rvGenPaste));
 
   const rvAdd = await page.evaluate(() => {
     const host = document.getElementById('mdRvHost');
@@ -6184,22 +7049,247 @@ Connections:  {
     '导出彩色：2048 正方形 / 5 格 / PNG', JSON.stringify(rvExp));
 
   const rvDepth = await page.evaluate(async () => {
-    const o = await window.MDViewRender.exportPass('depth', true);
-    return o ? { cells: o.cells.length, png: (o.png || '').indexOf('data:image/png') === 0 } : null;
+    /* 彩色导出后的自动预览可能还在跑：busy 期间 exportPass 直接返回 null，
+     * 这是有界重试（最多 4 拍），不是掩盖真实失败。 */
+    for (let i = 0; i < 4; i++) {
+      const o = await window.MDViewRender.exportPass('depth', true);
+      if (o) return { cells: o.cells.length, png: (o.png || '').indexOf('data:image/png') === 0, retry: i };
+      await new Promise(r => setTimeout(r, 200));
+    }
+    return null;
   });
   check(!!rvDepth && rvDepth.cells === 5 && rvDepth.png, '导出深度通道（数据级）', JSON.stringify(rvDepth));
 
-  /* 收尾：撤掉 iso、回到建模工具箱，别把状态留给后面的截图 */
+  /* 收尾：撤掉 iso，别把状态留给后面的截图 */
   await page.evaluate(() => {
     const host = document.getElementById('mdRvHost');
     const chip = host && host.querySelector('[data-md-rv="view"][data-v="iso"]');
     if (chip && chip.classList.contains('on')) chip.click();
-    if (window.modelDesk.getState().tbKind === 'props') {
-      const tg = document.getElementById('mdPropsToggle');
-      if (tg) tg.click();
-    }
   });
   await page.waitForTimeout(600);
+
+  /* 12.9 吸管三约：纹理色 / 跨对象不切选择 / 平涂「显示=纹理=吸管」
+   * 两个盒子左右分开，贴图纯红 / 纯绿：光照后的渲染色与纹理色不会碰巧相等，
+   * 这样「取到的是纹理而不是渲染」才能被断言，而不是靠肉眼。 */
+  await page.evaluate(async () => {
+    const THREE = window.THREE, G = window.SeedGLB, S = window.SeedModel.Scene;
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    function mk(hex) {
+      const c = document.createElement('canvas');
+      c.width = 32; c.height = 32;
+      const x = c.getContext('2d');
+      x.fillStyle = hex; x.fillRect(0, 0, 32, 32);
+      return c;
+    }
+    const red = mk('#ff0000'), green = mk('#00ff00');
+    const scene = new THREE.Scene();
+    [{ c: red, n: 'PickRed' }, { c: green, n: 'PickGreen' }].forEach(function (t, i) {
+      const tex = new THREE.CanvasTexture(t.c);
+      tex.flipY = false;
+      const mat = new THREE.MeshStandardMaterial({ name: t.n, color: 0xffffff, map: tex });
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), mat);
+      mesh.name = 'pickpart' + i;
+      mesh.position.x = i * 1.4;
+      scene.add(mesh);
+    });
+    const buf = await new Promise((res, rej) =>
+      new THREE.GLTFExporter().parse(scene, res, rej, { binary: true }));
+    const id = 'asset-picker-2obj';
+    const dataURL = G.toDataURL(buf);
+    if (!window.openagiDesktop) window.openagiDesktop = {};
+    const prevRead = window.openagiDesktop.assetRead;
+    if (typeof window.openagiDesktop.assetPut !== 'function') {
+      window.openagiDesktop.assetPut = async () => ({ ok: false, error: 'probe stub' });
+    }
+    window.openagiDesktop.assetRead = async x => (x === id ? { ok: true, dataURL } : (prevRead ? prevRead(x) : { ok: false }));
+    await window.modelDesk.openAsset(id);
+    if (prevRead) window.openagiDesktop.assetRead = prevRead;
+    await sleep(500);
+    /* openAsset 会做一段「框住模型」的相机动画；动画没停就投影取点，点击与
+     * 断言读回会落在不同帧的坐标上（表现为偶发读到背景白）。等相机静止再取点。 */
+    async function settleCamera(ms) {
+      const t0 = performance.now();
+      let prev = null;
+      while (performance.now() - t0 < ms) {
+        const c = window.modelDesk.__debug().camera;
+        const p = c.position.toArray().concat(c.quaternion.toArray());
+        if (prev && p.every((v, i) => Math.abs(v - prev[i]) < 1e-4)) return true;
+        prev = p;
+        await sleep(100);
+      }
+      return false;
+    }
+    await settleCamera(2500);
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    return { ok: true };
+  });
+
+  const pickerX = await page.evaluate(async () => {
+    const THREE = window.THREE, S = window.SeedModel.Scene;
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    function mk(hex) {
+      const c = document.createElement('canvas');
+      c.width = 32; c.height = 32;
+      const x = c.getContext('2d');
+      x.fillStyle = hex; x.fillRect(0, 0, 32, 32);
+      return c;
+    }
+    const green = mk('#00ff00');
+
+    /* 绘画模式 + 吸管 */
+    const eb = document.querySelector('[data-md-editor-btn="paint"]');
+    if (eb) eb.click();
+    const pb = document.querySelector('[data-md-ptool="picker"]');
+    if (pb) pb.click();
+    await sleep(80);
+
+    const d = window.modelDesk.__debug();
+    const doc = d.doc, canvas = d.canvas;
+    const ids = Object.keys(d.pivots || {});
+    if (ids.length < 2) return { skip: 'nodes=' + ids.length };
+    const selBefore = d.pivot && d.pivot.userData.mdNode;
+    const otherId = ids.find(x => x !== selBefore);
+    const opv = d.pivots[otherId];
+    let solid = null;
+    opv.traverse(o => { if (!solid && o.userData && o.userData.mdPart === 'solid') solid = o; });
+    const node = S.nodeById(doc, otherId);
+    const mesh = S.getMesh(doc, node);
+    if (!solid || !mesh) return { skip: 'no solid' };
+
+    /* 相机初始可能只框住激活对象；把镜头对准「另一个对象」的包围盒中心，
+     * 保证取点与断言都落在那块可见面上（不依赖快捷键是否被桌面焦点拦掉）。 */
+    const bbox = new THREE.Box3().setFromObject(solid);
+    const focus = bbox.getCenter(new THREE.Vector3());
+    const bsize = bbox.getSize(new THREE.Vector3());
+    const cam = d.camera;
+    const camDist = Math.max(1.5, bsize.length() * 1.5);
+    cam.position.set(focus.x + 0.4, focus.y + 0.5, focus.z + camDist);
+    cam.lookAt(focus);
+    cam.updateMatrixWorld(true);
+    if (d.controls) { d.controls.target.copy(focus); d.controls.update(); }
+    d.renderer.render(d.scene, d.camera);
+    await sleep(60);
+
+    /* 取一个朝向相机的面中心：距离最近的那张面，避开共享边 */
+    const camPos = d.camera.getWorldPosition(new THREE.Vector3());
+    const off = mesh.faceOffsets, pos = mesh.positions, idx = mesh.faceIndices;
+    let pickFace = 0, bestD = Infinity, pickW = null;
+    for (let f = 0; f < mesh.faceIds.length; f++) {
+      const s = off[f], e = off[f + 1];
+      if (e - s < 3) continue;
+      const cx0 = (pos[idx[s] * 3] + pos[idx[s + 1] * 3] + pos[idx[s + 2] * 3]) / 3;
+      const cy0 = (pos[idx[s] * 3 + 1] + pos[idx[s + 1] * 3 + 1] + pos[idx[s + 2] * 3 + 1]) / 3;
+      const cz0 = (pos[idx[s] * 3 + 2] + pos[idx[s + 1] * 3 + 2] + pos[idx[s + 2] * 3 + 2]) / 3;
+      const w = opv.localToWorld(new THREE.Vector3(cx0, cy0, cz0));
+      const dd = w.distanceTo(camPos);
+      if (dd < bestD) { bestD = dd; pickFace = f; pickW = w; }
+    }
+    if (!pickW) return { skip: 'no face' };
+    const slot = mesh.faceSlots[pickFace] | 0;
+    /* 普通导入的图只在文档里，视口按「零图层 = 白模」不挂图；这里用真实的
+     * applySlotTexture 给「另一个对象」的槽挂一张纯绿图 —— 既造出可取的纹理，
+     * 又走产品同一条贴图路径（不走测试专用口）。 */
+    const greenTex = new THREE.CanvasTexture(green);
+    greenTex.needsUpdate = true;
+    window.modelDesk.__debug().store.applySlotTexture(slot, greenTex);
+    function rgbAt(img) {
+      if (!img) return null;
+      const c = document.createElement('canvas');
+      c.width = 1; c.height = 1;
+      const x = c.getContext('2d');
+      x.drawImage(img, (img.width || img.naturalWidth) >> 1, (img.height || img.naturalHeight) >> 1,
+        1, 1, 0, 0, 1, 1);
+      const p = x.getImageData(0, 0, 1, 1).data;
+      return [p[0], p[1], p[2]];
+    }
+    const expected = rgbAt(green);
+
+    const q = pickW.clone().project(d.camera);
+    const r = canvas.getBoundingClientRect();
+    const cx = r.left + (q.x * 0.5 + 0.5) * r.width;
+    const cy = r.top + (-q.y * 0.5 + 0.5) * r.height;
+    const send = type => canvas.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse',
+      button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: cx, clientY: cy
+    }));
+    const statusEl = () => (document.querySelector('.md-status') || {}).textContent || '';
+    send('pointerdown'); send('pointerup');
+    await sleep(160);
+    const pickedHex = window.modelDesk.getState().brushColor;
+    const selAfter = window.modelDesk.__debug().pivot.userData.mdNode;
+    const status = statusEl();
+
+    /* 平涂：unlit + 不压色调，屏幕像素必须等于纹理色 */
+    const shadeSel = document.getElementById('mdShadeSel');
+    if (shadeSel) {
+      shadeSel.value = 'flat';
+      shadeSel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    await sleep(220);
+    const d2 = window.modelDesk.__debug();
+    d2.renderer.render(d2.scene, d2.camera);
+    const gl = d2.renderer.getContext();
+    const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+    const px = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    const q2 = pickW.clone().project(d2.camera);
+    const sx = Math.round((q2.x * 0.5 + 0.5) * w), sy = Math.round((-q2.y * 0.5 + 0.5) * h);
+    const si = ((h - 1 - sy) * w + sx) * 4;
+    const flatRGB = [px[si], px[si + 1], px[si + 2]];
+    const fmArr = Array.isArray(solid.material) ? solid.material : [solid.material];
+    const fm = fmArr[slot];
+    const dbg = {
+      flags: { material: window.SeedViewFlags.get('material'), texture: window.SeedViewFlags.get('texture') },
+      shading: window.modelDesk.getState().shading,
+      type: fm && fm.type,
+      hasMap: !!(fm && fm.map),
+      mapReady: !!(fm && fm.map && fm.map.image && (fm.map.image.width || fm.map.image.naturalWidth)),
+      color: fm && fm.color && fm.color.getHexString(),
+      baseMap: !!(fm && fm.userData && fm.userData.mdBaseMap),
+      proj: [sx, sy, w, h], rect: [r.width, r.height]
+    };
+    if (shadeSel) {
+      shadeSel.value = 'shaded';
+      shadeSel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    /* 选取工具：点同一块面，应把当前对象切到指针下那个对象，且不写历史 */
+    const selBtn = document.querySelector('[data-md-ptool="select"]');
+    if (selBtn) selBtn.click();
+    await sleep(80);
+    const undoBeforeSelect = window.modelDesk.getState().undo;
+    send('pointerdown'); send('pointerup');
+    await sleep(220);
+    const selectedAfter = window.modelDesk.__debug().pivot.userData.mdNode;
+    const selectStatus = statusEl();
+    const undoAfterSelect = window.modelDesk.getState().undo;
+    const brushBtn = document.querySelector('[data-md-ptool="brush"]');
+    if (brushBtn) brushBtn.click();
+    await sleep(60);
+
+    const pickedRGB = [1, 3, 5].map(k => parseInt(pickedHex.substr(k, 2), 16));
+    return {
+      otherId, slot, expected, flatRGB, pickedHex, pickedRGB, status,
+      selBefore, selAfter, dbg,
+      selectedAfter, selectStatus, undoBeforeSelect, undoAfterSelect
+    };
+  });
+  const chDiff = (a, b) => Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]));
+  check(!pickerX.skip && pickerX.selBefore === pickerX.selAfter,
+    '吸管：吸取别的对象不切换当前选中的对象',
+    JSON.stringify({ skip: pickerX.skip, before: pickerX.selBefore, after: pickerX.selAfter }));
+  check(!pickerX.skip && pickerX.expected && pickerX.pickedRGB && chDiff(pickerX.pickedRGB, pickerX.expected) <= 2 &&
+    /纹理色/.test(pickerX.status || ''),
+    '吸管：取的是纹理颜色（不是光照后的渲染色）',
+    JSON.stringify({ tex: pickerX.expected, picked: pickerX.pickedHex, status: pickerX.status }));
+  check(!pickerX.skip && pickerX.expected && pickerX.flatRGB && chDiff(pickerX.flatRGB, pickerX.expected) <= 4,
+    '平涂着色：屏幕显示色 = 纹理色 = 吸管色',
+    JSON.stringify({ screen: pickerX.flatRGB, tex: pickerX.expected, picked: pickerX.pickedHex, dbg: pickerX.dbg }));
+  check(!pickerX.skip && pickerX.selectedAfter === pickerX.otherId && /选取/.test(pickerX.selectStatus || ''),
+    '绘制选取工具：点模型切换当前选中对象',
+    JSON.stringify({ want: pickerX.otherId, got: pickerX.selectedAfter, status: pickerX.selectStatus }));
+  check(!pickerX.skip && pickerX.undoBeforeSelect === pickerX.undoAfterSelect,
+    '绘制选取工具：只切选择集，不写历史 / 不改贴图',
+    JSON.stringify({ undo: [pickerX.undoBeforeSelect, pickerX.undoAfterSelect] }));
 
   /* 13. 截图（整窗 + 视口） */
   try {
