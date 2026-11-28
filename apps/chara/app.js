@@ -191,8 +191,10 @@
     var useImage = !!src && state.refSource !== false;
     var p;
     if (useImage && /edit/i.test(endpoint || '')) {
-      /* OpenAI 兼容 /images/edits：必须 multipart/form-data（与工作台 generate() 同款） */
-      p = fetch(base + endpoint, {
+      /* OpenAI 兼容 /images/edits：必须 multipart/form-data（与工作台 generate() 同款）。
+         走 apiFetch 而非裸 fetch：本机服务商（如 magpie 3425）常不开 CORS，
+         裸 fetch 从 app://openagi 撞跨域后无路可走；apiFetch 撞了会自动改走本地中转。 */
+      p = apiFetch(base + endpoint, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + key },
         body: (function () {
@@ -204,7 +206,7 @@
           fd.append('image', new Blob([arr], { type: 'image/png' }), 'source.png');
           return fd;
         })()
-      }).then(function (r) {
+      }, 60000).then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status + ': 生成请求失败');
         return r.json();
       });
