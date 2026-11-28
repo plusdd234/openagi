@@ -283,8 +283,28 @@ async function apiFetch(url, opts, timeoutMs){
       if(e && e.name === 'AbortError'){
         throw new Error('请求超时（' + Math.round(ms / 1000) + ' 秒）：服务商没有响应');
       }
+      /* 直连被 CORS / 网络拦住（服务商不开放跨域，如本机 magpie 3425）：按设置里的
+         中转配置改走 8787/proxy 再试一次。原来只有 llm-router 的独立页 rawFetch 有这条，
+         桌面模式 apiFetch 没有 → 读取模型 / 对话 / 生图全在此断掉，误报「无法连接本地中转」。
+         只在「目标是上游（非中转本身）」时才兜，避免中转请求自己又转回中转成死循环。 */
       lastErr = e;
-      if(attempt >= API_RETRY_MAX) throw e;
+      if(relayEnabled()){
+        const rb = relayBase();
+        const t = String(req.url || '');
+        if(!/^https?:/i.test(t) || t.replace(/\/$/, '') !== rb){
+          try{
+            const rh = Object.assign({}, (req.init && req.init.headers) || {},
+              { 'X-Relay-Target': t });
+            const r2 = await fetch(rb + '/proxy',
+              Object.assign({}, req.init, { headers: rh, signal: ctrl.signal }));
+            if(!(r2.status >= 502 && r2.status <= 504) || attempt >= API_RETRY_MAX) return r2;
+            lastErr = new Error('HTTP ' + r2.status);
+          }catch(e2){
+            lastErr = e2;
+          }
+        }
+      }
+      if(attempt >= API_RETRY_MAX) throw lastErr;
       await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
     }finally{
       clearTimeout(timer);

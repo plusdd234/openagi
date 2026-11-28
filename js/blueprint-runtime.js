@@ -688,7 +688,26 @@ async function llmStreamRequest(sys, messages, onDelta, opts){
       } catch (e) {
         if (e && e.name === 'AbortError') throw e;
         last = e;
-        if (i >= FETCH_RETRY_MAX) throw e;
+        /* 直连被 CORS / 网络拦住（服务商不开放跨域，如本机 magpie 3425）：改走本机中转
+           8787/proxy 再试一次。流式对话原走 apiRequest，而 apiRequest 的 localhost 豁免
+           把 3425 放行为直连 → 撞 CORS 后无路可走。这里补上和 apiFetch 同款的兜底，
+           让流式对话也能经中转转发。避免中转请求自己再转回中转成死循环。 */
+        if (typeof relayEnabled === 'function' && relayEnabled()) {
+          const rb = (typeof relayBase === 'function') ? relayBase() : 'http://127.0.0.1:8787';
+          const t = String(req.url || '');
+          if (/^https?:/i.test(t) && t.replace(/\/$/, '') !== rb) {
+            try {
+              const rh = Object.assign({}, (req.init && req.init.headers) || {},
+                { 'X-Relay-Target': t });
+              const r2 = await fetch(rb + '/proxy',
+                Object.assign({}, req.init, { headers: rh, signal: ctrl.signal }));
+              return r2;
+            } catch (e2) {
+              last = e2;
+            }
+          }
+        }
+        if (i >= FETCH_RETRY_MAX) throw last;
         await new Promise(rs => setTimeout(rs, 700 * (i + 1)));
       }
     }
