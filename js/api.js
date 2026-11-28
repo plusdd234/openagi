@@ -51,11 +51,42 @@ async function tripoWebLogin(){
   const el = $('tripoWebState');
   el.textContent = '正在打开浏览器…';
   try{
-    await tripoWebFetch('/login', {
+    let d = await tripoWebFetch('/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: confGet('tripoWebUrl') })
     }, 20000);
+    /* 内嵌模式（桌面版默认）：登录页跑在「Tripo 工坊」App 内的 <webview> 里，不在外面弹 Edge。
+       只有工坊 App 会创建那个 webview guest —— 若还没就绪，服务端回 needOpen。
+       这里认出 needOpen：自动打开工坊 App 把 webview 建起来，再重试一次 /login。
+       原来不认这个字段，掉进「浏览器已打开」兜底文案（假成功），人卡在设置页找不到窗口。 */
+    if(d && d.needOpen){
+      el.textContent = '正在打开 Tripo 工坊（内嵌登录页）…';
+      let opened = false;
+      try{
+        if(typeof openDeskApp === 'function'){ openDeskApp('tripostudio'); opened = true; }
+      }catch(e){ /* 打开工坊失败则退回提示 */ }
+      await new Promise(r => setTimeout(r, 2500));   // 给 webview 一点加载时间
+      d = await tripoWebFetch('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: confGet('tripoWebUrl') })
+      }, 20000);
+      if(opened){
+        if(d && d.needOpen){
+          // 第二次仍 needOpen：工坊 webview 还没加载完（2500ms 常常不够），
+          // 诚实告知用户稍等，不假装成功。用户稍后在工坊里看到页面加载完，
+          // 回这里再点一次「打开登录页」或「检测状态」即可。
+          el.textContent = '「Tripo 工坊」页面加载中，请稍等几秒后回工坊窗口确认已进入 Tripo 页面，然后回这里点「检测状态」';
+          updateStatusChips();
+          return;
+        }
+        el.textContent = '已在「Tripo 工坊」打开登录页 · 请在工坊窗口内登录，登录后回这里点「检测状态」';
+        updateStatusChips();
+        // 不立刻判失败：内嵌页面要人工登录，交给用户操作后点「检测状态」确认
+        return;
+      }
+    }
     el.textContent = '浏览器已打开 · 等待登录并进入生图页…';
     for(let i = 0; i < 30; i++){
       await new Promise(r => setTimeout(r, 3000));
