@@ -1016,8 +1016,16 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: target })
-    }, 15000).then(function () {
-      toast('已打开 Tripo 登录页，登录完成后回到这里点「检测」');
+    }, 15000).then(function (d) {
+      /* 与内嵌分支同款：外部 Edge 分支原来把响应参数整个丢掉，无条件 toast「已打开」。
+         桌面版内嵌模式下服务端可能回 needOpen（webview guest 未就绪），这里同样要认，
+         否则假成功。needOpen 时引导用户改走内嵌（工坊）登录。 */
+      if (d && d.needOpen) {
+        toast('内嵌页面还没就绪，稍等几秒再点「登录」，或确认已在「Tripo 工坊」里打开过登录页', 'warn');
+        log('外部登录路径收到 needOpen：webview 未就绪');
+        return;
+      }
+      toast((d && d.message) || '已打开 Tripo 登录页，登录完成后回到这里点「检测」');
       log('已请求打开 Tripo 登录页');
       setTimeout(function () { refreshStatus(false); }, 1500);
     }).catch(function (e) {
